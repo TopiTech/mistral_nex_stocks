@@ -74,6 +74,14 @@ function applyPreset(name) {
   if (baseUrlInput) baseUrlInput.value = preset.baseUrl;
   if (modelInput) modelInput.value = preset.model;
   if (embeddingsInput) embeddingsInput.value = preset.embeddingsModel;
+  const apiKeyInput = getEl("openaiApiKey");
+  if (apiKeyInput) {
+    if (name === "ollama") {
+      apiKeyInput.placeholder = "ローカル接続（Ollama等）は未入力で利用可能";
+    } else {
+      apiKeyInput.placeholder = "sk-... (クラウドプロバイダのAPIキー)";
+    }
+  }
 }
 
 async function verifyOpenaiSetup() {

@@ -607,3 +607,80 @@ def test_safe_parse_analysis_result_with_openai_reasoning_and_aliases():
     assert result["target_price_3m"] == 420.5
     assert "AI需要" in result["analysis_summary"]
     assert result["fallback_used"] is False
+
+
+def test_build_openai_headers_omits_authorization_for_ollama_local():
+    """Verify _build_openai_headers does not set Authorization header for 'ollama-local' sentinel."""
+    from services.openai_service import _build_openai_headers
+
+    headers_local = _build_openai_headers("ollama-local")
+    assert "Authorization" not in headers_local
+
+    headers_auth = _build_openai_headers("sk-real-test-key")
+    assert headers_auth.get("Authorization") == "Bearer sk-real-test-key"
+
+
+def test_stream_openai_chat_filters_none_reasoning():
+    """Test stream_openai_chat omits 'none' reasoning_effort upfront."""
+    captured_payloads = []
+
+    mock_ok_resp = MagicMock()
+    mock_ok_resp.status_code = 200
+    mock_ok_resp.iter_lines.return_value = [
+        b'data: {"choices": [{"delta": {"content": "Hello!"}}]}',
+        b'data: [DONE]',
+    ]
+    mock_ok_resp.__enter__.return_value = mock_ok_resp
+
+    with patch("httpx.Client.stream", side_effect=lambda *args, **kwargs: captured_payloads.append(kwargs.get("json", {})) or mock_ok_resp):
+        events = list(
+            stream_openai_chat(
+                api_key="test-key",
+                messages=[{"role": "user", "content": "hi"}],
+                reasoning_effort="none",  # Should be omitted upfront
+            )
+        )
+
+    assert "reasoning_effort" not in captured_payloads[0]
+    assert any(e.get("type") == "done" for e in events)
+
+
+def test_stream_openai_chat_retries_on_reasoning_rejection_400():
+    """Test stream_openai_chat retries without reasoning_effort when model rejects it with 400."""
+    captured_payloads = []
+
+    mock_err_resp = MagicMock()
+    mock_err_resp.status_code = 400
+    mock_err_resp.text = json.dumps({"error": {"message": "Reasoning is not supported by this model"}})
+    mock_err_resp.__enter__.return_value = mock_err_resp
+
+    mock_ok_resp = MagicMock()
+    mock_ok_resp.status_code = 200
+    mock_ok_resp.iter_lines.return_value = [
+        b'data: {"choices": [{"delta": {"content": "Hello after retry!"}}]}',
+        b'data: [DONE]',
+    ]
+    mock_ok_resp.__enter__.return_value = mock_ok_resp
+
+    def mock_stream(method, url, json=None, headers=None):
+        captured_payloads.append(dict(json or {}))
+        if len(captured_payloads) == 1:
+            return mock_err_resp
+        return mock_ok_resp
+
+    with patch("httpx.Client.stream", side_effect=mock_stream):
+        events = list(
+            stream_openai_chat(
+                api_key="test-key",
+                messages=[{"role": "user", "content": "hi"}],
+                reasoning_effort="high",
+            )
+        )
+
+    # First attempt had reasoning_effort
+    assert captured_payloads[0].get("reasoning_effort") == "high"
+    # Second attempt retried without reasoning_effort
+    assert "reasoning_effort" not in captured_payloads[1]
+    assert any(e.get("type") == "done" for e in events)
+
+

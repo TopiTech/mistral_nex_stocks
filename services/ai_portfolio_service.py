@@ -702,12 +702,23 @@ def generate_ai_portfolio_by_theme(
             )
 
         if not api_key:
-            api_key = get_mistral_api_key()
+            from credential_manager import (
+                get_openai_api_key,
+                is_local_openai_base_url,
+                is_openai_provider,
+            )
+
+            if is_openai_provider():
+                api_key = get_openai_api_key() or (
+                    "ollama-local" if is_local_openai_base_url() else None
+                )
+            else:
+                api_key = get_mistral_api_key()
         from credential_manager import is_preview_api_key
 
         if not api_key or is_preview_api_key(api_key):
             logger.info(
-                "Mistral API key not configured; generating fallback portfolio for theme: %s",
+                "AI API key not configured or in preview mode; generating fallback portfolio for theme: %s",
                 search_theme,
             )
             portfolio = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)

@@ -266,6 +266,42 @@ class ExtractJsonPayloadTestCase(unittest.TestCase):
         self.assertIn("recommendation", parsed)
         self.assertEqual(parsed["recommendation"], "Buy")
 
+class AppConfigSchemaTestCase(unittest.TestCase):
+    """Test AppConfigSchema template configuration validation."""
+
+    def test_app_config_schema_openai_fields_preservation(self):
+        from utils.validators import AppConfigSchema
+
+        data = {
+            "has_mistral_api_key": False,
+            "has_openai_api_key": True,
+            "has_langsearch_api_key": False,
+            "has_tavily_api_key": False,
+            "has_alphavantage_api_key": False,
+            "has_ai_access": True,
+            "ai_provider": "openai_compatible",
+            "is_beta_provider": True,
+            "provider_notice": "Beta notice",
+            "openai_base_url": "https://api.openai.com/v1",
+            "openai_model": "gpt-4o",
+            "openai_embeddings_model": "text-embedding-3-large",
+            "is_local_openai_base_url": False,
+            "api_mode": "chat",
+            "agent_id": "",
+            "preview_mode": False,
+            "model_selectable": True,
+            "mistral_model": "mistral-medium-3.5",
+            "is_ai_technical_lines_eligible": True,
+        }
+        schema = AppConfigSchema.model_validate(data)
+        dumped = schema.model_dump()
+        self.assertEqual(dumped["ai_provider"], "openai_compatible")
+        self.assertTrue(dumped["has_openai_api_key"])
+        self.assertEqual(dumped["openai_model"], "gpt-4o")
+        self.assertEqual(dumped["openai_embeddings_model"], "text-embedding-3-large")
+        self.assertTrue(dumped["is_beta_provider"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

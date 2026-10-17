@@ -83,7 +83,9 @@ def _build_openai_headers(api_key: str | None = None) -> dict[str, str]:
         "X-Title": "MistralNeXStocks",
     }
     if api_key and api_key.strip() and not is_preview_api_key(api_key):
-        headers["Authorization"] = f"Bearer {api_key.strip()}"
+        clean_key = api_key.strip()
+        if clean_key != "ollama-local":
+            headers["Authorization"] = f"Bearer {clean_key}"
     return headers
 
 
@@ -321,11 +323,15 @@ def call_openai_chat(
     }
     if temperature is not None:
         payload["temperature"] = max(0.0, min(float(temperature), 2.0))
-    if reasoning_effort and isinstance(reasoning_effort, str):
+    if (
+        reasoning_effort
+        and isinstance(reasoning_effort, str)
+        and reasoning_effort.lower() in ("low", "medium", "high")
+    ):
         # "none" is omitted for OpenAI-compat as standard OpenAI only supports low/medium/high,
         # and mandatory-reasoning endpoints (DeepSeek-R1, etc.) reject "none" with HTTP 400.
-        if reasoning_effort.lower() in ("low", "medium", "high"):
-            payload["reasoning_effort"] = reasoning_effort.lower()
+        payload["reasoning_effort"] = reasoning_effort.lower()
+
 
     if requires_pydantic_parse and pydantic_cls is not None:
         payload["response_format"] = {"type": "json_object"}
@@ -511,74 +517,98 @@ def stream_openai_chat(
         "max_tokens": token_limit,
         "stream": True,
     }
-    if temperature is not None:
-        payload["temperature"] = max(0.0, min(float(temperature), 2.0))
-    if reasoning_effort and isinstance(reasoning_effort, str):
-        payload["reasoning_effort"] = reasoning_effort
+    if (
+        reasoning_effort
+        and isinstance(reasoning_effort, str)
+        and reasoning_effort.lower() in ("low", "medium", "high")
+    ):
+        payload["reasoning_effort"] = reasoning_effort.lower()
 
     full_parts: list[str] = []
     logger.info("OpenAI stream start model=%s base_url=%s", model, base_url)
 
     try:
-        with (
-            _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC) as client,
-            client.stream("POST", endpoint, json=payload, headers=headers) as stream,
-        ):
-            if stream.status_code >= 400:
-                stream.read()
-                err_detail = stream.text[:500]
-                try:
-                    err_json = json.loads(err_detail)
-                    if isinstance(err_json, dict) and "error" in err_json:
-                        err_obj = err_json["error"]
-                        err_detail = err_obj.get("message", err_detail) if isinstance(err_obj, dict) else str(err_obj)
-                except Exception:
-                    pass
-                logger.warning(
-                    "OpenAI stream HTTP error status=%d detail=%s",
-                    stream.status_code,
-                    err_detail,
-                )
-                err_msg = _public_openai_error_message(Exception(err_detail), stream.status_code)
-                yield {
-                    "type": "error",
-                    "message": err_msg,
-                    "status_code": stream.status_code,
-                    "detail": err_detail,
-                }
-                return
+        with _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC) as client:
+            def _open_stream(p: dict[str, Any]):
+                return client.stream("POST", endpoint, json=p, headers=headers)
 
-            for line in stream.iter_lines():
-                if not line:
-                    continue
-                line_str = line.strip()
-                if line_str.startswith("data:"):
-                    data_part = line_str.removeprefix("data:").strip()
-                    if data_part == "[DONE]":
-                        break
+            stream_cm = _open_stream(payload)
+            stream = stream_cm.__enter__()
+            try:
+                # Retry handler for common 400 parameter rejections (e.g. reasoning_effort rejected)
+                if stream.status_code == 400:
+                    stream.read()
+                    err_detail = stream.text[:500]
+                    if "reasoning" in err_detail.lower() and "reasoning_effort" in payload:
+                        logger.info(
+                            "OpenAI stream rejected reasoning_effort (HTTP 400). Retrying stream without reasoning_effort."
+                        )
+                        payload.pop("reasoning_effort", None)
+                        stream_cm.__exit__(None, None, None)
+                        stream_cm = _open_stream(payload)
+                        stream = stream_cm.__enter__()
+
+                if stream.status_code >= 400:
+                    stream.read()
+                    err_detail = stream.text[:500]
                     try:
-                        chunk = json.loads(data_part)
-                        choices = chunk.get("choices") or []
-                        if choices and isinstance(choices, list):
-                            delta = choices[0].get("delta") or {}
-                            delta_text = delta.get("content")
-                            # Also capture reasoning deltas if present (e.g. DeepSeek-R1 / OpenRouter / o1)
-                            if not delta_text:
-                                r_val = (
-                                    delta.get("reasoning_content")
-                                    or delta.get("reasoning")
-                                    or delta.get("thinking")
-                                )
-                                if isinstance(r_val, str):
-                                    delta_text = r_val
-                                elif isinstance(r_val, list):
-                                    delta_text = "".join(str(x) for x in r_val)
-                            if delta_text and isinstance(delta_text, str):
-                                full_parts.append(delta_text)
-                                yield {"type": "delta", "text": delta_text}
-                    except Exception as c_err:
-                        logger.debug("Failed parsing SSE chunk: %s", c_err)
+                        err_json = json.loads(err_detail)
+                        if isinstance(err_json, dict) and "error" in err_json:
+                            err_obj = err_json["error"]
+                            err_detail = err_obj.get("message", err_detail) if isinstance(err_obj, dict) else str(err_obj)
+                    except Exception:
+                        pass
+                    logger.warning(
+                        "OpenAI stream HTTP error status=%d detail=%s",
+                        stream.status_code,
+                        err_detail,
+                    )
+                    err_msg = _public_openai_error_message(Exception(err_detail), stream.status_code)
+                    yield {
+                        "type": "error",
+                        "message": err_msg,
+                        "status_code": stream.status_code,
+                        "detail": err_detail,
+                    }
+                    return
+
+                for line in stream.iter_lines():
+                    if not line:
                         continue
+                    line_str = (
+                        line.decode("utf-8", errors="replace")
+                        if isinstance(line, (bytes, bytearray))
+                        else str(line)
+                    ).strip()
+                    if line_str.startswith("data:"):
+                        data_part = line_str.removeprefix("data:").strip()
+                        if data_part == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_part)
+                            choices = chunk.get("choices") or []
+                            if choices and isinstance(choices, list):
+                                delta = choices[0].get("delta") or {}
+                                delta_text = delta.get("content")
+                                # Also capture reasoning deltas if present (e.g. DeepSeek-R1 / OpenRouter / o1)
+                                if not delta_text:
+                                    r_val = (
+                                        delta.get("reasoning_content")
+                                        or delta.get("reasoning")
+                                        or delta.get("thinking")
+                                    )
+                                    if isinstance(r_val, str):
+                                        delta_text = r_val
+                                    elif isinstance(r_val, list):
+                                        delta_text = "".join(str(x) for x in r_val)
+                                if delta_text and isinstance(delta_text, str):
+                                    full_parts.append(delta_text)
+                                    yield {"type": "delta", "text": delta_text}
+                        except Exception as c_err:
+                            logger.debug("Failed parsing SSE chunk: %s", c_err)
+                            continue
+            finally:
+                stream_cm.__exit__(None, None, None)
 
         yield {"type": "done", "text": "".join(full_parts)}
 

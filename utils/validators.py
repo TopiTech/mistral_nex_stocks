@@ -222,22 +222,33 @@ class AppConfigSchema(BaseModel):
     """Schema for app config passed to templates."""
 
     has_mistral_api_key: bool
+    has_openai_api_key: bool = False
     has_langsearch_api_key: bool
     has_tavily_api_key: bool
     has_alphavantage_api_key: bool
     has_ai_access: bool = False
+    ai_provider: str = "mistral"
+    is_beta_provider: bool = False
+    provider_notice: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
+    openai_embeddings_model: str = "text-embedding-3-small"
+    is_local_openai_base_url: bool = False
     api_mode: str = "chat"
     agent_id: str = ""
     preview_mode: bool = False
     model_selectable: bool = True
     mistral_model: str
     is_ai_technical_lines_eligible: bool
+    is_free_tier_model: bool = False
+    model_tier: str = "Medium"
     mistral_api_key_min_length: int = 32
     langsearch_api_key_min_length: int = 20
     tavily_api_key_min_length: int = 5
     credentials_ephemeral: bool = False
     credentials_ephemeral_keys: list[str] = []
     credentials_ephemeral_warning: str | None = None
+
 
 
 class PortfolioInputSchema(BaseModel):
@@ -1088,12 +1099,12 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
                 break
     if "key_catalysts" not in res or not res["key_catalysts"]:
         for alias in ("catalysts", "growth_catalysts", "positives"):
-            if alias in res and res[alias]:
+            if res.get(alias):
                 res["key_catalysts"] = res[alias]
                 break
     if "risk_factors" not in res or not res["risk_factors"]:
         for alias in ("risks", "risk", "negatives"):
-            if alias in res and res[alias]:
+            if res.get(alias):
                 res["risk_factors"] = res[alias]
                 break
     return res

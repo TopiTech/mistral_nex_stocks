@@ -3,6 +3,7 @@ Integration tests for OpenAI-compatible API Provider (Beta).
 Tests provider switching, credential management, API endpoints, and ai_service dispatch.
 """
 
+import json
 import os
 from unittest.mock import patch
 
@@ -272,4 +273,55 @@ def test_api_credentials_verify_with_empty_key_uses_stored_key(client):
 
     # Clean up
     clear_api_credentials()
+
+
+def test_generate_ai_portfolio_resolves_openai_key_when_none():
+    """Verify generate_ai_portfolio_by_theme resolves get_openai_api_key when api_key is None."""
+    from services.ai_portfolio_service import generate_ai_portfolio_by_theme
+
+    save_api_credentials(
+        ai_provider=PROVIDER_OPENAI,
+        openai_api_key="sk-test-ai-portfolio-key",
+        openai_base_url="https://api.openai.com/v1",
+    )
+
+    mock_resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps({
+                        "title": "AI Semiconductors",
+                        "description": "Leading chips portfolio",
+                        "risk_level": "中リスク",
+                        "expected_return": "12%",
+                        "commentary": "Semiconductor leaders",
+                        "items": [
+                            {
+                                "symbol": "NVDA",
+                                "market": "us",
+                                "weight_pct": 100.0,
+                                "target_price": 150.0,
+                                "rationale": "GPU market leader",
+                                "risk_level": "mid",
+                            }
+                        ],
+                    }),
+                }
+            }
+        ]
+    }
+
+    with (
+        patch("services.ai_portfolio_service.collect_symbol_research_context", return_value=""),
+        patch("services.ai_portfolio_service.call_mistral_chat", return_value=mock_resp) as mock_call,
+    ):
+        result = generate_ai_portfolio_by_theme("AI Semiconductors", force_rebalance=True, api_key=None)
+
+    assert mock_call.called
+    assert mock_call.call_args[1]["api_key"] == "sk-test-ai-portfolio-key"
+    assert result["title"] == "AI Semiconductors"
+
+    clear_api_credentials()
+
 

@@ -949,6 +949,16 @@ document.addEventListener("DOMContentLoaded", () => {
         if (urlInput) urlInput.value = conf.url;
         if (modelInput) modelInput.value = conf.model;
         if (embInput) embInput.value = conf.emb;
+        const keyInput = document.getElementById("openai-api-key-input");
+        if (keyInput) {
+          if (presetKey === "ollama") {
+            keyInput.placeholder = "ローカル接続（Ollama等）は未入力で利用可能";
+          } else if (_currentCredentialsData?.has_openai_api_key) {
+            keyInput.placeholder = "設定済み (変更する場合のみ入力)";
+          } else {
+            keyInput.placeholder = "APIキーを入力 (例: sk-...)";
+          }
+        }
         showToast(
           `プリセット [${btn.textContent.trim()}] を適用しました`,
           "#00f2fe",
@@ -1158,8 +1168,13 @@ document.addEventListener("DOMContentLoaded", () => {
             oaEmbInput.value = data.openai_embeddings_model;
           }
           const oaKeyInput = document.getElementById("openai-api-key-input");
-          if (oaKeyInput && data.has_openai_api_key) {
-            oaKeyInput.placeholder = "設定済み (変更する場合のみ入力)";
+          if (oaKeyInput) {
+            if (data.has_openai_api_key) {
+              oaKeyInput.placeholder = "設定済み (変更する場合のみ入力)";
+            } else if (data.is_local_openai_base_url) {
+              oaKeyInput.placeholder =
+                "ローカル接続（Ollama等）は未入力で利用可能";
+            }
           }
 
           const mistralInput = document.getElementById("mistral-api-key-input");

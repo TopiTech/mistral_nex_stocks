@@ -353,10 +353,10 @@ def _clean_reasoning_tags(text: str, preserve_for_history: bool = False) -> str:
         return text
     cleaned = text
     had_tags = False
-    if "<thought>" in cleaned or "<thinking>" in cleaned:
+    if "<thought>" in cleaned or "<thinking>" in cleaned or "<think>" in cleaned:
         had_tags = True
         cleaned = re.sub(
-            r"<(?:thought|thinking)>.*?(?:</(?:thought|thinking)>|$)", "", cleaned, flags=re.DOTALL
+            r"<(?:thought|thinking|think)>.*?(?:</(?:thought|thinking|think)>|$)", "", cleaned, flags=re.DOTALL
         )
     if "[THINK]" in cleaned or "[REASONING]" in cleaned:
         had_tags = True
@@ -428,23 +428,45 @@ def extract_chat_content(response, preserve_for_history: bool = False):
         else:
             message = {}
 
-        # Get content from message (with reasoning_content fallback)
+        # Get content from message (with reasoning_content / reasoning / thinking fallback)
         if isinstance(message, dict):
             content = message.get("content")
             if content is None or (isinstance(content, str) and not content.strip()):
-                reasoning_alt = message.get("reasoning_content") or message.get("thinking")
+                reasoning_alt = (
+                    message.get("reasoning_content")
+                    or message.get("reasoning")
+                    or message.get("thinking")
+                )
+                if not reasoning_alt and isinstance(message.get("reasoning_details"), list):
+                    parts = []
+                    for rd in message["reasoning_details"]:
+                        if isinstance(rd, dict) and "text" in rd:
+                            parts.append(str(rd["text"]))
+                        elif isinstance(rd, str):
+                            parts.append(rd)
+                    if parts:
+                        reasoning_alt = "".join(parts)
                 if reasoning_alt:
                     content = reasoning_alt
         elif hasattr(message, "content"):
             content = message.content
             if content is None or (isinstance(content, str) and not content.strip()):
-                reasoning_alt = getattr(message, "reasoning_content", None) or getattr(
-                    message, "thinking", None
+                reasoning_alt = (
+                    getattr(message, "reasoning_content", None)
+                    or getattr(message, "reasoning", None)
+                    or getattr(message, "thinking", None)
                 )
                 if reasoning_alt:
                     content = reasoning_alt
         else:
             content = None
+
+        # Fallback to choice text if message content is still empty
+        if content is None or (isinstance(content, str) and not content.strip()):
+            if isinstance(first_choice, dict) and first_choice.get("text"):
+                content = first_choice["text"]
+            elif hasattr(first_choice, "text") and getattr(first_choice, "text", None):
+                content = first_choice.text
 
         # 2026 Structured Outputs: content might be a BaseModel instance
         if isinstance(content, BaseModel):
@@ -484,6 +506,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                         chunk.get("type") in ("thinking", "reasoning")
                         or "thinking" in chunk
                         or "reasoning_content" in chunk
+                        or "reasoning" in chunk
                     )
                     if is_thinking:
                         # Extract thinking content
@@ -503,7 +526,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                         elif isinstance(think_val, str) and think_val:
                             thinking_chunks.append(think_val)
 
-                        r_val = chunk.get("reasoning_content")
+                        r_val = chunk.get("reasoning_content") or chunk.get("reasoning")
                         if isinstance(r_val, str) and r_val:
                             thinking_chunks.append(r_val)
 
@@ -538,6 +561,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                             getattr(chunk, "type", None) in ("thinking", "reasoning")
                             or hasattr(chunk, "thinking")
                             or hasattr(chunk, "reasoning_content")
+                            or hasattr(chunk, "reasoning")
                             or "think" in chunk_type_name
                         )
                         if is_think_obj:
@@ -561,7 +585,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                             elif isinstance(think_val, str) and think_val:
                                 thinking_chunks.append(think_val)
 
-                            r_val = getattr(chunk, "reasoning_content", None)
+                            r_val = getattr(chunk, "reasoning_content", None) or getattr(chunk, "reasoning", None)
                             if isinstance(r_val, str) and r_val:
                                 thinking_chunks.append(r_val)
 
@@ -685,6 +709,33 @@ def normalize_chat_parse_payload(response: Any) -> dict[str, Any] | None:
 
     payload = parsed if parsed is not None else content
     if payload is None:
+        # Fallback: check alternative reasoning fields in message if content is None
+        alt_content = None
+        if isinstance(message, dict):
+            alt_content = (
+                message.get("reasoning_content")
+                or message.get("reasoning")
+                or message.get("thinking")
+            )
+        elif (
+            hasattr(message, "reasoning_content")
+            or hasattr(message, "reasoning")
+            or hasattr(message, "thinking")
+        ):
+            alt_content = (
+                getattr(message, "reasoning_content", None)
+                or getattr(message, "reasoning", None)
+                or getattr(message, "thinking", None)
+            )
+        if alt_content and isinstance(alt_content, str):
+            try:
+                extracted = extract_json_payload(alt_content)
+                if extracted:
+                    parsed_payload = json.loads(extracted)
+                    if isinstance(parsed_payload, dict):
+                        return parsed_payload
+            except Exception:
+                pass
         return None
     if isinstance(payload, dict):
         return payload
@@ -742,9 +793,9 @@ def extract_json_payload(content, required_fields=None):
         raise ValueError("空の応答です")
 
     # Strip thinking / thought tags so internal reasoning braces do not mislead the structural parser
-    if "<thought>" in text or "<thinking>" in text:
+    if "<thought>" in text or "<thinking>" in text or "<think>" in text:
         clean_text = re.sub(
-            r"<(?:thought|thinking)>.*?</(?:thought|thinking)>", "", text, flags=re.DOTALL
+            r"<(?:thought|thinking|think)>.*?(?:</(?:thought|thinking|think)>|$)", "", text, flags=re.DOTALL
         ).strip()
         if clean_text:
             text = clean_text
@@ -1010,9 +1061,47 @@ def extract_json_payload(content, required_fields=None):
     raise ValueError("JSONブロックの抽出に失敗しました (構文エラーの可能性あり)")
 
 
+def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize common field name variations produced by diverse LLM providers."""
+    if not isinstance(result, dict):
+        return result
+    res = dict(result)
+    if "analysis_summary" not in res or not res["analysis_summary"]:
+        for alias in ("summary", "overview", "analysis", "conclusion", "details"):
+            if alias in res and isinstance(res[alias], str) and res[alias].strip():
+                res["analysis_summary"] = res[alias]
+                break
+    if "recommendation" not in res or not res["recommendation"]:
+        for alias in ("rating", "verdict", "action", "signal", "stance"):
+            if alias in res and isinstance(res[alias], str) and res[alias].strip():
+                res["recommendation"] = res[alias]
+                break
+    if "sentiment" not in res or not res["sentiment"]:
+        for alias in ("market_sentiment", "tone"):
+            if alias in res and isinstance(res[alias], str) and res[alias].strip():
+                res["sentiment"] = res[alias]
+                break
+    if "target_price_3m" not in res or res["target_price_3m"] is None:
+        for alias in ("target_price", "price_target", "target"):
+            if alias in res and res[alias] is not None:
+                res["target_price_3m"] = res[alias]
+                break
+    if "key_catalysts" not in res or not res["key_catalysts"]:
+        for alias in ("catalysts", "growth_catalysts", "positives"):
+            if alias in res and res[alias]:
+                res["key_catalysts"] = res[alias]
+                break
+    if "risk_factors" not in res or not res["risk_factors"]:
+        for alias in ("risks", "risk", "negatives"):
+            if alias in res and res[alias]:
+                res["risk_factors"] = res[alias]
+                break
+    return res
+
+
 def normalize_analysis_result(result: Any) -> dict[str, Any]:
     """Ensures all expected keys are present in the AI analysis result dictionary."""
-    normalized = dict(result or {})
+    normalized = _normalize_analysis_aliases(dict(result or {}))
     defaults = {
         "recommendation": "中立",
         "sentiment": "中立",
@@ -1052,14 +1141,15 @@ def validate_analysis_result(result):
     if not isinstance(result, dict):
         return False, "result is not an object"
 
+    normalized = _normalize_analysis_aliases(result)
     # Require at least one core field to consider the result usable.
     core_fields = ("analysis_summary", "recommendation", "sentiment", "target_price_3m")
-    if not any(k in result for k in core_fields):
+    if not any(k in normalized for k in core_fields):
         return False, "missing core analysis fields"
 
     # If specific fields are present, sanity-check their types (non-blocking)
-    if "target_price_3m" in result:
-        tpm = result.get("target_price_3m")
+    if "target_price_3m" in normalized:
+        tpm = normalized.get("target_price_3m")
         if isinstance(tpm, bool):
             return False, "target_price_3m must be numeric"
         if not isinstance(tpm, (int, float)):
@@ -1070,9 +1160,9 @@ def validate_analysis_result(result):
         if not math.isfinite(float(tpm)):
             return False, "target_price_3m must be finite"
 
-    if "key_catalysts" in result and not isinstance(result.get("key_catalysts"), list):
+    if "key_catalysts" in normalized and not isinstance(normalized.get("key_catalysts"), list):
         return False, "key_catalysts must be an array"
-    if "risk_factors" in result and not isinstance(result.get("risk_factors"), list):
+    if "risk_factors" in normalized and not isinstance(normalized.get("risk_factors"), list):
         return False, "risk_factors must be an array"
 
     return True, ""
@@ -1089,6 +1179,8 @@ def safe_parse_analysis_result(
     from utils.formatting import build_fallback_analysis_result
 
     result = normalize_chat_parse_payload(response)
+    if isinstance(result, dict):
+        result = _normalize_analysis_aliases(result)
     if not isinstance(result, dict):
         # Fallback to local extraction from string content before remote LLM repair
         content = extract_chat_content(response)
@@ -1099,6 +1191,7 @@ def safe_parse_analysis_result(
                 if extracted:
                     parsed_local = json.loads(extracted)
                     if isinstance(parsed_local, dict):
+                        parsed_local = _normalize_analysis_aliases(parsed_local)
                         is_valid_local, _ = validate_analysis_result(parsed_local)
                         if is_valid_local:
                             result = parsed_local
@@ -1111,7 +1204,8 @@ def safe_parse_analysis_result(
         if not isinstance(result, dict) and has_usable_content:
             try:
                 repaired_result, _ = repair_func(api_key, content)
-                result = repaired_result
+                if isinstance(repaired_result, dict):
+                    result = _normalize_analysis_aliases(repaired_result)
             except Exception as exc:
                 logger.warning(
                     "safe_parse_analysis_result extraction-repair failed error_type=%s",
@@ -1122,6 +1216,7 @@ def safe_parse_analysis_result(
         logger.error("safe_parse_analysis_result failed to extract result")
         return build_fallback_analysis_result("AI解析の生成に失敗しました")
 
+    result = _normalize_analysis_aliases(result)
     valid, reason = validate_analysis_result(result)
     if not valid:
         logger.info(
@@ -1129,7 +1224,8 @@ def safe_parse_analysis_result(
         )
         try:
             repaired_result, _ = repair_func(api_key, json.dumps(result))
-            result = repaired_result
+            if isinstance(repaired_result, dict):
+                result = _normalize_analysis_aliases(repaired_result)
         except Exception as exc:
             logger.warning(
                 "safe_parse_analysis_result final validation-repair failed error_type=%s",

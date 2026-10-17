@@ -258,6 +258,16 @@ def call_openai_chat(
     model = _model_override if _model_override else get_openai_model()
     token_limit = min(max(16, max_tokens), MISTRAL_MAX_TOKENS_CEIL)
 
+    # Response format handling
+    requires_pydantic_parse = False
+    pydantic_cls = None
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        requires_pydantic_parse = True
+        pydantic_cls = response_format
+        # Reasoning models expend significant tokens on internal chain-of-thought before emitting JSON.
+        # Ensure a safe token floor for structured analysis.
+        token_limit = min(max(3000, token_limit), MISTRAL_MAX_TOKENS_CEIL)
+
     cache_key = _build_openai_cache_key(
         model,
         messages,
@@ -278,22 +288,46 @@ def call_openai_chat(
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 
+    # For Pydantic structured output, inject the JSON schema into prompt instructions so
+    # all OpenAI-compatible models (including those without native json_schema support) output
+    # the exact required fields.
+    effective_messages = [copy.deepcopy(m) if isinstance(m, dict) else m for m in messages]
+    if requires_pydantic_parse and pydantic_cls is not None:
+        schema_dict = pydantic_cls.model_json_schema()
+        schema_instruction = (
+            "\n\n【必須出力形式】\n"
+            "必ず以下のJSONスキーマに厳密に準拠した有効な単一のJSONオブジェクト（JSON形式）のみを出力してください。\n"
+            "マークダウンコードブロックや前置き・解説テキストは一切含めず、純粋なJSON文字列のみを出力してください。\n"
+            f"スキーマ:\n{json.dumps(schema_dict, ensure_ascii=False)}"
+        )
+        has_system = False
+        new_msgs = []
+        for m in effective_messages:
+            if isinstance(m, dict) and m.get("role") == "system" and not has_system:
+                new_m = dict(m)
+                new_m["content"] = str(new_m.get("content", "")) + schema_instruction
+                new_msgs.append(new_m)
+                has_system = True
+            else:
+                new_msgs.append(m)
+        if not has_system:
+            new_msgs.insert(0, {"role": "system", "content": "あなたは厳密なJSON出力アシスタントです。" + schema_instruction})
+        effective_messages = new_msgs
+
     payload: dict[str, Any] = {
         "model": model,
-        "messages": messages,
+        "messages": effective_messages,
         "max_tokens": token_limit,
     }
     if temperature is not None:
         payload["temperature"] = max(0.0, min(float(temperature), 2.0))
     if reasoning_effort and isinstance(reasoning_effort, str):
-        payload["reasoning_effort"] = reasoning_effort
+        # "none" is omitted for OpenAI-compat as standard OpenAI only supports low/medium/high,
+        # and mandatory-reasoning endpoints (DeepSeek-R1, etc.) reject "none" with HTTP 400.
+        if reasoning_effort.lower() in ("low", "medium", "high"):
+            payload["reasoning_effort"] = reasoning_effort.lower()
 
-    # Response format handling
-    requires_pydantic_parse = False
-    pydantic_cls = None
-    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-        requires_pydantic_parse = True
-        pydantic_cls = response_format
+    if requires_pydantic_parse and pydantic_cls is not None:
         payload["response_format"] = {"type": "json_object"}
     elif isinstance(response_format, dict):
         payload["response_format"] = response_format
@@ -321,12 +355,38 @@ def call_openai_chat(
         with _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True) as client:
             resp = client.post(endpoint, json=payload, headers=headers)
 
-            # If tools were passed but model rejected with 400 (common for non-tool models)
-            if resp.status_code == 400 and tools and "tool" in resp.text.lower():
-                logger.info("OpenAI model %s rejected tools (HTTP 400). Retrying without tools.", model)
-                payload.pop("tools", None)
-                payload.pop("tool_choice", None)
-                resp = client.post(endpoint, json=payload, headers=headers)
+            # Retry handler for common 400 parameter rejections across diverse OpenAI providers
+            if resp.status_code == 400:
+                resp_text_lower = resp.text.lower()
+                modified = False
+
+                # 1. Tools rejected (common for non-tool reasoning/chat models)
+                if tools and "tool" in resp_text_lower and "tools" in payload:
+                    logger.info("OpenAI model %s rejected tools (HTTP 400). Retrying without tools.", model)
+                    payload.pop("tools", None)
+                    payload.pop("tool_choice", None)
+                    modified = True
+
+                # 2. Reasoning effort rejected (e.g. "Reasoning is mandatory for this endpoint and cannot be disabled")
+                if "reasoning" in resp_text_lower and "reasoning_effort" in payload:
+                    logger.info("OpenAI model %s rejected reasoning_effort (HTTP 400). Retrying without reasoning_effort.", model)
+                    payload.pop("reasoning_effort", None)
+                    modified = True
+
+                # 3. response_format rejected (e.g. provider only supports json_object or no response_format)
+                if ("response_format" in resp_text_lower or "json_schema" in resp_text_lower or "schema" in resp_text_lower) and "response_format" in payload:
+                    current_rf = payload.get("response_format")
+                    if isinstance(current_rf, dict) and current_rf.get("type") == "json_schema":
+                        logger.info("OpenAI model %s rejected json_schema (HTTP 400). Retrying with json_object.", model)
+                        payload["response_format"] = {"type": "json_object"}
+                        modified = True
+                    else:
+                        logger.info("OpenAI model %s rejected response_format (HTTP 400). Retrying without response_format.", model)
+                        payload.pop("response_format", None)
+                        modified = True
+
+                if modified:
+                    resp = client.post(endpoint, json=payload, headers=headers)
 
             if resp.status_code >= 400:
                 err_detail = resp.text[:500]
@@ -366,23 +426,47 @@ def call_openai_chat(
                     choices = data.get("choices") or []
                     if choices and isinstance(choices, list):
                         msg = choices[0].get("message") or {}
-                        raw_content = msg.get("content") or ""
+                        raw_content = (
+                            msg.get("content")
+                            or msg.get("reasoning")
+                            or msg.get("reasoning_content")
+                            or msg.get("thinking")
+                            or ""
+                        )
                         json_str = extract_json_payload(str(raw_content)) or str(raw_content)
+                        parsed_dict = None
                         try:
                             parsed_model = pydantic_cls.model_validate_json(json_str)
                             parsed_dict = parsed_model.model_dump()
-                            data["choices"][0]["message"]["parsed"] = parsed_dict
-                            data["choices"][0]["message"]["content"] = parsed_dict
                         except Exception:
                             try:
                                 raw_dict = json.loads(json_str)
                                 if isinstance(raw_dict, dict):
-                                    data["choices"][0]["message"]["parsed"] = raw_dict
-                                    data["choices"][0]["message"]["content"] = raw_dict
+                                    parsed_dict = raw_dict
                             except Exception:
                                 pass
+
+                        if parsed_dict is not None:
+                            data["choices"][0]["message"]["parsed"] = parsed_dict
+                            data["choices"][0]["message"]["content"] = parsed_dict
+                        elif raw_content and not msg.get("content"):
+                            # If content was empty/None, populate with raw reasoning so downstream extraction can use it
+                            data["choices"][0]["message"]["content"] = raw_content
                 except Exception as p_err:
                     logger.debug("Failed Pydantic parsing on OpenAI response: %s", p_err)
+            else:
+                # Even for non-pydantic responses, if content is None/empty, populate with reasoning if available
+                choices = data.get("choices") or []
+                if choices and isinstance(choices, list):
+                    msg = choices[0].get("message") or {}
+                    if not msg.get("content"):
+                        reasoning_fallback = (
+                            msg.get("reasoning")
+                            or msg.get("reasoning_content")
+                            or msg.get("thinking")
+                        )
+                        if reasoning_fallback:
+                            data["choices"][0]["message"]["content"] = reasoning_fallback
 
             if use_cache and data.get("choices"):
                 with app_state.ai.mistral_response_lock:
@@ -478,9 +562,17 @@ def stream_openai_chat(
                         if choices and isinstance(choices, list):
                             delta = choices[0].get("delta") or {}
                             delta_text = delta.get("content")
-                            # Also capture reasoning deltas if present (e.g. DeepSeek-R1 / o1)
-                            if not delta_text and "reasoning_content" in delta:
-                                delta_text = delta.get("reasoning_content")
+                            # Also capture reasoning deltas if present (e.g. DeepSeek-R1 / OpenRouter / o1)
+                            if not delta_text:
+                                r_val = (
+                                    delta.get("reasoning_content")
+                                    or delta.get("reasoning")
+                                    or delta.get("thinking")
+                                )
+                                if isinstance(r_val, str):
+                                    delta_text = r_val
+                                elif isinstance(r_val, list):
+                                    delta_text = "".join(str(x) for x in r_val)
                             if delta_text and isinstance(delta_text, str):
                                 full_parts.append(delta_text)
                                 yield {"type": "delta", "text": delta_text}

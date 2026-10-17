@@ -16,6 +16,7 @@ from services.openai_service import (
     stream_openai_chat,
     verify_openai_connection,
 )
+from utils.validators import extract_chat_content
 
 
 class SampleSchema(BaseModel):
@@ -389,3 +390,220 @@ def test_get_openai_embeddings_batch_unsupported_fallback():
         )
 
     assert vectors == [None, None]
+
+
+def test_call_openai_chat_reasoning_fallback_in_message():
+    """Test call_openai_chat extracts JSON and text from OpenRouter reasoning field when content is None."""
+    sample_analysis = {
+        "summary": "AI semiconductor boom continues",
+        "score": 9,
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": json.dumps(sample_analysis),
+                }
+            }
+        ]
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp):
+        result = call_openai_chat(
+            api_key="sk-test",
+            messages=[{"role": "user", "content": "Analyze NVDA"}],
+            response_format=SampleSchema,
+            use_cache=False,
+        )
+
+    msg = result["choices"][0]["message"]
+    assert msg["parsed"]["summary"] == "AI semiconductor boom continues"
+    assert msg["parsed"]["score"] == 9
+    assert msg["content"] == msg["parsed"]
+
+
+def test_call_openai_chat_retries_on_reasoning_effort_error():
+    """Test call_openai_chat automatically retries when endpoint rejects reasoning_effort (HTTP 400)."""
+    resp_400 = MagicMock()
+    resp_400.status_code = 400
+    resp_400.text = "reasoning_effort is not supported on this endpoint"
+    resp_400.json.return_value = {
+        "error": {"message": "reasoning_effort is not supported on this endpoint"}
+    }
+
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+    resp_200.json.return_value = {
+        "choices": [
+            {"message": {"role": "assistant", "content": "Analysis completed successfully."}}
+        ]
+    }
+
+    with patch("httpx.Client.post", side_effect=[resp_400, resp_200]) as mock_post:
+        result = call_openai_chat(
+            api_key="sk-test",
+            messages=[{"role": "user", "content": "Analyze"}],
+            reasoning_effort="high",
+            use_cache=False,
+        )
+
+    assert mock_post.call_count == 2
+    assert result["choices"][0]["message"]["content"] == "Analysis completed successfully."
+
+
+def test_call_openai_chat_omits_none_reasoning_effort():
+    """Test call_openai_chat automatically omits reasoning_effort='none' to avoid mandatory reasoning errors."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [
+            {"message": {"role": "assistant", "content": "Success"}}
+        ]
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+        call_openai_chat(
+            api_key="sk-test",
+            messages=[{"role": "user", "content": "Analyze"}],
+            reasoning_effort="none",
+            use_cache=False,
+        )
+
+    sent_json = mock_post.call_args[1]["json"]
+    assert "reasoning_effort" not in sent_json
+
+
+def test_call_openai_chat_retries_on_response_format_error():
+    """Test call_openai_chat automatically falls back when response_format is rejected."""
+    resp_400 = MagicMock()
+    resp_400.status_code = 400
+    resp_400.text = "'response_format' is not supported by this model"
+    resp_400.json.return_value = {
+        "error": {"message": "'response_format' is not supported by this model"}
+    }
+
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+    resp_200.json.return_value = {
+        "choices": [
+            {"message": {"role": "assistant", "content": json.dumps({"summary": "OK", "score": 5})}}
+        ]
+    }
+
+    with patch("httpx.Client.post", side_effect=[resp_400, resp_200]) as mock_post:
+        result = call_openai_chat(
+            api_key="sk-test",
+            messages=[{"role": "user", "content": "Analyze"}],
+            response_format=SampleSchema,
+            use_cache=False,
+        )
+
+    assert mock_post.call_count == 2
+    second_call_json = mock_post.call_args_list[1][1]["json"]
+    assert "response_format" not in second_call_json
+    assert result["choices"][0]["message"]["parsed"]["summary"] == "OK"
+
+
+def test_call_openai_chat_structured_output_injects_schema_instructions():
+    """Test that call_openai_chat enriches prompt messages with schema instructions for non-native providers."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [
+            {"message": {"role": "assistant", "content": json.dumps({"summary": "Injected", "score": 7})}}
+        ]
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+        call_openai_chat(
+            api_key="sk-test",
+            messages=[{"role": "system", "content": "Base system."}, {"role": "user", "content": "Run"}],
+            response_format=SampleSchema,
+            use_cache=False,
+        )
+
+    sent_payload = mock_post.call_args[1]["json"]
+    system_msg = sent_payload["messages"][0]["content"]
+    assert "Base system." in system_msg
+    assert "必須出力形式" in system_msg
+    assert "SampleSchema" in system_msg or "summary" in system_msg
+
+
+def test_extract_chat_content_openrouter_reasoning_field():
+    """Test extract_chat_content successfully extracts reasoning text when content is None."""
+    # OpenRouter reasoning field
+    resp_or = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": "Reasoning thought: Stock is overbought.",
+                }
+            }
+        ]
+    }
+    assert extract_chat_content(resp_or) == "Reasoning thought: Stock is overbought."
+
+    # OpenRouter reasoning_details list
+    resp_rd = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_details": [{"text": "Detailed "}, {"text": "rationale"}],
+                }
+            }
+        ]
+    }
+    assert extract_chat_content(resp_rd) == "Detailed rationale"
+
+
+def test_clean_reasoning_tags_think_tags():
+    """Test _clean_reasoning_tags strips <think>...</think> tags commonly produced by DeepSeek-R1."""
+    from utils.validators import _clean_reasoning_tags
+
+    text = "<think>\nThinking about balance sheet...\n</think>Target price is $150."
+    assert _clean_reasoning_tags(text) == "Target price is $150."
+
+    # Unclosed think tag (due to token truncation)
+    unclosed = "<think>Thinking endlessly until token limit"
+    assert _clean_reasoning_tags(unclosed) == ""
+
+
+def test_safe_parse_analysis_result_with_openai_reasoning_and_aliases():
+    """Test safe_parse_analysis_result extracts and validates AI stock analysis from reasoning payload with aliases."""
+    from utils.validators import safe_parse_analysis_result
+
+    raw_ai_payload = {
+        "rating": "買い",
+        "market_sentiment": "強気",
+        "target_price": 420.5,
+        "summary": "AI需要の急拡大に伴い売上高が前年比40%成長しており強気を維持。",
+        "catalysts": ["次世代GPU出荷開始", "データセンター投資増加"],
+        "risks": ["半導体規制強化"],
+    }
+    # Response where content is None, JSON is in reasoning (OpenRouter pattern)
+    mock_response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": f"<think>Model internal CoT</think>\n{json.dumps(raw_ai_payload)}",
+                }
+            }
+        ]
+    }
+
+    result = safe_parse_analysis_result(mock_response, "sk-test")
+    assert result["recommendation"] == "買い"
+    assert result["sentiment"] == "強気"
+    assert result["target_price_3m"] == 420.5
+    assert "AI需要" in result["analysis_summary"]
+    assert result["fallback_used"] is False

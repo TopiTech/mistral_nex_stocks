@@ -185,7 +185,7 @@ def _repair_json_with_llm(
                 },
                 {"role": "user", "content": repair_prompt},
             ],
-            max_tokens=max_tokens,
+            max_tokens=(max(max_tokens, 2500) if is_openai_provider() else max_tokens),
             temperature=0.0,
             response_format={
                 "type": "json_schema",

@@ -290,17 +290,23 @@ def call_openai_chat(
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 
-    # For Pydantic structured output, inject the JSON schema into prompt instructions so
+    # For Pydantic structured output, inject clear field guidelines and JSON schema into prompt instructions so
     # all OpenAI-compatible models (including those without native json_schema support) output
-    # the exact required fields.
+    # the exact required fields and Japanese values.
     effective_messages = [copy.deepcopy(m) if isinstance(m, dict) else m for m in messages]
     if requires_pydantic_parse and pydantic_cls is not None:
         schema_dict = pydantic_cls.model_json_schema()
         schema_instruction = (
-            "\n\n【必須出力形式】\n"
-            "必ず以下のJSONスキーマに厳密に準拠した有効な単一のJSONオブジェクト（JSON形式）のみを出力してください。\n"
+            "\n\n【必須出力形式 (JSON)】\n"
+            "必ず以下のJSONスキーマに厳密に準拠した有効な単一のJSONオブジェクト（json形式）のみを出力してください。\n"
             "マークダウンコードブロックや前置き・解説テキストは一切含めず、純粋なJSON文字列のみを出力してください。\n"
-            f"スキーマ:\n{json.dumps(schema_dict, ensure_ascii=False)}"
+            "【重要：推奨・センチメント・確信度・目標価格キーの指定値】\n"
+            "- recommendation: \"強い買い\" | \"買い\" | \"中立\" | \"売り\" | \"強い売り\"\n"
+            "- sentiment: \"強気\" | \"中立\" | \"弱気\"\n"
+            "- confidence: \"高\" | \"中\" | \"低\"\n"
+            "- target_price_3m: 数値 (例: 150.0)\n"
+            "- upside_3m: 文字列 (例: \"+10%\")\n"
+            f"スキーマ定義:\n{json.dumps(schema_dict, ensure_ascii=False)}"
         )
         has_system = False
         new_msgs = []
@@ -332,11 +338,14 @@ def call_openai_chat(
         # and mandatory-reasoning endpoints (DeepSeek-R1, etc.) reject "none" with HTTP 400.
         payload["reasoning_effort"] = reasoning_effort.lower()
 
-
     if requires_pydantic_parse and pydantic_cls is not None:
         payload["response_format"] = {"type": "json_object"}
     elif isinstance(response_format, dict):
-        payload["response_format"] = response_format
+        # Fall back from json_schema to json_object for generic OpenAI-compatible servers
+        if response_format.get("type") == "json_schema":
+            payload["response_format"] = {"type": "json_object"}
+        else:
+            payload["response_format"] = response_format
 
     if tools:
         payload["tools"] = tools
@@ -361,33 +370,34 @@ def call_openai_chat(
         with _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True) as client:
             resp = client.post(endpoint, json=payload, headers=headers)
 
-            # Retry handler for common 400 parameter rejections across diverse OpenAI providers
-            if resp.status_code == 400:
+            # Retry handler for common 400 / 422 parameter rejections across diverse OpenAI providers
+            if resp.status_code in (400, 422):
                 resp_text_lower = resp.text.lower()
                 modified = False
 
                 # 1. Tools rejected (common for non-tool reasoning/chat models)
                 if tools and "tool" in resp_text_lower and "tools" in payload:
-                    logger.info("OpenAI model %s rejected tools (HTTP 400). Retrying without tools.", model)
+                    logger.info("OpenAI model %s rejected tools (HTTP %d). Retrying without tools.", model, resp.status_code)
                     payload.pop("tools", None)
                     payload.pop("tool_choice", None)
                     modified = True
 
                 # 2. Reasoning effort rejected (e.g. "Reasoning is mandatory for this endpoint and cannot be disabled")
                 if "reasoning" in resp_text_lower and "reasoning_effort" in payload:
-                    logger.info("OpenAI model %s rejected reasoning_effort (HTTP 400). Retrying without reasoning_effort.", model)
+                    logger.info("OpenAI model %s rejected reasoning_effort (HTTP %d). Retrying without reasoning_effort.", model, resp.status_code)
                     payload.pop("reasoning_effort", None)
                     modified = True
 
-                # 3. response_format rejected (e.g. provider only supports json_object or no response_format)
-                if ("response_format" in resp_text_lower or "json_schema" in resp_text_lower or "schema" in resp_text_lower) and "response_format" in payload:
+                # 3. response_format rejected (e.g. provider only supports json_object or no response_format at all)
+                rf_reject_keywords = ("response_format", "json_schema", "schema", "format", "extra", "unrecognized", "unexpected", "not supported")
+                if any(kw in resp_text_lower for kw in rf_reject_keywords) and "response_format" in payload:
                     current_rf = payload.get("response_format")
                     if isinstance(current_rf, dict) and current_rf.get("type") == "json_schema":
-                        logger.info("OpenAI model %s rejected json_schema (HTTP 400). Retrying with json_object.", model)
+                        logger.info("OpenAI model %s rejected json_schema (HTTP %d). Retrying with json_object.", model, resp.status_code)
                         payload["response_format"] = {"type": "json_object"}
                         modified = True
                     else:
-                        logger.info("OpenAI model %s rejected response_format (HTTP 400). Retrying without response_format.", model)
+                        logger.info("OpenAI model %s rejected response_format (HTTP %d). Retrying without response_format.", model, resp.status_code)
                         payload.pop("response_format", None)
                         modified = True
 
@@ -440,8 +450,15 @@ def call_openai_chat(
                             or msg.get("thinking")
                             or ""
                         )
-                        json_str = extract_json_payload(str(raw_content)) or str(raw_content)
                         parsed_dict = None
+                        json_str = None
+                        try:
+                            json_str = extract_json_payload(str(raw_content))
+                        except Exception:
+                            pass
+                        if not json_str:
+                            json_str = str(raw_content)
+
                         try:
                             parsed_model = pydantic_cls.model_validate_json(json_str)
                             parsed_dict = parsed_model.model_dump()
@@ -454,8 +471,10 @@ def call_openai_chat(
                                 pass
 
                         if parsed_dict is not None:
-                            data["choices"][0]["message"]["parsed"] = parsed_dict
-                            data["choices"][0]["message"]["content"] = parsed_dict
+                            from utils.validators import _normalize_analysis_aliases
+                            normalized_parsed = _normalize_analysis_aliases(parsed_dict)
+                            data["choices"][0]["message"]["parsed"] = normalized_parsed
+                            data["choices"][0]["message"]["content"] = normalized_parsed
                         elif raw_content and not msg.get("content"):
                             # If content was empty/None, populate with raw reasoning so downstream extraction can use it
                             data["choices"][0]["message"]["content"] = raw_content

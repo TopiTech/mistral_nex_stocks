@@ -1072,8 +1072,75 @@ def extract_json_payload(content, required_fields=None):
     raise ValueError("JSONブロックの抽出に失敗しました (構文エラーの可能性あり)")
 
 
+_RECOMMENDATION_NORM_MAP: dict[str, str] = {
+    "強い買い": "強い買い",
+    "強気買い": "強い買い",
+    "strong buy": "強い買い",
+    "strong_buy": "強い買い",
+    "strongbuy": "強い買い",
+    "買い": "買い",
+    "買": "買い",
+    "buy": "買い",
+    "outperform": "買い",
+    "positive": "買い",
+    "中立": "中立",
+    "hold": "中立",
+    "neutral": "中立",
+    "売り": "売り",
+    "売": "売り",
+    "sell": "売り",
+    "underperform": "売り",
+    "強い売り": "強い売り",
+    "弱気売り": "強い売り",
+    "strong sell": "強い売り",
+    "strong_sell": "強い売り",
+    "strongsell": "強い売り",
+}
+
+_SENTIMENT_NORM_MAP: dict[str, str] = {
+    "強気": "強気",
+    "bullish": "強気",
+    "positive": "強気",
+    "中立": "中立",
+    "neutral": "中立",
+    "弱気": "弱気",
+    "bearish": "弱気",
+    "negative": "弱気",
+}
+
+_CONFIDENCE_NORM_MAP: dict[str, str] = {
+    "高": "高",
+    "high": "高",
+    "中": "中",
+    "medium": "中",
+    "mid": "中",
+    "moderate": "中",
+    "低": "低",
+    "low": "低",
+}
+
+
+def _clean_numeric_price(val: Any) -> float | None:
+    """Safely parse and clean a numeric price from diverse LLM output shapes."""
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        f = float(val)
+        return f if math.isfinite(f) else None
+    if isinstance(val, str):
+        cleaned = re.sub(r"[¥$€£,]", "", val.strip())
+        m = re.search(r"[-+]?\d+(?:\.\d+)?", cleaned)
+        if m:
+            try:
+                num = float(m.group(0))
+                return num if math.isfinite(num) else None
+            except ValueError:
+                return None
+    return None
+
+
 def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
-    """Normalize common field name variations produced by diverse LLM providers."""
+    """Normalize common field name and value variations produced by diverse LLM providers."""
     if not isinstance(result, dict):
         return result
     res = dict(result)
@@ -1097,6 +1164,11 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
             if alias in res and res[alias] is not None:
                 res["target_price_3m"] = res[alias]
                 break
+    if "confidence" not in res or not res["confidence"]:
+        for alias in ("confidence_level", "certainty", "conviction"):
+            if alias in res and isinstance(res[alias], str) and res[alias].strip():
+                res["confidence"] = res[alias]
+                break
     if "key_catalysts" not in res or not res["key_catalysts"]:
         for alias in ("catalysts", "growth_catalysts", "positives"):
             if res.get(alias):
@@ -1107,6 +1179,50 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
             if res.get(alias):
                 res["risk_factors"] = res[alias]
                 break
+
+    # Value normalization for recommendation (English -> Japanese standard)
+    if "recommendation" in res and isinstance(res["recommendation"], str):
+        rec_clean = res["recommendation"].strip().lower()
+        if res["recommendation"] in _RECOMMENDATION_NORM_MAP:
+            res["recommendation"] = _RECOMMENDATION_NORM_MAP[res["recommendation"]]
+        elif rec_clean in _RECOMMENDATION_NORM_MAP:
+            res["recommendation"] = _RECOMMENDATION_NORM_MAP[rec_clean]
+
+    # Value normalization for sentiment (English -> Japanese standard)
+    if "sentiment" in res and isinstance(res["sentiment"], str):
+        sent_clean = res["sentiment"].strip().lower()
+        if res["sentiment"] in _SENTIMENT_NORM_MAP:
+            res["sentiment"] = _SENTIMENT_NORM_MAP[res["sentiment"]]
+        elif sent_clean in _SENTIMENT_NORM_MAP:
+            res["sentiment"] = _SENTIMENT_NORM_MAP[sent_clean]
+
+    # Value normalization for confidence (English -> Japanese standard)
+    if "confidence" in res and isinstance(res["confidence"], str):
+        conf_clean = res["confidence"].strip().lower()
+        if res["confidence"] in _CONFIDENCE_NORM_MAP:
+            res["confidence"] = _CONFIDENCE_NORM_MAP[res["confidence"]]
+        elif conf_clean in _CONFIDENCE_NORM_MAP:
+            res["confidence"] = _CONFIDENCE_NORM_MAP[conf_clean]
+
+    # Value normalization for target_price_3m (currency symbols / cleanable numbers only)
+    if "target_price_3m" in res:
+        val = res["target_price_3m"]
+        if isinstance(val, str):
+            # Only convert if it actually contains cleanable numeric digits
+            parsed_p = _clean_numeric_price(val)
+            if parsed_p is not None:
+                res["target_price_3m"] = parsed_p
+
+    # Value normalization for lists if given as multiline/bullet-separated strings
+    for list_key in ("key_catalysts", "risk_factors"):
+        if list_key in res and isinstance(res[list_key], str):
+            val_s = res[list_key].strip()
+            # Only auto-split if explicitly multiline or bulleted list
+            if "\n" in val_s or any(val_s.startswith(b) for b in ("•", "-", "*")):
+                items = [it.strip().lstrip("•-*0123456789. ") for it in re.split(r"[\n;]+", val_s) if it.strip()]
+                if items:
+                    res[list_key] = items
+
     return res
 
 

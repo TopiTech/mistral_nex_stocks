@@ -666,7 +666,8 @@ window.addEventListener("beforeunload", () => {
 });
 
 /**
- * Check Mistral AI API connectivity and update the header status badge.
+ * Check AI API connectivity and update the header status badge.
+ * Dynamically reflects provider (Mistral API, OpenAI API, Preview) and status.
  * Falls back to "API Key Required" or "Disconnected" on failure.
  */
 async function updateApiStatus() {
@@ -678,13 +679,40 @@ async function updateApiStatus() {
     badge.classList.remove("connected");
     return;
   }
+
+  const isPreview = Boolean(
+    (typeof IS_PREVIEW_MODE !== "undefined" && IS_PREVIEW_MODE) ||
+    (typeof APP_CONFIG !== "undefined" &&
+      APP_CONFIG &&
+      APP_CONFIG.preview_mode),
+  );
+  const currentProvider =
+    (typeof APP_CONFIG !== "undefined" &&
+      APP_CONFIG &&
+      APP_CONFIG.ai_provider) ||
+    "mistral";
+  const initialLabel = isPreview
+    ? "Preview"
+    : currentProvider === "openai_compatible"
+      ? "OpenAI API"
+      : "Mistral API";
+
   try {
-    await apiFetch("/api/health", {}, { showToast: false });
-    badge.textContent = "Mistral API: Connected";
+    const result = await apiFetch("/api/health", {}, { showToast: false });
+    const healthData = result && result.data ? result.data : null;
+    const resolvedProvider = healthData?.ai_provider || currentProvider;
+    const resolvedPreview = healthData?.preview_mode ?? isPreview;
+    const resolvedLabel = resolvedPreview
+      ? "Preview"
+      : resolvedProvider === "openai_compatible"
+        ? "OpenAI API"
+        : "Mistral API";
+
+    badge.textContent = `${resolvedLabel}: Connected`;
     badge.classList.remove("inactive");
     badge.classList.add("connected");
   } catch (_e) {
-    badge.textContent = "Mistral API: Disconnected";
+    badge.textContent = `${initialLabel}: Disconnected`;
     badge.classList.add("inactive");
     badge.classList.remove("connected");
   }

@@ -111,6 +111,7 @@ export default [
         applyAnalysisResult: "readonly",
         bulkAnalyzeFavorites: "readonly",
         HAS_MISTRAL_API_KEY: "readonly",
+        IS_PREVIEW_MODE: "readonly",
         DEFAULT_SYMBOLS: "readonly",
         APP_CONFIG: "readonly",
         IntersectionObserver: "readonly",

@@ -28,10 +28,12 @@ from constants import (
 )
 from credential_manager import (
     clear_api_credentials,
+    get_ai_provider,
     get_api_credential_state,
     get_custom_ai_prompt,
     get_model_badge,
     get_model_name,
+    is_preview_mode,
     save_api_credentials,
 )
 from error_codes import ErrorCode
@@ -920,6 +922,8 @@ def api_health():
         "app": "Mistral NeX Stocks",
         "model": get_model_name(),
         "badge": get_model_badge(),
+        "ai_provider": get_ai_provider(),
+        "preview_mode": is_preview_mode(),
         "is_yfinance_rate_limited": yf_limited,
         "yfinance_rate_limit_until": yf_until,
         "extension_manifest_ok": manifest_ok,

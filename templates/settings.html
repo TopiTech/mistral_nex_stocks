@@ -307,7 +307,7 @@
         <!-- LLM Provider Selector -->
         <div class="provider-toggle-group" role="radiogroup" aria-label="LLMプロバイダ選択">
           <label class="provider-toggle-label">
-            <input type="radio" name="aiProvider" value="mistral" checked />
+            <input type="radio" name="aiProvider" value="mistral" {% if app_config.ai_provider != 'openai_compatible' %}checked{% endif %} />
             <span class="provider-toggle-card">
               <span class="provider-card-header">
                 <span class="provider-title">⚡ Mistral AI</span>
@@ -317,7 +317,7 @@
             </span>
           </label>
           <label class="provider-toggle-label">
-            <input type="radio" name="aiProvider" value="openai_compatible" />
+            <input type="radio" name="aiProvider" value="openai_compatible" {% if app_config.ai_provider == 'openai_compatible' %}checked{% endif %} />
             <span class="provider-toggle-card">
               <span class="provider-card-header">
                 <span class="provider-title">🧪 OpenAI互換 API</span>
@@ -329,7 +329,7 @@
         </div>
 
         <!-- Beta Disclaimer Banner -->
-        <div id="openai-beta-notice" class="beta-notice-banner" style="display: none;">
+        <div id="openai-beta-notice" class="beta-notice-banner" style="{% if app_config.ai_provider != 'openai_compatible' %}display: none;{% endif %}">
           <div class="beta-notice-header">
             <span class="beta-badge-tag">BETA</span>
             <strong>OpenAI互換API接続モード（ベータ機能）</strong>
@@ -342,14 +342,14 @@
         <div class="api-connection-status-card" id="api-connection-status-card">
           <div>
             <span style="opacity: 0.75; font-size: 0.8rem; display: block;">現在の接続方式</span>
-            <strong id="current-api-mode-label">通常 API (Chat Completions)</strong>
-            <span id="current-agent-id-display" style="display: none; font-size: 0.8rem; opacity: 0.85; margin-left: 6px;"></span>
+            <strong id="current-api-mode-label">{% if app_config.ai_provider == 'openai_compatible' %}OpenAI互換 (Beta): {{ app_config.openai_model or "gpt-4o-mini" }}{% elif app_config.api_mode == 'agents' %}Agents API (Mistral Agent連携){% elif app_config.preview_mode %}プレビューモード (APIキー未設定){% else %}通常 API (Chat Completions){% endif %}</strong>
+            <span id="current-agent-id-display" style="{% if app_config.ai_provider == 'openai_compatible' or app_config.api_mode != 'agents' or not app_config.agent_id %}display: none;{% endif %} font-size: 0.8rem; opacity: 0.85; margin-left: 6px;">{% if app_config.agent_id %}(ID: {{ app_config.agent_id }}){% endif %}</span>
           </div>
-          <span class="api-connection-mode-badge" id="api-connection-mode-badge">通常API</span>
+          <span class="api-connection-mode-badge{% if app_config.ai_provider == 'openai_compatible' or app_config.preview_mode %} badge-preview{% elif app_config.api_mode == 'agents' %} badge-agents{% endif %}" id="api-connection-mode-badge">{% if app_config.ai_provider == 'openai_compatible' %}OpenAI Beta{% elif app_config.api_mode == 'agents' %}Agents API{% elif app_config.preview_mode %}プレビュー{% else %}通常API{% endif %}</span>
         </div>
 
         <!-- Mistral Specific Settings Group -->
-        <div id="mistral-settings-group">
+        <div id="mistral-settings-group" style="{% if app_config.ai_provider == 'openai_compatible' %}display: none;{% endif %}">
           <div class="api-key-field" id="agent-id-settings-group" style="margin-bottom: 14px; display: none;">
             <label for="agent-id-settings-input" class="filter-label" style="display: block; margin-bottom: 4px;">
               Agent ID (Agents API用)
@@ -410,7 +410,7 @@
         </div>
 
         <!-- OpenAI-Compatible Specific Settings Group -->
-        <div id="openai-settings-group" style="display: none;">
+        <div id="openai-settings-group" style="{% if app_config.ai_provider != 'openai_compatible' %}display: none;{% endif %}">
           <div style="margin-bottom: 8px;">
             <span class="filter-label" style="display: block; margin-bottom: 6px;">クイック・プリセット (ワンクリック入力)</span>
             <div class="preset-buttons-container">

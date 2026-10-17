@@ -187,14 +187,18 @@ def _repair_json_with_llm(
             ],
             max_tokens=(max(max_tokens, 2500) if is_openai_provider() else max_tokens),
             temperature=0.0,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": schema_name,
-                    "strict": True,
-                    "schema": schema,
-                },
-            },
+            response_format=(
+                {"type": "json_object"}
+                if is_openai_provider()
+                else {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "strict": True,
+                        "schema": schema,
+                    },
+                }
+            ),
             cache_key_override=cache_key_override,
             reasoning_effort="none",
         )

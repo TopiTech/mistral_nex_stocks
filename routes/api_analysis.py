@@ -1394,6 +1394,29 @@ def api_analyze_v2():
         if cached_err is not None:
             return _analyze_v2_error_response(cached_err, g)
         if cached_result is not None:
+            if isinstance(cached_result, dict):
+                if cached_result.get("provider_error"):
+                    prov_err = cached_result["provider_error"]
+                    err_msg = prov_err.get("message", "AIサービスエラーが発生しました") if isinstance(prov_err, dict) else str(prov_err)
+                    sc = prov_err.get("status_code", 502) if isinstance(prov_err, dict) else 502
+                    try:
+                        sc_int = int(sc)
+                        if sc_int < 400 or sc_int > 599:
+                            sc_int = 502
+                    except Exception:
+                        sc_int = 502
+                    return error_response(
+                        ErrorCode.API_SERVICE_ERROR,
+                        details={"reason": _sanitize_error_message(str(err_msg)), "provider_error": prov_err},
+                        status_code=sc_int,
+                    )
+                if cached_result.get("step") == "error":
+                    err_msg = cached_result.get("message") or "AI解析処理に失敗しました"
+                    return error_response(
+                        ErrorCode.API_SERVICE_ERROR,
+                        details={"reason": _sanitize_error_message(str(err_msg))},
+                        status_code=502,
+                    )
             return jsonify(cached_result)
         # result was None (e.g. fetch failed to produce data) -> fall through
         # to start a fresh job below.
@@ -1574,6 +1597,7 @@ def api_analyze_v2():
                     result_holder["result"] = build_fallback_analysis_result(
                         "AI解析APIエラー: ネットワーク接続に失敗しました"
                     )
+                    result_holder["error"] = net_err
                     return
 
                 # Check if provider returned explicit error object
@@ -1591,8 +1615,16 @@ def api_analyze_v2():
                     fb_res["provider_error"] = err_info
                     fb_res["parsed"] = False
                     result_holder["step"] = "error"
-                    result_holder["message"] = "AIサービスエラーが発生しました"
+                    result_holder["message"] = f"AIサービスエラー: {sanitized_err}"
                     result_holder["result"] = fb_res
+                    raw_sc = err_info.get("status_code", 502) if isinstance(err_info, dict) else 502
+                    try:
+                        sc_int = int(raw_sc)
+                        if sc_int < 400 or sc_int > 599:
+                            sc_int = 502
+                    except Exception:
+                        sc_int = 502
+                    result_holder["error"] = ProviderAPIError(sanitized_err, status_code=sc_int, details=err_info if isinstance(err_info, dict) else {})
                     return
 
                 result_holder["step"] = "parsing_result"
@@ -1602,6 +1634,22 @@ def api_analyze_v2():
                 result = safe_parse_analysis_result(
                     response, api_key, repair_func=repair_analysis_json_with_llm
                 )
+
+                if isinstance(result, dict) and result.get("provider_error"):
+                    prov_err = result["provider_error"]
+                    err_msg = prov_err.get("message", "AI解析APIエラー") if isinstance(prov_err, dict) else str(prov_err)
+                    raw_sc = prov_err.get("status_code", 502) if isinstance(prov_err, dict) else 502
+                    try:
+                        sc_int = int(raw_sc)
+                        if sc_int < 400 or sc_int > 599:
+                            sc_int = 502
+                    except Exception:
+                        sc_int = 502
+                    result_holder["step"] = "error"
+                    result_holder["message"] = f"AIサービスエラー: {err_msg}"
+                    result_holder["result"] = result
+                    result_holder["error"] = ProviderAPIError(str(err_msg), status_code=sc_int, details=prov_err if isinstance(prov_err, dict) else {})
+                    return
 
                 result["search_used"] = bool(raw_research_context.strip())
                 # Search keys were configured but produced no usable context
@@ -1736,6 +1784,29 @@ def api_analyze_v2():
             if cached_err is not None:
                 return _analyze_v2_error_response(cached_err, g)
             if cached_result is not None:
+                if isinstance(cached_result, dict):
+                    if cached_result.get("provider_error"):
+                        prov_err = cached_result["provider_error"]
+                        err_msg = prov_err.get("message", "AIサービスエラーが発生しました") if isinstance(prov_err, dict) else str(prov_err)
+                        sc = prov_err.get("status_code", 502) if isinstance(prov_err, dict) else 502
+                        try:
+                            sc_int = int(sc)
+                            if sc_int < 400 or sc_int > 599:
+                                sc_int = 502
+                        except Exception:
+                            sc_int = 502
+                        return error_response(
+                            ErrorCode.API_SERVICE_ERROR,
+                            details={"reason": _sanitize_error_message(str(err_msg)), "provider_error": prov_err},
+                            status_code=sc_int,
+                        )
+                    if cached_result.get("step") == "error":
+                        err_msg = cached_result.get("message") or "AI解析処理に失敗しました"
+                        return error_response(
+                            ErrorCode.API_SERVICE_ERROR,
+                            details={"reason": _sanitize_error_message(str(err_msg))},
+                            status_code=502,
+                        )
                 return jsonify(cached_result)
         elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
         return jsonify({
@@ -1748,7 +1819,41 @@ def api_analyze_v2():
     if result_holder["error"] is not None:
         return _analyze_v2_error_response(result_holder["error"], g)
 
-    return jsonify(result_holder["result"])
+    result_data = result_holder["result"]
+    if isinstance(result_data, dict):
+        if result_data.get("provider_error"):
+            prov_err = result_data["provider_error"]
+            err_msg = prov_err.get("message", "AIサービスエラーが発生しました") if isinstance(prov_err, dict) else str(prov_err)
+            sc = prov_err.get("status_code", 502) if isinstance(prov_err, dict) else 502
+            try:
+                sc_int = int(sc)
+                if sc_int < 400 or sc_int > 599:
+                    sc_int = 502
+            except Exception:
+                sc_int = 502
+            return error_response(
+                ErrorCode.API_SERVICE_ERROR,
+                details={"reason": _sanitize_error_message(str(err_msg)), "provider_error": prov_err},
+                status_code=sc_int,
+            )
+        if result_holder.get("step") == "error":
+            err_msg = result_holder.get("message") or "AI解析処理に失敗しました"
+            return error_response(
+                ErrorCode.API_SERVICE_ERROR,
+                details={"reason": _sanitize_error_message(str(err_msg))},
+                status_code=502,
+            )
+
+    return jsonify(result_data)
+
+
+class ProviderAPIError(RuntimeError):
+    """Raised when an AI provider returns an explicit error payload."""
+
+    def __init__(self, message: str, status_code: int = 502, details: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.details = details or {}
 
 
 def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
@@ -1756,6 +1861,7 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
 
     Network/connection failures are surfaced as 503 (try again later);
     Timeout failures are surfaced as 504;
+    Provider failures are surfaced with the provider's status code (or 502);
     data/preprocessing failures (including LLM repair or JSON validation
     failure) are surfaced as 500 so the client does NOT misclassify them as a
     user-input problem (which a 400 INVALID_INPUT would imply).
@@ -1763,6 +1869,19 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     req_id = getattr(g, "request_id", "-")
     err_type = type(job_err).__name__
     err_msg = _sanitize_error_message(str(job_err))
+
+    if isinstance(job_err, ProviderAPIError):
+        current_app.logger.error(
+            "Analyze-v2 provider API error id=%s status=%d: %s",
+            req_id,
+            job_err.status_code,
+            err_msg,
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": err_msg, "error_type": err_type, **job_err.details},
+            status_code=job_err.status_code,
+        )
 
     if isinstance(job_err, (httpx.TimeoutException, requests.Timeout)):
         current_app.logger.error(

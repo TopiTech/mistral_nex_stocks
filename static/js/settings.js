@@ -618,7 +618,7 @@ document.addEventListener("DOMContentLoaded", () => {
       previewP.style.margin = "0";
       previewP.style.fontSize = "0.88rem";
       previewP.textContent =
-        "APIキーが未設定のため、AI機能はサンプル出力を返します。「API・システム」タブからMistral APIキーを登録すると本番モデルが有効化されます。";
+        "APIキーが未設定のため、AI機能はサンプル出力を返します。「API・システム」タブからAPIキーを登録すると本番モデルが有効化されます。";
       previewBanner.appendChild(previewP);
       container.appendChild(previewBanner);
     }
@@ -901,6 +901,71 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function updateConnectionModeDisplay(data) {
+    if (!data) return;
+    const modeLabel = document.getElementById("current-api-mode-label");
+    const modeBadge = document.getElementById("api-connection-mode-badge");
+    const agentIdGroup = document.getElementById("agent-id-settings-group");
+    const agentIdInput = document.getElementById("agent-id-settings-input");
+    const agentIdDisplay = document.getElementById("current-agent-id-display");
+
+    if (data.ai_provider === "openai_compatible") {
+      const oaRadio = document.querySelector(
+        'input[name="aiProvider"][value="openai_compatible"]',
+      );
+      if (oaRadio) oaRadio.checked = true;
+      syncProviderUI("openai_compatible");
+      if (modeLabel)
+        modeLabel.textContent = `OpenAI互換 (Beta): ${data.openai_model || "gpt-4o-mini"}`;
+      if (modeBadge) {
+        modeBadge.textContent = "OpenAI Beta";
+        modeBadge.className = "api-connection-mode-badge badge-preview";
+      }
+      if (agentIdGroup) agentIdGroup.style.display = "none";
+    } else if (data.api_mode === "agents") {
+      const misRadio = document.querySelector(
+        'input[name="aiProvider"][value="mistral"]',
+      );
+      if (misRadio) misRadio.checked = true;
+      syncProviderUI("mistral");
+      if (modeLabel) modeLabel.textContent = "Agents API (Mistral Agent連携)";
+      if (modeBadge) {
+        modeBadge.textContent = "Agents API";
+        modeBadge.className = "api-connection-mode-badge badge-agents";
+      }
+      if (agentIdGroup) agentIdGroup.style.display = "block";
+      if (agentIdInput && data.agent_id) agentIdInput.value = data.agent_id;
+      if (agentIdDisplay && data.agent_id) {
+        agentIdDisplay.style.display = "inline";
+        agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
+      }
+    } else if (data.preview_mode) {
+      const misRadio = document.querySelector(
+        'input[name="aiProvider"][value="mistral"]',
+      );
+      if (misRadio) misRadio.checked = true;
+      syncProviderUI("mistral");
+      if (modeLabel) modeLabel.textContent = "プレビューモード (APIキー未設定)";
+      if (modeBadge) {
+        modeBadge.textContent = "プレビュー";
+        modeBadge.className = "api-connection-mode-badge badge-preview";
+      }
+      if (agentIdGroup) agentIdGroup.style.display = "none";
+    } else {
+      const misRadio = document.querySelector(
+        'input[name="aiProvider"][value="mistral"]',
+      );
+      if (misRadio) misRadio.checked = true;
+      syncProviderUI("mistral");
+      if (modeLabel) modeLabel.textContent = "通常 API (Chat Completions)";
+      if (modeBadge) {
+        modeBadge.textContent = "通常API";
+        modeBadge.className = "api-connection-mode-badge";
+      }
+      if (agentIdGroup) agentIdGroup.style.display = "none";
+    }
+  }
+
   providerRadios.forEach((radio) => {
     radio.addEventListener("change", (e) => {
       syncProviderUI(e.target.value);
@@ -1079,79 +1144,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
 
           // Update connection mode display in Tab 4
-          const modeLabel = document.getElementById("current-api-mode-label");
-          const modeBadge = document.getElementById(
-            "api-connection-mode-badge",
-          );
-          const agentIdGroup = document.getElementById(
-            "agent-id-settings-group",
-          );
-          const agentIdInput = document.getElementById(
-            "agent-id-settings-input",
-          );
-          const agentIdDisplay = document.getElementById(
-            "current-agent-id-display",
-          );
-
-          if (data.ai_provider === "openai_compatible") {
-            const oaRadio = document.querySelector(
-              'input[name="aiProvider"][value="openai_compatible"]',
-            );
-            if (oaRadio) oaRadio.checked = true;
-            syncProviderUI("openai_compatible");
-            if (modeLabel)
-              modeLabel.textContent = `OpenAI互換 (Beta): ${data.openai_model || "gpt-4o-mini"}`;
-            if (modeBadge) {
-              modeBadge.textContent = "OpenAI Beta";
-              modeBadge.className = "api-connection-mode-badge badge-preview";
-            }
-            if (agentIdGroup) agentIdGroup.style.display = "none";
-          } else if (data.api_mode === "agents") {
-            const misRadio = document.querySelector(
-              'input[name="aiProvider"][value="mistral"]',
-            );
-            if (misRadio) misRadio.checked = true;
-            syncProviderUI("mistral");
-            if (modeLabel)
-              modeLabel.textContent = "Agents API (Mistral Agent連携)";
-            if (modeBadge) {
-              modeBadge.textContent = "Agents API";
-              modeBadge.className = "api-connection-mode-badge badge-agents";
-            }
-            if (agentIdGroup) agentIdGroup.style.display = "block";
-            if (agentIdInput && data.agent_id)
-              agentIdInput.value = data.agent_id;
-            if (agentIdDisplay && data.agent_id) {
-              agentIdDisplay.style.display = "inline";
-              agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
-            }
-          } else if (data.preview_mode) {
-            const misRadio = document.querySelector(
-              'input[name="aiProvider"][value="mistral"]',
-            );
-            if (misRadio) misRadio.checked = true;
-            syncProviderUI("mistral");
-            if (modeLabel)
-              modeLabel.textContent = "プレビューモード (APIキー未設定)";
-            if (modeBadge) {
-              modeBadge.textContent = "プレビュー";
-              modeBadge.className = "api-connection-mode-badge badge-preview";
-            }
-            if (agentIdGroup) agentIdGroup.style.display = "none";
-          } else {
-            const misRadio = document.querySelector(
-              'input[name="aiProvider"][value="mistral"]',
-            );
-            if (misRadio) misRadio.checked = true;
-            syncProviderUI("mistral");
-            if (modeLabel)
-              modeLabel.textContent = "通常 API (Chat Completions)";
-            if (modeBadge) {
-              modeBadge.textContent = "通常API";
-              modeBadge.className = "api-connection-mode-badge";
-            }
-            if (agentIdGroup) agentIdGroup.style.display = "none";
-          }
+          updateConnectionModeDisplay(data);
 
           const oaUrlInput = document.getElementById("openai-base-url-input");
           if (oaUrlInput && data.openai_base_url) {
@@ -1301,6 +1294,7 @@ document.addEventListener("DOMContentLoaded", () => {
           );
 
         _currentCredentialsData = data;
+        updateConnectionModeDisplay(data);
         if (alphaStatus) alphaStatus.textContent = "✓ 保存しました";
         if (mistralInput) {
           mistralInput.value = "";

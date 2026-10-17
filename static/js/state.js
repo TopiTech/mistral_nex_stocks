@@ -498,6 +498,11 @@ async function refreshCredentialState() {
       HAS_LANGSEARCH_API_KEY = !!data.has_langsearch_api_key;
       HAS_TAVILY_API_KEY = !!data.has_tavily_api_key;
       IS_PREVIEW_MODE = !!data.preview_mode;
+      if (typeof APP_CONFIG !== "undefined" && APP_CONFIG) {
+        if (data.ai_provider) APP_CONFIG.ai_provider = data.ai_provider;
+        if (data.preview_mode !== undefined)
+          APP_CONFIG.preview_mode = !!data.preview_mode;
+      }
       return data;
     }
   } catch (error) {

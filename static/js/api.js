@@ -2249,7 +2249,16 @@ async function requestStockAnalysis(stockKey, onProgress = null) {
     throw new Error(`AIサービスエラー: ${errMsg}`);
   }
 
-  if (!data.recommendation && data.parsed === false) {
+  if (data.step === "error") {
+    throw new Error(
+      data.message || data.error || "AI分析処理でエラーが発生しました",
+    );
+  }
+
+  if (
+    data.parsed === false &&
+    (data.error || data.provider_error || !data.recommendation)
+  ) {
     throw new Error(data.error || "AIの応答を構造化できませんでした");
   }
   return { stock, data };

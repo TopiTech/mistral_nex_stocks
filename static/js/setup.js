@@ -21,19 +21,161 @@ const setErrorMessage = (message) => {
   errorMsg.style.display = message ? "block" : "none";
 };
 
-async function storeCredentials(
-  mistralApiKey,
-  langsearchApiKey,
-  tavilyApiKey,
-  { apiMode = "chat", agentId = "" } = {},
-) {
-  const payload = {
-    mistral_api_key: mistralApiKey,
-    mistral_api_mode: apiMode,
-  };
-  if (apiMode === "agents") {
-    payload.mistral_agent_id = agentId;
+const OPENAI_PRESETS = {
+  openai: {
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+    embeddingsModel: "text-embedding-3-small",
+  },
+  ollama: {
+    baseUrl: "http://localhost:11434/v1",
+    model: "llama3.2",
+    embeddingsModel: "nomic-embed-text",
+  },
+  groq: {
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+    embeddingsModel: "",
+  },
+  deepseek: {
+    baseUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-chat",
+    embeddingsModel: "",
+  },
+  openrouter: {
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "meta-llama/llama-3.3-70b-instruct",
+    embeddingsModel: "",
+  },
+};
+
+const getAiProvider = () => {
+  const checked = document.querySelector('input[name="aiProvider"]:checked');
+  return checked && checked.value === "openai_compatible"
+    ? "openai_compatible"
+    : "mistral";
+};
+
+function syncProviderUi() {
+  const isMistral = getAiProvider() === "mistral";
+  const mistralContainer = getEl("mistralSetupContainer");
+  const openaiContainer = getEl("openaiSetupContainer");
+  if (mistralContainer) mistralContainer.hidden = !isMistral;
+  if (openaiContainer) openaiContainer.hidden = isMistral;
+  setErrorMessage("");
+}
+
+function applyPreset(name) {
+  const preset = OPENAI_PRESETS[name];
+  if (!preset) return;
+  const baseUrlInput = getEl("openaiBaseUrl");
+  const modelInput = getEl("openaiModel");
+  const embeddingsInput = getEl("openaiEmbeddingsModel");
+  if (baseUrlInput) baseUrlInput.value = preset.baseUrl;
+  if (modelInput) modelInput.value = preset.model;
+  if (embeddingsInput) embeddingsInput.value = preset.embeddingsModel;
+}
+
+async function verifyOpenaiSetup() {
+  const btn = getEl("verifyOpenaiSetupBtn");
+  const statusEl = getEl("openaiSetupVerifyStatus");
+  const baseUrl = (getEl("openaiBaseUrl")?.value || "").trim();
+  const apiKey = (getEl("openaiApiKey")?.value || "").trim();
+
+  if (!baseUrl) {
+    if (statusEl) {
+      statusEl.textContent = "Base URLを入力してください";
+      statusEl.className = "verify-status error";
+    }
+    return;
   }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "テスト中...";
+  }
+  if (statusEl) {
+    statusEl.textContent = "接続確認中...";
+    statusEl.className = "verify-status";
+  }
+
+  try {
+    const res = await csrfFetch("/api/credentials/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_provider: "openai_compatible",
+        base_url: baseUrl,
+        api_key: apiKey,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      const latencyStr =
+        typeof data.latency_ms === "number" ? ` (${data.latency_ms}ms)` : "";
+      if (statusEl) {
+        statusEl.textContent = `接続成功${latencyStr}！利用可能モデル: ${
+          data.models?.length || 0
+        }件`;
+        statusEl.className = "verify-status success";
+      }
+    } else {
+      const err =
+        data.details?.reason ||
+        data.error ||
+        data.message ||
+        "接続に失敗しました";
+      if (statusEl) {
+        statusEl.textContent = `エラー: ${err}`;
+        statusEl.className = "verify-status error";
+      }
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = `エラー: ${err.message || "通信エラー"}`;
+      statusEl.className = "verify-status error";
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "接続テスト";
+    }
+  }
+}
+
+async function storeCredentials(options = {}) {
+  const {
+    aiProvider = "mistral",
+    mistralApiKey = "",
+    langsearchApiKey = "",
+    tavilyApiKey = "",
+    apiMode = "chat",
+    agentId = "",
+    openaiBaseUrl = "",
+    openaiApiKey = "",
+    openaiModel = "",
+    openaiEmbeddingsModel = "",
+  } = options;
+
+  const payload = {
+    ai_provider: aiProvider,
+  };
+
+  if (aiProvider === "openai_compatible") {
+    payload.openai_base_url = openaiBaseUrl;
+    payload.openai_model = openaiModel;
+    payload.openai_embeddings_model = openaiEmbeddingsModel;
+    if (openaiApiKey) {
+      payload.openai_api_key = openaiApiKey;
+    }
+  } else {
+    payload.mistral_api_key = mistralApiKey;
+    payload.mistral_api_mode = apiMode;
+    if (apiMode === "agents") {
+      payload.mistral_agent_id = agentId;
+    }
+  }
+
   if (langsearchApiKey) {
     payload.langsearch_api_key = langsearchApiKey;
   }
@@ -71,8 +213,6 @@ async function getCredentialState() {
 }
 
 async function bootstrapLegacyCredentials() {
-  // Plaintext browser-stored credentials are no longer auto-migrated.
-  // Remove any leftovers proactively so they do not persist indefinitely.
   clearLegacyBrowserCredentials({
     mistral: true,
     langsearch: true,
@@ -135,66 +275,6 @@ async function startPreviewMode() {
   }
 }
 
-async function saveKey() {
-  const keyInput = getEl("apiKey");
-  const agentInput = getEl("agentId");
-  const langsearchInput = getEl("langsearchApiKey");
-  const tavilyInput = getEl("tavilyApiKey");
-
-  if (!keyInput) {
-    setErrorMessage("APIキー入力欄が見つかりません");
-    return;
-  }
-
-  const apiMode = getApiMode();
-  const key = (keyInput.value || "").trim();
-  const agentId = (agentInput?.value || "").trim();
-  const langsearchKey = (langsearchInput?.value || "").trim();
-  const tavilyKey = (tavilyInput?.value || "").trim();
-  if (!key) {
-    setErrorMessage("APIキーを入力してください");
-    keyInput.focus();
-    return;
-  }
-  if (key.length < MIN_KEY_LENGTHS.mistral) {
-    setErrorMessage(
-      `Mistral APIキーは${MIN_KEY_LENGTHS.mistral}文字以上である必要があります（現在${key.length}文字）`,
-    );
-    keyInput.focus();
-    return;
-  }
-  if (apiMode === "agents" && !agentId) {
-    setErrorMessage("Agents APIを使用するにはAgent IDを入力してください");
-    agentInput?.focus();
-    return;
-  }
-  if (langsearchKey && langsearchKey.length < MIN_KEY_LENGTHS.langsearch) {
-    setErrorMessage(
-      `LangSearch APIキーは${MIN_KEY_LENGTHS.langsearch}文字以上である必要があります（現在${langsearchKey.length}文字）`,
-    );
-    langsearchInput?.focus();
-    return;
-  }
-  if (tavilyKey && tavilyKey.length < MIN_KEY_LENGTHS.tavily) {
-    setErrorMessage(
-      `Tavily APIキーは${MIN_KEY_LENGTHS.tavily}文字以上である必要があります（現在${tavilyKey.length}文字）`,
-    );
-    tavilyInput?.focus();
-    return;
-  }
-
-  try {
-    await storeCredentials(key, langsearchKey, tavilyKey, {
-      apiMode,
-      agentId: apiMode === "agents" ? agentId : "",
-    });
-    setErrorMessage("");
-    window.location.href = "/main";
-  } catch (error) {
-    setErrorMessage(error.message || "APIキーの保存に失敗しました");
-  }
-}
-
 /**
  * Toggle password field visibility.
  * @param {string} inputId - ID of the password input field
@@ -228,6 +308,27 @@ document.addEventListener("DOMContentLoaded", () => {
       saveKey();
     }
   });
+  getEl("openaiBaseUrl")?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKey();
+    }
+  });
+  getEl("openaiApiKey")?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKey();
+    }
+  });
+  getEl("openaiModel")?.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKey();
+    }
+  });
   getEl("langsearchApiKey")?.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter") {
@@ -242,6 +343,20 @@ document.addEventListener("DOMContentLoaded", () => {
       saveKey();
     }
   });
+
+  // Provider toggle listener
+  document.querySelectorAll('input[name="aiProvider"]').forEach((radio) => {
+    radio.addEventListener("change", syncProviderUi);
+  });
+  syncProviderUi();
+
+  // Preset buttons
+  document.querySelectorAll(".preset-pill-btn").forEach((btn) => {
+    btn.addEventListener("click", () => applyPreset(btn.dataset.preset));
+  });
+
+  // Test OpenAI connection button
+  getEl("verifyOpenaiSetupBtn")?.addEventListener("click", verifyOpenaiSetup);
 
   // API mode radio change listeners
   document.querySelectorAll('input[name="apiMode"]').forEach((radio) => {
@@ -275,3 +390,4 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   bootstrapLegacyCredentials();
 });
+

@@ -83,6 +83,28 @@ def get_mistral_embeddings_batch(
         _wait_for_rate_limit_slot,
     )
 
+    from credential_manager import get_openai_api_key, is_openai_provider
+
+    if is_openai_provider():
+        from services.openai_service import get_openai_embeddings_batch
+
+        eff_key = (
+            api_key
+            if (api_key and not api_key.startswith("mns-preview"))
+            else (get_openai_api_key() or "")
+        )
+        openai_embs = get_openai_embeddings_batch(
+            uncached_texts, api_key=eff_key, batch_size=batch_size
+        )
+        with _EMBEDDINGS_CACHE_LOCK:
+            for data_idx, emb in enumerate(openai_embs):
+                if emb and isinstance(emb, list) and data_idx < len(uncached_indices):
+                    target_orig_idx = uncached_indices[data_idx]
+                    target_hash = uncached_hashes[data_idx]
+                    results[target_orig_idx] = emb
+                    _EMBEDDINGS_CACHE[target_hash] = emb
+        return results
+
     if app_state.market.is_circuit_open("mistral"):
         logger.warning("Mistral circuit is open; skipping batch embedding call.")
         return results

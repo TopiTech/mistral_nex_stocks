@@ -1801,11 +1801,20 @@ def api_analyze_chart_image():
 
     api_key = extract_api_key(request)
     if not api_key:
+        from credential_manager import is_openai_provider
+
         return error_response(
             ErrorCode.API_AUTH_FAILED,
-            details={"reason": "Mistral APIキーが必要です"},
+            details={
+                "reason": (
+                    "OpenAI互換APIキーが必要です"
+                    if is_openai_provider()
+                    else "Mistral APIキーが必要です"
+                )
+            },
             status_code=401,
         )
+
 
     image_data = data.get("image_data") or data.get("image")
     if not image_data or not isinstance(image_data, str):

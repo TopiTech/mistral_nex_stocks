@@ -879,6 +879,147 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // --- OpenAI-Compatible Provider Handlers (Beta) ---
+  const providerRadios = document.querySelectorAll('input[name="aiProvider"]');
+  const mistralGroup = document.getElementById("mistral-settings-group");
+  const openaiGroup = document.getElementById("openai-settings-group");
+  const openaiBetaNotice = document.getElementById("openai-beta-notice");
+
+  function syncProviderUI(provider) {
+    if (provider === "openai_compatible") {
+      if (mistralGroup) mistralGroup.style.display = "none";
+      if (openaiGroup) openaiGroup.style.display = "block";
+      if (openaiBetaNotice) openaiBetaNotice.style.display = "block";
+    } else {
+      if (mistralGroup) mistralGroup.style.display = "block";
+      if (openaiGroup) openaiGroup.style.display = "none";
+      if (openaiBetaNotice) openaiBetaNotice.style.display = "none";
+    }
+  }
+
+  providerRadios.forEach((radio) => {
+    radio.addEventListener("change", (e) => {
+      syncProviderUI(e.target.value);
+    });
+  });
+
+  // Presets handling
+  const PRESET_MAP = {
+    openai: {
+      url: "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+      emb: "text-embedding-3-small",
+    },
+    ollama: {
+      url: "http://localhost:11434/v1",
+      model: "llama3.2",
+      emb: "nomic-embed-text",
+    },
+    groq: {
+      url: "https://api.groq.com/openai/v1",
+      model: "llama-3.3-70b-versatile",
+      emb: "",
+    },
+    deepseek: {
+      url: "https://api.deepseek.com/v1",
+      model: "deepseek-chat",
+      emb: "",
+    },
+    openrouter: {
+      url: "https://openrouter.ai/api/v1",
+      model: "openai/gpt-4o-mini",
+      emb: "",
+    },
+  };
+
+  document.querySelectorAll(".preset-pill-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const presetKey = btn.dataset.preset;
+      const conf = PRESET_MAP[presetKey];
+      if (conf) {
+        const urlInput = document.getElementById("openai-base-url-input");
+        const modelInput = document.getElementById("openai-model-input");
+        const embInput = document.getElementById("openai-embeddings-model-input");
+        if (urlInput) urlInput.value = conf.url;
+        if (modelInput) modelInput.value = conf.model;
+        if (embInput) embInput.value = conf.emb;
+        showToast(`プリセット [${btn.textContent.trim()}] を適用しました`, "#00f2fe");
+      }
+    });
+  });
+
+  // Verify OpenAI-compatible endpoint button
+  const verifyOpenAIBtn = document.getElementById("verify-openai-btn");
+  const openaiVerifyStatus = document.getElementById("openai-verify-status");
+  const openaiDiscoveredModels = document.getElementById("openai-discovered-models");
+
+  if (verifyOpenAIBtn && openaiVerifyStatus) {
+    verifyOpenAIBtn.addEventListener("click", async () => {
+      verifyOpenAIBtn.disabled = true;
+      verifyOpenAIBtn.textContent = "接続テスト中...";
+      openaiVerifyStatus.className = "verify-status-msg pending";
+      openaiVerifyStatus.textContent = "OpenAI互換エンドポイントに接続してモデル情報を照会中...";
+
+      const typedUrl = document.getElementById("openai-base-url-input")?.value?.trim() || "";
+      const typedKey = document.getElementById("openai-api-key-input")?.value?.trim() || "";
+      const payload = {
+        ai_provider: "openai_compatible",
+        openai_base_url: typedUrl,
+        openai_api_key: typedKey,
+      };
+
+      try {
+        const res = await csrfFetch("/api/credentials/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.error || `接続テストに失敗しました (HTTP ${res.status})`);
+        }
+
+        openaiVerifyStatus.className = "verify-status-msg success";
+        openaiVerifyStatus.textContent = `✓ ${data.message || "接続成功"}`;
+        showToast("OpenAI互換サーバー接続成功", "#10b981");
+
+        // Render discovered model chips
+        if (Array.isArray(data.models) && data.models.length > 0 && openaiDiscoveredModels) {
+          openaiDiscoveredModels.textContent = "";
+          openaiDiscoveredModels.style.display = "flex";
+
+          const header = document.createElement("div");
+          header.style.width = "100%";
+          header.style.fontSize = "0.78rem";
+          header.style.color = "#94a3b8";
+          header.style.marginBottom = "4px";
+          header.textContent = "利用可能モデル一覧（クリックで入力欄に反映）:";
+          openaiDiscoveredModels.appendChild(header);
+
+          data.models.forEach((mId) => {
+            const chip = document.createElement("span");
+            chip.className = "model-chip";
+            chip.textContent = mId;
+            chip.addEventListener("click", () => {
+              const modelInput = document.getElementById("openai-model-input");
+              if (modelInput) modelInput.value = mId;
+              showToast(`モデル選択: ${mId}`, "#00f2fe");
+            });
+            openaiDiscoveredModels.appendChild(chip);
+          });
+        }
+      } catch (err) {
+        openaiVerifyStatus.className = "verify-status-msg error";
+        openaiVerifyStatus.textContent = `✗ ${err.message}`;
+        showToast(`接続テスト失敗: ${err.message}`, "#ff7d7d");
+      } finally {
+        verifyOpenAIBtn.disabled = false;
+        verifyOpenAIBtn.textContent = "接続テスト & モデル取得";
+      }
+    });
+  }
+
+
   const promptInput = document.getElementById("custom-prompt-input");
   const savePromptBtn = document.getElementById("save-prompt-btn");
   const promptStatus = document.getElementById("prompt-save-status");
@@ -923,7 +1064,19 @@ document.addEventListener("DOMContentLoaded", () => {
             "current-agent-id-display",
           );
 
-          if (data.api_mode === "agents") {
+          if (data.ai_provider === "openai_compatible") {
+            const oaRadio = document.querySelector('input[name="aiProvider"][value="openai_compatible"]');
+            if (oaRadio) oaRadio.checked = true;
+            syncProviderUI("openai_compatible");
+            if (modeLabel) modeLabel.textContent = `OpenAI互換 (Beta): ${data.openai_model || "gpt-4o-mini"}`;
+            if (modeBadge) {
+              modeBadge.textContent = "OpenAI Beta";
+              modeBadge.className = "api-connection-mode-badge badge-preview";
+            }
+          } else if (data.api_mode === "agents") {
+            const misRadio = document.querySelector('input[name="aiProvider"][value="mistral"]');
+            if (misRadio) misRadio.checked = true;
+            syncProviderUI("mistral");
             if (modeLabel)
               modeLabel.textContent = "Agents API (Mistral Agent連携)";
             if (modeBadge) {
@@ -938,6 +1091,9 @@ document.addEventListener("DOMContentLoaded", () => {
               agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
             }
           } else if (data.preview_mode) {
+            const misRadio = document.querySelector('input[name="aiProvider"][value="mistral"]');
+            if (misRadio) misRadio.checked = true;
+            syncProviderUI("mistral");
             if (modeLabel)
               modeLabel.textContent = "プレビューモード (APIキー未設定)";
             if (modeBadge) {
@@ -946,6 +1102,9 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             if (agentIdGroup) agentIdGroup.style.display = "none";
           } else {
+            const misRadio = document.querySelector('input[name="aiProvider"][value="mistral"]');
+            if (misRadio) misRadio.checked = true;
+            syncProviderUI("mistral");
             if (modeLabel)
               modeLabel.textContent = "通常 API (Chat Completions)";
             if (modeBadge) {
@@ -953,6 +1112,23 @@ document.addEventListener("DOMContentLoaded", () => {
               modeBadge.className = "api-connection-mode-badge";
             }
             if (agentIdGroup) agentIdGroup.style.display = "none";
+          }
+
+          const oaUrlInput = document.getElementById("openai-base-url-input");
+          if (oaUrlInput && data.openai_base_url) {
+            oaUrlInput.value = data.openai_base_url;
+          }
+          const oaModelInput = document.getElementById("openai-model-input");
+          if (oaModelInput && data.openai_model) {
+            oaModelInput.value = data.openai_model;
+          }
+          const oaEmbInput = document.getElementById("openai-embeddings-model-input");
+          if (oaEmbInput && data.openai_embeddings_model) {
+            oaEmbInput.value = data.openai_embeddings_model;
+          }
+          const oaKeyInput = document.getElementById("openai-api-key-input");
+          if (oaKeyInput && data.has_openai_api_key) {
+            oaKeyInput.placeholder = "設定済み (変更する場合のみ入力)";
           }
 
           const mistralInput = document.getElementById("mistral-api-key-input");
@@ -1013,23 +1189,40 @@ document.addEventListener("DOMContentLoaded", () => {
   const alphaStatus = document.getElementById("alpha-save-status");
   if (saveAlphaBtn) {
     saveAlphaBtn.addEventListener("click", async () => {
-      const payload = {};
-      if (mistralInput && mistralInput.value.trim()) {
-        payload.mistral_api_key = mistralInput.value.trim();
+      const selectedProvider =
+        document.querySelector('input[name="aiProvider"]:checked')?.value || "mistral";
+      payload.ai_provider = selectedProvider;
+
+      if (selectedProvider === "openai_compatible") {
+        const oaUrl = document.getElementById("openai-base-url-input")?.value?.trim();
+        const oaModel = document.getElementById("openai-model-input")?.value?.trim();
+        const oaEmb = document.getElementById("openai-embeddings-model-input")?.value?.trim();
+        const oaKey = document.getElementById("openai-api-key-input")?.value?.trim();
+
+        if (oaUrl) payload.openai_base_url = oaUrl;
+        if (oaModel) payload.openai_model = oaModel;
+        if (oaEmb !== undefined) payload.openai_embeddings_model = oaEmb;
+        if (oaKey) payload.openai_api_key = oaKey;
+      } else {
+        if (mistralInput && mistralInput.value.trim()) {
+          payload.mistral_api_key = mistralInput.value.trim();
+        }
+        if (
+          _currentCredentialsData?.api_mode === "agents" &&
+          agentSettingsInput &&
+          agentSettingsInput.value.trim()
+        ) {
+          payload.mistral_agent_id = agentSettingsInput.value.trim();
+        }
       }
+
       if (tavilyInput && tavilyInput.value.trim()) {
         payload.tavily_api_key = tavilyInput.value.trim();
       }
       if (alphaInput && alphaInput.value.trim()) {
         payload.alphavantage_api_key = alphaInput.value.trim();
       }
-      if (
-        _currentCredentialsData?.api_mode === "agents" &&
-        agentSettingsInput &&
-        agentSettingsInput.value.trim()
-      ) {
-        payload.mistral_agent_id = agentSettingsInput.value.trim();
-      }
+
       if (Object.keys(payload).length === 0) {
         showToast("変更する設定またはAPIキーを入力してください", "#ff9800");
         return;

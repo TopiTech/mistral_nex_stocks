@@ -304,6 +304,41 @@
           Vantage）の接続設定を変更できます。
         </div>
 
+        <!-- LLM Provider Selector -->
+        <div class="provider-toggle-group" role="radiogroup" aria-label="LLMプロバイダ選択">
+          <label class="provider-toggle-label">
+            <input type="radio" name="aiProvider" value="mistral" checked />
+            <span class="provider-toggle-card">
+              <span class="provider-card-header">
+                <span class="provider-title">⚡ Mistral AI</span>
+                <span class="model-rec-tag" style="margin: 0;">最適化済・推奨</span>
+              </span>
+              <span class="provider-desc">当プロジェクトが完全最適化されている標準プロバイダ。高速な推論と高精度な構造化出力。</span>
+            </span>
+          </label>
+          <label class="provider-toggle-label">
+            <input type="radio" name="aiProvider" value="openai_compatible" />
+            <span class="provider-toggle-card">
+              <span class="provider-card-header">
+                <span class="provider-title">🧪 OpenAI互換 API</span>
+                <span class="beta-badge-tag">BETA</span>
+              </span>
+              <span class="provider-desc">OpenAI、Ollama、Groq、DeepSeek、OpenRouterなど多様なLLMサーバーに対応。</span>
+            </span>
+          </label>
+        </div>
+
+        <!-- Beta Disclaimer Banner -->
+        <div id="openai-beta-notice" class="beta-notice-banner" style="display: none;">
+          <div class="beta-notice-header">
+            <span class="beta-badge-tag">BETA</span>
+            <strong>OpenAI互換API接続モード（ベータ機能）</strong>
+          </div>
+          <p class="beta-notice-desc">
+            ※当プロジェクトは<strong>Mistral APIに最適化</strong>されています。プロンプト設計、推論制御、ツール連携（Function Calling）はMistralモデルにチューニングされているため、OpenAI互換サーバーをご利用の場合、モデルの仕様や推論性能によって動作や出力精度が異なる場合があります。
+          </p>
+        </div>
+
         <div class="api-connection-status-card" id="api-connection-status-card">
           <div>
             <span style="opacity: 0.75; font-size: 0.8rem; display: block;">現在の接続方式</span>
@@ -313,63 +348,171 @@
           <span class="api-connection-mode-badge" id="api-connection-mode-badge">通常API</span>
         </div>
 
-        <div class="api-key-field" id="agent-id-settings-group" style="margin-bottom: 14px; display: none;">
-          <label for="agent-id-settings-input" class="filter-label" style="display: block; margin-bottom: 4px;">
-            Agent ID (Agents API用)
-          </label>
-          <input
-            type="text"
-            id="agent-id-settings-input"
-            placeholder="ag_xxxxxxxxxxxxxxxx"
-            class="setup-input"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <div class="note" style="margin-top: 4px; margin-bottom: 0;">
-            ※モデルや推論設定は <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener">Mistral AI Console</a> で設定した内容が適用されます。
+        <!-- Mistral Specific Settings Group -->
+        <div id="mistral-settings-group">
+          <div class="api-key-field" id="agent-id-settings-group" style="margin-bottom: 14px; display: none;">
+            <label for="agent-id-settings-input" class="filter-label" style="display: block; margin-bottom: 4px;">
+              Agent ID (Agents API用)
+            </label>
+            <input
+              type="text"
+              id="agent-id-settings-input"
+              placeholder="ag_xxxxxxxxxxxxxxxx"
+              class="setup-input"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="note" style="margin-top: 4px; margin-bottom: 0;">
+              ※モデルや推論設定は <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener">Mistral AI Console</a> で設定した内容が適用されます。
+            </div>
+          </div>
+
+          <div class="api-key-field" style="margin-bottom: 14px">
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 4px;
+              "
+            >
+              <label for="mistral-api-key-input" class="filter-label"
+                >Mistral AI APIキー</label
+              >
+              <button
+                type="button"
+                id="verify-mistral-btn"
+                class="verify-key-btn"
+              >
+                接続テスト & モデル確認
+              </button>
+            </div>
+            <div class="password-wrapper">
+              <input
+                type="password"
+                id="mistral-api-key-input"
+                placeholder="Mistral APIキー (変更する場合のみ入力)"
+                class="setup-input"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                data-target="mistral-api-key-input"
+                aria-pressed="false"
+                aria-label="APIキーを表示する"
+              >
+                <span class="toggle-icon" aria-hidden="true">&#128065;</span>
+              </button>
+            </div>
+            <div id="mistral-verify-status" class="verify-status-msg" role="status" aria-live="polite"></div>
           </div>
         </div>
 
-        <div class="api-key-field" style="margin-bottom: 14px">
-          <div
-            style="
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              margin-bottom: 4px;
-            "
-          >
-            <label for="mistral-api-key-input" class="filter-label"
-              >Mistral AI APIキー</label
-            >
-            <button
-              type="button"
-              id="verify-mistral-btn"
-              class="verify-key-btn"
-            >
-              接続テスト & モデル確認
-            </button>
+        <!-- OpenAI-Compatible Specific Settings Group -->
+        <div id="openai-settings-group" style="display: none;">
+          <div style="margin-bottom: 8px;">
+            <span class="filter-label" style="display: block; margin-bottom: 6px;">クイック・プリセット (ワンクリック入力)</span>
+            <div class="preset-buttons-container">
+              <button type="button" class="preset-pill-btn" data-preset="openai">🌐 OpenAI 公式</button>
+              <button type="button" class="preset-pill-btn" data-preset="ollama">💻 Ollama (ローカル)</button>
+              <button type="button" class="preset-pill-btn" data-preset="groq">⚡ Groq Cloud</button>
+              <button type="button" class="preset-pill-btn" data-preset="deepseek">🐋 DeepSeek</button>
+              <button type="button" class="preset-pill-btn" data-preset="openrouter">🔀 OpenRouter</button>
+            </div>
           </div>
-          <div class="password-wrapper">
+
+          <div class="api-key-field" style="margin-bottom: 14px">
+            <label for="openai-base-url-input" class="filter-label" style="display: block; margin-bottom: 4px;">
+              Base URL (OpenAI互換エンドポイント)
+            </label>
             <input
-              type="password"
-              id="mistral-api-key-input"
-              placeholder="Mistral APIキー (変更する場合のみ入力)"
+              type="text"
+              id="openai-base-url-input"
+              placeholder="https://api.openai.com/v1 または http://localhost:11434/v1"
               class="setup-input"
               autocomplete="off"
+              spellcheck="false"
             />
-            <button
-              type="button"
-              class="password-toggle"
-              data-target="mistral-api-key-input"
-              aria-pressed="false"
-              aria-label="APIキーを表示する"
-            >
-              <span class="toggle-icon" aria-hidden="true">&#128065;</span>
-            </button>
+            <div class="note" style="margin-top: 4px; margin-bottom: 0;">
+              ※末尾の <code>/v1</code> まで含めて指定してください（例: <code>http://localhost:11434/v1</code>）。
+            </div>
           </div>
-          <div id="mistral-verify-status" class="verify-status-msg" role="status" aria-live="polite"></div>
+
+          <div class="api-key-field" style="margin-bottom: 14px">
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 4px;
+              "
+            >
+              <label for="openai-api-key-input" class="filter-label">OpenAI APIキー</label>
+              <button
+                type="button"
+                id="verify-openai-btn"
+                class="verify-key-btn"
+              >
+                接続テスト & モデル取得
+              </button>
+            </div>
+            <div class="password-wrapper">
+              <input
+                type="password"
+                id="openai-api-key-input"
+                placeholder="sk-... (Ollama等ローカル環境は空欄可)"
+                class="setup-input"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                data-target="openai-api-key-input"
+                aria-pressed="false"
+                aria-label="APIキーを表示する"
+              >
+                <span class="toggle-icon" aria-hidden="true">&#128065;</span>
+              </button>
+            </div>
+            <div id="openai-verify-status" class="verify-status-msg" role="status" aria-live="polite"></div>
+          </div>
+
+          <div class="api-key-field" style="margin-bottom: 14px">
+            <label for="openai-model-input" class="filter-label" style="display: block; margin-bottom: 4px;">
+              推論モデル名 (Model ID)
+            </label>
+            <input
+              type="text"
+              id="openai-model-input"
+              placeholder="gpt-4o-mini, llama3.2, deepseek-chat..."
+              class="setup-input"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="openai-discovered-models" class="models-chips-container" style="display: none;">
+              <!-- Discovered model chips will appear here on test -->
+            </div>
+          </div>
+
+          <div class="api-key-field" style="margin-bottom: 14px">
+            <label for="openai-embeddings-model-input" class="filter-label" style="display: block; margin-bottom: 4px;">
+              埋め込みモデル名 (Embeddings Model・任意)
+            </label>
+            <input
+              type="text"
+              id="openai-embeddings-model-input"
+              placeholder="text-embedding-3-small (未対応サーバーは自動フォールバック)"
+              class="setup-input"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="note" style="margin-top: 4px; margin-bottom: 0;">
+              ※埋め込み非対応サーバーの場合は空欄でも構いません（安全にフォールバックします）。
+            </div>
+          </div>
         </div>
+
 
         <div class="api-key-field" style="margin-bottom: 14px">
           <label

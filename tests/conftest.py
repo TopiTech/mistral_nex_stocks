@@ -15,10 +15,15 @@ os.environ["PYTHONKEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 os.environ["KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
 os.environ["DBUS_SESSION_BUS_ADDRESS"] = ""
 
+# Clear any ambient external API keys from developer environment so tests are isolated.
+os.environ.pop("OPENAI_API_KEY", None)
+os.environ.pop("MISTRAL_API_KEY", None)
+
 # Allow client-provided API keys via Authorization header in TESTING mode for the
 # test suite. In production this requires the explicit MNS_ALLOW_CLIENT_API_KEY=1
 # opt-in; tests set it here so existing header-based auth tests keep working.
 os.environ["MNS_ALLOW_CLIENT_API_KEY"] = "1"
+
 
 # Zero the global Mistral minimum-call interval for the test suite. With the
 # default (1.35s) every second call_mistral_chat/stream_mistral_chat inside a

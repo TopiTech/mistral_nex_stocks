@@ -106,6 +106,11 @@ DEFAULT_CONFIG = {
     "mistral_agent_id": "",
     # Keyless demo mode: AI features return built-in sample output.
     "preview_mode": False,
+    # LLM provider: "mistral" (standard / optimized) or "openai_compatible" (beta)
+    "ai_provider": "mistral",
+    "openai_base_url": "https://api.openai.com/v1",
+    "openai_model": "gpt-4o-mini",
+    "openai_embeddings_model": "text-embedding-3-small",
 }
 
 

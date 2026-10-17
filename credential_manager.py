@@ -39,9 +39,52 @@ API_MODE_CHAT = "chat"
 API_MODE_AGENTS = "agents"
 VALID_API_MODES = (API_MODE_CHAT, API_MODE_AGENTS)
 
+PROVIDER_MISTRAL = "mistral"
+PROVIDER_OPENAI = "openai_compatible"
+VALID_PROVIDERS = (PROVIDER_MISTRAL, PROVIDER_OPENAI)
+
 # Placeholder returned in preview (keyless demo) mode.  It is never sent to
-# Mistral: ai_service detects it and answers with built-in sample output.
+# providers: ai_service detects it and answers with built-in sample output.
 PREVIEW_API_KEY = "mns-preview-mode-no-api-key"
+
+
+def get_ai_provider() -> str:
+    """Return the active AI provider ('mistral' or 'openai_compatible')."""
+    prov = config_store.load_config().get("ai_provider")
+    return prov if prov in VALID_PROVIDERS else PROVIDER_MISTRAL
+
+
+def is_openai_provider() -> bool:
+    """True when OpenAI-compatible API provider is selected."""
+    return get_ai_provider() == PROVIDER_OPENAI
+
+
+def get_openai_base_url() -> str:
+    """Return configured OpenAI-compatible base URL (default: https://api.openai.com/v1)."""
+    raw = config_store.load_config().get("openai_base_url")
+    if not isinstance(raw, str) or not raw.strip():
+        return "https://api.openai.com/v1"
+    return raw.strip().rstrip("/")
+
+
+def is_local_openai_base_url(url: str | None = None) -> bool:
+    """True if configured or given OpenAI-compatible base URL points to localhost/127.0.0.1/0.0.0.0."""
+    target = url if (isinstance(url, str) and url.strip()) else get_openai_base_url()
+    base = target.lower()
+    return "localhost" in base or "127.0.0.1" in base or "0.0.0.0" in base
+
+
+def get_openai_model() -> str:
+    """Return configured OpenAI-compatible model name."""
+    raw = config_store.load_config().get("openai_model")
+    return raw.strip() if isinstance(raw, str) and raw.strip() else "gpt-4o-mini"
+
+
+def get_openai_embeddings_model() -> str:
+    """Return configured OpenAI-compatible embeddings model name."""
+    raw = config_store.load_config().get("openai_embeddings_model")
+    return raw.strip() if isinstance(raw, str) and raw.strip() else "text-embedding-3-small"
+
 
 
 def get_api_mode() -> str:
@@ -63,7 +106,7 @@ def is_agents_mode() -> bool:
 
 def is_preview_mode() -> bool:
     """True when the keyless preview mode is active and no real key exists."""
-    if _get_real_mistral_api_key():
+    if _get_real_mistral_api_key() or _get_real_openai_api_key():
         return False
     return config_store.load_config().get("preview_mode") is True
 
@@ -125,8 +168,30 @@ def has_mistral_api_key():
     return bool(_get_real_mistral_api_key())
 
 
+def _get_real_openai_api_key():
+    env_key = os.environ.get("OPENAI_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+    return crypto_utils._decode_secret(
+        _get_api_credentials_blob().get("openai_api_key"),
+        "openai_api_key",
+    )
+
+
+def get_openai_api_key():
+    """OpenAI API鍵を取得（プレビューモード時は識別用プレースホルダを返す）"""
+    return _get_real_openai_api_key() or (PREVIEW_API_KEY if is_preview_mode() else None)
+
+
+def has_openai_api_key():
+    """OpenAI API鍵（実キー）が設定されているか確認"""
+    return bool(_get_real_openai_api_key())
+
+
 def has_ai_access():
-    """AI機能を利用可能か（実キーまたはプレビューモード）"""
+    """AI機能を利用可能か（実キーまたはプレビューモード、ローカルOpenAI互換含む）"""
+    if is_openai_provider():
+        return has_openai_api_key() or is_local_openai_base_url() or is_preview_mode()
     return has_mistral_api_key() or is_preview_mode()
 
 
@@ -177,6 +242,7 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
 
 def save_api_credentials(
     mistral_api_key=None,
+    openai_api_key=None,
     langsearch_api_key=None,
     tavily_api_key=None,
     alphavantage_api_key=None,
@@ -186,18 +252,23 @@ def save_api_credentials(
     api_mode: str | None = None,
     agent_id: str | None = None,
     preview_mode: bool | None = None,
+    ai_provider: str | None = None,
+    openai_base_url: str | None = None,
+    openai_model: str | None = None,
+    openai_embeddings_model: str | None = None,
 ):
     """Persist credentials and related AI settings in one config transaction.
 
     ``mistral_model`` is accepted here rather than being saved by a separate
     caller so a request that updates a key, prompt, and model cannot report a
     failed credential save after the model has already been committed.
-    ``api_mode`` / ``agent_id`` / ``preview_mode`` follow the same rule.
+    ``api_mode`` / ``agent_id`` / ``preview_mode`` / ``ai_provider`` follow the same rule.
     """
     requested = {
         key: value
         for key, value in {
             "mistral_api_key": mistral_api_key,
+            "openai_api_key": openai_api_key,
             "langsearch_api_key": langsearch_api_key,
             "tavily_api_key": tavily_api_key,
             "alphavantage_api_key": alphavantage_api_key,
@@ -248,7 +319,15 @@ def save_api_credentials(
                 cfg["mistral_agent_id"] = agent_id.strip()
             if preview_mode is not None:
                 cfg["preview_mode"] = bool(preview_mode)
-            if "mistral_api_key" in requested:
+            if ai_provider is not None:
+                cfg["ai_provider"] = ai_provider if ai_provider in VALID_PROVIDERS else PROVIDER_MISTRAL
+            if openai_base_url is not None:
+                cfg["openai_base_url"] = openai_base_url.strip().rstrip("/")
+            if openai_model is not None:
+                cfg["openai_model"] = openai_model.strip()
+            if openai_embeddings_model is not None:
+                cfg["openai_embeddings_model"] = openai_embeddings_model.strip()
+            if "mistral_api_key" in requested or "openai_api_key" in requested:
                 # A real key supersedes the keyless preview mode.
                 cfg["preview_mode"] = False
             config_store.save_config(cfg)
@@ -259,10 +338,12 @@ def save_api_credentials(
 
 _CREDENTIAL_KEY_NAMES = (
     "mistral_api_key",
+    "openai_api_key",
     "langsearch_api_key",
     "tavily_api_key",
     "alphavantage_api_key",
 )
+
 
 
 def _restore_cleared_credentials(
@@ -460,21 +541,30 @@ def get_api_credential_state() -> dict[str, Any]:
         TAVILY_API_KEY_MIN_LENGTH,
     )
 
+    is_openai = is_openai_provider()
     return {
         "has_mistral_api_key": has_mistral_api_key(),
+        "has_openai_api_key": has_openai_api_key(),
         "has_langsearch_api_key": has_langsearch_api_key(),
         "has_tavily_api_key": has_tavily_api_key(),
         "has_alphavantage_api_key": has_alphavantage_api_key(),
         "has_ai_access": has_ai_access(),
+        "ai_provider": get_ai_provider(),
+        "is_beta_provider": is_openai,
+        "provider_notice": "当プロジェクトはMistral APIに最適化されています。OpenAI互換プロバイダはベータ機能です。",
+        "openai_base_url": get_openai_base_url(),
+        "openai_model": get_openai_model(),
+        "openai_embeddings_model": get_openai_embeddings_model(),
+        "is_local_openai_base_url": is_local_openai_base_url(),
         "api_mode": get_api_mode(),
         "agent_id": get_agent_id(),
         "preview_mode": is_preview_mode(),
         # Agents API: the model is fixed by the agent in Mistral Console.
-        "model_selectable": not is_agents_mode(),
+        "model_selectable": True if is_openai else (not is_agents_mode()),
         "mistral_model": model_name,
-        "is_ai_technical_lines_eligible": is_medium_or_large_model(model_name),
-        "is_free_tier_model": is_free_tier_model(model_name),
-        "model_tier": get_model_tier(model_name),
+        "is_ai_technical_lines_eligible": True if is_openai else is_medium_or_large_model(model_name),
+        "is_free_tier_model": False if is_openai else is_free_tier_model(model_name),
+        "model_tier": "OpenAI Beta" if is_openai else get_model_tier(model_name),
         "credentials_ephemeral": ephemeral_active,
         "credentials_ephemeral_keys": ephemeral_keys,
         "credentials_ephemeral_warning": ephemeral_warning,
@@ -482,6 +572,7 @@ def get_api_credential_state() -> dict[str, Any]:
         "langsearch_api_key_min_length": LANGSEARCH_API_KEY_MIN_LENGTH,
         "tavily_api_key_min_length": TAVILY_API_KEY_MIN_LENGTH,
     }
+
 
 
 def get_model_name() -> str:
@@ -516,6 +607,9 @@ def get_model_badge():
     """現在のモデルバッジ（UI表示用）を取得"""
     from config_utils import resolve_model_target
 
+    if is_openai_provider():
+        m = get_openai_model()
+        return f"[Beta] {m}"
     if is_agents_mode():
         return "Agents API"
     if is_preview_mode():
@@ -525,6 +619,7 @@ def get_model_badge():
     if resolved and "badge" in resolved:
         return resolved["badge"]
     return model_name or "unknown"
+
 
 
 def get_custom_ai_prompt() -> str:

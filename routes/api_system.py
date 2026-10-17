@@ -186,10 +186,18 @@ def _build_safe_credentials_response() -> dict[str, Any]:
     _state = get_api_credential_state()
     _allowed_keys: set[str] = {
         "has_mistral_api_key",
+        "has_openai_api_key",
         "has_langsearch_api_key",
         "has_tavily_api_key",
         "has_alphavantage_api_key",
         "has_ai_access",
+        "ai_provider",
+        "is_beta_provider",
+        "provider_notice",
+        "openai_base_url",
+        "openai_model",
+        "openai_embeddings_model",
+        "is_local_openai_base_url",
         "api_mode",
         "agent_id",
         "preview_mode",
@@ -220,7 +228,11 @@ def _build_safe_credentials_response() -> dict[str, Any]:
         if resolved_info
         else configured_model_str
     )
-    if state.get("api_mode") == "agents":
+    if state.get("ai_provider") == "openai_compatible":
+        cur_openai_model = str(state.get("openai_model") or "gpt-4o-mini")
+        state["model_label"] = f"OpenAI互換 (Beta): {cur_openai_model}"
+        state["model_badge"] = f"[Beta] {cur_openai_model}"
+    elif state.get("api_mode") == "agents":
         state["model_label"] = "Agents API (モデルはMistralコンソールで指定)"
     elif state.get("preview_mode"):
         state["model_label"] = "プレビューモード"
@@ -358,6 +370,7 @@ def api_credentials():
             status_code=400,
         )
     mistral_api_key = data.get("mistral_api_key")
+    openai_api_key = data.get("openai_api_key")
     langsearch_api_key = data.get("langsearch_api_key")
     tavily_api_key = data.get("tavily_api_key")
     alphavantage_api_key = data.get("alphavantage_api_key")
@@ -367,6 +380,7 @@ def api_credentials():
     # generic 500 instead of a client input error.
     for field_name, field_value in (
         ("mistral_api_key", mistral_api_key),
+        ("openai_api_key", openai_api_key),
         ("langsearch_api_key", langsearch_api_key),
         ("tavily_api_key", tavily_api_key),
         ("alphavantage_api_key", alphavantage_api_key),
@@ -580,15 +594,74 @@ def api_credentials():
                 resolved_model.get("name", model_str) if resolved_model else model_str
             )
 
+        # --- AI provider / OpenAI compatible settings --------------------------
+        raw_provider = data.get("ai_provider")
+        target_provider: str | None = None
+        if raw_provider is not None:
+            if raw_provider not in ("mistral", "openai_compatible"):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "ai_providerは mistral または openai_compatible を指定してください"},
+                    status_code=400,
+                )
+            target_provider = raw_provider
+
+        raw_openai_url = data.get("openai_base_url")
+        target_openai_url: str | None = None
+        if raw_openai_url is not None:
+            if not isinstance(raw_openai_url, str):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "openai_base_urlは文字列で指定してください"},
+                    status_code=400,
+                )
+            url_clean = raw_openai_url.strip().rstrip("/")
+            if url_clean and not (url_clean.startswith("http://") or url_clean.startswith("https://")):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"fields": ["openai_base_url"], "reason": "URLは http:// または https:// で始まっている必要があります"},
+                    status_code=400,
+                )
+            target_openai_url = url_clean
+
+        raw_openai_model = data.get("openai_model")
+        target_openai_model: str | None = None
+        if raw_openai_model is not None:
+            if not isinstance(raw_openai_model, str):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "openai_modelは文字列で指定してください"},
+                    status_code=400,
+                )
+            target_openai_model = raw_openai_model.strip()
+
+        raw_openai_emb_model = data.get("openai_embeddings_model")
+        target_openai_emb_model: str | None = None
+        if raw_openai_emb_model is not None:
+            if not isinstance(raw_openai_emb_model, str):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "openai_embeddings_modelは文字列で指定してください"},
+                    status_code=400,
+                )
+            target_openai_emb_model = raw_openai_emb_model.strip()
+
         has_credentials_update = (
             mistral_api_key is not None
+            or openai_api_key is not None
             or langsearch_api_key is not None
             or tavily_api_key is not None
             or alphavantage_api_key is not None
         )
         has_prompt_update = "custom_ai_prompt" in data
         has_mode_update = (
-            target_api_mode is not None or target_agent_id is not None or target_preview is not None
+            target_api_mode is not None
+            or target_agent_id is not None
+            or target_preview is not None
+            or target_provider is not None
+            or target_openai_url is not None
+            or target_openai_model is not None
+            or target_openai_emb_model is not None
         )
         if (
             has_credentials_update
@@ -598,6 +671,7 @@ def api_credentials():
         ):
             save_api_credentials(
                 mistral_api_key=mistral_api_key,
+                openai_api_key=openai_api_key,
                 langsearch_api_key=langsearch_api_key,
                 tavily_api_key=tavily_api_key,
                 alphavantage_api_key=alphavantage_api_key,
@@ -607,6 +681,10 @@ def api_credentials():
                 api_mode=target_api_mode,
                 agent_id=target_agent_id,
                 preview_mode=target_preview,
+                ai_provider=target_provider,
+                openai_base_url=target_openai_url,
+                openai_model=target_openai_model,
+                openai_embeddings_model=target_openai_emb_model,
             )
     except RuntimeError as exc:
         current_app.logger.warning(
@@ -655,6 +733,27 @@ def api_credentials_verify():
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
+    target_provider = data.get("ai_provider") or data.get("target_provider")
+    if not target_provider:
+        from credential_manager import get_ai_provider
+
+        target_provider = get_ai_provider()
+
+    if target_provider == "openai_compatible":
+        from credential_manager import get_openai_api_key, get_openai_base_url
+        from services.openai_service import verify_openai_connection
+
+        openai_key = data.get("openai_api_key")
+        if openai_key is None:
+            openai_key = data.get("api_key")
+        if openai_key is None:
+            openai_key = get_openai_api_key() or ""
+
+        base_url = data.get("openai_base_url") or data.get("base_url") or get_openai_base_url()
+        res_dict = verify_openai_connection(base_url=base_url, api_key=openai_key)
+        status_code = 200 if res_dict.get("ok") else 400
+        return jsonify(res_dict), status_code
+
     api_key = data.get("mistral_api_key")
     if not api_key:
         from credential_manager import get_mistral_api_key

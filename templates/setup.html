@@ -28,62 +28,170 @@
         <li>株価・チャート表示</li>
       </ul>
     </div>
-    <div class="api-mode-group" role="radiogroup" aria-labelledby="apiModeTitle">
-      <div class="api-mode-title" id="apiModeTitle">利用するMistral API</div>
-      <div class="api-mode-options">
-        <label class="api-mode-option">
-          <input type="radio" name="apiMode" value="chat" checked />
-          <span class="api-mode-card">
-            <strong>通常API</strong>
-            <small>Chat Completions。モデルは設定画面で選択できます。</small>
+    <!-- Provider Selection -->
+    <div class="provider-toggle-group" role="radiogroup" aria-labelledby="providerToggleTitle">
+      <div class="provider-toggle-title" id="providerToggleTitle">LLMプロバイダーの選択</div>
+      <div class="provider-toggle-options">
+        <label class="provider-toggle-option">
+          <input type="radio" name="aiProvider" value="mistral" checked />
+          <span class="provider-toggle-card">
+            <strong>Mistral AI <span class="recommended-badge">推奨・最適化</span></strong>
+            <small>公式ネイティブ対応。高品質な財務分析・Agents・OCRに最適化</small>
           </span>
         </label>
-        <label class="api-mode-option">
-          <input type="radio" name="apiMode" value="agents" />
-          <span class="api-mode-card">
-            <strong>Agents API</strong>
-            <small
-              >Mistralコンソールで作成したAgentを使用。モデルはAgent側で固定されます。</small
-            >
+        <label class="provider-toggle-option">
+          <input type="radio" name="aiProvider" value="openai_compatible" />
+          <span class="provider-toggle-card">
+            <strong>OpenAI互換 API <span class="beta-badge">BETA</span></strong>
+            <small>OpenAI / Ollama / Groq / DeepSeek 等のエンドポイントを利用</small>
           </span>
         </label>
       </div>
     </div>
-    <div class="input-group" id="agentIdGroup" hidden>
-      <label for="agentId">Agent ID（Agents API使用時は必須）</label>
-      <input
-        id="agentId"
-        type="text"
-        placeholder="ag_xxxxxxxxxxxxxxxx"
-        autocomplete="off"
-        spellcheck="false"
-      />
-      <p class="agent-id-note">
-        Agent IDとモデルは
-        <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener"
-          >Mistral AI Console</a
-        >
-        で事前に設定してください。アプリ側ではモデルを変更できません。
-      </p>
-    </div>
-    <div class="input-group">
-      <label for="apiKey">Mistral APIキー（必須）</label>
-      <div class="password-wrapper">
+
+    <!-- Mistral Settings Container -->
+    <div id="mistralSetupContainer">
+      <div class="api-mode-group" role="radiogroup" aria-labelledby="apiModeTitle">
+        <div class="api-mode-title" id="apiModeTitle">利用するMistral API</div>
+        <div class="api-mode-options">
+          <label class="api-mode-option">
+            <input type="radio" name="apiMode" value="chat" checked />
+            <span class="api-mode-card">
+              <strong>通常API</strong>
+              <small>Chat Completions。モデルは設定画面で選択できます。</small>
+            </span>
+          </label>
+          <label class="api-mode-option">
+            <input type="radio" name="apiMode" value="agents" />
+            <span class="api-mode-card">
+              <strong>Agents API</strong>
+              <small
+                >Mistralコンソールで作成したAgentを使用。モデルはAgent側で固定されます。</small
+              >
+            </span>
+          </label>
+        </div>
+      </div>
+      <div class="input-group" id="agentIdGroup" hidden>
+        <label for="agentId">Agent ID（Agents API使用時は必須）</label>
         <input
-          id="apiKey"
-          type="password"
-          placeholder="Enter your Mistral API key"
+          id="agentId"
+          type="text"
+          placeholder="ag_xxxxxxxxxxxxxxxx"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <p class="agent-id-note">
+          Agent IDとモデルは
+          <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener"
+            >Mistral AI Console</a
+          >
+          で事前に設定してください。アプリ側ではモデルを変更できません。
+        </p>
+      </div>
+      <div class="input-group">
+        <label for="apiKey">Mistral APIキー（必須）</label>
+        <div class="password-wrapper">
+          <input
+            id="apiKey"
+            type="password"
+            placeholder="Enter your Mistral API key"
+            autocomplete="off"
+          />
+          <button
+            type="button"
+            class="password-toggle"
+            data-target="apiKey"
+            aria-pressed="false"
+            aria-label="APIキーを表示する"
+          >
+            <span class="toggle-icon" aria-hidden="true">&#128065;</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- OpenAI Compatible Settings Container -->
+    <div id="openaiSetupContainer" hidden>
+      <div class="beta-notice-banner">
+        <div class="beta-notice-header">
+          <span class="beta-badge">BETA 機能</span>
+          <strong style="color: #f59e0b; font-size: 0.88rem;">OpenAI互換プロバイダー利用に関するご案内</strong>
+        </div>
+        <p class="beta-notice-desc">
+          ⚠️ OpenAI互換APIの接続は<strong>ベータ機能</strong>です。<br />
+          当プラットフォームは<strong>Mistral API向けに最適化</strong>されて開発されています。モデルの特性によりツールの呼び出し精度や応答形式が異なる場合があります。
+        </p>
+      </div>
+
+      <div class="input-group">
+        <label>プリセット設定（ワンクリック適用）</label>
+        <div class="preset-buttons-container">
+          <button type="button" class="preset-pill-btn" data-preset="openai">OpenAI</button>
+          <button type="button" class="preset-pill-btn" data-preset="ollama">Ollama (Local)</button>
+          <button type="button" class="preset-pill-btn" data-preset="groq">Groq</button>
+          <button type="button" class="preset-pill-btn" data-preset="deepseek">DeepSeek</button>
+          <button type="button" class="preset-pill-btn" data-preset="openrouter">OpenRouter</button>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label for="openaiBaseUrl">Base URL（必須）</label>
+        <input
+          id="openaiBaseUrl"
+          type="text"
+          placeholder="https://api.openai.com/v1"
+          value="https://api.openai.com/v1"
           autocomplete="off"
         />
-        <button
-          type="button"
-          class="password-toggle"
-          data-target="apiKey"
-          aria-pressed="false"
-          aria-label="APIキーを表示する"
-        >
-          <span class="toggle-icon" aria-hidden="true">&#128065;</span>
-        </button>
+      </div>
+
+      <div class="input-group">
+        <label for="openaiApiKey">APIキー（ローカルLLM等で不要な場合は空欄可）</label>
+        <div class="password-wrapper">
+          <input
+            id="openaiApiKey"
+            type="password"
+            placeholder="sk-..."
+            autocomplete="off"
+          />
+          <button
+            type="button"
+            class="password-toggle"
+            data-target="openaiApiKey"
+            aria-pressed="false"
+            aria-label="APIキーを表示する"
+          >
+            <span class="toggle-icon" aria-hidden="true">&#128065;</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label for="openaiModel">チャットモデル名（必須）</label>
+        <input
+          id="openaiModel"
+          type="text"
+          placeholder="gpt-4o-mini"
+          value="gpt-4o-mini"
+          autocomplete="off"
+        />
+      </div>
+
+      <div class="input-group">
+        <label for="openaiEmbeddingsModel">Embeddingsモデル名（任意・空欄でスキップ）</label>
+        <input
+          id="openaiEmbeddingsModel"
+          type="text"
+          placeholder="text-embedding-3-small"
+          value="text-embedding-3-small"
+          autocomplete="off"
+        />
+      </div>
+
+      <div class="verify-action-group">
+        <button type="button" id="verifyOpenaiSetupBtn" class="verify-btn">接続テスト</button>
+        <span id="openaiSetupVerifyStatus" class="verify-status"></span>
       </div>
     </div>
     <div class="input-group">

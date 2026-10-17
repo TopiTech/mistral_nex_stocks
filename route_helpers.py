@@ -564,6 +564,27 @@ def extract_api_key(req: Any) -> str:
     side effects) their own key.
     """
     from flask import current_app
+    from credential_manager import (
+        PREVIEW_API_KEY,
+        get_openai_api_key,
+        is_local_openai_base_url,
+        is_openai_provider,
+        is_preview_mode,
+    )
+
+    if is_openai_provider():
+        stored_oa: str = _as_text(get_openai_api_key())
+        if stored_oa:
+            current_app.logger.debug(
+                "OpenAI key source=stored fp=%s id=%s",
+                _token_fingerprint(stored_oa),
+                getattr(g, "request_id", "-"),
+            )
+            return stored_oa
+        if is_local_openai_base_url():
+            return "ollama-local"
+        if is_preview_mode():
+            return PREVIEW_API_KEY
 
     stored: str = _as_text(get_mistral_api_key())
     if stored:

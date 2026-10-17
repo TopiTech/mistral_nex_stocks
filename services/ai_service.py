@@ -29,8 +29,16 @@ from constants import (
     CurlRequestsTimeout,
     RequestsTimeout,
 )
-from credential_manager import get_agent_id, get_model_name, is_agents_mode, is_preview_api_key
+from credential_manager import (
+    get_agent_id,
+    get_model_name,
+    get_openai_api_key,
+    is_agents_mode,
+    is_openai_provider,
+    is_preview_api_key,
+)
 from mistral_compat import BackoffStrategy, MistralError, RetryConfig, SDKError
+
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.text_utils import _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
@@ -791,6 +799,29 @@ def call_mistral_chat(
         # Keyless preview mode: built-in sample output, no network / accounting.
         return build_preview_chat_response(messages, response_format)
 
+    if is_openai_provider():
+        from services.openai_service import call_openai_chat
+
+        eff_key = (
+            api_key
+            if (api_key and not api_key.startswith("mns-preview"))
+            else (get_openai_api_key() or "")
+        )
+        return call_openai_chat(
+            eff_key,
+            messages=messages,
+            max_tokens=max_tokens,
+            use_cache=use_cache,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            cache_key_override=cache_key_override,
+            reasoning_effort=reasoning_effort,
+            temperature=temperature,
+            _model_override=_model_override,
+            _is_fallback=_is_fallback,
+        )
+
     use_agents, agent_id = _resolve_agents_target()
     if use_agents and not agent_id:
         return {
@@ -1216,6 +1247,26 @@ def call_mistral_chat_with_tools(
     """
     from mistral_compat import ToolMessage
     from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
+
+    if is_openai_provider():
+        from services.openai_service import call_openai_chat_with_tools
+
+        eff_key = (
+            api_key
+            if (api_key and not api_key.startswith("mns-preview"))
+            else (get_openai_api_key() or "")
+        )
+        return call_openai_chat_with_tools(
+            eff_key,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            max_tool_iterations=max_tool_iterations,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+            response_format=response_format,
+            cache_key_override=cache_key_override,
+        )
 
     # The values are normally internal constants, but keep this public helper
     # defensive because it is also used by tests/integrations.  A malformed
@@ -1644,13 +1695,28 @@ def analyze_chart_image_with_mistral(
     if not image_data or not isinstance(image_data, str):
         return {"error": "画像データが不正です。"}
 
-    # Format data URI if not already prefixed or web URL
     clean_img = image_data.strip()
     if clean_img.startswith(("http://", "https://", "data:image/")):
         image_url = clean_img
     else:
         clean_b64 = "".join(clean_img.split())
         image_url = f"data:image/png;base64,{clean_b64}"
+
+    if is_openai_provider():
+        from services.openai_service import analyze_chart_image_with_openai
+
+        eff_key = (
+            api_key
+            if (api_key and not api_key.startswith("mns-preview"))
+            else (get_openai_api_key() or "")
+        )
+        return analyze_chart_image_with_openai(
+            eff_key,
+            image_data=image_data,
+            symbol=symbol,
+            market=market,
+            custom_prompt=custom_prompt,
+        )
 
     safe_sym = _sanitize_prompt_text(symbol, 16) if symbol else "対象銘柄"
     user_text = (
@@ -1856,6 +1922,25 @@ def stream_mistral_chat(
     if is_preview_api_key(api_key):
         # Keyless preview mode: sample output, no network / pacing / accounting.
         yield from build_preview_stream_events(messages)
+        return
+
+    if is_openai_provider():
+        from services.openai_service import stream_openai_chat
+
+        eff_key = (
+            api_key
+            if (api_key and not api_key.startswith("mns-preview"))
+            else (get_openai_api_key() or "")
+        )
+        yield from stream_openai_chat(
+            eff_key,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+            _model_override=_model_override,
+            _is_fallback=_is_fallback,
+        )
         return
 
     use_agents, agent_id = _resolve_agents_target()
@@ -2090,3 +2175,11 @@ def stream_mistral_chat(
             # SDK stream must be closed here as well so its HTTP response does
             # not remain open until garbage collection.
             _close_mistral_stream(sdk_stream)
+
+
+# Provider-agnostic aliases (delegates according to configured active provider)
+call_ai_chat = call_mistral_chat
+stream_ai_chat = stream_mistral_chat
+call_ai_chat_with_tools = call_mistral_chat_with_tools
+analyze_chart_image_with_ai = analyze_chart_image_with_mistral
+

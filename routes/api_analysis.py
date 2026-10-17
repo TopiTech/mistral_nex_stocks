@@ -867,24 +867,42 @@ def _stream_chat_response(
                     )
                     break
                 elif event["type"] == "error":
-                    # R5: ポーリング経路(_chat_error_response)と同様に、SDKの
-                    # 生エラー文字列をクライアントへ露出させず固定メッセージへ
-                    # 正規化する。診断は安全な型・状態だけをログへ残す。
-                    status_code = event.get("status_code", 0)
-                    raw_message = event.get("message") or "Unknown stream error"
+                    status_code = int(event.get("status_code") or 0)
+                    raw_message = str(event.get("message") or "Unknown stream error")
+                    detail = str(event.get("detail") or "")
                     with stream_state_lock:
                         stream_error = RuntimeError(raw_message)
                     app_logger.warning(
-                        "Chat stream API error id=%s status=%s error_type=%s",
+                        "Chat stream API error id=%s status=%s message=%s detail=%s",
                         request_id,
                         status_code,
-                        type(raw_message).__name__,
+                        raw_message,
+                        detail,
                     )
-                    friendly_message = (
-                        "AIサービスに接続できませんでした"
-                        if int(status_code or 0) >= 500
-                        else "チャット処理に失敗しました"
-                    )
+                    if status_code == 401:
+                        friendly_message = (
+                            "AI APIの認証に失敗しました (HTTP 401)。APIキーおよびBase URL設定を確認してください。"
+                        )
+                    elif status_code == 403:
+                        friendly_message = (
+                            "AI APIへのアクセスが拒否されました (HTTP 403)。権限やモデル設定を確認してください。"
+                        )
+                    elif status_code == 404:
+                        friendly_message = (
+                            "指定されたモデルまたはエンドポイントが見つかりません (HTTP 404)。Base URLとモデル名を確認してください。"
+                        )
+                    elif status_code == 429:
+                        friendly_message = (
+                            "AI APIの利用上限またはレート制限に達しました (HTTP 429)。しばらく待ってから再試行してください。"
+                        )
+                    elif status_code >= 500:
+                        friendly_message = "AIサービスに接続できませんでした"
+                    else:
+                        friendly_message = (
+                            raw_message
+                            if raw_message and not raw_message.startswith("Unknown")
+                            else "チャット処理に失敗しました"
+                        )
                     yield (
                         "data: "
                         + json.dumps({"error": friendly_message}, ensure_ascii=False)
@@ -933,10 +951,20 @@ def _stream_chat_response(
 def _chat_error_response(
     exc: Any, flask_g: Any, operation_token: str | None = None
 ) -> "tuple[Any, int]":
-    """Mistral 呼び出しで発生した例外を HTTP レスポンスへ変換する。"""
+    """Mistral / OpenAI 呼び出しで発生した例外を HTTP レスポンスへ変換する。"""
     payload: dict[str, Any] = {"disclaimer": ANALYSIS_DISCLAIMER}
     if operation_token:
         payload["request_token"] = operation_token
+
+    exc_str = str(exc or "")
+    if "認証" in exc_str or "401" in exc_str:
+        current_app.logger.warning(
+            "api_chat auth error id=%s error=%s",
+            getattr(flask_g, "request_id", "-"),
+            exc_str,
+        )
+        payload["reply"] = exc_str if "認証" in exc_str else "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
+        return jsonify(payload), 401
 
     if isinstance(exc, (requests.ConnectionError, ConnectionError)):
         current_app.logger.error(

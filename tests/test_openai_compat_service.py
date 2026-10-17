@@ -67,6 +67,82 @@ def test_verify_openai_connection_auth_error():
     assert "認証エラー" in res["error"]
 
 
+def test_verify_openai_connection_openrouter_auth_failure():
+    """Test verify_openai_connection catches 401 on /auth/key even when /models returns 200."""
+    mock_models_resp = MagicMock()
+    mock_models_resp.status_code = 200
+    mock_models_resp.json.return_value = {"data": [{"id": "meta-llama/llama-3-8b"}]}
+
+    mock_auth_resp = MagicMock()
+    mock_auth_resp.status_code = 401
+    mock_auth_resp.json.return_value = {"error": {"message": "Missing Authentication header"}}
+
+    def mock_get(url, **kwargs):
+        if url.endswith("/models"):
+            return mock_models_resp
+        return mock_auth_resp
+
+    with patch("httpx.Client.get", side_effect=mock_get):
+        res = verify_openai_connection(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="invalid_or_wrong_key",
+            timeout_sec=5.0,
+        )
+
+    assert res["ok"] is False
+    assert "認証エラー" in res["error"]
+    assert "401" in res["error"]
+
+
+def test_verify_openai_connection_openrouter_success():
+    """Test verify_openai_connection succeeds when both /models and /auth/key succeed."""
+    mock_models_resp = MagicMock()
+    mock_models_resp.status_code = 200
+    mock_models_resp.json.return_value = {"data": [{"id": "meta-llama/llama-3-8b"}]}
+
+    mock_auth_resp = MagicMock()
+    mock_auth_resp.status_code = 200
+    mock_auth_resp.json.return_value = {"data": {"label": "valid key"}}
+
+    def mock_get(url, **kwargs):
+        if url.endswith("/models"):
+            return mock_models_resp
+        return mock_auth_resp
+
+    with patch("httpx.Client.get", side_effect=mock_get):
+        res = verify_openai_connection(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="sk-or-v1-valid-key",
+            timeout_sec=5.0,
+        )
+
+    assert res["ok"] is True
+    assert "meta-llama/llama-3-8b" in res["models"]
+
+
+def test_stream_openai_chat_401_error():
+    """Test stream_openai_chat yields structured error on HTTP 401."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 401
+    mock_resp.text = json.dumps({"error": {"message": "Missing Authentication header"}})
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("httpx.Client.stream", return_value=mock_resp):
+        events = list(
+            stream_openai_chat(
+                api_key="invalid-key",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        )
+
+    assert len(events) == 1
+    err = events[0]
+    assert err["type"] == "error"
+    assert err["status_code"] == 401
+    assert "認証に失敗" in err["message"]
+    assert "Missing Authentication header" in err["detail"]
+
+
 def test_call_openai_chat_plain_text():
     """Test call_openai_chat returns OpenAI-style response dictionary."""
     mock_resp = MagicMock()

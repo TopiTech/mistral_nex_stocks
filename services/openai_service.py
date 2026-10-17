@@ -60,11 +60,27 @@ def _public_openai_error_message(exc: BaseException, status_code: int = 0) -> st
     return "OpenAI互換APIの呼び出しに失敗しました。設定と接続を確認してください。"
 
 
+def _create_httpx_client(**kwargs) -> httpx.Client:
+    """Create an httpx.Client configured with OS trust store certs on Windows."""
+    import ssl
+
+    if "verify" not in kwargs:
+        try:
+            ctx = ssl.create_default_context()
+            ctx.load_default_certs()
+            kwargs["verify"] = ctx
+        except Exception as exc:
+            logger.debug("Failed configuring OS trust store certs: %s", exc)
+    return httpx.Client(**kwargs)
+
+
 def _build_openai_headers(api_key: str | None = None) -> dict[str, str]:
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "User-Agent": "MistralNeXStocks/3.0 (OpenAI-Compat-Beta)",
+        "HTTP-Referer": "http://localhost:5000",
+        "X-Title": "MistralNeXStocks",
     }
     if api_key and api_key.strip() and not is_preview_api_key(api_key):
         headers["Authorization"] = f"Bearer {api_key.strip()}"
@@ -83,7 +99,7 @@ def verify_openai_connection(
 
     start_ts = time.time()
     try:
-        with httpx.Client(timeout=timeout_sec, follow_redirects=True) as client:
+        with _create_httpx_client(timeout=timeout_sec, follow_redirects=True) as client:
             resp = client.get(models_endpoint, headers=headers)
             latency_ms = int((time.time() - start_ts) * 1000)
 
@@ -114,6 +130,42 @@ def verify_openai_connection(
                     "error": err_text or f"接続テスト失敗 (HTTP {resp.status_code})",
                     "latency_ms": latency_ms,
                 }
+
+            # OpenRouter provides public unauthenticated access to /models.
+            # If the target is OpenRouter, verify the API key with /auth/key.
+            if "openrouter.ai" in target_url:
+                if not api_key or not api_key.strip():
+                    return {
+                        "ok": False,
+                        "valid": False,
+                        "error": "OpenRouterを利用するには有効なAPIキーが必要です (未入力)。",
+                        "latency_ms": latency_ms,
+                    }
+                auth_resp = client.get(f"{target_url}/auth/key", headers=headers)
+                if auth_resp.status_code == 401:
+                    auth_err = "認証エラー: OpenRouterのAPIキーが無効です (HTTP 401)"
+                    try:
+                        auth_data = auth_resp.json()
+                        msg = auth_data.get("error", {}).get("message")
+                        if msg:
+                            auth_err = f"OpenRouter認証エラー: {msg} (HTTP 401)"
+                    except Exception:
+                        pass
+                    if not api_key.strip().startswith("sk-or-"):
+                        auth_err += "。OpenRouterのキーは通常 'sk-or-v1-' で始まります。キーと接続先Base URLを確認してください。"
+                    return {
+                        "ok": False,
+                        "valid": False,
+                        "error": auth_err,
+                        "latency_ms": latency_ms,
+                    }
+                if auth_resp.status_code >= 400:
+                    return {
+                        "ok": False,
+                        "valid": False,
+                        "error": f"OpenRouter認証確認失敗 (HTTP {auth_resp.status_code})",
+                        "latency_ms": latency_ms,
+                    }
 
             data = resp.json()
             raw_models = data.get("data", []) if isinstance(data, dict) else []
@@ -253,7 +305,7 @@ def call_openai_chat(
     )
 
     try:
-        with httpx.Client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True) as client:
+        with _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True) as client:
             resp = client.post(endpoint, json=payload, headers=headers)
 
             # If tools were passed but model rejected with 400 (common for non-tool models)
@@ -372,13 +424,31 @@ def stream_openai_chat(
 
     try:
         with (
-            httpx.Client(timeout=MISTRAL_API_TIMEOUT_SEC) as client,
+            _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC) as client,
             client.stream("POST", endpoint, json=payload, headers=headers) as stream,
         ):
             if stream.status_code >= 400:
                 stream.read()
-                err_msg = _public_openai_error_message(Exception(stream.text[:300]), stream.status_code)
-                yield {"type": "error", "message": err_msg, "status_code": stream.status_code}
+                err_detail = stream.text[:500]
+                try:
+                    err_json = json.loads(err_detail)
+                    if isinstance(err_json, dict) and "error" in err_json:
+                        err_obj = err_json["error"]
+                        err_detail = err_obj.get("message", err_detail) if isinstance(err_obj, dict) else str(err_obj)
+                except Exception:
+                    pass
+                logger.warning(
+                    "OpenAI stream HTTP error status=%d detail=%s",
+                    stream.status_code,
+                    err_detail,
+                )
+                err_msg = _public_openai_error_message(Exception(err_detail), stream.status_code)
+                yield {
+                    "type": "error",
+                    "message": err_msg,
+                    "status_code": stream.status_code,
+                    "detail": err_detail,
+                }
                 return
 
             for line in stream.iter_lines():
@@ -614,7 +684,7 @@ def get_openai_embeddings_batch(
             "input": chunk,
         }
         try:
-            with httpx.Client(timeout=15.0) as client:
+            with _create_httpx_client(timeout=15.0) as client:
                 resp = client.post(endpoint, json=payload, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()

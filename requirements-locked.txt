@@ -201,7 +201,7 @@ typing-inspection==0.4.2
     # via
     #   mistralai
     #   pydantic
-tzdata==2026.3 ; sys_platform == 'emscripten' or sys_platform == 'win32'
+tzdata==2026.5 ; sys_platform == 'emscripten' or sys_platform == 'win32'
     # via
     #   mistral-nex-stocks
     #   pandas

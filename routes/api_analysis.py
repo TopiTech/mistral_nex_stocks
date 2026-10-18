@@ -531,7 +531,12 @@ def api_chat():
             f"[Current context: {symbol} latest known price={safe_price}]"
             "</context>"
         )
-        messages_snapshot.append({"role": "user", "content": fresh_context})
+        if messages_snapshot and messages_snapshot[-1].get("role") == "user":
+            last_msg = dict(messages_snapshot[-1])
+            last_msg["content"] = str(last_msg.get("content", "")) + fresh_context
+            messages_snapshot[-1] = last_msg
+        else:
+            messages_snapshot.append({"role": "user", "content": fresh_context})
     except (ValueError, TypeError, KeyError, RuntimeError):
         pass  # Non-critical: proceed without fresh context
 

@@ -429,7 +429,10 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
     query = raw_query.strip() if isinstance(raw_query, str) else ""
     query = " ".join(query.split())
     raw_limit = args.get("limit", 5)
-    limit = max(1, min(int(5 if raw_limit is None else raw_limit), 10))
+    try:
+        limit = max(1, min(int(5 if raw_limit is None else raw_limit), 10))
+    except (ValueError, TypeError):
+        limit = 5
     if not query:
         return {"error": "query is required"}
     if len(query) > _TOOL_QUERY_MAX_LENGTH:

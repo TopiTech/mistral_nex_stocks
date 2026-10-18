@@ -1523,8 +1523,10 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
     株価履歴データからAI（Mistral）を用いてサポート線・抵抗線・トレンドライン等の
     テクニカル描画線データを動的に検出・生成する。
     """
-    if app_state.market.is_circuit_open("mistral"):
-        return {"error": "Mistral API の呼び出し制限中（サーキットブレーカー発動中）です。"}
+    circuit_name = "openai_compatible" if is_openai_provider() else "mistral"
+    if app_state.market.is_circuit_open(circuit_name):
+        provider_name = "OpenAI Compatible" if is_openai_provider() else "Mistral"
+        return {"error": f"{provider_name} API の呼び出し制限中（サーキットブレーカー発動中）です。"}
 
     if not history_data or not isinstance(history_data, list):
         return {"error": "テクニカル分析に必要な株価履歴データが存在しません。"}

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from credential_manager import PREVIEW_API_KEY
 from services.openai_service import (
+    _build_openai_cache_key,
     analyze_chart_image_with_openai,
     call_openai_chat,
     call_openai_chat_with_tools,
@@ -632,7 +633,11 @@ def test_stream_openai_chat_filters_none_reasoning():
     ]
     mock_ok_resp.__enter__.return_value = mock_ok_resp
 
-    with patch("httpx.Client.stream", side_effect=lambda *args, **kwargs: captured_payloads.append(kwargs.get("json", {})) or mock_ok_resp):
+    def mock_stream(*args, **kwargs):
+        captured_payloads.append(kwargs.get("json", {}))
+        return mock_ok_resp
+
+    with patch("httpx.Client.stream", side_effect=mock_stream):
         events = list(
             stream_openai_chat(
                 api_key="test-key",
@@ -682,5 +687,168 @@ def test_stream_openai_chat_retries_on_reasoning_rejection_400():
     # Second attempt retried without reasoning_effort
     assert "reasoning_effort" not in captured_payloads[1]
     assert any(e.get("type") == "done" for e in events)
+
+
+def test_build_openai_cache_key_tools_isolation():
+    """Different tool definitions must generate distinct cache keys to avoid collision."""
+    tool_a = [
+        {
+            "type": "function",
+            "function": {"name": "get_stock_quote", "parameters": {"symbol": "str"}},
+        }
+    ]
+    tool_b = [
+        {
+            "type": "function",
+            "function": {"name": "search_financial_news", "parameters": {"query": "str"}},
+        }
+    ]
+
+    key_tool_a = _build_openai_cache_key(
+        "gpt-4o",
+        [{"role": "user", "content": "AAPL"}],
+        500,
+        0.0,
+        None,
+        tool_a,
+    )
+    key_tool_b = _build_openai_cache_key(
+        "gpt-4o",
+        [{"role": "user", "content": "AAPL"}],
+        500,
+        0.0,
+        None,
+        tool_b,
+    )
+    key_no_tools = _build_openai_cache_key(
+        "gpt-4o",
+        [{"role": "user", "content": "AAPL"}],
+        500,
+        0.0,
+        None,
+        None,
+    )
+    key_empty_tools = _build_openai_cache_key(
+        "gpt-4o",
+        [{"role": "user", "content": "AAPL"}],
+        500,
+        0.0,
+        None,
+        [],
+    )
+
+    # Different tools must not collide
+    assert key_tool_a != key_tool_b
+    assert key_tool_a != key_no_tools
+    # None and empty list represent absence of tools and produce the same key
+    assert key_no_tools == key_empty_tools
+
+
+def test_call_openai_chat_with_tools_propagates_flask_app_context():
+    """ThreadPoolExecutor worker threads must execute inside Flask app context."""
+    from flask import Flask, current_app
+
+    test_app = Flask("test_openai_context")
+    test_app.config["TEST_MARKER"] = "context_propagated_successfully"
+
+    turn1_resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "tool_1", "arguments": "{}"},
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "tool_2", "arguments": "{}"},
+                        },
+                    ],
+                }
+            }
+        ]
+    }
+    turn2_resp = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Done processing tools.",
+                }
+            }
+        ]
+    }
+
+    accessed_markers = []
+
+    def mock_tool_call(fn_name: str, fn_args: str) -> dict[str, str]:
+        # If app context is not propagated, current_app access raises RuntimeError
+        marker = current_app.config.get("TEST_MARKER", "not_found")
+        accessed_markers.append(marker)
+        return {"result": f"ok from {fn_name}"}
+
+    with test_app.app_context():
+        with patch("services.openai_service.call_openai_chat", side_effect=[turn1_resp, turn2_resp]), patch(
+            "services.openai_service.execute_mistral_tool_call", side_effect=mock_tool_call
+        ):
+            res = call_openai_chat_with_tools(
+                api_key="sk-test",
+                messages=[{"role": "user", "content": "Run parallel tools"}],
+            )
+
+    assert res["choices"][0]["message"]["content"] == "Done processing tools."
+    assert len(accessed_markers) == 2
+    assert all(m == "context_propagated_successfully" for m in accessed_markers)
+
+
+def test_get_openai_embeddings_batch_filters_empty_and_whitespace():
+    """Empty and whitespace strings must be omitted from HTTP payload and mapped to None."""
+    captured_payloads = []
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "data": [
+            {"index": 0, "embedding": [0.11, 0.22]},
+            {"index": 1, "embedding": [0.33, 0.44]},
+        ]
+    }
+
+    def mock_post(url, json=None, headers=None):
+        captured_payloads.append(dict(json or {}))
+        return mock_resp
+
+    with patch("httpx.Client.post", side_effect=mock_post):
+        results = get_openai_embeddings_batch(
+            texts=["First document", "", "   ", "Second document"],
+            api_key="sk-test",
+        )
+
+    assert len(captured_payloads) == 1
+    # Only non-empty texts should have been sent to the API
+    assert captured_payloads[0]["input"] == ["First document", "Second document"]
+    # Results must maintain original index order with None for empty texts
+    assert len(results) == 4
+    assert results[0] == [0.11, 0.22]
+    assert results[1] is None
+    assert results[2] is None
+    assert results[3] == [0.33, 0.44]
+
+
+def test_get_openai_embeddings_batch_all_empty():
+    """All-empty inputs must return list of None without making HTTP requests."""
+    with patch("httpx.Client.post") as mock_post:
+        results = get_openai_embeddings_batch(
+            texts=["", "   ", "\t\n "],
+            api_key="sk-test",
+        )
+
+    mock_post.assert_not_called()
+    assert results == [None, None, None]
 
 

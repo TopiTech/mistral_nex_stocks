@@ -45,6 +45,7 @@ from services.ai_portfolio_service import (
     DEFAULT_PRESET_CONFIGS,
     MAX_AI_PORTFOLIO_ITEMS,
     VIRTUAL_INITIAL_CAPITAL_JPY,
+    PortfolioStorageError,
     delete_custom_ai_portfolio,
     generate_ai_portfolio_by_theme,
     load_saved_ai_portfolios,
@@ -122,6 +123,19 @@ def _ai_portfolio_error_response(
             ErrorCode.API_SERVICE_ERROR,
             details={"reason": f"AIサービス通信エラー: {err_msg}", "error_type": err_type},
             status_code=503,
+        )
+
+    if isinstance(job_err, PortfolioStorageError):
+        current_app.logger.error(
+            "AI portfolio storage error id=%s error_type=%s: %s", req_id, err_type, err_msg
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={
+                "reason": "ポートフォリオの生成または保存処理が完了しませんでした。しばらくしてから再試行してください。",
+                "error_type": err_type,
+            },
+            status_code=getattr(job_err, "status_code", 503),
         )
 
     current_app.logger.error(

@@ -555,6 +555,13 @@ async function fetchInitialStocks(force = false) {
       const container = document.getElementById(`${market}-stocks`);
       if (!container) return;
       container.setAttribute("aria-busy", "false");
+      container.querySelectorAll(".stock-wrapper").forEach((w) => {
+        w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+        if (cardIntersectionObserver) {
+          cardIntersectionObserver.unobserve(w);
+        }
+        unregisterWrapper(w.dataset.stockKey, w);
+      });
       container.textContent = "";
       const error = createEl("div", "no-results data-error-state");
       error.style.gridColumn = "1 / -1";

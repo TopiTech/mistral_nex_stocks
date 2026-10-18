@@ -489,4 +489,11 @@ def api_search() -> Any:
     )
     if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"results": []}
+    if "error" in result:
+        err_msg = result.get("error")
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": str(err_msg)} if err_msg else None,
+            status_code=502,
+        )
     return jsonify(result)

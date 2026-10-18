@@ -1850,3 +1850,169 @@ def test_submit_in_app_context_queue_saturation_guard():
 
     with pytest.raises(queue.Full):
         _submit_in_app_context(mock_executor, lambda: None, app=app)
+
+
+def test_ai_portfolio_rebalance_cache_cleared_on_read():
+    """Verify that rebalance result cache is popped on read so subsequent rebalances are fresh."""
+    import time
+
+    from app import app
+    from routes.stocks.ai_portfolio import ai_portfolio_fetch_lock, ai_portfolio_result_cache
+
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    client = app.test_client()
+
+    fake_portfolio = {"title": "Cached Portfolio", "items": []}
+    theme = "rebalance_cache_test"
+    cache_key = ""
+
+    try:
+        with client.session_transaction() as sess:
+            scope = sess.get("mns_analysis_conversation")
+            if not scope:
+                import secrets
+
+                scope = secrets.token_urlsafe(24)
+                sess["mns_analysis_conversation"] = scope
+        cache_key = f"rebalance:{scope}:{theme}"
+
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache[cache_key] = (time.time(), fake_portfolio, None)
+
+        with patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, None)):
+            res1 = client.post("/api/ai-portfolio/rebalance", json={"theme": theme})
+            assert res1.status_code == 200
+            assert res1.get_json()["portfolio"]["title"] == "Cached Portfolio"
+
+            # Cache key must be popped from ai_portfolio_result_cache on read
+            with ai_portfolio_fetch_lock:
+                assert cache_key not in ai_portfolio_result_cache
+    finally:
+        if cache_key:
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_result_cache.pop(cache_key, None)
+        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+
+
+def test_generate_ai_portfolio_concurrent_failure_fallback_self_generation(tmp_path):
+    """When a concurrent generation finishes without saving, the waiter must fall back to self-generation."""
+    import threading
+    import time as _time
+
+    from services import ai_portfolio_service as aps
+
+    test_storage = tmp_path / "ai_portfolios_fallback.json"
+    release_first = threading.Event()
+    results: dict[str, object] = {}
+    errors: list[Exception] = []
+
+    def failing_first_generation():
+        aps._acquire_ai_generation_slot("並行フォールバックテーマ")
+        release_first.wait(timeout=10)
+        aps._release_ai_generation_slot("並行フォールバックテーマ")
+
+    def waiter_generation():
+        try:
+            results["res"] = aps.generate_ai_portfolio_by_theme("並行フォールバックテーマ")
+        except Exception as exc:
+            errors.append(exc)
+
+    try:
+        with (
+            patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage),
+            patch("services.ai_portfolio_service.get_mistral_api_key", return_value="mock_key"),
+            patch("services.ai_portfolio_service.collect_symbol_research_context", return_value=""),
+            patch(
+                "services.ai_portfolio_service.call_mistral_chat",
+                return_value={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "title": "フォールバック生成成功",
+                                        "description": "D",
+                                        "risk_level": "mid",
+                                        "expected_return": "5%",
+                                        "commentary": "C",
+                                        "items": [
+                                            {
+                                                "symbol": "AAPL",
+                                                "market": "us",
+                                                "weight_pct": 100.0,
+                                                "target_price": 250.0,
+                                                "rationale": "r",
+                                                "risk_level": "mid",
+                                            }
+                                        ],
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                },
+            ),
+        ):
+            t_first = threading.Thread(target=failing_first_generation)
+            t_first.start()
+            _time.sleep(0.1)
+
+            t_waiter = threading.Thread(target=waiter_generation)
+            t_waiter.start()
+            _time.sleep(0.2)
+
+            release_first.set()
+            t_first.join(timeout=10)
+            t_waiter.join(timeout=10)
+
+            assert not errors, f"Expected fallback self-generation to succeed, but got error: {errors}"
+            assert results["res"]["title"] == "フォールバック生成成功"
+    finally:
+        aps._AI_GEN_INFLIGHT.clear()
+
+
+def test_generate_ai_portfolio_concurrent_failure_raises_503_storage_error():
+    """When concurrent generation fails to persist and retry slot cannot be acquired, raise PortfolioStorageError with status_code 503."""
+    import threading
+
+    from services import ai_portfolio_service as aps
+
+    theme = "並行スロット再取得失敗テーマ"
+    try:
+        event = threading.Event()
+        aps._AI_GEN_INFLIGHT[theme] = event
+        event.set()
+
+        with (
+            patch("services.ai_portfolio_service._find_saved_ai_portfolio", return_value=None),
+            patch("services.ai_portfolio_service._acquire_ai_generation_slot", side_effect=[False, False]),
+        ):
+            with pytest.raises(aps.PortfolioStorageError) as exc_info:
+                aps.generate_ai_portfolio_by_theme(theme)
+            assert exc_info.value.status_code == 503
+    finally:
+        aps._AI_GEN_INFLIGHT.clear()
+
+
+def test_ai_portfolio_error_response_handles_portfolio_storage_error():
+    """Verify that _ai_portfolio_error_response returns 503 API_SERVICE_ERROR for PortfolioStorageError."""
+    from unittest.mock import MagicMock
+
+    from app import app
+    from error_codes import ErrorCode
+    from routes.stocks.ai_portfolio import _ai_portfolio_error_response
+    from services.ai_portfolio_service import PortfolioStorageError
+
+    with app.test_request_context("/api/ai-portfolio"):
+        mock_g = MagicMock()
+        mock_g.request_id = "test-req-123"
+
+        err = PortfolioStorageError("保存待機失敗", status_code=503)
+        resp, status_code = _ai_portfolio_error_response(err, mock_g)
+
+        assert status_code == 503
+        payload = resp.get_json()
+        assert payload["ok"] is False
+        assert payload["error_code"] == int(ErrorCode.API_SERVICE_ERROR)
+

@@ -475,3 +475,42 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error_code"], 1002)  # ErrorCode.INVALID_MARKET
+
+    def test_api_chat_merges_fresh_context_into_last_user_message(self):
+        """Verify that fresh market context is merged into the user message rather than appended as a second user turn."""
+        captured_messages = []
+
+        def fake_chat(api_key, messages_snapshot, market, symbol, *args, **kwargs):
+            captured_messages.extend(messages_snapshot)
+            return "Analysis reply"
+
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"),
+            patch("routes.api_analysis._call_mistral_chat_with_retry", side_effect=fake_chat),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "us",
+                    "symbol": "AAPL_CONTEXT",
+                    "message": "Appleの動向は？",
+                    "request_token": "merge-context-token-001",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(len(captured_messages) >= 2)
+        # Ensure no two consecutive 'user' roles exist in captured messages
+        for i in range(len(captured_messages) - 1):
+            self.assertFalse(
+                captured_messages[i]["role"] == "user" and captured_messages[i + 1]["role"] == "user",
+                f"Found consecutive user messages at index {i} and {i+1}",
+            )
+        # The last message should be user and contain both the prompt and market context
+        last_msg = captured_messages[-1]
+        self.assertEqual(last_msg["role"], "user")
+        self.assertIn("Appleの動向は？", last_msg["content"])
+        self.assertIn('<context type="market_data">', last_msg["content"])
+        self.assertIn("AAPL_CONTEXT", last_msg["content"])
+

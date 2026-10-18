@@ -1150,6 +1150,9 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   const showRSI = getChartPref(stockKey, "ind_rsi", "off") === "on";
   const showMACD = getChartPref(stockKey, "ind_macd", "off") === "on";
   const showAILines = getChartPref(stockKey, "ind_ai", "on") !== "off";
+  const isJpScheme =
+    typeof getColorSchemePreference === "function" &&
+    getColorSchemePreference() === "jp_standard";
 
   destroyChart(canvas);
 
@@ -1210,13 +1213,19 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
       l: d.l,
       c: d.c,
     }));
+    const candleUpColor = isJpScheme ? "#ff3366" : "#00ff88";
+    const candleDownColor = isJpScheme ? "#00ff88" : "#ff3366";
     datasets.push({
       type: "candlestick",
       label: type === "heikin_ashi" ? "平均足" : "ローソク足",
       data: candleData,
       yAxisID: "y",
-      color: { up: "#00ff88", down: "#ff3366", unchanged: "#999" },
-      borderColor: { up: "#00ff88", down: "#ff3366", unchanged: "#999" },
+      color: { up: candleUpColor, down: candleDownColor, unchanged: "#999" },
+      borderColor: {
+        up: candleUpColor,
+        down: candleDownColor,
+        unchanged: "#999",
+      },
     });
   } else if (type === "area") {
     const gradient = ctx.createLinearGradient(0, 0, 0, 300);
@@ -1374,16 +1383,27 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
       x: d.x,
       y: d.v || 0,
     }));
+    const upBg = isJpScheme
+      ? "rgba(255, 51, 102, 0.25)"
+      : "rgba(0, 255, 136, 0.25)";
+    const downBg = isJpScheme
+      ? "rgba(0, 255, 136, 0.25)"
+      : "rgba(255, 51, 102, 0.25)";
+    const upBorder = isJpScheme
+      ? "rgba(255, 51, 102, 0.5)"
+      : "rgba(0, 255, 136, 0.5)";
+    const downBorder = isJpScheme
+      ? "rgba(0, 255, 136, 0.5)"
+      : "rgba(255, 51, 102, 0.5)";
+
     datasets.push({
       type: "bar",
       label: "出来高",
       data: volumeData,
       yAxisID: "yVolume",
-      backgroundColor: normalizedOhlc.map((d) =>
-        d.c >= d.o ? "rgba(0, 255, 136, 0.25)" : "rgba(255, 51, 102, 0.25)",
-      ),
+      backgroundColor: normalizedOhlc.map((d) => (d.c >= d.o ? upBg : downBg)),
       borderColor: normalizedOhlc.map((d) =>
-        d.c >= d.o ? "rgba(0, 255, 136, 0.5)" : "rgba(255, 51, 102, 0.5)",
+        d.c >= d.o ? upBorder : downBorder,
       ),
       borderWidth: 1,
       barThickness: "flex",
@@ -1554,10 +1574,23 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
     return;
   }
 
+  const isJpScheme =
+    typeof getColorSchemePreference === "function" &&
+    getColorSchemePreference() === "jp_standard";
+
   const pnlData = data.map((d) => ({
     x: d.x,
     y: (((d.c ?? d.price) - avgPrice) / avgPrice) * 100,
   }));
+
+  const posColor = isJpScheme ? "#ff7d7d" : "#7dffb0";
+  const negColor = isJpScheme ? "#7dffb0" : "#ff7d7d";
+  const posFill = isJpScheme
+    ? "rgba(255, 125, 125, 0.2)"
+    : "rgba(125, 255, 176, 0.2)";
+  const negFill = isJpScheme
+    ? "rgba(125, 255, 176, 0.2)"
+    : "rgba(255, 125, 125, 0.2)";
 
   const existingChart = chartInstances.get(canvas);
   if (existingChart && existingChart.config.type === "line") {
@@ -1565,8 +1598,12 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
     // 最新の損益状態に合わせて色を動的に更新
     existingChart.data.datasets[0].borderColor = (ctx) => {
       if (!ctx.chart.chartArea) return "#6bb6ff";
-      return pnlData[pnlData.length - 1].y >= 0 ? "#7dffb0" : "#ff7d7d";
+      return pnlData[pnlData.length - 1].y >= 0 ? posColor : negColor;
     };
+    if (existingChart.data.datasets[0].fill) {
+      existingChart.data.datasets[0].fill.above = posFill;
+      existingChart.data.datasets[0].fill.below = negFill;
+    }
     existingChart.update(animate ? undefined : "none");
     return;
   }
@@ -1583,13 +1620,13 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
           data: pnlData,
           borderColor: (ctx) => {
             if (!ctx.chart.chartArea) return "#6bb6ff";
-            return pnlData[pnlData.length - 1].y >= 0 ? "#7dffb0" : "#ff7d7d";
+            return pnlData[pnlData.length - 1].y >= 0 ? posColor : negColor;
           },
           borderWidth: 1.5,
           fill: {
             target: "origin",
-            below: "rgba(255, 125, 125, 0.2)",
-            above: "rgba(125, 255, 176, 0.2)",
+            below: negFill,
+            above: posFill,
           },
           tension: 0.3,
           pointRadius: 0,

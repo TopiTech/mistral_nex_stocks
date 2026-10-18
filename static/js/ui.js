@@ -398,6 +398,15 @@ function updateStockUI(wrapper, stock) {
     }
   }
 
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerOpen =
+    (typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === wrapper) ||
+    Boolean(
+      drawerEl?.classList.contains("open") &&
+      drawerEl.dataset.stockKey === stockKey,
+    );
+
   // Update Detail Panel (only if not open to avoid jitter)
   const detail = wrapper.querySelector(".detail-panel");
   if (detail && !detail.classList.contains("open")) {
@@ -416,14 +425,31 @@ function updateStockUI(wrapper, stock) {
     }
   }
 
+  // Update drawer detail numerical values if open for this stock
+  if (isDrawerOpen) {
+    const drawerChartContent = document.getElementById("drawerTabChartContent");
+    const drawerTarget = drawerChartContent || drawerEl;
+    if (drawerTarget) {
+      const elMap = {
+        ".detail-current": formatPrice(stock.price, stock),
+        ".detail-high": formatPrice(stock.high, stock),
+        ".detail-low": formatPrice(stock.low, stock),
+        ".detail-volume":
+          stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
+      };
+      for (const [sel, val] of Object.entries(elMap)) {
+        const el = drawerTarget.querySelector(sel);
+        if (el && el.textContent !== String(val)) {
+          el.textContent = val;
+        }
+      }
+    }
+  }
+
   // Real-time Chart Update if open
   // ガード条件: ローディング中、または読み込み完了直後（0.8秒間）は更新をスキップしてアニメーションの衝突を防ぐ
   let container = wrapper.querySelector(".chart-container");
-  if (
-    !container &&
-    typeof currentDrawerActiveWrapper !== "undefined" &&
-    currentDrawerActiveWrapper === wrapper
-  ) {
+  if (!container && isDrawerOpen) {
     const drawerChart = document.getElementById("drawerTabChartContent");
     if (drawerChart) {
       container = drawerChart.querySelector(".chart-container");
@@ -431,16 +457,23 @@ function updateStockUI(wrapper, stock) {
   }
   const lastRefresh = parseInt(wrapper.dataset.lastRefresh || "0");
   const isCooldown = Date.now() - lastRefresh < 800;
+  const isDetailOpen = Boolean(detail?.classList.contains("open"));
 
   if (
-    detail?.classList.contains("open") &&
+    (isDetailOpen || isDrawerOpen) &&
     container &&
     !container.classList.contains("loading") &&
     !isCooldown
   ) {
     requestAnimationFrame(() => {
       if (isPortfolioTab) {
-        const pnlCanvas = wrapper.querySelector(".chart-canvas-pnl");
+        const pnlCanvas =
+          wrapper.querySelector(".chart-canvas-pnl") ||
+          (isDrawerOpen
+            ? document.querySelector(
+                "#drawerTabChartContent .chart-canvas-pnl, #stock-detail-drawer .chart-canvas-pnl",
+              )
+            : null);
         if (pnlCanvas)
           drawPnLChart(pnlCanvas, stock.chart_data || [], stock.avg_price, {
             animate: false,
@@ -460,10 +493,14 @@ function updateStockUI(wrapper, stock) {
             });
           } else {
             // SSE軽量ペイロード時は既存チャートの末尾だけ追従させる
-            const canvas = wrapper.querySelector(".chart-canvas");
+            const canvas =
+              wrapper.querySelector(".chart-canvas") ||
+              (isDrawerOpen
+                ? document.querySelector(
+                    "#drawerTabChartContent .chart-canvas, #stock-detail-drawer .chart-canvas",
+                  )
+                : null);
             const chart = canvas ? chartInstances.get(canvas) : null;
-            const _isLine =
-              getChartPref(stockKey, "type", "line") !== "candlestick";
             if (
               chart &&
               chart.data.datasets?.[0]?.data?.length > 0 &&
@@ -482,11 +519,15 @@ function updateStockUI(wrapper, stock) {
           }
         } else {
           // 他期間選択中: 既存チャートの最終データポイントのみ現在価格に更新 (SSEデータで上書きしない)
-          const canvas = wrapper.querySelector(".chart-canvas");
+          const canvas =
+            wrapper.querySelector(".chart-canvas") ||
+            (isDrawerOpen
+              ? document.querySelector(
+                  "#drawerTabChartContent .chart-canvas, #stock-detail-drawer .chart-canvas",
+                )
+              : null);
           if (canvas) {
             const chart = chartInstances.get(canvas);
-            const _isLine =
-              getChartPref(stockKey, "type", "line") !== "candlestick";
             if (chart && chart.data.datasets?.[0]?.data?.length > 0) {
               const lastPoint = chart.data.datasets[0].data.at(-1);
               if (lastPoint && stock.price != null) {
@@ -858,6 +899,11 @@ function buildDetailPanel(
     chartContainer.classList.add("portfolio-hidden");
   }
   const chartCanvas = createEl("canvas", "chart-canvas");
+  chartCanvas.setAttribute("role", "img");
+  chartCanvas.setAttribute(
+    "aria-label",
+    `${stock.symbol} のテクニカルチャート`,
+  );
   chartContainer.appendChild(chartCanvas);
   inner.appendChild(chartContainer);
 
@@ -1497,6 +1543,13 @@ function renderPortfolio() {
 
   if (holdings.length === 0) {
     if (summaryContainer) summaryContainer.style.display = "none";
+    Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
+      w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+      if (cardIntersectionObserver) {
+        cardIntersectionObserver.unobserve(w);
+      }
+      unregisterWrapper(w.dataset.stockKey, w);
+    });
     container.textContent = "";
     const empty = document.createElement("div");
     empty.className = "no-results";
@@ -2433,11 +2486,18 @@ function closeAiDrawer() {
 
 async function sendAiDrawerMessage() {
   const inputEl = document.getElementById("aiDrawerInput");
+  const sendBtn = document.getElementById("sendAiDrawerBtn");
   const messagesEl = document.getElementById("ai-drawer-chat-messages");
   if (!inputEl || !messagesEl) return;
 
   const text = inputEl.value.trim();
   if (!text) return;
+  if (inputEl.disabled) return;
+
+  inputEl.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+  const originalBtnText = sendBtn ? sendBtn.textContent : "";
+  if (sendBtn) sendBtn.textContent = "送信中...";
 
   const userMsg = document.createElement("div");
   userMsg.className = "ai-msg user";
@@ -2574,6 +2634,13 @@ async function sendAiDrawerMessage() {
     renderReply(reply);
   } catch (err) {
     loadingMsg.textContent = `エラー: ${err.message || "接続エラーが発生しました。"}`;
+  } finally {
+    inputEl.disabled = false;
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = originalBtnText;
+    }
+    inputEl.focus();
   }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -2824,6 +2891,15 @@ function openStockDetailDrawer(stock, wrapper) {
   const overlay = document.getElementById("stock-detail-drawer-overlay");
   if (!overlay) return;
 
+  const stockKey =
+    wrapper?.dataset?.stockKey ||
+    makeStockKey(stock.market || "us", stock.symbol);
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  if (drawerEl) {
+    drawerEl.classList.add("open");
+    drawerEl.dataset.stockKey = stockKey;
+  }
+
   if (currentDrawerActiveWrapper && currentDrawerActiveWrapper !== wrapper) {
     closeStockDetailDrawer();
   }
@@ -2954,6 +3030,12 @@ function closeStockDetailDrawer() {
     if (typeof unlockBodyScroll === "function") {
       unlockBodyScroll();
     }
+  }
+
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  if (drawerEl) {
+    drawerEl.classList.remove("open");
+    delete drawerEl.dataset.stockKey;
   }
 
   if (currentDrawerActiveWrapper) {
@@ -3171,10 +3253,34 @@ async function triggerAiTechnicalLines(wrapper) {
 
 function renderAiTechnicalLinesSummary(wrapper, data) {
   if (!wrapper) return;
+  const stockKey = wrapper.dataset?.stockKey;
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerActive =
+    currentDrawerActiveWrapper === wrapper ||
+    Boolean(
+      drawerEl?.classList.contains("open") &&
+      drawerEl.dataset.stockKey === stockKey,
+    );
+
   let summaryBox = wrapper.querySelector(".ai-tech-lines-summary");
+  if (!summaryBox && isDrawerActive) {
+    const drawerChartContent = document.getElementById("drawerTabChartContent");
+    summaryBox =
+      drawerChartContent?.querySelector(".ai-tech-lines-summary") ||
+      drawerEl?.querySelector(".ai-tech-lines-summary");
+  }
+
   if (!summaryBox) {
     summaryBox = createEl("div", "ai-tech-lines-summary hidden");
-    const chartContainer = wrapper.querySelector(".chart-container");
+    let chartContainer = wrapper.querySelector(".chart-container");
+    if (!chartContainer && isDrawerActive) {
+      const drawerChartContent = document.getElementById(
+        "drawerTabChartContent",
+      );
+      chartContainer =
+        drawerChartContent?.querySelector(".chart-container") ||
+        drawerEl?.querySelector(".chart-container");
+    }
     if (chartContainer && chartContainer.parentNode) {
       chartContainer.parentNode.insertBefore(
         summaryBox,
@@ -3593,6 +3699,8 @@ function closeFsChartModal() {
     modal.setAttribute("aria-hidden", "true");
     modal.setAttribute("inert", "");
     delete modal.dataset.stockKey;
+    const fsCanvas = document.getElementById("fs-chart-canvas");
+    if (fsCanvas) destroyChart(fsCanvas);
     const tvContainer = document.getElementById("tradingview-chart-container");
     if (tvContainer && window.TradingViewManager) {
       window.TradingViewManager.clearContainer(tvContainer);

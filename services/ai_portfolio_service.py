@@ -62,6 +62,10 @@ _AI_GEN_INFLIGHT: dict[str, threading.Event] = {}
 class PortfolioStorageError(RuntimeError):
     """Raised when existing portfolio storage cannot be read safely."""
 
+    def __init__(self, message: str, status_code: int = 503) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 def _strip_html_tags(text: str) -> str:
     """Remove HTML-like tags from text before it is persisted (defense in depth)."""
@@ -678,8 +682,20 @@ def generate_ai_portfolio_by_theme(
             logger.info("Reusing AI portfolio generated concurrently for theme/id: %s", clean_id)
             return saved
         # The concurrent request did not persist anything (it may have failed).
-        logger.warning("Concurrent generation for theme/id: %s saved nothing", clean_id)
-        raise PortfolioStorageError("Concurrent generation failed to persist portfolio")
+        # Fall back to acquiring generation slot and generating ourselves.
+        logger.warning(
+            "Concurrent generation for theme/id: %s saved nothing; falling back to self-generation",
+            clean_id,
+        )
+        if not _acquire_ai_generation_slot(key):
+            logger.warning(
+                "Could not acquire generation slot for theme/id: %s after concurrent failure",
+                clean_id,
+            )
+            raise PortfolioStorageError(
+                "Concurrent generation failed to persist portfolio and retry slot could not be acquired",
+                status_code=503,
+            )
 
     try:
         # Perform Web Search to gather real-time market news & stock research for theme

@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from flask import g, has_app_context
+from flask import current_app, g, has_app_context
 from pydantic import BaseModel
 
 from app_state import app_state
@@ -248,6 +248,24 @@ def _build_openai_cache_key(
     reasoning_effort: str | None = None,
     cache_key_override: str | None = None,
 ) -> str:
+    serializable_tools: Any = None
+    if tools:
+        if isinstance(tools, list):
+            serializable_tools = []
+            for t in tools:
+                if hasattr(t, "model_dump"):
+                    serializable_tools.append(t.model_dump())
+                elif hasattr(t, "dict") and callable(t.dict):
+                    serializable_tools.append(t.dict())
+                else:
+                    serializable_tools.append(t)
+        elif hasattr(tools, "model_dump"):
+            serializable_tools = tools.model_dump()
+        elif hasattr(tools, "dict") and callable(tools.dict):
+            serializable_tools = tools.dict()
+        else:
+            serializable_tools = tools
+
     raw_key = {
         "provider": "openai_compatible",
         "model": model,
@@ -255,7 +273,7 @@ def _build_openai_cache_key(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "response_format": str(response_format),
-        "tools": bool(tools),
+        "tools": serializable_tools,
         "tool_choice": str(tool_choice) if tool_choice else None,
         "reasoning_effort": str(reasoning_effort) if reasoning_effort else None,
         "cache_key_override": cache_key_override,
@@ -863,6 +881,9 @@ def call_openai_chat_with_tools(
     import concurrent.futures
     import math
 
+    _proxy: Any = current_app
+    flask_app: Any = _proxy._get_current_object() if has_app_context() else None
+
     max_tool_calls_per_turn = 8
     max_tool_argument_chars = 16_384
     max_tool_call_id_chars = 128
@@ -952,22 +973,28 @@ def call_openai_chat_with_tools(
             tool_calls = tool_calls[:max_tool_calls_per_turn]
 
         def _exec_single_tool(tc: dict[str, Any], iter_idx: int = iteration) -> dict[str, Any]:
-            tc_id = tc.get("id") or f"call_{iter_idx}_{_gen_token()}"
-            if len(tc_id) > max_tool_call_id_chars:
-                tc_id = tc_id[:max_tool_call_id_chars]
-            fn = tc.get("function") or {}
-            fn_name = str(fn.get("name") or "unknown_tool")[:80]
-            fn_args = fn.get("arguments") or "{}"
-            if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
-                fn_args = "{}"
+            def _execute() -> dict[str, Any]:
+                tc_id = tc.get("id") or f"call_{iter_idx}_{_gen_token()}"
+                if len(tc_id) > max_tool_call_id_chars:
+                    tc_id = tc_id[:max_tool_call_id_chars]
+                fn = tc.get("function") or {}
+                fn_name = str(fn.get("name") or "unknown_tool")[:80]
+                fn_args = fn.get("arguments") or "{}"
+                if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                    fn_args = "{}"
 
-            tool_output = execute_mistral_tool_call(fn_name, fn_args)
-            return {
-                "role": "tool",
-                "tool_call_id": tc_id,
-                "name": fn_name,
-                "content": _serialize_tool_result(tool_output),
-            }
+                tool_output = execute_mistral_tool_call(fn_name, fn_args)
+                return {
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "name": fn_name,
+                    "content": _serialize_tool_result(tool_output),
+                }
+
+            if flask_app is not None:
+                with flask_app.app_context():
+                    return _execute()
+            return _execute()
 
         valid_tcs = [tc for tc in tool_calls if isinstance(tc, dict)]
         if len(valid_tcs) > 1:
@@ -1092,11 +1119,23 @@ def get_openai_embeddings_batch(
 
     results: list[list[float] | None] = [None] * len(texts)
 
-    for i in range(0, len(texts), batch_size):
-        chunk = [t.strip()[:4000] for t in texts[i : i + batch_size]]
+    # Filter non-empty texts while tracking original indices to prevent HTTP 400
+    valid_items: list[tuple[int, str]] = [
+        (idx, t.strip()[:4000])
+        for idx, t in enumerate(texts)
+        if isinstance(t, str) and t.strip()
+    ]
+
+    if not valid_items:
+        return results
+
+    effective_batch_size = max(1, batch_size)
+    for i in range(0, len(valid_items), effective_batch_size):
+        chunk = valid_items[i : i + effective_batch_size]
+        chunk_texts = [text for _, text in chunk]
         payload = {
             "model": target_model,
-            "input": chunk,
+            "input": chunk_texts,
         }
         try:
             client = _get_openai_client(base_url, api_key)
@@ -1104,10 +1143,17 @@ def get_openai_embeddings_batch(
             if resp.status_code == 200:
                 data = resp.json()
                 raw_data = data.get("data", []) if isinstance(data, dict) else []
-                for idx, item in enumerate(raw_data):
-                    emb = item.get("embedding") if isinstance(item, dict) else None
-                    if isinstance(emb, list) and (i + idx) < len(results):
-                        results[i + idx] = emb
+                for fallback_idx, item in enumerate(raw_data):
+                    if not isinstance(item, dict):
+                        continue
+                    pos = item.get("index")
+                    if not isinstance(pos, int) or pos < 0 or pos >= len(chunk):
+                        pos = fallback_idx
+                    if 0 <= pos < len(chunk):
+                        orig_idx = chunk[pos][0]
+                        emb = item.get("embedding")
+                        if isinstance(emb, list) and orig_idx < len(results):
+                            results[orig_idx] = emb
             else:
                 logger.debug(
                     "OpenAI embeddings returned HTTP %d: %s (graceful fallback)",

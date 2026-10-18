@@ -91,6 +91,27 @@ class SearchNullResponseTests(unittest.TestCase):
         self.assertEqual(second.get_json()["results"][0]["symbol"], "SECOND")
         self.assertEqual(search.call_count, 2)
 
+    def test_search_returns_502_when_search_provider_fails(self):
+        """When the stock_provider search raises an error, /api/search must return HTTP 502 error_response."""
+        with global_cache.cache_lock:
+            global_cache.caches.clear()
+
+        with patch.object(
+            app_state.stock_provider,
+            "search",
+            side_effect=ValueError("Simulated search provider failure"),
+        ):
+            response = self.client.get(
+                "/api/search?q=NVDA",
+                headers={"Origin": "http://localhost:5000"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        payload = response.get_json()
+        self.assertIsInstance(payload, dict)
+        self.assertFalse(payload.get("ok"))
+        self.assertTrue(payload.get("error_flag"))
+
 
 if __name__ == "__main__":
     unittest.main()

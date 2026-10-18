@@ -238,13 +238,15 @@ class StateManager {
    * @param {string} key - 銘柄を識別するキー (例: "us:AAPL")。
    */
   toggleFavorite(key) {
-    if (this.favorites.has(key)) {
-      this.favorites.delete(key);
-      this._notify("favorites", this.favorites, this.favorites);
+    const oldFavorites = new Set(this._favorites);
+    const newFavorites = new Set(this._favorites);
+    if (newFavorites.has(key)) {
+      newFavorites.delete(key);
     } else {
-      this.favorites.add(key);
-      this._notify("favorites", this.favorites, this.favorites);
+      newFavorites.add(key);
     }
+    this._favorites = newFavorites;
+    this._notify("favorites", newFavorites, oldFavorites);
     this.saveFavorites();
   }
 

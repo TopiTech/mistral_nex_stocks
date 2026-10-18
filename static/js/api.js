@@ -326,6 +326,7 @@ function buildIndexChip(label, key) {
   const chip = document.createElement("span");
   chip.className = "index-chip";
   chip.dataset.indexKey = key;
+  chip.tabIndex = 0;
 
   const strong = document.createElement("strong");
   strong.textContent = label;
@@ -338,6 +339,8 @@ function buildIndexChip(label, key) {
   chip.addEventListener("mouseenter", (e) => showIndexTooltip(e, key));
   chip.addEventListener("mousemove", (e) => moveIndexTooltip(e));
   chip.addEventListener("mouseleave", () => hideIndexTooltip());
+  chip.addEventListener("focus", (e) => showIndexTooltip(e, key));
+  chip.addEventListener("blur", () => hideIndexTooltip());
 
   return chip;
 }
@@ -369,16 +372,33 @@ function showIndexTooltip(event, key) {
     tooltip.appendChild(div);
   }
   tooltip.classList.add("show");
-  moveIndexTooltip(event);
+  moveIndexTooltip(event, event?.currentTarget || event?.target);
 }
 
-function moveIndexTooltip(event) {
+function moveIndexTooltip(event, targetEl = null) {
   const tooltip = document.getElementById("indices-tooltip");
   if (!tooltip || !tooltip.classList.contains("show")) return;
 
   const rect = tooltip.getBoundingClientRect();
-  const x = event.clientX - rect.width / 2;
-  const y = event.clientY + 25; // 25px below the cursor to avoid overlap
+  let x, y;
+  if (
+    event &&
+    typeof event.clientX === "number" &&
+    (event.clientX !== 0 || event.clientY !== 0)
+  ) {
+    x = event.clientX - rect.width / 2;
+    y = event.clientY + 25; // 25px below the cursor to avoid overlap
+  } else {
+    const el = targetEl || event?.target;
+    if (el && typeof el.getBoundingClientRect === "function") {
+      const chipRect = el.getBoundingClientRect();
+      x = chipRect.left + chipRect.width / 2 - rect.width / 2;
+      y = chipRect.bottom + 8;
+    } else {
+      x = 10;
+      y = 50;
+    }
+  }
 
   tooltip.style.left = `${Math.max(10, Math.min(x, window.innerWidth - rect.width - 10))}px`;
   tooltip.style.top = `${Math.min(y, window.innerHeight - rect.height - 10)}px`;
@@ -1928,11 +1948,20 @@ async function sendChat(wrapper) {
   const input =
     wrapper.querySelector(".chat-input") ||
     document.querySelector("#stock-detail-drawer .chat-input");
+  const sendBtn =
+    wrapper.querySelector(".chat-send-btn") ||
+    document.querySelector("#stock-detail-drawer .chat-send-btn");
   const log =
     wrapper.querySelector(".chat-log") ||
     document.querySelector("#stock-detail-drawer .chat-log");
+
+  if (input?.disabled || sendBtn?.disabled) return;
+
   const msg = input?.value.trim();
   if (!msg || !HAS_MISTRAL_API_KEY) return;
+
+  if (input) input.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
 
   const stock = getStockByKey(stockKey);
   const userDiv = document.createElement("div");
@@ -1974,6 +2003,14 @@ async function sendChat(wrapper) {
   } catch (e) {
     aiDiv.textContent = "通信エラーが発生しました";
     showToast("❌ チャット通信エラー: " + e.message, "#ff7d7d");
+  } finally {
+    if (input) {
+      input.disabled = false;
+      input.focus();
+    }
+    if (sendBtn) {
+      sendBtn.disabled = false;
+    }
   }
   ensureChatDisclaimer(log);
   log.scrollTop = log.scrollHeight;
@@ -1987,26 +2024,7 @@ function applyAnalysisResult(wrapper, stock, data) {
     drawerEl?.classList.contains("open") &&
     drawerEl.dataset.stockKey === stockKey,
   );
-  const findEl = (sel) =>
-    wrapper.querySelector(sel) ||
-    (isDrawerActiveForStock ? drawerEl?.querySelector(sel) : null);
-  const aiSection = findEl(".ai-section");
-  if (data.search_failed && aiSection) {
-    const box = document.createElement("div");
-    box.className = "ai-warning-banner";
-    box.style.cssText =
-      "margin:8px 0 12px;padding:8px 10px;border-radius:8px;background:rgba(230,126,34,0.14);border:1px solid rgba(230,126,34,0.45);color:#ffe5d9;font-size:0.82rem;";
-    box.textContent =
-      "⚠️ 最新ニュースの取得に失敗したため、基本財務データのみで分析しています。";
-    const aiSlider = aiSection.querySelector(".ai-slider");
-    aiSection.insertBefore(box, aiSlider || null);
-  }
-  const recEl = findEl(".ai-rec");
-  const sentEl = findEl(".ai-sent");
-  const targetEl = findEl(".ai-target");
-  const upsideEl = findEl(".ai-upside");
-  const catEl = findEl(".ai-cat");
-  const riskEl = findEl(".ai-risk");
+  const drawerAiContent = document.getElementById("drawerTabAiContent");
 
   // Retrieve previous state for diffing
   let prevData = null;
@@ -2060,155 +2078,229 @@ function applyAnalysisResult(wrapper, stock, data) {
     ["弱気", "中立"],
   );
 
-  applyArrowToElement(recEl, data.recommendation, recArrow);
-  applyArrowToElement(sentEl, data.sentiment, sentArrow);
-  if (targetEl)
-    targetEl.textContent =
-      data.target_price_3m != null
-        ? formatPrice(data.target_price_3m, stock)
+  const targetSections = [];
+  const wrapperAiSection = wrapper?.querySelector(".ai-section");
+  if (wrapperAiSection) targetSections.push(wrapperAiSection);
+  if (isDrawerActiveForStock) {
+    const drawerAiSection =
+      drawerAiContent?.querySelector(".ai-section") ||
+      drawerEl?.querySelector(".ai-section");
+    if (drawerAiSection && !targetSections.includes(drawerAiSection)) {
+      targetSections.push(drawerAiSection);
+    }
+  }
+
+  targetSections.forEach((aiSection) => {
+    if (data.search_failed && aiSection) {
+      let box = aiSection.querySelector(".ai-warning-banner");
+      if (!box) {
+        box = document.createElement("div");
+        box.className = "ai-warning-banner";
+        box.style.cssText =
+          "margin:8px 0 12px;padding:8px 10px;border-radius:8px;background:rgba(230,126,34,0.14);border:1px solid rgba(230,126,34,0.45);color:#ffe5d9;font-size:0.82rem;";
+        box.textContent =
+          "⚠️ 最新ニュースの取得に失敗したため、基本財務データのみで分析しています。";
+        const aiSlider = aiSection.querySelector(".ai-slider");
+        aiSection.insertBefore(box, aiSlider || null);
+      }
+    }
+    const recEl = aiSection.querySelector(".ai-rec");
+    const sentEl = aiSection.querySelector(".ai-sent");
+    const targetEl = aiSection.querySelector(".ai-target");
+    const upsideEl = aiSection.querySelector(".ai-upside");
+    const catEl = aiSection.querySelector(".ai-cat");
+    const riskEl = aiSection.querySelector(".ai-risk");
+
+    applyArrowToElement(recEl, data.recommendation, recArrow);
+    applyArrowToElement(sentEl, data.sentiment, sentArrow);
+    if (targetEl)
+      targetEl.textContent =
+        data.target_price_3m != null
+          ? formatPrice(data.target_price_3m, stock)
+          : "--";
+    if (upsideEl) {
+      const upside = data.upside_3m ?? "";
+      upsideEl.textContent = upside ? `上昇余地: ${upside}` : "";
+      const upsideNum = parseFloat(String(upside).replace("%", ""));
+      if (!upside || !Number.isFinite(upsideNum) || upsideNum === 0) {
+        upsideEl.style.color = "#9ca3af";
+      } else {
+        upsideEl.style.color =
+          upside.includes("+") || upsideNum > 0 ? "#7dffb0" : "#ff7d7d";
+      }
+    }
+
+    const catalystsText =
+      Array.isArray(data.key_catalysts) && data.key_catalysts.length
+        ? data.key_catalysts.join(" / ")
         : "--";
-  if (upsideEl) {
-    const upside = data.upside_3m ?? "";
-    upsideEl.textContent = upside ? `上昇余地: ${upside}` : "";
-    const upsideNum = parseFloat(String(upside).replace("%", ""));
-    if (!upside || !Number.isFinite(upsideNum) || upsideNum === 0) {
-      upsideEl.style.color = "#9ca3af";
-    } else {
-      upsideEl.style.color =
-        upside.includes("+") || upsideNum > 0 ? "#7dffb0" : "#ff7d7d";
+    if (catEl) catEl.textContent = catalystsText;
+
+    const risksText =
+      Array.isArray(data.risk_factors) && data.risk_factors.length
+        ? data.risk_factors.join(" / ")
+        : "--";
+    if (riskEl) riskEl.textContent = risksText;
+
+    const aiSlider = aiSection.querySelector(".ai-slider");
+    if (aiSlider && (data.confidence || data.latest_news_impact)) {
+      aiSlider.querySelectorAll(".ai-extra-card").forEach((c) => c.remove());
+
+      if (data.analyzed_at) {
+        const dateCard = document.createElement("div");
+        dateCard.className = "ai-card ai-extra-card";
+
+        const dateTitle = document.createElement("div");
+        dateTitle.className = "ai-card-title";
+        dateTitle.textContent = "分析日時";
+
+        const dateContent = document.createElement("div");
+        dateContent.className = "ai-card-content";
+        dateContent.style.fontSize = "0.85rem";
+        dateContent.textContent = new Date(data.analyzed_at).toLocaleString();
+
+        dateCard.appendChild(dateTitle);
+        dateCard.appendChild(dateContent);
+        aiSlider.appendChild(dateCard);
+      }
+
+      if (data.confidence) {
+        const confCard = document.createElement("div");
+        confCard.className = "ai-card ai-extra-card";
+
+        const confTitle = document.createElement("div");
+        confTitle.className = "ai-card-title";
+        confTitle.textContent = "AI確信度";
+
+        const confContent = document.createElement("div");
+        confContent.className = "ai-card-content";
+        confContent.textContent = data.confidence;
+
+        const confLabel = document.createElement("div");
+        confLabel.className = "ai-confidence-label";
+        confLabel.textContent = "Intelligence Confidence";
+
+        confCard.appendChild(confTitle);
+        confCard.appendChild(confContent);
+        confCard.appendChild(confLabel);
+        aiSlider.appendChild(confCard);
+      }
+
+      if (data.latest_news_impact) {
+        const newsCard = document.createElement("div");
+        newsCard.className = "ai-card ai-extra-card";
+
+        const newsTitle = document.createElement("div");
+        newsTitle.className = "ai-card-title";
+        newsTitle.textContent = "最新ニュース影響";
+
+        const newsContent = document.createElement("div");
+        newsContent.className = "ai-card-content";
+        newsContent.textContent = data.latest_news_impact;
+
+        newsCard.appendChild(newsTitle);
+        newsCard.appendChild(newsContent);
+        aiSlider.appendChild(newsCard);
+      }
     }
-  }
 
-  const catalystsText =
-    Array.isArray(data.key_catalysts) && data.key_catalysts.length
-      ? data.key_catalysts.join(" / ")
-      : "--";
-  if (catEl) catEl.textContent = catalystsText;
-
-  const risksText =
-    Array.isArray(data.risk_factors) && data.risk_factors.length
-      ? data.risk_factors.join(" / ")
-      : "--";
-  if (riskEl) riskEl.textContent = risksText;
-
-  // 確信度やニュース影響がある場合は追加カードとして表示するロジック（オプション）
-  const aiSlider = recEl?.closest(".ai-slider");
-  if (aiSlider && (data.confidence || data.latest_news_impact)) {
-    // 既存のConfidence/Newsカードがあれば削除して再作成
-    aiSlider.querySelectorAll(".ai-extra-card").forEach((c) => c.remove());
-
-    // Analyzed At Card
-    if (data.analyzed_at) {
-      const dateCard = document.createElement("div");
-      dateCard.className = "ai-card ai-extra-card";
-
-      const dateTitle = document.createElement("div");
-      dateTitle.className = "ai-card-title";
-      dateTitle.textContent = "分析日時";
-
-      const dateContent = document.createElement("div");
-      dateContent.className = "ai-card-content";
-      dateContent.style.fontSize = "0.85rem";
-      dateContent.textContent = new Date(data.analyzed_at).toLocaleString();
-
-      dateCard.appendChild(dateTitle);
-      dateCard.appendChild(dateContent);
-      aiSlider.appendChild(dateCard);
-    }
-
-    if (data.confidence) {
-      const confCard = document.createElement("div");
-      confCard.className = "ai-card ai-extra-card";
-
-      const confTitle = document.createElement("div");
-      confTitle.className = "ai-card-title";
-      confTitle.textContent = "AI確信度";
-
-      const confContent = document.createElement("div");
-      confContent.className = "ai-card-content";
-      confContent.textContent = data.confidence;
-
-      const confLabel = document.createElement("div");
-      confLabel.className = "ai-confidence-label";
-      confLabel.textContent = "Intelligence Confidence";
-
-      confCard.appendChild(confTitle);
-      confCard.appendChild(confContent);
-      confCard.appendChild(confLabel);
-      aiSlider.appendChild(confCard);
-    }
-
-    if (data.latest_news_impact) {
-      const newsCard = document.createElement("div");
-      newsCard.className = "ai-card ai-extra-card";
-
-      const newsTitle = document.createElement("div");
-      newsTitle.className = "ai-card-title";
-      newsTitle.textContent = "最新ニュース影響";
-
-      const newsContent = document.createElement("div");
-      newsContent.className = "ai-card-content";
-      newsContent.textContent = data.latest_news_impact;
-
-      newsCard.appendChild(newsTitle);
-      newsCard.appendChild(newsContent);
-      aiSlider.appendChild(newsCard);
-    }
-  }
-
-  if (aiSection) {
-    const listContainer = wrapper.closest(".stocks-list");
     aiSection.classList.add("show");
-    scheduleCompactLayoutAfterTransition(
-      aiSection,
-      listContainer,
-      "max-height",
-      false,
-    );
-  }
+    const listContainer = aiSection.closest(".stocks-list");
+    if (listContainer) {
+      scheduleCompactLayoutAfterTransition(
+        aiSection,
+        listContainer,
+        "max-height",
+        false,
+      );
+    }
+  });
 }
 
 function clearAnalysisError(wrapper) {
-  const errorBox = wrapper.querySelector(".ai-error-banner");
-  if (errorBox) errorBox.remove();
-  const warnBox = wrapper.querySelector(".ai-warning-banner");
-  if (warnBox) warnBox.remove();
+  const stockKey = wrapper?.dataset?.stockKey;
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerActiveForStock = Boolean(
+    drawerEl?.classList.contains("open") &&
+    drawerEl.dataset.stockKey === stockKey,
+  );
+  const drawerAiContent = document.getElementById("drawerTabAiContent");
+
+  const targets = [wrapper];
+  if (isDrawerActiveForStock) {
+    if (drawerAiContent) targets.push(drawerAiContent);
+    if (drawerEl) targets.push(drawerEl);
+  }
+  targets.forEach((target) => {
+    if (!target) return;
+    const errorBox = target.querySelector(".ai-error-banner");
+    if (errorBox) errorBox.remove();
+    const warnBox = target.querySelector(".ai-warning-banner");
+    if (warnBox) warnBox.remove();
+  });
 }
 
 function applyAnalysisError(wrapper, message) {
-  const aiSection = wrapper.querySelector(".ai-section");
-  if (!aiSection) return;
-  const listContainer = wrapper.closest(".stocks-list");
-  aiSection.classList.add("show");
-  scheduleCompactLayoutAfterTransition(
-    aiSection,
-    listContainer,
-    "max-height",
-    false,
+  const stockKey = wrapper?.dataset?.stockKey;
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerActiveForStock = Boolean(
+    drawerEl?.classList.contains("open") &&
+    drawerEl.dataset.stockKey === stockKey,
   );
+  const drawerAiContent = document.getElementById("drawerTabAiContent");
 
-  let box = aiSection.querySelector(".ai-error-banner");
-  if (!box) {
-    box = document.createElement("div");
-    box.className = "ai-error-banner";
-    box.style.cssText =
-      "margin:8px 0 12px;padding:8px 10px;border-radius:8px;background:rgba(255,125,125,0.14);border:1px solid rgba(255,125,125,0.45);color:#ffd7d7;font-size:0.82rem;";
-    aiSection.insertBefore(box, aiSection.querySelector(".ai-slider") || null);
+  const targetSections = [];
+  const wrapperAiSection = wrapper?.querySelector(".ai-section");
+  if (wrapperAiSection) targetSections.push(wrapperAiSection);
+  if (isDrawerActiveForStock) {
+    const drawerAiSection =
+      drawerAiContent?.querySelector(".ai-section") ||
+      drawerEl?.querySelector(".ai-section");
+    if (drawerAiSection && !targetSections.includes(drawerAiSection)) {
+      targetSections.push(drawerAiSection);
+    }
   }
-  box.textContent = `分析エラー: ${message || "不明なエラー"}`;
 
-  const recEl = wrapper.querySelector(".ai-rec");
-  const sentEl = wrapper.querySelector(".ai-sent");
-  const targetEl = wrapper.querySelector(".ai-target");
-  const upsideEl = wrapper.querySelector(".ai-upside");
-  const catEl = wrapper.querySelector(".ai-cat");
-  const riskEl = wrapper.querySelector(".ai-risk");
-  if (recEl) recEl.textContent = "エラー";
-  if (sentEl) sentEl.textContent = "エラー";
-  if (targetEl) targetEl.textContent = "--";
-  if (upsideEl) upsideEl.textContent = "";
-  if (catEl) catEl.textContent = "--";
-  if (riskEl) riskEl.textContent = "--";
+  if (targetSections.length === 0) return;
+
+  targetSections.forEach((aiSection) => {
+    const listContainer = aiSection.closest(".stocks-list");
+    aiSection.classList.add("show");
+    if (listContainer) {
+      scheduleCompactLayoutAfterTransition(
+        aiSection,
+        listContainer,
+        "max-height",
+        false,
+      );
+    }
+
+    let box = aiSection.querySelector(".ai-error-banner");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "ai-error-banner";
+      box.style.cssText =
+        "margin:8px 0 12px;padding:8px 10px;border-radius:8px;background:rgba(255,125,125,0.14);border:1px solid rgba(255,125,125,0.45);color:#ffd7d7;font-size:0.82rem;";
+      aiSection.insertBefore(
+        box,
+        aiSection.querySelector(".ai-slider") || null,
+      );
+    }
+    box.textContent = `分析エラー: ${message || "不明なエラー"}`;
+
+    const recEl = aiSection.querySelector(".ai-rec");
+    const sentEl = aiSection.querySelector(".ai-sent");
+    const targetEl = aiSection.querySelector(".ai-target");
+    const upsideEl = aiSection.querySelector(".ai-upside");
+    const catEl = aiSection.querySelector(".ai-cat");
+    const riskEl = aiSection.querySelector(".ai-risk");
+    if (recEl) recEl.textContent = "エラー";
+    if (sentEl) sentEl.textContent = "エラー";
+    if (targetEl) targetEl.textContent = "--";
+    if (upsideEl) upsideEl.textContent = "";
+    if (catEl) catEl.textContent = "--";
+    if (riskEl) riskEl.textContent = "--";
+  });
 }
 
 const ANALYZE_POLL_MAX_ATTEMPTS = 30; // 30 attempts * (8s wait + 2s sleep) allows up to ~150s for heavy reasoning models

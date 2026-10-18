@@ -101,8 +101,9 @@ def test_tool_error_does_not_expose_provider_diagnostics(mock_get_info, caplog):
 
 
 def test_tool_dispatch_error_does_not_expose_diagnostics():
-    """Invalid tool arguments must return the same generic failure envelope."""
-    res = execute_mistral_tool_call("get_market_news", {"query": "AAPL", "limit": "not-an-int"})
+    """Unexpected tool failures must return the generic failure envelope."""
+    with patch("services.ai_tools._tool_get_market_news", side_effect=RuntimeError("unexpected dispatch failure")):
+        res = execute_mistral_tool_call("get_market_news", {"query": "AAPL", "limit": "not-an-int"})
 
     assert res == {"error": "ツールの実行に失敗しました"}
 

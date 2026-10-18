@@ -751,6 +751,7 @@ def get_or_create_extension_api_token() -> str:
         cfg = config_store.load_config()
         secret_entry = cfg.get("extension_api_token")
         created_ts = cfg.get("extension_api_token_created", 0.0)
+        created_ts_f: float = 0.0
         rotated = False
         secret: str | None = None
 

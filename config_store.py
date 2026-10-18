@@ -16,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from crypto_utils import (
     _decode_secret,
@@ -632,7 +632,7 @@ def _rotate_corrupt_backups(directory: Path, limit: int = 5):
         logger.warning("Error during corrupt backups rotation: %s", exc, exc_info=True)
 
 
-def _config_cache_key():
+def _config_cache_key() -> tuple[int, int] | Literal["missing"]:
     """ファイルのmtime+sizeからキャッシュキーを生成（存在しない場合は 'missing'）。"""
     try:
         st = CONFIG_FILE.stat()
@@ -865,7 +865,7 @@ def load_config() -> dict[str, Any]:
         # Acquire a shared process-level lock before reading the JSON file.
         lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
         data = None
-        read_key: tuple[int, int] | None = None
+        read_key: tuple[int, int] | Literal["missing"] | None = None
 
         try:
             if os.name == "nt":  # Windows

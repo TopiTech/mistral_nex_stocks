@@ -13,7 +13,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
 import httpx
-from flask import g, has_app_context
+from flask import current_app, g, has_app_context
 from pydantic import BaseModel
 
 from app_state import app_state
@@ -1301,6 +1301,9 @@ def call_mistral_chat_with_tools(
     max_tool_call_id_chars = 128
     max_tool_result_chars = 32_000
 
+    _proxy: Any = current_app
+    flask_app = _proxy._get_current_object() if has_app_context() else None
+
     def _tool_loop_error(message: str) -> dict[str, Any]:
         return {"error": {"message": message, "status_code": 502}}
 
@@ -1436,33 +1439,39 @@ def call_mistral_chat_with_tools(
         current_messages.append(msg)
 
         def _exec_single_tool(tc: dict[str, Any]) -> dict[str, Any]:
-            tc_id = tc.get("id")
-            if not isinstance(tc_id, str) or not tc_id or len(tc_id) > max_tool_call_id_chars:
-                tc_id = f"call_{secrets.token_hex(4)}"
-            fn_name = "unknown_tool"
-            try:
-                fn = tc.get("function")
-                if not isinstance(fn, dict):
-                    raise TypeError("tool function must be an object")
-                candidate_name = fn.get("name")
-                if not isinstance(candidate_name, str) or not candidate_name.strip():
-                    raise ValueError("tool function name is missing")
-                fn_name = candidate_name.strip()[:80]
-                fn_args = fn.get("arguments") or {}
-                if not isinstance(fn_args, (dict, str)):
-                    raise TypeError("tool arguments must be an object or JSON string")
-                if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
-                    raise ValueError("tool arguments are too large")
-                tool_output = execute_mistral_tool_call(fn_name, fn_args)
-                tool_content = _serialize_tool_result(tool_output)
-            except Exception as tool_err:
-                logger.warning(
-                    "Tool execution error for %s error_type=%s",
-                    fn_name,
-                    type(tool_err).__name__,
-                )
-                tool_content = _serialize_tool_result({"error": "ツールの実行に失敗しました"})
-            return ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name)
+            def _execute() -> dict[str, Any]:
+                tc_id = tc.get("id")
+                if not isinstance(tc_id, str) or not tc_id or len(tc_id) > max_tool_call_id_chars:
+                    tc_id = f"call_{secrets.token_hex(4)}"
+                fn_name = "unknown_tool"
+                try:
+                    fn = tc.get("function")
+                    if not isinstance(fn, dict):
+                        raise TypeError("tool function must be an object")
+                    candidate_name = fn.get("name")
+                    if not isinstance(candidate_name, str) or not candidate_name.strip():
+                        raise ValueError("tool function name is missing")
+                    fn_name = candidate_name.strip()[:80]
+                    fn_args = fn.get("arguments") or {}
+                    if not isinstance(fn_args, (dict, str)):
+                        raise TypeError("tool arguments must be an object or JSON string")
+                    if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                        raise ValueError("tool arguments are too large")
+                    tool_output = execute_mistral_tool_call(fn_name, fn_args)
+                    tool_content = _serialize_tool_result(tool_output)
+                except Exception as tool_err:
+                    logger.warning(
+                        "Tool execution error for %s error_type=%s",
+                        fn_name,
+                        type(tool_err).__name__,
+                    )
+                    tool_content = _serialize_tool_result({"error": "ツールの実行に失敗しました"})
+                return ToolMessage(content=tool_content, tool_call_id=tc_id, name=fn_name)
+
+            if flask_app is not None:
+                with flask_app.app_context():
+                    return _execute()
+            return _execute()
 
         if len(valid_tcs) > 1:
             import concurrent.futures

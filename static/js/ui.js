@@ -2903,15 +2903,30 @@ function renderStockDetailDrawerHeader(stock) {
   const sym = stock.symbol || "";
   const name = stock.name || stock.companyName || "";
   const priceStr = formatDrawerPrice(stock);
-  const changeVal = parseFloat(stock.change_percent || 0);
-  const isPos = changeVal >= 0;
-  const sign = isPos ? "+" : "";
+  const changeVal = Number.isFinite(stock?.change_percent)
+    ? Number(stock.change_percent)
+    : null;
+  let badgeClass = "drawer-price-badge";
+  let pctStr = "--%";
+
+  if (changeVal !== null) {
+    if (changeVal > 0) {
+      badgeClass = "drawer-price-badge pos";
+      pctStr = `+${changeVal.toFixed(2)}%`;
+    } else if (changeVal < 0) {
+      badgeClass = "drawer-price-badge neg";
+      pctStr = `${changeVal.toFixed(2)}%`;
+    } else {
+      badgeClass = "drawer-price-badge";
+      pctStr = "0.00%";
+    }
+  }
 
   if (symbolEl) symbolEl.textContent = sym;
   if (nameEl) nameEl.textContent = name;
   if (priceBadge) {
-    priceBadge.textContent = `${priceStr} (${sign}${changeVal.toFixed(2)}%)`;
-    priceBadge.className = `drawer-price-badge ${isPos ? "pos" : "neg"}`;
+    priceBadge.textContent = `${priceStr} (${pctStr})`;
+    priceBadge.className = badgeClass;
   }
 }
 

@@ -449,10 +449,10 @@ def api_add_stock() -> Any:
     _announce_watchlist_state()
     _sync_realtime_symbol(symbol, market, register=True)
     schedule_sync_all_stocks_now()
-    return jsonify({"success": True})
+    return jsonify({"success": True, "ok": True})
 
 
-@views_bp.route("/api/stocks/delete", methods=["POST"])
+@views_bp.route("/api/stocks/delete", methods=["POST", "DELETE"])
 @rate_limit(max_requests=15, window_seconds=60)
 def api_delete_stock() -> Any:
     """銘柄削除APIエンドポイント"""
@@ -511,7 +511,7 @@ def api_delete_stock() -> Any:
 
     _announce_watchlist_state()
     schedule_sync_all_stocks_now()
-    return jsonify({"success": True})
+    return jsonify({"success": True, "ok": True})
 
 
 @views_bp.route("/api/stocks/add_ext", methods=["POST", "OPTIONS"])

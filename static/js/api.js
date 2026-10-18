@@ -1641,8 +1641,9 @@ async function searchStocks() {
     if (data.error) {
       if (list) {
         list.textContent = "";
+        const errorDetail = data.details?.reason || data.message || data.error;
         list.appendChild(
-          createEl("div", "no-results", `エラー: ${data.error}`),
+          createEl("div", "no-results", `エラー: ${errorDetail}`),
         );
       }
       input?.setAttribute("aria-expanded", "false");
@@ -1763,7 +1764,9 @@ async function addStock(symbol, name, market) {
       { showToast: false },
     );
     if (!res.ok || data.error) {
-      showToast(`❌ 追加エラー: ${data.error || "不明なエラー"}`, "#ff7d7d");
+      const errorDetail =
+        data.details?.reason || data.message || data.error || "不明なエラー";
+      showToast(`❌ 追加エラー: ${errorDetail}`, "#ff7d7d");
       return;
     }
     const marketNames = { us: "米国", jp: "日本", idx: "インデックス/ETF" };

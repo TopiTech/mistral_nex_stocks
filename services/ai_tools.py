@@ -458,7 +458,7 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
         import trend_sources as ts
 
         is_jp = (
-            any("\u3000" <= c <= "\u9fff" for c in query)
+            any("\u3000" <= c <= "\u9fff" or "\uff65" <= c <= "\uff9f" for c in query)
             or is_jp_stock_code(query.removesuffix(".T").strip())
             or query.strip().upper().endswith(".T")
         )

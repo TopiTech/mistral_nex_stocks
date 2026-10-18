@@ -366,15 +366,18 @@
       jpRegex.lastIndex = 0;
       while ((match = jpRegex.exec(text)) !== null) {
         const code = match[1];
+        const hasTSuffix = match[0].toUpperCase().endsWith(".T");
         // Ensure not part of a standard year or date or price like 2024, 2025, 2026, 1000
         // Use a sliding window of plausible years so the rule does not go stale.
+        // If explicitly suffixed with .T (e.g. 2002.T), it is a TSE stock ticker, not a calendar year.
         const yearVal = parseInt(code, 10);
         const currentYear = new Date().getFullYear();
-        if (yearVal >= 1990 && yearVal <= currentYear + 1) continue; // skip year numbers
+        if (!hasTSuffix && yearVal >= 1990 && yearVal <= currentYear + 1)
+          continue; // skip year numbers
 
         // Check surrounding context for Japanese stock indicators or just numeric stock code
         const symbol = `${code}.T`;
-        addMatch(foundMap, symbol, "jp", text, match.index, 2);
+        addMatch(foundMap, symbol, "jp", text, match.index, hasTSuffix ? 3 : 2);
       }
 
       // 3. Check US Ticker symbols

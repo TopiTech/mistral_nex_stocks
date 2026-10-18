@@ -259,6 +259,53 @@ function renderFavorites() {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Format compact change metrics (arrow, sign, value, percent, class, aria-label)
+ * ensuring proper accessibility, neutral zero/missing states, and NaN safety.
+ */
+function formatStockChangeMetrics(stock) {
+  let changeCls = "";
+  let arrow = "";
+  let sign = "";
+  let ariaPrefix = "変動なし";
+  let changeText = "--";
+  let pctText = "--%";
+
+  if (Number.isFinite(stock?.change)) {
+    changeText = String(stock.change);
+    if (stock.change > 0) {
+      changeCls = "pos";
+      arrow = "▲";
+      sign = "+";
+      ariaPrefix = "上昇";
+    } else if (stock.change < 0) {
+      changeCls = "neg";
+      arrow = "▼";
+      sign = "";
+      ariaPrefix = "下落";
+    } else {
+      ariaPrefix = "変わらず";
+    }
+  }
+
+  if (Number.isFinite(stock?.change_percent)) {
+    const pctSign = stock.change_percent > 0 ? "+" : "";
+    pctText = `${pctSign}${stock.change_percent}%`;
+  }
+
+  const className = changeCls
+    ? `compact-change ${changeCls}`
+    : "compact-change";
+  const text = Number.isFinite(stock?.change)
+    ? `${arrow}${sign}${changeText} (${pctText})`
+    : `-- (${pctText})`;
+  const ariaLabel = Number.isFinite(stock?.change)
+    ? `${ariaPrefix} ${sign}${changeText} (${pctText})`
+    : `データなし (${pctText})`;
+
+  return { className, text, ariaLabel };
+}
+
+/**
  * Unified UI Update for a stock card.
  */
 function updateStockUI(wrapper, stock) {
@@ -318,21 +365,15 @@ function updateStockUI(wrapper, stock) {
 
   const changeEl = wrapper.querySelector(".compact-change");
   if (changeEl) {
-    const isUp = Number.isFinite(stock.change) && stock.change >= 0;
-    const sign = isUp ? "+" : "";
-    // ▲▼ は色覚多様性に配慮し、色だけでなく記号でも増減を伝えるためのアクセシビリティ記号
-    const arrow = isUp ? "▲" : "▼";
-    const ariaPrefix = isUp ? "上昇" : "下落";
-    const nextCls = `compact-change ${isUp ? "pos" : "neg"}`;
-    const changeText = Number.isFinite(stock.change) ? stock.change : "--";
-    const nextText = `${arrow}${sign}${changeText} (${sign}${stock.change_percent}%)`;
+    const {
+      className: nextCls,
+      text: nextText,
+      ariaLabel,
+    } = formatStockChangeMetrics(stock);
     if (changeEl.className !== nextCls) changeEl.className = nextCls;
     if (changeEl.textContent !== nextText) {
       changeEl.textContent = nextText;
-      changeEl.setAttribute(
-        "aria-label",
-        `${ariaPrefix} ${sign}${changeText} (${sign}${stock.change_percent}%)`,
-      );
+      changeEl.setAttribute("aria-label", ariaLabel);
     }
   }
 
@@ -1000,8 +1041,6 @@ function createStockCard(stock, marketContext) {
   wrapper.dataset.marketContext = marketContext;
   wrapper.__stockData = { ...stock, market };
 
-  const isUpChange = Number.isFinite(stock.change) && stock.change >= 0;
-  const sign = isUpChange ? "+" : "";
   const isPortfolio = marketContext === "portfolio";
 
   // Compact Card Inner - DOM APIで構築
@@ -1026,19 +1065,13 @@ function createStockCard(stock, marketContext) {
       formatPrice(stock.price, stock),
     ),
   );
-  const changeClass = isUpChange ? "pos" : "neg";
-  const arrow = isUpChange ? "▲" : "▼";
-  const ariaPrefix = isUpChange ? "上昇" : "下落";
-  const changeText = Number.isFinite(stock.change) ? stock.change : "--";
-  const changeEl = createEl(
-    "div",
-    `compact-change ${changeClass}`,
-    `${arrow}${sign}${changeText} (${sign}${stock.change_percent}%)`,
-  );
-  changeEl.setAttribute(
-    "aria-label",
-    `${ariaPrefix} ${sign}${changeText} (${sign}${stock.change_percent}%)`,
-  );
+  const {
+    className: changeCls,
+    text: changeText,
+    ariaLabel: changeAriaLabel,
+  } = formatStockChangeMetrics(stock);
+  const changeEl = createEl("div", changeCls, changeText);
+  changeEl.setAttribute("aria-label", changeAriaLabel);
   right.appendChild(changeEl);
   let ptsTxt = "";
   if (

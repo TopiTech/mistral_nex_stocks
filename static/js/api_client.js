@@ -369,8 +369,13 @@ class APIClient {
       body: JSON.stringify(body),
     });
   }
-  async delete(url) {
-    return this.request(url, { method: "DELETE" });
+  async delete(url, body) {
+    const init = { method: "DELETE" };
+    if (body !== undefined) {
+      init.headers = { "Content-Type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    return this.request(url, init);
   }
   resetHeartbeat(onError) {
     const handler = onError || this._lastSSEParams?.onError;

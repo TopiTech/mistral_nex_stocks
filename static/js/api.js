@@ -1753,11 +1753,15 @@ async function addStock(symbol, name, market) {
   }
 
   try {
-    const { response: res, data } = await apiFetch("/api/stocks/add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: normalizedSymbol, name, market }),
-    });
+    const { response: res, data } = await apiFetch(
+      "/api/stocks/add",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: normalizedSymbol, name, market }),
+      },
+      { showToast: false },
+    );
     if (!res.ok || data.error) {
       showToast(`❌ 追加エラー: ${data.error || "不明なエラー"}`, "#ff7d7d");
       return;
@@ -1775,7 +1779,13 @@ async function addStock(symbol, name, market) {
     await fetchInitialStocks();
   } catch (e) {
     $logger.error("Add stock error:", e);
-    showToast("❌ 通信エラーが発生しました", "#ff7d7d");
+    if (e?.type !== APIErrorType.ABORTED) {
+      const msg = e?.message || "通信エラーが発生しました";
+      showToast(
+        msg.startsWith("❌") ? msg : `❌ 追加エラー: ${msg}`,
+        "#ff7d7d",
+      );
+    }
   }
 }
 

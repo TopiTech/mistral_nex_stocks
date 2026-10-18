@@ -407,26 +407,32 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
             "name": info.get("name") or symbol,
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
-            "market_cap": info.get("market_cap") or info.get("marketCap"),
-            "pe_ratio": info.get("pe_ratio") or info.get("trailing_pe") or info.get("trailingPE"),
-            "forward_pe": info.get("forward_pe") or info.get("forwardPE"),
-            "pb_ratio": info.get("pb_ratio")
-            or info.get("price_to_book")
-            or info.get("priceToBook"),
-            "dividend_yield": info.get("dividend_yield") or info.get("dividendYield"),
-            "eps": (
-                info.get("eps")
-                or info.get("trailing_eps")
-                or info.get("trailingEps")
-                or info.get("earningsPerShare")
+            "market_cap": _first_not_none(info.get("market_cap"), info.get("marketCap")),
+            "pe_ratio": _first_not_none(
+                info.get("pe_ratio"), info.get("trailing_pe"), info.get("trailingPE")
             ),
-            "52w_high": (
-                info.get("fifty_two_week_high")
-                or info.get("fiftyTwoWeekHigh")
-                or info.get("52w_high")
+            "forward_pe": _first_not_none(info.get("forward_pe"), info.get("forwardPE")),
+            "pb_ratio": _first_not_none(
+                info.get("pb_ratio"), info.get("price_to_book"), info.get("priceToBook")
             ),
-            "52w_low": (
-                info.get("fifty_two_week_low") or info.get("fiftyTwoWeekLow") or info.get("52w_low")
+            "dividend_yield": _first_not_none(
+                info.get("dividend_yield"), info.get("dividendYield")
+            ),
+            "eps": _first_not_none(
+                info.get("eps"),
+                info.get("trailing_eps"),
+                info.get("trailingEps"),
+                info.get("earningsPerShare"),
+            ),
+            "52w_high": _first_not_none(
+                info.get("fifty_two_week_high"),
+                info.get("fiftyTwoWeekHigh"),
+                info.get("52w_high"),
+            ),
+            "52w_low": _first_not_none(
+                info.get("fifty_two_week_low"),
+                info.get("fiftyTwoWeekLow"),
+                info.get("52w_low"),
             ),
         }
     except Exception as exc:
@@ -451,7 +457,12 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
     try:
         import trend_sources as ts
 
-        market = "jp" if any("\u3000" <= c <= "\u9fff" for c in query) else "us"
+        is_jp = (
+            any("\u3000" <= c <= "\u9fff" for c in query)
+            or is_jp_stock_code(query.removesuffix(".T").strip())
+            or query.strip().upper().endswith(".T")
+        )
+        market = "jp" if is_jp else "us"
         raw_items = ts.collect_market_news_items_fast(market)
         items: list[dict[str, Any]] = []
         for item in raw_items:

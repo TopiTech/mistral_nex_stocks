@@ -471,8 +471,13 @@ class APIClient {
     });
   }
 
-  async delete(url: string): Promise<APIResponse> {
-    return this.request(url, { method: "DELETE" });
+  async delete(url: string, body?: unknown): Promise<APIResponse> {
+    const init: RequestInit = { method: "DELETE" };
+    if (body !== undefined) {
+      init.headers = { "Content-Type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    return this.request(url, init);
   }
 
   resetHeartbeat(onError?: SSEErrorHandler): void {

@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 _TOOL_QUERY_MAX_LENGTH = 200
 _TOOL_TEXT_MAX_LENGTH = 2_000
 
+
+def _first_not_none(*values):
+    """Return the first value that is not None (treating 0/False as valid)."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
 # ---------------------------------------------------------------------------
 # Mistral Function Calling Tool Schemas
 # ---------------------------------------------------------------------------
@@ -224,23 +232,25 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(info, dict):
             info = {}
 
-        price = (
-            info.get("price")
-            or info.get("current_price")
-            or info.get("regularMarketPrice")
-            or info.get("currentPrice")
+        price = _first_not_none(
+            info.get("price"),
+            info.get("current_price"),
+            info.get("regularMarketPrice"),
+            info.get("currentPrice"),
         )
-        change = info.get("change") or info.get("regularMarketChange")
-        change_pct = (
-            info.get("change_pct")
-            or info.get("change_percent")
-            or info.get("regularMarketChangePercent")
+        change = _first_not_none(info.get("change"), info.get("regularMarketChange"))
+        change_pct = _first_not_none(
+            info.get("change_pct"),
+            info.get("change_percent"),
+            info.get("regularMarketChangePercent"),
         )
-        volume = info.get("volume") or info.get("regularMarketVolume")
-        high = info.get("high") or info.get("regularMarketDayHigh") or info.get("dayHigh")
-        low = info.get("low") or info.get("regularMarketDayLow") or info.get("dayLow")
-        open_val = info.get("open") or info.get("regularMarketOpen")
-        updated_at = info.get("updated_at") or info.get("timestamp")
+        volume = _first_not_none(info.get("volume"), info.get("regularMarketVolume"))
+        high = _first_not_none(
+            info.get("high"), info.get("regularMarketDayHigh"), info.get("dayHigh")
+        )
+        low = _first_not_none(info.get("low"), info.get("regularMarketDayLow"), info.get("dayLow"))
+        open_val = _first_not_none(info.get("open"), info.get("regularMarketOpen"))
+        updated_at = _first_not_none(info.get("updated_at"), info.get("timestamp"))
 
         # 1. Fallback to realtime market engine snapshot if price missing
         if price is None:
@@ -362,7 +372,7 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
 
         return {
             "symbol": symbol,
-            "name": info.get("name") or info.get("shortName") or symbol,
+            "name": _first_not_none(info.get("name"), info.get("shortName")) or symbol,
             "market": market,
             "price": price,
             "change": change,

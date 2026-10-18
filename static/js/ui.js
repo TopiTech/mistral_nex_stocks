@@ -318,18 +318,20 @@ function updateStockUI(wrapper, stock) {
 
   const changeEl = wrapper.querySelector(".compact-change");
   if (changeEl) {
-    const sign = stock.change >= 0 ? "+" : "";
+    const isUp = Number.isFinite(stock.change) && stock.change >= 0;
+    const sign = isUp ? "+" : "";
     // ▲▼ は色覚多様性に配慮し、色だけでなく記号でも増減を伝えるためのアクセシビリティ記号
-    const arrow = stock.change >= 0 ? "▲" : "▼";
-    const ariaPrefix = stock.change >= 0 ? "上昇" : "下落";
-    const nextCls = `compact-change ${stock.change >= 0 ? "pos" : "neg"}`;
-    const nextText = `${arrow}${sign}${stock.change} (${sign}${stock.change_percent}%)`;
+    const arrow = isUp ? "▲" : "▼";
+    const ariaPrefix = isUp ? "上昇" : "下落";
+    const nextCls = `compact-change ${isUp ? "pos" : "neg"}`;
+    const changeText = Number.isFinite(stock.change) ? stock.change : "--";
+    const nextText = `${arrow}${sign}${changeText} (${sign}${stock.change_percent}%)`;
     if (changeEl.className !== nextCls) changeEl.className = nextCls;
     if (changeEl.textContent !== nextText) {
       changeEl.textContent = nextText;
       changeEl.setAttribute(
         "aria-label",
-        `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`,
+        `${ariaPrefix} ${sign}${changeText} (${sign}${stock.change_percent}%)`,
       );
     }
   }
@@ -998,7 +1000,8 @@ function createStockCard(stock, marketContext) {
   wrapper.dataset.marketContext = marketContext;
   wrapper.__stockData = { ...stock, market };
 
-  const sign = stock.change >= 0 ? "+" : "";
+  const isUpChange = Number.isFinite(stock.change) && stock.change >= 0;
+  const sign = isUpChange ? "+" : "";
   const isPortfolio = marketContext === "portfolio";
 
   // Compact Card Inner - DOM APIで構築
@@ -1023,17 +1026,18 @@ function createStockCard(stock, marketContext) {
       formatPrice(stock.price, stock),
     ),
   );
-  const changeClass = stock.change >= 0 ? "pos" : "neg";
-  const arrow = stock.change >= 0 ? "▲" : "▼";
-  const ariaPrefix = stock.change >= 0 ? "上昇" : "下落";
+  const changeClass = isUpChange ? "pos" : "neg";
+  const arrow = isUpChange ? "▲" : "▼";
+  const ariaPrefix = isUpChange ? "上昇" : "下落";
+  const changeText = Number.isFinite(stock.change) ? stock.change : "--";
   const changeEl = createEl(
     "div",
     `compact-change ${changeClass}`,
-    `${arrow}${sign}${stock.change} (${sign}${stock.change_percent}%)`,
+    `${arrow}${sign}${changeText} (${sign}${stock.change_percent}%)`,
   );
   changeEl.setAttribute(
     "aria-label",
-    `${ariaPrefix} ${sign}${stock.change} (${sign}${stock.change_percent}%)`,
+    `${ariaPrefix} ${sign}${changeText} (${sign}${stock.change_percent}%)`,
   );
   right.appendChild(changeEl);
   let ptsTxt = "";

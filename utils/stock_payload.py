@@ -406,7 +406,9 @@ def _compute_price_metrics(hist, symbol, info=None):
         return None, None, None, None
     prev = None
     if isinstance(info, dict):
-        raw_prev = info.get("previousClose") or info.get("regularMarketPreviousClose")
+        raw_prev = info.get("previousClose")
+        if raw_prev is None:
+            raw_prev = info.get("regularMarketPreviousClose")
         if raw_prev is not None:
             try:
                 p_val = float(raw_prev)

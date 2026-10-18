@@ -926,7 +926,7 @@ def _auto_remove_invalid_symbols(
 
     removed_any = False
     with app_state.market.invalid_symbol_lock:
-        for (symbol, _name_or_dict, market), result in zip(items, fetched_items):
+        for (symbol, _name_or_dict, market), result in zip(items, fetched_items, strict=True):
             if symbol in default_symbols or market == "idx":
                 continue
             if _is_batch_result_invalid(result):

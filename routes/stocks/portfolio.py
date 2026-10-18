@@ -269,7 +269,7 @@ def api_update_portfolio() -> Any:
     announce_current_market_state()
     announce_real_market_state()
     schedule_sync_all_stocks_now()
-    return jsonify({"success": True})
+    return jsonify({"ok": True, "success": True})
 
 
 @portfolio_bp.route("/api/stocks/portfolio/snapshot", methods=["POST"])
@@ -284,4 +284,4 @@ def api_portfolio_snapshot() -> Any:
             status_code=403,
         )
     stocks = resolve_stocks_for_response(include_portfolio=True)
-    return jsonify({"stocks": stocks})
+    return jsonify({"ok": True, "stocks": stocks})

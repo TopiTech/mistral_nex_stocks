@@ -299,7 +299,7 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
 
         data_list = []
         for ts, o, h, low_val, c, v, ma5, ma25 in zip(
-            timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s
+            timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s, strict=True
         ):
             volume_float = _finite_float(v, default=None)
             vol = int(volume_float) if volume_float is not None else 0

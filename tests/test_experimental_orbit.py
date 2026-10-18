@@ -323,3 +323,97 @@ def test_stock_history_api_response_schema(client):
     item = history[0]
     assert "c" in item or "close" in item
     assert "x" in item or "timestamp" in item or "date" in item
+
+
+def test_constellation_controller_error_handling():
+    """Verify ConstellationController renders error banner instead of comparison card when /api/chat fails."""
+    _run_node(
+        r"""
+const fs = require("fs");
+const vm = require("vm");
+class Node {
+  constructor(tag) {
+    this.tagName = tag;
+    this.children = [];
+    this.attributes = {};
+    this._text = "";
+    this.className = "";
+    this.disabled = false;
+    this.classList = {
+      add: (c) => { this.className = (this.className + " " + c).trim(); },
+      remove: (c) => { this.className = this.className.replace(c, "").trim(); },
+    };
+  }
+  set textContent(value) { this._text = String(value); this.children = []; }
+  get textContent() { return this._text; }
+  appendChild(child) { this.children.push(child); return child; }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  addEventListener() {}
+}
+const context = {
+  document: {
+    createElement: (tag) => new Node(tag),
+    createTextNode: (text) => {
+      const node = new Node("#text");
+      node.textContent = text;
+      return node;
+    },
+  },
+  AbortController: class {
+    constructor() { this.signal = {}; }
+    abort() {}
+  },
+  fetch: async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ ok: false, error: "INVALID_API_KEY", message: "APIキーが無効です" }),
+  }),
+  setTimeout: (fn) => fn(),
+  clearTimeout: () => {},
+};
+context.window = context;
+context.global = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync("static/js/experimental/constellation-controller.js", "utf8"), context);
+
+const container = new Node("div");
+const compareBtn = new Node("button");
+const controller = new context.ConstellationController(
+  {
+    state: {
+      connectedSymbols: ["AAPL", "MSFT"],
+      stocks: new Map([
+        ["AAPL", { symbol: "AAPL", market: "us", price: 180, changePercent: 1.2, sector: "Technology", peRatio: 28, marketCap: 2800000000000 }],
+        ["MSFT", { symbol: "MSFT", market: "us", price: 420, changePercent: -0.5, sector: "Technology", peRatio: 34, marketCap: 3100000000000 }],
+      ]),
+    },
+    subscribe: () => {},
+  },
+  { aiResultContainer: container, aiCompareBtn: compareBtn },
+);
+
+controller.runAiComparison().then(() => {
+  function flatten(node) {
+    return [node, ...node.children.flatMap(flatten)];
+  }
+  const nodes = flatten(container);
+  const errorBanners = nodes.filter((n) => n.className === "ai-error-banner");
+  const comparisonCards = nodes.filter((n) => n.className === "ai-comparison-card");
+  if (errorBanners.length === 0) {
+    throw new Error("Expected ai-error-banner to be rendered on API error");
+  }
+  if (comparisonCards.length > 0) {
+    throw new Error("Did not expect ai-comparison-card on API error");
+  }
+  if (!errorBanners[0].textContent.includes("APIキーが無効です")) {
+    throw new Error(`Expected error message in banner, got: ${errorBanners[0].textContent}`);
+  }
+  process.stdout.write("ok");
+  process.exit(0);
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+"""
+    )
+

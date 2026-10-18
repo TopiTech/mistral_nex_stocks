@@ -172,7 +172,7 @@ class RateLimitingTestCase(unittest.TestCase):
         """Exceeding rate limit should return 429"""
         # レート制限を超えるまでリクエストを送信
         # localhost は除外されるため、非ローカルIPを環境変数でエミュレート
-        for i in range(65):  # デフォルトは60リクエスト/60秒
+        for _ in range(65):  # デフォルトは60リクエスト/60秒
             response = self.client.get("/api/health", environ_base={"REMOTE_ADDR": "192.168.1.100"})
 
         # 最後のリクエストは429であるべき
@@ -181,7 +181,7 @@ class RateLimitingTestCase(unittest.TestCase):
     def test_rate_limit_includes_retry_after_header(self):
         """429 response should include Retry-After header"""
         # レート制限を超えるまでリクエストを送信
-        for i in range(65):
+        for _ in range(65):
             response = self.client.get("/api/health", environ_base={"REMOTE_ADDR": "192.168.1.101"})
 
         if response.status_code == 429:
@@ -192,7 +192,7 @@ class RateLimitingTestCase(unittest.TestCase):
 
     def test_localhost_exempt_from_rate_limit(self):
         """localhost should be exempt from rate limiting"""
-        for i in range(100):
+        for _ in range(100):
             response = self.client.get("/api/health")
 
         # localhost はレート制限されない

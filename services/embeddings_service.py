@@ -207,7 +207,7 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     dot_product = 0.0
     sum_sq_a = 0.0
     sum_sq_b = 0.0
-    for a, b in zip(vec_a, vec_b):
+    for a, b in zip(vec_a, vec_b, strict=True):
         if (
             isinstance(a, bool)
             or isinstance(b, bool)
@@ -287,7 +287,7 @@ def rank_news_by_semantic_relevance(
 
     # 4. Score and sort
     scored_items = []
-    for item, article_vec in zip(valid_items, article_vecs):
+    for item, article_vec in zip(valid_items, article_vecs, strict=True):
         score = cosine_similarity(query_vec, article_vec) if article_vec else 0.0
         item_copy = dict(item)
         item_copy["semantic_score"] = round(score, 4)

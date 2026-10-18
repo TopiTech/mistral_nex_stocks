@@ -354,6 +354,17 @@
             res && typeof res.json === "function"
               ? await res.json().catch(() => null)
               : (res?.data ?? res);
+
+          if (res && typeof res.ok === "boolean" && !res.ok) {
+            const errorMsg =
+              data?.message || data?.error || `HTTP ${res.status}`;
+            throw new Error(errorMsg);
+          }
+          if (data && (data.ok === false || (data.error && !data.fetching))) {
+            throw new Error(
+              data.message || data.error || "AI分析エラーが発生しました",
+            );
+          }
           if (!data?.fetching) break;
           await this.waitForAiPoll(1500, abortController.signal);
         }
@@ -363,10 +374,15 @@
             "AI分析の準備に時間がかかっています。しばらくして再試行してください。",
           );
         }
+        if (data && (data.ok === false || data.error)) {
+          throw new Error(
+            data.message || data.error || "AI分析エラーが発生しました",
+          );
+        }
         aiResultContainer.textContent = "";
 
-        if (data && (data.reply || data.message)) {
-          const replyText = data.reply || data.message;
+        if (data && data.reply) {
+          const replyText = data.reply;
           const resultCard = document.createElement("div");
           resultCard.className = "ai-comparison-card";
 
@@ -381,12 +397,15 @@
           const disclaimer = document.createElement("div");
           disclaimer.className = "ai-disclaimer-note";
           disclaimer.textContent =
+            data.disclaimer ||
             "※ AIによる比較分析は客観的データに基づく情報提供のみを目的としており、特定の投資行動を推奨するものではありません。";
           resultCard.appendChild(disclaimer);
 
           aiResultContainer.appendChild(resultCard);
         } else {
-          throw new Error(data?.error || "AI応答を取得できませんでした");
+          throw new Error(
+            data?.message || data?.error || "AI応答を取得できませんでした",
+          );
         }
       } catch (err) {
         if (err.name !== "AbortError") {

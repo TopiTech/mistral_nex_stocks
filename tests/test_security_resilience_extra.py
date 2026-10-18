@@ -117,7 +117,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
 
             from constants import HISTORY_CIRCUIT_BREAKER_THRESHOLD
 
-            for i in range(HISTORY_CIRCUIT_BREAKER_THRESHOLD):
+            for _ in range(HISTORY_CIRCUIT_BREAKER_THRESHOLD):
                 clear_cache_prefix(f"hist_{symbol}")
                 response = self.client.get(
                     f"/api/stock-history?symbol={symbol}&market=us&period=1d"

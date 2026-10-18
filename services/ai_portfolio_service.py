@@ -880,7 +880,7 @@ def generate_ai_portfolio_by_theme(
                     for it in items:
                         it["weight_pct"] = equal_w
                 elif total_w > 0.0:
-                    for it, w in zip(items, raw_weights):
+                    for it, w in zip(items, raw_weights, strict=True):
                         it["weight_pct"] = round((w / total_w) * 100.0, 1)
 
                 # Mark the portfolio as AI-generated (distinct from the fallback path).

@@ -246,7 +246,7 @@ class AppConfigSchema(BaseModel):
     langsearch_api_key_min_length: int = 20
     tavily_api_key_min_length: int = 5
     credentials_ephemeral: bool = False
-    credentials_ephemeral_keys: list[str] = []
+    credentials_ephemeral_keys: list[str] = Field(default_factory=list)
     credentials_ephemeral_warning: str | None = None
 
 

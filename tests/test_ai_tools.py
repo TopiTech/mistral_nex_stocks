@@ -45,3 +45,44 @@ def test_tool_get_market_news_invalid_limit(monkeypatch):
     res_huge = _tool_get_market_news({"query": "AI stocks", "limit": 999})
     assert "news" in res_huge
     assert res_huge["count"] <= 10
+
+
+def test_tool_calculate_technical_levels_protected_history(monkeypatch):
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+
+    import utils.market_utils as mu
+    from services.ai_tools import _tool_calculate_technical_levels
+
+    data = {
+        "Open": [100.0 + i for i in range(30)],
+        "High": [105.0 + i for i in range(30)],
+        "Low": [95.0 + i for i in range(30)],
+        "Close": [102.0 + i for i in range(30)],
+        "Volume": [1000000] * 30,
+    }
+    df = pd.DataFrame(data)
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = df
+
+    monkeypatch.setattr(mu, "safe_get_ticker", lambda sym: mock_ticker)
+
+    res = _tool_calculate_technical_levels({"symbol": "NVDA", "market": "us", "period": "3mo"})
+    assert res["symbol"] == "NVDA"
+    assert "current_price" in res
+    assert "sma_20" in res
+    assert mock_ticker.history.called
+
+
+def test_tool_calculate_technical_levels_rate_limited(monkeypatch):
+    from app_state import app_state
+    from services.ai_tools import _tool_calculate_technical_levels
+
+    monkeypatch.setattr(app_state.market, "is_yf_rate_limited", lambda: True)
+
+    res = _tool_calculate_technical_levels({"symbol": "NVDA", "market": "us", "period": "3mo"})
+    assert res["symbol"] == "NVDA"
+    assert res["status"] == "データ取得失敗"
+
+

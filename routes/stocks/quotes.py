@@ -380,10 +380,12 @@ def api_stock_history() -> Any:
                         interval=interval,
                         probe=True,
                     )
-                except queue.Full:
+                except Exception as exc:
                     submitted = False
                     logger.warning(
-                        "History fetch queue full during HALF_OPEN symbol=%s", circuit_key
+                        "History fetch submission failed during HALF_OPEN symbol=%s: %s",
+                        circuit_key,
+                        exc,
                     )
                 if not submitted:
                     app_state.market.report_circuit_result(

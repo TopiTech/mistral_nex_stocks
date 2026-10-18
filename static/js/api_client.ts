@@ -242,12 +242,24 @@ class APIClient {
       });
   }
 
+  resolveURL(url: string): string {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      return url;
+    }
+    const cleanBase = this.baseURL.replace(/\/+$/, "");
+    if (cleanBase && (url === cleanBase || url.startsWith(`${cleanBase}/`))) {
+      return url;
+    }
+    const cleanUrl = url.replace(/^\/+/, "");
+    return cleanBase ? `${cleanBase}/${cleanUrl}` : `/${cleanUrl}`;
+  }
+
   async request(
     url: string,
     options: RequestInit = {},
     maxRetries = 2,
   ): Promise<APIResponse> {
-    const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
+    const fullURL = this.resolveURL(url);
     let lastError: APIError | null = null;
     const token = document
       .querySelector('meta[name="csrf-token"]')
@@ -578,7 +590,7 @@ class APIClient {
     }
     this._teardownSSE();
     this._reconnecting = false;
-    const fullURL = url.startsWith("http") ? url : `${this.baseURL}${url}`;
+    const fullURL = this.resolveURL(url);
     try {
       const eventSource = new EventSource(fullURL);
       this.currentEventSource = eventSource;

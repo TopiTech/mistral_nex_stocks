@@ -458,17 +458,8 @@ function logout() {
 document.addEventListener("DOMContentLoaded", () => {
   loadStocks();
 
-  const backBtn = document.getElementById("back-btn");
-  if (backBtn)
-    backBtn.addEventListener("click", () => {
-      location.href = "/main";
-    });
-
-  const screenerBtn = document.getElementById("screener-btn");
-  if (screenerBtn)
-    screenerBtn.addEventListener("click", () => {
-      location.href = "/screener";
-    });
+  // Navigation buttons (back-btn, screener-btn) are native <a> elements.
+  // Their default navigation handles clicks and modifier keys natively.
 
   const resetBtn = document.getElementById("reset-btn");
   if (resetBtn) resetBtn.addEventListener("click", resetAllStocks);

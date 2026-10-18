@@ -526,6 +526,7 @@ document.addEventListener("DOMContentLoaded", () => {
         !detailDrawerOverlay.classList.contains("hidden")
       ) {
         if (typeof closeStockDetailDrawer === "function") {
+          e.preventDefault();
           closeStockDetailDrawer();
         }
         return;
@@ -533,6 +534,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const aiDrawerOverlay = document.getElementById("ai-drawer-overlay");
       if (aiDrawerOverlay && !aiDrawerOverlay.classList.contains("hidden")) {
         if (typeof closeAiDrawer === "function") {
+          e.preventDefault();
           closeAiDrawer();
         }
         return;

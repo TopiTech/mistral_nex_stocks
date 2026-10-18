@@ -191,12 +191,8 @@ function initNavigationEvents() {
   document.getElementById("settingsBtn")?.addEventListener("click", () => {
     window.location.href = "/settings";
   });
-  // mobileSettingsBtn is now a plain <a href="/settings"> link. Do not
-  // intercept clicks whose browser default already navigates correctly:
-  // handling plain left clicks would cancel the default and break auxiliary
-  // behaviors such as Ctrl/Cmd+click (open in new tab). Note that the click
-  // event for <a> elements fires on the anchor itself, so no closest() lookup
-  // is needed here.
+  // mobileSettingsBtn is a plain <a href="/settings"> link. Intercept plain left
+  // clicks while preserving auxiliary navigation such as Ctrl/Cmd+click.
   document
     .getElementById("mobileSettingsBtn")
     ?.addEventListener("click", (event) => {
@@ -902,6 +898,7 @@ window.addEventListener("keydown", (e) => {
   const fsModal = document.getElementById("chart-fullscreen-modal");
   if (fsModal && !fsModal.classList.contains("hidden")) {
     if (typeof closeFsChartModal === "function") {
+      e.preventDefault();
       closeFsChartModal();
       return;
     }
@@ -909,6 +906,7 @@ window.addEventListener("keydown", (e) => {
   const aiDrawer = document.getElementById("ai-drawer-overlay");
   if (aiDrawer && !aiDrawer.classList.contains("hidden")) {
     if (typeof closeAiDrawer === "function") {
+      e.preventDefault();
       closeAiDrawer();
       return;
     }
@@ -916,6 +914,7 @@ window.addEventListener("keydown", (e) => {
   const detailDrawer = document.getElementById("stock-detail-drawer-overlay");
   if (detailDrawer && !detailDrawer.classList.contains("hidden")) {
     if (typeof closeStockDetailDrawer === "function") {
+      e.preventDefault();
       closeStockDetailDrawer();
       return;
     }
@@ -927,6 +926,7 @@ window.addEventListener("keydown", (e) => {
     alertModal.classList.contains("show")
   ) {
     if (typeof closeModal === "function") {
+      e.preventDefault();
       closeModal("alertModal");
       return;
     }
@@ -938,12 +938,14 @@ window.addEventListener("keydown", (e) => {
     portfolioModal.classList.contains("show")
   ) {
     if (typeof closeModal === "function") {
+      e.preventDefault();
       closeModal("portfolioModal");
       return;
     }
   }
   const searchResults = DOM.get("search-results");
   if (searchResults && searchResults.style.display !== "none") {
+    e.preventDefault();
     searchResults.style.display = "none";
   }
 });

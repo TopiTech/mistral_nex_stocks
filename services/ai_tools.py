@@ -513,12 +513,28 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
         return input_error
 
     try:
+        from app_state import app_state
+        from constants import HISTORY_SEMAPHORE_TIMEOUT
         from utils.market_utils import safe_get_ticker
+
+        if app_state.market.is_yf_rate_limited():
+            return {"symbol": symbol, "status": "データ取得失敗"}
 
         ticker = safe_get_ticker(symbol)
         if ticker is None:
             return {"symbol": symbol, "status": "データ取得失敗"}
-        history_df = ticker.history(period=period)
+
+        acquired = app_state.market.yfinance_history_semaphore.acquire(
+            blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT
+        )
+        if not acquired:
+            return {"symbol": symbol, "status": "データ取得失敗"}
+
+        try:
+            history_df = ticker.history(period=period)
+        finally:
+            app_state.market.yfinance_history_semaphore.release()
+
         if history_df is None or history_df.empty or "Close" not in history_df:
             return {"symbol": symbol, "period": period, "status": "履歴データ不足"}
 

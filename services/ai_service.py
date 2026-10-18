@@ -2004,6 +2004,22 @@ def stream_mistral_chat(
         }
         return
 
+    circuit_probe_claimed = False
+    if not _is_fallback:
+        circuit_state = app_state.market.get_circuit_state("mistral")
+        if circuit_state.get("status") == "HALF_OPEN":
+            if not app_state.market.try_claim_circuit_probe("mistral"):
+                logger.warning(
+                    "Mistral circuit recovery probe already in progress. Skipping stream call."
+                )
+                yield {
+                    "type": "error",
+                    "message": "AIサービスは一時的に利用できません（復旧プローブ実行中）",
+                    "status_code": 503,
+                }
+                return
+            circuit_probe_claimed = True
+
     client = _get_mistral_client(api_key)
     if client is None:
         yield {
@@ -2081,6 +2097,7 @@ def stream_mistral_chat(
                         }
 
             app_state.market.report_circuit_result("mistral", success=True)
+            circuit_probe_claimed = False
             app_state.ai.reset_mistral_streak()
             with app_state.ai.mistral_cooldown_lock:
                 app_state.ai.mistral_last_call_ts = max(
@@ -2180,7 +2197,7 @@ def stream_mistral_chat(
                 return
 
             is_tier_err = _is_mistral_tier_restriction_error(exc, err_payload, status_code)
-            if (
+            is_circuit_failure = (
                 not is_tier_err
                 and status_code != 403
                 and (
@@ -2196,10 +2213,16 @@ def stream_mistral_chat(
                     )
                     or status_code >= 500
                 )
-            ):
+            )
+            if is_circuit_failure:
                 app_state.market.report_circuit_result(
                     "mistral", success=False, threshold=3, open_sec=60
                 )
+                circuit_probe_claimed = False
+            elif circuit_probe_claimed:
+                app_state.market.release_circuit_probe("mistral")
+                circuit_probe_claimed = False
+
             if status_code == 429 or _is_mistral_capacity_error(err_payload):
                 app_state.ai.mark_mistral_429(retry_after_sec)
 
@@ -2207,6 +2230,9 @@ def stream_mistral_chat(
 
             yield {"type": "error", "message": err_msg, "status_code": status_code}
         finally:
+            if circuit_probe_claimed:
+                app_state.market.release_circuit_probe("mistral")
+                circuit_probe_claimed = False
             # Flask closes this generator when the SSE client disconnects.  The
             # SDK stream must be closed here as well so its HTTP response does
             # not remain open until garbage collection.

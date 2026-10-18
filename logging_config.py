@@ -298,7 +298,9 @@ def init_logging(app) -> None:
         encoding="utf-8",
     )
     rotating_handler.setLevel(LOG_LEVEL)
-    rotating_handler.addFilter(BackendLogFilter())
+    # Pass the configured level so DEBUG records survive when LOG_LEVEL=DEBUG;
+    # with the default (INFO) the filter still drops all DEBUG output.
+    rotating_handler.addFilter(BackendLogFilter(log_level=LOG_LEVEL))
     rotating_handler.addFilter(WarningDeduplicationFilter())
     rotating_handler.setFormatter(_log_formatter)
     rotating_handler._mns_logging_initialized = True  # type: ignore[attr-defined]

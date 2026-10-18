@@ -645,7 +645,10 @@ function hasFreshSparklineData(stock) {
     if (ageMs <= MAX_INITIAL_SNAPSHOT_AGE_MS) return true;
   }
   // snapshot timestamp が欠落していても、SSE更新で届いたデータは描画許可する
-  return Boolean(stock?.__live_update);
+  if (stock?.__live_update) return true;
+  // リアルタイムdeltaパスは snapshot_ts_ms を含まないため、is_realtime を鮮度シグナルとして扱う
+  // (未接続のままだと15分後に updateStockUI が早期リターンし、開いているドロワーの値/チャートが凍結する)
+  return Boolean(stock?.is_realtime);
 }
 
 function setSparklineVisibility(wrapper, visible) {

@@ -190,11 +190,22 @@ def config_update_lock():
 
 @contextmanager
 def _master_key_update_lock():
-    """Serialize master-key initialization across local processes.
+    """Serialize master-key initialization across local processes AND threads.
 
-    On Windows, use a kernel mutex rather than a byte-range lock: the latter
-    is already used by config writes and cannot be safely nested for the full
-    load/generate/save transaction. POSIX uses the existing update lock.
+    On Windows, a kernel mutex serializes the transaction against other
+    master-key initializations, and ``config_update_lock()`` is nested inside
+    it so the load/generate/save sequence is also mutually exclusive with
+    credential/config RMW transactions that only hold ``config_update_lock()``
+    (a kernel mutex and a byte-range lock are different mechanisms: without
+    the nested acquisition the two transactions can interleave and silently
+    lose an update). POSIX already serializes both through the same
+    ``config_update_lock()``.
+
+    Callers must preserve the documented ordering — acquire the master-key
+    lock BEFORE ``config_update_lock()`` (see
+    ``credential_manager.get_or_create_flask_secret_key`` and
+    ``services.ai_portfolio_service._get_portfolio_master_key``) so the
+    nesting never runs in the reverse direction.
     """
     if os.name != "nt":
         with config_update_lock():
@@ -237,7 +248,8 @@ def _master_key_update_lock():
             raise RuntimeError(
                 f"Timed out waiting for master key initialization (wait_result={wait_result})"
             )
-        yield
+        with config_update_lock():
+            yield
     finally:
         if acquired:
             try:
@@ -853,6 +865,7 @@ def load_config() -> dict[str, Any]:
         # Acquire a shared process-level lock before reading the JSON file.
         lock_file = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
         data = None
+        read_key: tuple[int, int] | None = None
 
         try:
             if os.name == "nt":  # Windows
@@ -871,6 +884,17 @@ def load_config() -> dict[str, Any]:
                         locked = True
                         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                             data = json.load(f)
+                            # Key the cache from the handle we just read so the
+                            # stored key always matches the stored content, even
+                            # if another process replaces the file between the
+                            # read and the stat (otherwise the stale content
+                            # would be cached under the NEW file's key and
+                            # served indefinitely).
+                            try:
+                                _st = os.fstat(f.fileno())
+                                read_key = (_st.st_mtime_ns, _st.st_size)
+                            except OSError:
+                                read_key = None
                     finally:
                         if locked:
                             try:
@@ -895,6 +919,12 @@ def load_config() -> dict[str, Any]:
                         locked = True
                         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                             data = json.load(f)
+                            # See the Windows branch: fstat the handle we read.
+                            try:
+                                _st = os.fstat(f.fileno())
+                                read_key = (_st.st_mtime_ns, _st.st_size)
+                            except OSError:
+                                read_key = None
                     finally:
                         if locked:
                             try:
@@ -915,6 +945,11 @@ def load_config() -> dict[str, Any]:
                     try:
                         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                             data = json.load(f)
+                            try:
+                                _st = os.fstat(f.fileno())
+                                read_key = (_st.st_mtime_ns, _st.st_size)
+                            except OSError:
+                                read_key = None
                         break
                     except (json.JSONDecodeError, OSError) as read_exc:
                         last_err = read_exc
@@ -939,7 +974,11 @@ def load_config() -> dict[str, Any]:
             if not isinstance(cfg.get("api_credentials"), dict):
                 cfg["api_credentials"] = {}
             _CONFIG_CACHE["data"] = cfg
-            _CONFIG_CACHE["key"] = _config_cache_key()
+            # Fall back to a path stat only when the handle-based key could not
+            # be captured (os.fstat failed on every read path above).
+            if read_key is None:
+                read_key = _config_cache_key()
+            _CONFIG_CACHE["key"] = read_key
             _CONFIG_CORRUPTED = False
             return copy.deepcopy(cfg)
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
@@ -1073,19 +1112,18 @@ def save_config(cfg, create_backup=True):
                     break  # 成功
                 except (OSError, TypeError, RuntimeError) as exc:
                     if isinstance(exc, RuntimeError):
-                        logger.warning(
-                            "RuntimeError during config save (attempt %d/%d): %s. Retrying...",
-                            attempt + 1,
-                            max_retries,
-                            exc,
-                        )
-                    else:
-                        logger.warning(
-                            "Error during config save (attempt %d/%d): %s. Retrying...",
-                            attempt + 1,
-                            max_retries,
-                            exc,
-                        )
+                        # Fail-fast contract (see _write_and_replace_with_msvcrt_lock):
+                        # RuntimeError means the update lock could not be
+                        # acquired after its own bounded retry budget —
+                        # re-spinning here would hold config_update_lock for
+                        # another ~30s and block every config transaction.
+                        raise
+                    logger.warning(
+                        "Error during config save (attempt %d/%d): %s. Retrying...",
+                        attempt + 1,
+                        max_retries,
+                        exc,
+                    )
                     if attempt < max_retries - 1:
                         time.sleep(0.1 * (attempt + 1))
                         continue

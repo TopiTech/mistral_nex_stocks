@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import credential_manager
 from app import app
 from app_state import app_state
+from error_codes import ErrorCode
 
 
 class ApiCredentialsTestCase(unittest.TestCase):
@@ -716,9 +717,10 @@ class ShutdownEndpointTestCase(unittest.TestCase):
                     headers={"Origin": "http://localhost:5000"},
                 )
                 self.assertEqual(response.status_code, 403)
-                self.assertEqual(
-                    response.get_json(), {"ok": False, "error": "invalid shutdown request"}
-                )
+                body = response.get_json()
+                self.assertFalse(body["ok"])
+                self.assertEqual(body["error_code"], int(ErrorCode.FORBIDDEN))
+                self.assertEqual(body["details"], {"reason": "invalid shutdown request"})
 
     @patch.object(app_state, "consume_shutdown_token", return_value=False)
     def test_shutdown_empty_header_falls_back_to_json_token(self, mock_consume):

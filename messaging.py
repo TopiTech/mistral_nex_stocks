@@ -288,6 +288,26 @@ class SSEEventLog:
 
             self._last_used[mode] = _time.time()
 
+    def emit(self, mode: int, kind: str, payload: Any) -> int:
+        """Allocate the next sequence id and record the event atomically.
+
+        Splitting allocation (``next_id``) from recording (``record``) lets two
+        broadcaster threads interleave and store their ids out of order inside
+        the per-mode buffer, so ``replay_after`` would hand a reconnecting
+        client its frames in the wrong order (and mis-report ``oldest``).
+        Emitters that always record what they allocate must use this method;
+        ``next_id``/``record`` remain for callers that intentionally allocate
+        without recording (e.g. simulated gaps in tests).
+        """
+        with self._lock:
+            self._seq = (self._seq + 1) & self._SEQ_MASK
+            seq = self._seq
+            self._buffer_for(mode).append((seq, kind, payload))
+            import time as _time
+
+            self._last_used[mode] = _time.time()
+            return seq
+
     def contains(self, seq: int, mode: int) -> bool:
         """Return whether *seq* is an actually recorded event for *mode*."""
         with self._lock:

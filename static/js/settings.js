@@ -1118,7 +1118,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const savePromptBtn = document.getElementById("save-prompt-btn");
   const promptStatus = document.getElementById("prompt-save-status");
 
-  let _currentCredentialsData = null;
+  // _currentCredentialsData はモジュール先頭(line 15)で宣言済み —
+  // ここで再宣言すると外側が永久に null の死んだ状態になり、
+  // クロージャ外のヘルパーから参照した際に黙って null を読む。
 
   if (promptInput && savePromptBtn) {
     // Load existing credentials state (custom prompt, model catalog, etc.)

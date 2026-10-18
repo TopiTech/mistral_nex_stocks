@@ -90,13 +90,6 @@ class ShutdownTokenManager:
             if self.shutdown_token and not self.used_marker.exists():
                 return self.shutdown_token
 
-            was_used = self.used_marker.exists()
-            if was_used:
-                try:
-                    self.used_marker.unlink(missing_ok=True)
-                except OSError:
-                    pass
-
             # R1: One-time migration of a legacy project-root token into the
             # runtime data directory. Only attempt migration when the runtime
             # copy does not yet exist (otherwise the migrated copy would
@@ -106,6 +99,17 @@ class ShutdownTokenManager:
                 self._migrate_legacy_token_file()
             except OSError as exc:
                 self.logger.debug("Legacy shutdown token migration skipped: %s", exc)
+
+            # Evaluate consumption AFTER migration: a used-marker moved in by
+            # _migrate_legacy_token_file proves the migrated token was already
+            # consumed in a previous run, so it must be regenerated instead of
+            # silently resurrected.
+            was_used = self.used_marker.exists()
+            if was_used:
+                try:
+                    self.used_marker.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
             try:
                 if not was_used and self.token_file.exists():

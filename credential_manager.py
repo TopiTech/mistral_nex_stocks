@@ -787,8 +787,13 @@ def get_or_create_extension_api_token() -> str:
             config_store.save_config(cfg)
             rotated = True
 
-        if not rotated and not created_ts:
+        if not rotated and not created_ts_f:
             # Backfill creation timestamp for a pre-existing token (no rotation).
+            # Use the PARSED value: a truthy-but-non-numeric raw entry would
+            # otherwise skip the backfill forever, permanently disabling the
+            # age-based rotation (the rotation condition requires
+            # created_ts_f > 0). Backfilling on the parsed value self-heals
+            # the corrupted entry on the next call.
             cfg["extension_api_token_created"] = time.time()
             config_store.save_config(cfg)
 

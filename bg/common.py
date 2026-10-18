@@ -39,6 +39,10 @@ _sse_payload_yf_limited: bool = False
 _sse_payload_us_open: bool = False
 _sse_payload_jp_open: bool = False
 _sse_payload_lock = threading.Lock()
+# Serializes the emit+announce pair inside _announce_frame so concurrent
+# broadcasters cannot allocate adjacent sequence ids and then deliver them in
+# the opposite order (listeners apply diff frames strictly in arrival order).
+_sse_frame_publish_lock = threading.Lock()
 _sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
 _sse_full_snapshot_counter: int = 0
 
@@ -112,10 +116,16 @@ def _invalidate_sse_payload_cache() -> None:
 
 
 def _announce_frame(announcer: Any, frame: str, mode: int) -> None:
-    """Broadcast a complete SSE frame with a single replay-log sequence id."""
-    seq = sse_event_log.next_id()
-    sse_event_log.record(seq, mode, "frame", frame)
-    announcer.announce((seq, frame))
+    """Broadcast a complete SSE frame with a single replay-log sequence id.
+
+    The emit and the announce are serialized process-wide so two broadcaster
+    threads cannot invert frame order relative to the replay log (a listener
+    that receives seq N+1 before seq N would apply a newer diff and then an
+    older one, reverting values until the next frame).
+    """
+    with _sse_frame_publish_lock:
+        seq = sse_event_log.emit(mode, "frame", frame)
+        announcer.announce((seq, frame))
 
 
 def _raw_announce_current_market_state() -> None:
@@ -134,6 +144,7 @@ def _raw_announce_current_market_state() -> None:
         stocks = copy.deepcopy(app_state.market.current_stocks_cache)
         indices = copy.deepcopy(app_state.market.current_indices_cache)
 
+    announcer1 = getattr(app_state, "sse_announcer", None) or app_state.sse_announcer_mode1
     with _sse_payload_lock:
         current_gen = int(_get_app_bg_attr("_sse_payload_generation", _sse_payload_generation))
         cached_gen = int(
@@ -143,17 +154,15 @@ def _raw_announce_current_market_state() -> None:
         cached_us = bool(_get_app_bg_attr("_sse_payload_us_open", _sse_payload_us_open))
         cached_jp = bool(_get_app_bg_attr("_sse_payload_jp_open", _sse_payload_jp_open))
 
-    announcer1 = getattr(app_state, "sse_announcer", None) or app_state.sse_announcer_mode1
-    if (
-        current_gen == cached_gen
-        and yf_limited == cached_yf
-        and us_open == cached_us
-        and jp_open == cached_jp
-    ):
-        announcer1.announce(_SSE_KEEPALIVE_FRAME)
-        return
+        if (
+            current_gen == cached_gen
+            and yf_limited == cached_yf
+            and us_open == cached_us
+            and jp_open == cached_jp
+        ):
+            announcer1.announce(_SSE_KEEPALIVE_FRAME)
+            return
 
-    with _sse_payload_lock:
         counter = (
             int(_get_app_bg_attr("_sse_full_snapshot_counter", _sse_full_snapshot_counter)) + 1
         )
@@ -214,20 +223,27 @@ def _raw_announce_current_market_state() -> None:
         _sse_prev_stocks = new_prev
         _set_app_bg_attr("_sse_prev_stocks", new_prev)
 
-        _sse_payload_cache = f"data: {payload}\n\n"
+        frame = f"data: {payload}\n\n"
+        _sse_payload_cache = frame
         _sse_payload_cached_generation = current_gen
         _sse_payload_yf_limited = yf_limited
         _sse_payload_us_open = us_open
         _sse_payload_jp_open = jp_open
 
-        _set_app_bg_attr("_sse_payload_cache", _sse_payload_cache)
+        _set_app_bg_attr("_sse_payload_cache", frame)
         _set_app_bg_attr("_sse_payload_cached_generation", current_gen)
         _set_app_bg_attr("_sse_payload_yf_limited", yf_limited)
         _set_app_bg_attr("_sse_payload_us_open", us_open)
         _set_app_bg_attr("_sse_payload_jp_open", jp_open)
 
-    announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
-    announce_fn(announcer1, _sse_payload_cache, 1)
+        # Announce inside the lock from the captured local frame. Re-reading
+        # the shared global after releasing the lock would let a concurrent
+        # broadcaster's newer frame be announced twice while this thread's own
+        # frame is lost (listeners would miss the diff and diverge until the
+        # next full snapshot), and could publish an older build after a newer
+        # one since listeners apply diff frames strictly in arrival order.
+        announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
+        announce_fn(announcer1, frame, 1)
 
 
 def announce_current_market_state() -> None:

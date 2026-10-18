@@ -699,7 +699,9 @@ def api_reset_stocks() -> Any:
     clear_cache_prefix("stocks")
     _announce_watchlist_state()
     schedule_sync_all_stocks_now()
-    return jsonify({"success": True})
+    # "ok" keeps the unified success envelope; "success" is retained for the
+    # existing frontend/settings.js and test consumers.
+    return jsonify({"ok": True, "success": True})
 
 
 @views_bp.route("/api/heatmap")

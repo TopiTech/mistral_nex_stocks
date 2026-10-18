@@ -200,6 +200,7 @@ export default [
         historyPrefetchTimer: "writable",
         stockHashMap: "writable",
         cardIntersectionObserver: "writable",
+        currentDrawerActiveWrapper: "writable",
         getFreshPrefetchedHistory: "readonly",
         getColorSchemePreference: "readonly",
         initThemeColorScheme: "readonly",

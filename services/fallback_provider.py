@@ -796,14 +796,19 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             if price <= 0:
                 return None
             change = _to_float(parts[1]) if len(parts) > 1 else 0.0
+            # OHLC are unknown from this feed; report None instead of faking
+            # them as the current price (same policy as YahooJPScraperProvider
+            # above — faked O=H=L would misrepresent the fallback quote as a
+            # real intraday range). Downstream history synthesis substitutes
+            # the close for a well-formed flat candle.
             return {
                 "symbol": symbol,
                 "regularMarketPrice": price,
                 "regularMarketPreviousClose": price - change,
                 "regularMarketVolume": 0,
-                "regularMarketOpen": price,
-                "regularMarketDayHigh": price,
-                "regularMarketDayLow": price,
+                "regularMarketOpen": None,
+                "regularMarketDayHigh": None,
+                "regularMarketDayLow": None,
                 "source": "nikkei225jp",
             }
 
@@ -839,14 +844,15 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             return None
 
         change = _to_float(parts[9])
+        # OHLC unknown — None per the provider policy (see the index branch).
         return {
             "symbol": symbol,
             "regularMarketPrice": price,
             "regularMarketPreviousClose": price - change,
             "regularMarketVolume": 0,
-            "regularMarketOpen": price,
-            "regularMarketDayHigh": price,
-            "regularMarketDayLow": price,
+            "regularMarketOpen": None,
+            "regularMarketDayHigh": None,
+            "regularMarketDayLow": None,
             "source": "nikkei225jp_adr",
         }
 

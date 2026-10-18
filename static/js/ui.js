@@ -1530,6 +1530,8 @@ function renderSkeletons() {
   markets.forEach((m) => {
     const container = document.getElementById(`${m}-stocks`);
     if (!container) return;
+    // スクリーンリーダーにローディング状態を伝える(解除はデータ描画側が担う)
+    container.setAttribute("aria-busy", "true");
 
     // 見栄えのために8個程度スケルトンを表示
     container.textContent = "";

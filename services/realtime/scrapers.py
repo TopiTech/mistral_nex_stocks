@@ -239,12 +239,15 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
             self._record_fetch_failure(symbol, kind="pts")
             return None
         window = html[idx : idx + 600]
+        # Strip clock times BEFORE price extraction: with a layout like
+        # "PTS 17:05" the primary label match would otherwise adopt the clock
+        # hour (17) as the price — the timestamp stripping used to run only in
+        # the fallback path, where it could never see that match.
+        window = re.sub(r"\d{1,2}:\d{2}", " ", window)
         price = self._number_after_label(window, "PTS")
         if price is None or price <= 0:
-            # Fallback: first bare number in the window. Skip timestamps such as
-            # "PTS 17:05" — a clock time would be adopted as a bogus price
-            # (e.g. 17) otherwise.
-            m = re.search(r"([0-9][0-9,]*\.?[0-9]*)", re.sub(r"\d{1,2}:\d{2}", " ", window))
+            # Fallback: first bare number in the (time-stripped) window.
+            m = re.search(r"([0-9][0-9,]*\.?[0-9]*)", window)
             if m:
                 price = _parse_quote_number(m.group(1))
         if price is None or price <= 0:

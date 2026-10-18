@@ -768,5 +768,3 @@ async function csrfFetch(url, options = {}) {
 })();
 
 // #endregion Global Error Handler
-
-// #region CSRF-aware fetch

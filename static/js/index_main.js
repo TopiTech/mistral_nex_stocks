@@ -275,9 +275,12 @@ function initBulkAnalyzeEvents() {
 function initVisibilityHandler() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
-    fetchInitialStocks();
     const activeSource =
       sseState.stockEventSource || sseApiClient.currentEventSource;
+    // SSE が OPEN なら api_client.js の再接続・ストリーム更新で十分 —
+    // タブ復帰のたびに /api/stocks を全取得して再描画する必要はない。
+    if (activeSource && activeSource.readyState === EventSource.OPEN) return;
+    fetchInitialStocks();
     if (!activeSource || activeSource.readyState === EventSource.CLOSED) {
       // api_client.js only *resumes* a paused stream; a fully disconnected
       // stream (e.g. max reconnect attempts reached while hidden) needs an

@@ -212,6 +212,9 @@ class AppState:
         self.cache = global_cache
         self.shutdown_manager = ShutdownTokenManager()
         self.bootstrap_ready = threading.Event()
+        # Serializes shutdown_executors(): atexit and signal handlers can both
+        # invoke it concurrently, so the check-then-set guard must be atomic.
+        self._shutdown_executors_lock = threading.Lock()
         self.history_fetch_inflight = set()
         self.history_fetch_lock = threading.Lock()
         self.info_fetch_inflight = set()
@@ -349,9 +352,10 @@ class AppState:
         to avoid double-close errors when the SDK or DB layer rejects a
         second invocation.
         """
-        if getattr(self, "_shutdown_executors_done", False):
-            return
-        self._shutdown_executors_done = True
+        with self._shutdown_executors_lock:
+            if getattr(self, "_shutdown_executors_done", False):
+                return
+            self._shutdown_executors_done = True
 
         try:
             # TradingView WS ・Yahoo JP スクレイパー・PTS ループを停止する（R12）。

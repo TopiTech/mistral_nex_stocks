@@ -772,6 +772,8 @@ class LauncherScriptForwardingTestCase(unittest.TestCase):
                     cwd=root,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=15,
                     check=False,
                 )
@@ -837,6 +839,8 @@ class NativeHostInstallerSafetyTestCase(unittest.TestCase):
                 cwd=temp_root,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15,
                 check=False,
             )
@@ -882,6 +886,8 @@ $result = Test-DirectoryUserWritable -Dir 'in-memory-acl'
             cwd=Path(__file__).resolve().parents[1],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             check=False,
         )

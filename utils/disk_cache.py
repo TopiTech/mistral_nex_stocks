@@ -325,10 +325,6 @@ class StockDiskCache:
                 if not path.exists():
                     return None
                 try:
-                    age = time.time() - path.stat().st_mtime
-                    if not ignore_ttl and age > effective_ttl:
-                        path.unlink(missing_ok=True)
-                        return None
                     data = json.loads(path.read_text(encoding="utf-8"))
                     if not isinstance(data, dict):
                         logger.debug(
@@ -341,6 +337,19 @@ class StockDiskCache:
                             path.unlink(missing_ok=True)
                         except OSError:
                             pass
+                        return None
+                    # Freshness: prefer the embedded write timestamp over the
+                    # file mtime. Copies/restores (cp, Docker COPY, archive
+                    # extraction) reset mtimes, which would make stale entries
+                    # look fresh (or fresh entries look expired) — exactly
+                    # what the ``stored_at`` field exists to prevent.
+                    stored_at = data.get("stored_at")
+                    if isinstance(stored_at, (int, float)) and not isinstance(stored_at, bool):
+                        age = time.time() - float(stored_at)
+                    else:
+                        age = time.time() - path.stat().st_mtime
+                    if not ignore_ttl and age > effective_ttl:
+                        path.unlink(missing_ok=True)
                         return None
                     return data.get("value")
                 except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:

@@ -232,8 +232,7 @@ def api_stocks_stream() -> Any:
                                 allow_nan=False,
                             )
                         initial_frame = f"retry: 3000\ndata: {initial_payload}\n\n"
-                        initial_seq = sse_event_log.next_id()
-                        sse_event_log.record(initial_seq, sse_mode, "frame", initial_frame)
+                        initial_seq = sse_event_log.emit(sse_mode, "frame", initial_frame)
                         yield f"id: {initial_seq}\n{initial_frame}"
                         if sse_mode == 2:
                             try:
@@ -257,8 +256,7 @@ def api_stocks_stream() -> Any:
                         msg = item
                         if msg.startswith(":"):
                             return msg
-                        seq = sse_event_log.next_id()
-                        sse_event_log.record(seq, sse_mode, "frame", msg)
+                        seq = sse_event_log.emit(sse_mode, "frame", msg)
                         return f"id: {seq}\n{msg}"
 
                     while True:
@@ -283,7 +281,6 @@ def api_stocks_stream() -> Any:
                             try:
                                 deltas = realtime_market_engine.get_market_deltas(rt_client_id)
                                 if deltas:
-                                    seq = sse_event_log.next_id()
                                     current_app.logger.debug(
                                         "SSE sending realtime_update to client id=%s with %d symbol(s): %s",
                                         request_id,
@@ -297,12 +294,11 @@ def api_stocks_stream() -> Any:
                                         allow_nan=False,
                                     )
                                     delta_frame = f"event: realtime_update\ndata: {delta_data}\n\n"
-                                    sse_event_log.record(seq, 2, "frame", delta_frame)
+                                    seq = sse_event_log.emit(2, "frame", delta_frame)
                                     yield f"id: {seq}\n{delta_frame}"
 
                                 pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
                                 if pts_deltas:
-                                    seq = sse_event_log.next_id()
                                     pts_data = json.dumps(
                                         _json_safe(
                                             {"stream_event": "pts_update", "deltas": pts_deltas}
@@ -310,7 +306,7 @@ def api_stocks_stream() -> Any:
                                         allow_nan=False,
                                     )
                                     pts_frame = f"event: pts_update\ndata: {pts_data}\n\n"
-                                    sse_event_log.record(seq, 2, "frame", pts_frame)
+                                    seq = sse_event_log.emit(2, "frame", pts_frame)
                                     yield f"id: {seq}\n{pts_frame}"
                             except Exception as e:
                                 current_app.logger.debug(
@@ -324,7 +320,6 @@ def api_stocks_stream() -> Any:
                                         rt_client_id
                                     )
                                     if snapshot:
-                                        seq = sse_event_log.next_id()
                                         full_data = json.dumps(
                                             _json_safe(
                                                 {
@@ -337,7 +332,7 @@ def api_stocks_stream() -> Any:
                                         full_frame = (
                                             f"event: realtime_update\ndata: {full_data}\n\n"
                                         )
-                                        sse_event_log.record(seq, 2, "frame", full_frame)
+                                        seq = sse_event_log.emit(2, "frame", full_frame)
                                         yield f"id: {seq}\n{full_frame}"
                                 except Exception as e:
                                     current_app.logger.debug(

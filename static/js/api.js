@@ -1008,6 +1008,16 @@ function updateStocksFromSseData(data) {
     const stockKey = makeStockKey(market, symbol);
     stockHashMap.delete(stockKey);
     findAllWrappersByStockKey(stockKey).forEach((wrapper) => {
+      // 詳細ドロワーに内容を貸し出しているカードは先にドロワーを閉じる
+      // (renderStocks のクリーンアップと同一パターン。閉じないまま削除すると
+      // detached ノードを参照したドロワーが開き続ける)
+      if (
+        typeof currentDrawerActiveWrapper !== "undefined" &&
+        currentDrawerActiveWrapper === wrapper &&
+        typeof closeStockDetailDrawer === "function"
+      ) {
+        closeStockDetailDrawer();
+      }
       wrapper
         .querySelectorAll("canvas")
         .forEach((canvas) => destroyChart(canvas));
@@ -1425,26 +1435,14 @@ async function loadNews(forceRefresh = false) {
       newsRequestController.abort();
     }, CONSTANTS.TIMEOUT.NEWS_REQUEST);
 
-    const { response: res, data } = await apiFetch(newsUrl, {
+    const { data } = await apiFetch(newsUrl, {
       method: "POST",
       headers,
       signal: newsRequestController.signal,
     });
 
-    if (!res.ok) {
-      const errorData = data || {};
-      throw new APIError(
-        res.status,
-        errorData.error_code || 9999,
-        errorData.message || `HTTP ${res.status}`,
-        errorData.details,
-      );
-    }
-
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
+    // apiFetch は !response.ok で既に throw するため、ここでの res.ok 再チェックは不要。
+    // タイムアウト timer は fetching ポーリング全体をカバーするため、ここでは解除しない。
 
     // data は apiFetch が既にパース済み（{response, data} の data）。
     // バックグラウンドで生成中の場合は fetching:true が返る。
@@ -1457,20 +1455,14 @@ async function loadNews(forceRefresh = false) {
         attempt += 1;
         const backoff = Math.min(1000 + attempt * 200, 3000);
         await new Promise((resolve) => setTimeout(resolve, backoff));
-        const poll = await apiFetch("/api/news", { method: "POST", headers });
-        if (!poll.response.ok) {
-          const pollErrData = poll.data || {};
-          const errMsg =
-            pollErrData.details?.reason ||
-            pollErrData.message ||
-            `ニュース取得失敗 (HTTP ${poll.response.status})`;
-          throw new APIError(
-            poll.response.status,
-            pollErrData.error_code || 9999,
-            errMsg,
-            pollErrData.details,
-          );
-        }
+        // 初回リクエストと同じ AbortController の signal を引き継ぐことで、
+        // NEWS_REQUEST タイムアウトがポーリング全体をカバーする(signal なしの
+        // ループはユーザーが中断できない最長2〜3分の固まりになっていた)。
+        const poll = await apiFetch("/api/news", {
+          method: "POST",
+          headers,
+          signal: newsRequestController.signal,
+        });
         const pollData = poll.data;
         if (pollData && !pollData.fetching) {
           Object.assign(data, pollData);
@@ -1493,6 +1485,11 @@ async function loadNews(forceRefresh = false) {
           "ニュース要約の生成がタイムアウトしました。サーバーの負荷状況を確認して再試行してください。",
         );
       }
+    }
+
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
     }
 
     if (data.error) {

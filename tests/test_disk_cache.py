@@ -145,10 +145,13 @@ class TestStockDiskCache(unittest.TestCase):
 
     def test_expired_entry_returns_none(self):
         self.cache.set("expire_me", "data")
-        # Overwrite the mtime to simulate expiration
+        # Freshness prefers the embedded stored_at over the file mtime (see
+        # the StockDiskCache docstring), so simulate expiration by backdating
+        # the stored timestamp, not the mtime.
         path = self.cache._entry_path("expire_me")
-        old_time = time.time() - 120  # 2 minutes ago
-        os.utime(str(path), (old_time, old_time))
+        entry = json.loads(path.read_text(encoding="utf-8"))
+        entry["stored_at"] = time.time() - 120  # 2 minutes ago
+        path.write_text(json.dumps(entry), encoding="utf-8")
         self.assertIsNone(self.cache.get("expire_me", ttl=60))
 
     def test_valid_entry_within_ttl(self):

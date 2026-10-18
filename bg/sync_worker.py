@@ -73,6 +73,11 @@ _last_loaded_mtimes: dict[str, float] = {}
 _sync_execution_lock = threading.Lock()
 _BATCH_INVALID_MARKER = "__INVALID_SYMBOL__"
 
+# Marker attribute set on threads spawned by start_background_worker so a
+# re-entry (bootstrap retry / first-request fallback) can detect still-running
+# loops idempotently instead of spawning duplicates.
+_BG_LOOP_MARKER_ATTR = "_mns_bg_loop_marker"
+
 
 def _get_app_bg_attr(name: str, fallback: Any) -> Any:
     mod = sys.modules.get("app_bg")
@@ -1280,24 +1285,38 @@ def start_background_worker() -> None:
                 )
                 app_state.execution.shutdown_event.wait(sleep_time)
 
-    yahoo_loop = _get_app_bg_attr("bg_yahoo_fetch_loop", bg_yahoo_fetch_loop)
-    t1 = threading.Thread(target=wrapped_loop, args=(yahoo_loop, "Yahoo"), daemon=True)
-    app_state.execution.background_threads.append(t1)
-    t1.start()
-
-    leader_loop = _get_app_bg_attr("bg_leader_election_loop", bg_leader_election_loop)
-    t_leader = threading.Thread(
-        target=wrapped_loop, args=(leader_loop, "LeaderElection"), daemon=True
-    )
-    app_state.execution.background_threads.append(t_leader)
-    t_leader.start()
-
     from session_manager import bg_session_reap_loop
 
+    yahoo_loop = _get_app_bg_attr("bg_yahoo_fetch_loop", bg_yahoo_fetch_loop)
+    leader_loop = _get_app_bg_attr("bg_leader_election_loop", bg_leader_election_loop)
     reap_loop = _get_app_bg_attr("bg_session_reap_loop", bg_session_reap_loop)
-    t_reap = threading.Thread(target=wrapped_loop, args=(reap_loop, "SessionReap"), daemon=True)
-    app_state.execution.background_threads.append(t_reap)
-    t_reap.start()
+    interp_loop = _get_app_bg_attr("bg_interpolate_loop", bg_interpolate_loop)
+
+    def _spawn_loop(loop_fn: Any, loop_name: str) -> None:
+        """Start *loop_fn* unless a live thread for the same loop already exists.
+
+        ``start_background_worker`` can be re-entered after a partial start
+        (bootstrap retries while ``_app_bootstrap_done`` is still False, and
+        the first-request fallback can re-invoke it). Spawning a second copy
+        of a still-running loop would double-poll upstream APIs and double-
+        write shared state, so match on an explicit marker attribute rather
+        than closure identity (``wrapped_loop`` is re-created on every call).
+        """
+        for existing in list(app_state.execution.background_threads):
+            if (
+                getattr(existing, _BG_LOOP_MARKER_ATTR, None) == loop_name
+                and existing.is_alive()
+            ):
+                logger.debug("Background loop %s already running; not spawning again", loop_name)
+                return
+        t = threading.Thread(target=wrapped_loop, args=(loop_fn, loop_name), daemon=True)
+        setattr(t, _BG_LOOP_MARKER_ATTR, loop_name)
+        app_state.execution.background_threads.append(t)
+        t.start()
+
+    _spawn_loop(yahoo_loop, "Yahoo")
+    _spawn_loop(leader_loop, "LeaderElection")
+    _spawn_loop(reap_loop, "SessionReap")
 
     try:
         from constants import POPULAR_JP, POPULAR_US
@@ -1323,10 +1342,7 @@ def start_background_worker() -> None:
     except Exception as e:
         logger.info("Failed to start RealtimeMarketEngine: %s", e)
 
-    interp_loop = _get_app_bg_attr("bg_interpolate_loop", bg_interpolate_loop)
-    t_interp = threading.Thread(target=wrapped_loop, args=(interp_loop, "Interpolate"), daemon=True)
-    app_state.execution.background_threads.append(t_interp)
-    t_interp.start()
+    _spawn_loop(interp_loop, "Interpolate")
 
     def bg_threads_watchdog_loop() -> None:
         while not app_state.execution.shutdown_event.is_set():
@@ -1347,9 +1363,15 @@ def start_background_worker() -> None:
             )
             watchdog_fn()
 
-    t_watchdog = threading.Thread(target=bg_threads_watchdog_loop, name="Watchdog", daemon=True)
-    app_state.execution.background_threads.append(t_watchdog)
-    t_watchdog.start()
+    watchdog_running = any(
+        getattr(existing, _BG_LOOP_MARKER_ATTR, None) == "Watchdog" and existing.is_alive()
+        for existing in list(app_state.execution.background_threads)
+    )
+    if not watchdog_running:
+        t_watchdog = threading.Thread(target=bg_threads_watchdog_loop, name="Watchdog", daemon=True)
+        setattr(t_watchdog, _BG_LOOP_MARKER_ATTR, "Watchdog")
+        app_state.execution.background_threads.append(t_watchdog)
+        t_watchdog.start()
 
 
 _start_background_threads = start_background_worker

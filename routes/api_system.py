@@ -1289,7 +1289,11 @@ def api_shutdown():
         )
 
     if data.get("confirm") is not True:
-        return jsonify({"ok": False, "error": "confirm flag required"}), 400
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "confirm flag required"},
+            status_code=400,
+        )
 
     token_header = request.headers.get("X-MNS-Shutdown-Token")
     token_json = data.get("shutdown_token")
@@ -1297,18 +1301,30 @@ def api_shutdown():
     token_value = token_header or token_json
     if token_value is not None and not isinstance(token_value, str):
         current_app.logger.warning("Shutdown request rejected: malformed shutdown token")
-        return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "invalid shutdown request"},
+            status_code=403,
+        )
     provided_token = (token_value or "").strip()
 
     if not provided_token:
         current_app.logger.warning("Shutdown request rejected: missing shutdown token")
-        return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "invalid shutdown request"},
+            status_code=403,
+        )
 
     if not app_state.consume_shutdown_token(provided_token):
         current_app.logger.warning(
             "Shutdown request rejected: invalid or already used shutdown token"
         )
-        return jsonify({"ok": False, "error": "invalid shutdown request"}), 403
+        return error_response(
+            ErrorCode.FORBIDDEN,
+            details={"reason": "invalid shutdown request"},
+            status_code=403,
+        )
 
     logger = current_app.logger
     logger.info("Valid shutdown token accepted, initiating shutdown sequence")

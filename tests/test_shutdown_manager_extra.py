@@ -85,12 +85,39 @@ class ShutdownManagerExtraTests(unittest.TestCase):
         self.mgr._legacy_token_file.write_text(legacy_token, encoding="utf-8")
         self.mgr._legacy_used_marker.write_text("1234", encoding="utf-8")
 
-        token = self.mgr.get_or_create_shutdown_token()
-        self.assertTrue(token)
-        # Runtime files now exist; legacy files were moved away.
+        self.mgr._migrate_legacy_token_file()
+        # Both legacy files were moved into the runtime dir.
         self.assertTrue(self.mgr.token_file.exists())
         self.assertTrue(self.mgr.used_marker.exists())
         self.assertFalse(self.mgr._legacy_token_file.exists())
+        self.assertFalse(self.mgr._legacy_used_marker.exists())
+
+        token = self.mgr.get_or_create_shutdown_token()
+        self.assertTrue(token)
+        # The migrated used-marker proves the token was consumed previously,
+        # so a fresh token is generated and the marker cleared.
+        self.assertNotEqual(token, legacy_token)
+        self.assertFalse(self.mgr.used_marker.exists())
+
+    def test_consumed_legacy_token_is_not_resurrected(self):
+        """A previously-consumed encrypted legacy token must not be reused."""
+        import json as _json
+        import secrets as _secrets
+
+        from crypto_utils import protect_data
+
+        legacy_token = _secrets.token_urlsafe(32)
+        self.mgr._legacy_token_file.write_text(
+            _json.dumps(protect_data(legacy_token, "shutdown_token")), encoding="utf-8"
+        )
+        self.mgr._legacy_used_marker.write_text("1234", encoding="utf-8")
+
+        token = self.mgr.get_or_create_shutdown_token()
+        self.assertTrue(token)
+        # The consumed legacy token is never resurrected: a new token was
+        # generated and the old one no longer validates.
+        self.assertNotEqual(token, legacy_token)
+        self.assertFalse(self.mgr.validate_shutdown_token(legacy_token))
         self.assertFalse(self.mgr._legacy_used_marker.exists())
 
     def test_migration_replace_oserror_swallowed(self):

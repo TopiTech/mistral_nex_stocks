@@ -294,12 +294,47 @@ class R7DiskCacheListShapeTest(unittest.TestCase):
 
     def test_dict_shape_works_normally(self):
         """A normal dict-shaped cache file must still return the value."""
+        import time as _time
+
         from utils.disk_cache import StockDiskCache
 
         cache = StockDiskCache(cache_dir=self._cache_dir, enable_cleanup=False)
-        self._write_cache_file("good_key", {"value": "hello", "stored_at": 1000.0})
+        self._write_cache_file("good_key", {"value": "hello", "stored_at": _time.time()})
         result = cache.get("good_key")
         self.assertEqual(result, "hello")
+
+    def test_stored_at_takes_precedence_over_mtime(self):
+        """Freshness must use the embedded stored_at, not the file mtime.
+
+        A copied/restored entry has a fresh mtime but an old embedded
+        stored_at; it must be treated as expired (and vice versa).
+        """
+        import time as _time
+
+        from utils.disk_cache import StockDiskCache
+
+        cache = StockDiskCache(cache_dir=self._cache_dir, enable_cleanup=False)
+        # Fresh mtime (just written) + ancient stored_at -> expired.
+        self._write_cache_file("old_stored_at", {"value": "stale", "stored_at": 1000.0})
+        self.assertIsNone(cache.get("old_stored_at"))
+        # The expired entry is removed.
+        self.assertFalse(cache._entry_path("old_stored_at").exists())
+
+        # Stale mtime (backdated) + fresh stored_at -> still fresh.
+        path = self._write_cache_file("fresh_stored_at", {"value": "fresh", "stored_at": _time.time()})
+        old = _time.time() - 100_000.0
+        import os as _os
+
+        _os.utime(path, (old, old))
+        self.assertEqual(cache.get("fresh_stored_at"), "fresh")
+
+    def test_missing_stored_at_falls_back_to_mtime(self):
+        """Entries written before the stored_at field rely on mtime freshness."""
+        from utils.disk_cache import StockDiskCache
+
+        cache = StockDiskCache(cache_dir=self._cache_dir, enable_cleanup=False)
+        self._write_cache_file("legacy_key", {"value": "legacy"})
+        self.assertEqual(cache.get("legacy_key"), "legacy")
 
     def test_corrupt_json_returns_none(self):
         """Corrupt JSON (not parseable) still returns None (existing behavior)."""

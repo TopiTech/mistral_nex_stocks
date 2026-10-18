@@ -218,24 +218,39 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
             logger.info("%s: all yfinance history fetches failed, trying fallback provider", symbol)
             fallback_quote = app_state.fallback_provider.get_latest_quote(symbol)
             if fallback_quote:
-                now_dt = datetime.now(UTC)
-                hist = pd.DataFrame(
-                    [
-                        {
-                            "Open": fallback_quote["regularMarketOpen"],
-                            "High": fallback_quote["regularMarketDayHigh"],
-                            "Low": fallback_quote["regularMarketDayLow"],
-                            "Close": fallback_quote["regularMarketPrice"],
-                            "Volume": fallback_quote["regularMarketVolume"],
-                        }
-                    ],
-                    # tz-aware UTC index: the synthetic candle must anchor to
-                    # UTC midnight, otherwise ``Timestamp.timestamp()`` below
-                    # interprets the naive date in the server's local timezone
-                    # and the chart x-axis drifts by the TZ offset.
-                    index=[pd.Timestamp(now_dt.date(), tz=UTC)],
-                )
-                fetch_interval = "1d"
+                close_px = _finite_float(fallback_quote.get("regularMarketPrice"), default=None)
+                if close_px is not None:
+                    # Scrapers return OHLC=None when unknown (they never fake a
+                    # previous close). None/NaN would later collapse to 0.0 in
+                    # _finite_float and render — and persist to the disk cache —
+                    # a bogus "0-yen open" candle, so substitute the close for
+                    # the bar. All-or-nothing keeps the candle well-formed
+                    # (H >= max(O, C), L <= min(O, C)).
+                    bar = [
+                        _finite_float(fallback_quote.get("regularMarketOpen"), default=None),
+                        _finite_float(fallback_quote.get("regularMarketDayHigh"), default=None),
+                        _finite_float(fallback_quote.get("regularMarketDayLow"), default=None),
+                    ]
+                    if any(px is None for px in bar):
+                        bar = [close_px, close_px, close_px]
+                    now_dt = datetime.now(UTC)
+                    hist = pd.DataFrame(
+                        [
+                            {
+                                "Open": bar[0],
+                                "High": bar[1],
+                                "Low": bar[2],
+                                "Close": close_px,
+                                "Volume": fallback_quote.get("regularMarketVolume"),
+                            }
+                        ],
+                        # tz-aware UTC index: the synthetic candle must anchor to
+                        # UTC midnight, otherwise ``Timestamp.timestamp()`` below
+                        # interprets the naive date in the server's local timezone
+                        # and the chart x-axis drifts by the TZ offset.
+                        index=[pd.Timestamp(now_dt.date(), tz=UTC)],
+                    )
+                    fetch_interval = "1d"
 
         if hist.empty:
             circuit_key = f"{market}:{symbol}" if market else symbol

@@ -41,6 +41,25 @@ from utils.validators import extract_chat_content, extract_json_payload
 logger = logging.getLogger(__name__)
 
 
+def _openai_response_has_content(data: Any) -> bool:
+    """Return True when an OpenAI-compatible response contains usable content.
+
+    Mirrors ``services.ai_service._response_has_content`` (A-1): empty
+    responses must NOT be cached, otherwise a retry of the same request would
+    hit the cache and replay the same empty result until the TTL expires.
+    Defined locally because importing ai_service here would be circular
+    (ai_service dispatches to this module).
+    """
+    try:
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    content = message.get("content")
+    if isinstance(content, dict):
+        return bool(content)
+    return bool(content and str(content).strip())
+
+
 def _public_openai_error_message(exc: BaseException, status_code: int = 0) -> str:
     """Return a clean, actionable user error message for OpenAI-compatible API calls."""
     if isinstance(exc, httpx.TimeoutException):
@@ -627,7 +646,7 @@ def call_openai_chat(
                         if reasoning_fallback:
                             data["choices"][0]["message"]["content"] = reasoning_fallback
 
-            if use_cache and data.get("choices"):
+            if use_cache and _openai_response_has_content(data):
                 with app_state.ai.mistral_response_lock:
                     app_state.ai.mistral_response_cache[cache_key] = copy.deepcopy(data)
 
@@ -889,6 +908,11 @@ def call_openai_chat_with_tools(
     max_tool_call_id_chars = 128
     max_tool_result_chars = 32_000
 
+    def _tool_loop_error(message: str) -> dict[str, Any]:
+        # Mirrors services/ai_service.py: a malformed provider payload must
+        # surface as a graceful 502-shaped error, not an AttributeError.
+        return {"error": {"message": message, "status_code": 502}}
+
     def _json_safe_tool_value(value: Any) -> Any:
         if isinstance(value, float):
             return value if math.isfinite(value) else None
@@ -947,7 +971,14 @@ def call_openai_chat_with_tools(
         if not choices or not isinstance(choices, list):
             return response
 
+        # Mirror the Mistral path guard (services/ai_service.py): a broken
+        # proxy can return non-dict choices, which would otherwise raise an
+        # unhandled AttributeError on ``.get`` below.
+        if not isinstance(choices[0], dict):
+            return _tool_loop_error("AIサービスから不正な応答を受信しました")
         msg = choices[0].get("message") or {}
+        if not isinstance(msg, dict):
+            return _tool_loop_error("AIサービスから不正なメッセージを受信しました")
         tool_calls = msg.get("tool_calls")
         if not tool_calls or not isinstance(tool_calls, list):
             # Model gave final direct answer
@@ -959,18 +990,36 @@ def call_openai_chat_with_tools(
             len(tool_calls),
         )
 
+        # Truncate BEFORE building the assistant message: the assistant turn
+        # must reference exactly the tool_call_ids that get executed below,
+        # otherwise providers reject the next request with HTTP 400
+        # ("An assistant message with 'tool_calls' must be followed by tool
+        # messages ...").
+        if len(tool_calls) > max_tool_calls_per_turn:
+            logger.warning(
+                "OpenAI agent loop truncated excessive tool calls: "
+                "turn=%d count=%d limit=%d",
+                iteration + 1,
+                len(tool_calls),
+                max_tool_calls_per_turn,
+            )
+            tool_calls = tool_calls[:max_tool_calls_per_turn]
+
+        # Drop malformed entries up front so the assistant message never
+        # references a tool_call_id that has no matching tool result.
+        valid_tcs = [tc for tc in tool_calls if isinstance(tc, dict)]
+        if not valid_tcs:
+            return _tool_loop_error("AIサービスから不正なツール呼び出しを受信しました")
+
         # Normalize assistant message for OpenAI/Ollama compatibility:
         # Some compatible servers reject 'content: None' while others accept it.
         # Ensure clean dict structure with role and tool_calls preserved.
         assistant_turn_msg = {
             "role": "assistant",
             "content": msg.get("content") or "",
-            "tool_calls": tool_calls,
+            "tool_calls": valid_tcs,
         }
         current_messages.append(assistant_turn_msg)
-
-        if len(tool_calls) > max_tool_calls_per_turn:
-            tool_calls = tool_calls[:max_tool_calls_per_turn]
 
         def _exec_single_tool(tc: dict[str, Any], iter_idx: int = iteration) -> dict[str, Any]:
             def _execute() -> dict[str, Any]:
@@ -996,7 +1045,6 @@ def call_openai_chat_with_tools(
                     return _execute()
             return _execute()
 
-        valid_tcs = [tc for tc in tool_calls if isinstance(tc, dict)]
         if len(valid_tcs) > 1:
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(len(valid_tcs), 4)

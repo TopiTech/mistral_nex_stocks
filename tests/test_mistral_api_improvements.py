@@ -684,6 +684,44 @@ class StreamMistralChatTestCase(unittest.TestCase):
         self.assertNotIn(secret, str(events[-1]))
         self.assertNotIn(secret, "\n".join(logs.output))
 
+    @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
+    @patch("services.ai_service._wait_for_rate_limit_slot", return_value=True)
+    @patch("services.ai_service._get_mistral_client")
+    def test_stream_releases_half_open_probe_on_early_exit(
+        self, mock_get_client, mock_wait, mock_get_name
+    ):
+        """HALF_OPEN probe claimed by stream must be released on early exits.
+
+        Regression test: claiming the probe then exiting before the stream
+        (missing client / shutdown wait) must not leave probing=True, which
+        would 503 every subsequent AI call until restart.
+        """
+        from services import ai_service
+
+        for get_client_return in (None, MagicMock()):
+            with self.subTest(get_client_return=get_client_return is not None):
+                app_state.market.circuit_states["mistral"]["status"] = "HALF_OPEN"
+                app_state.market.circuit_states["mistral"]["probing"] = False
+                try:
+                    mock_get_client.return_value = get_client_return
+                    events = list(
+                        ai_service.stream_mistral_chat(
+                            "key-probe-leak", [{"role": "user", "content": "hi"}]
+                        )
+                    )
+                    self.assertEqual(events[-1]["type"], "error")
+                    self.assertFalse(
+                        app_state.market.circuit_states["mistral"].get("probing"),
+                        "probe claim leaked on early exit",
+                    )
+                    # Probe must be claimable again for the next recovery attempt.
+                    self.assertTrue(
+                        app_state.market.try_claim_circuit_probe("mistral")
+                    )
+                finally:
+                    app_state.market.circuit_states["mistral"]["status"] = "CLOSED"
+                    app_state.market.circuit_states["mistral"]["probing"] = False
+
 
 class MistralErrorRedactionTestCase(unittest.TestCase):
     """Provider diagnostics must not leave the service boundary or its logs."""

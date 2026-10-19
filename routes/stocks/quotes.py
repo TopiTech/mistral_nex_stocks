@@ -388,13 +388,20 @@ def api_stock_history() -> Any:
                         exc,
                     )
                 if not submitted:
-                    app_state.market.report_circuit_result(
-                        "yfinance_history",
-                        success=False,
-                        symbol=circuit_key,
-                        threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-                        open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
-                    )
+                    # Duplicate inflight (already probing via another request)
+                    # must not count as a failure: the running probe will
+                    # report its own result. Only a real submission failure
+                    # re-opens the circuit.
+                    with app_state.history_fetch_lock:
+                        still_inflight = cache_key in app_state.history_fetch_inflight
+                    if not still_inflight:
+                        app_state.market.report_circuit_result(
+                            "yfinance_history",
+                            success=False,
+                            symbol=circuit_key,
+                            threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+                            open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
+                        )
             return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
     if is_open:

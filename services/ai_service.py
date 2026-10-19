@@ -2022,6 +2022,9 @@ def stream_mistral_chat(
 
     client = _get_mistral_client(api_key)
     if client is None:
+        if circuit_probe_claimed:
+            app_state.market.release_circuit_probe("mistral")
+            circuit_probe_claimed = False
         yield {
             "type": "error",
             "message": "Mistral API key is missing or invalid",
@@ -2033,6 +2036,9 @@ def stream_mistral_chat(
     # R7: poll the shutdown event in bounded chunks so a 429 cooldown cannot
     # hold a stream thread for the full 300s window.
     if _wait_for_rate_limit_slot(wait_before):
+        if circuit_probe_claimed:
+            app_state.market.release_circuit_probe("mistral")
+            circuit_probe_claimed = False
         yield {"type": "error", "message": "AIサービスはシャットダウン中です", "status_code": 503}
         return
 
@@ -2153,6 +2159,9 @@ def stream_mistral_chat(
                 )
             )
             if is_reasoning_400:
+                if circuit_probe_claimed:
+                    app_state.market.release_circuit_probe("mistral")
+                    circuit_probe_claimed = False
                 logger.warning(
                     "Model %s rejected reasoning_effort parameter in stream (status 400, error_type=%s). Auto-retrying without reasoning_effort.",
                     model,
@@ -2177,6 +2186,9 @@ def stream_mistral_chat(
                 and model != "mistral-small-2603"
                 and not full_parts
             ):
+                if circuit_probe_claimed:
+                    app_state.market.release_circuit_probe("mistral")
+                    circuit_probe_claimed = False
                 logger.warning(
                     "Mistral stream tier restriction detected for model %s. Auto-falling back to mistral-small-2603.",
                     model,

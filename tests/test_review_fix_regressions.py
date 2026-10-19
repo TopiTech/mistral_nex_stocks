@@ -106,6 +106,42 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
             self.assertFalse(state["probing"])
             self.assertGreater(state["open_until"], 0)
 
+    def test_route_keeps_half_open_when_probe_already_inflight(self):
+        from app import app
+        from app_state import app_state
+        from market_state import CircuitState
+
+        symbol = "TSTPROBE"
+        circuit_key = f"us:{symbol}"
+        cache_key = f"hist_{symbol}_us_1mo"
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state[circuit_key] = CircuitState(
+                status="OPEN", open_until=0, probing=False
+            )
+        with app_state.history_fetch_lock:
+            app_state.history_fetch_inflight.add(cache_key)
+        try:
+            with (
+                patch("routes.api_stocks._has_cached_key", return_value=False),
+                app.test_client() as client,
+            ):
+                response = client.get(
+                    f"/api/stock-history?symbol={symbol}&market=us&period=1mo"
+                )
+
+            self.assertEqual(response.status_code, 200)
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state[circuit_key]
+                # Duplicate inflight means the running probe still owns the
+                # recovery attempt: the route must neither re-open nor close.
+                self.assertEqual(state["status"], "HALF_OPEN")
+                self.assertTrue(state["probing"])
+        finally:
+            with app_state.history_fetch_lock:
+                app_state.history_fetch_inflight.discard(cache_key)
+            with app_state.market.history_circuit_lock:
+                app_state.market.history_circuit_state.pop(circuit_key, None)
+
     def test_route_releases_probe_when_submitted_future_is_cancelled(self):
         from app import app
         from app_state import app_state

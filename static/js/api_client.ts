@@ -598,27 +598,56 @@ class APIClient {
       // Wrap addEventListener and removeEventListener so any custom SSE event
       // (realtime_update, pts_update, etc.) automatically resets the heartbeat
       // timer to prevent false timeout disconnects, while supporting clean detachment.
-      const origAddEventListener =
-        eventSource.addEventListener.bind(eventSource);
-      const origRemoveEventListener =
-        eventSource.removeEventListener.bind(eventSource);
+      const origAddEventListener = (
+        eventSource.addEventListener as (
+          type: string,
+          listener: unknown,
+          options?: boolean | AddEventListenerOptions,
+        ) => void
+      ).bind(eventSource);
+      const origRemoveEventListener = (
+        eventSource.removeEventListener as (
+          type: string,
+          listener: unknown,
+          options?: boolean | EventListenerOptions,
+        ) => void
+      ).bind(eventSource);
       const listenerMap = new WeakMap<object, (event: Event) => void>();
 
-      (eventSource as any).addEventListener = (
+      type EventSourceListener =
+        | ((this: EventSource, event: MessageEvent) => void)
+        | EventListenerOrEventListenerObject;
+
+      interface CustomEventSource {
+        addEventListener: (
+          type: string,
+          listener: EventSourceListener | null,
+          options?: boolean | AddEventListenerOptions,
+        ) => void;
+        removeEventListener: (
+          type: string,
+          listener: EventSourceListener | null,
+          options?: boolean | EventListenerOptions,
+        ) => void;
+      }
+
+      const customEventSource = eventSource as unknown as CustomEventSource;
+
+      customEventSource.addEventListener = (
         type: string,
-        listener: any,
+        listener: EventSourceListener | null,
         eventListenerOptions?: boolean | AddEventListenerOptions,
-      ) => {
+      ): void => {
         if (type !== "error" && type !== "open" && listener) {
-          const wrappedListener = (event: Event) => {
+          const wrappedListener: EventListener = (event: Event) => {
             if (event && (event as MessageEvent).lastEventId) {
               this.lastEventId =
                 Number((event as MessageEvent).lastEventId) || 0;
             }
             this._resetHeartbeatTimer(onError);
             if (typeof listener === "function") {
-              listener.call(eventSource, event);
-            } else if (listener && typeof listener.handleEvent === "function") {
+              listener.call(eventSource, event as MessageEvent);
+            } else if (typeof listener.handleEvent === "function") {
               listener.handleEvent(event);
             }
           };
@@ -626,29 +655,29 @@ class APIClient {
             listenerMap.set(listener, wrappedListener);
           }
           return origAddEventListener(
-            type as any,
-            wrappedListener as any,
+            type,
+            wrappedListener,
             eventListenerOptions,
           );
         }
-        return origAddEventListener(
-          type as any,
-          listener,
-          eventListenerOptions,
-        );
+        if (listener) {
+          return origAddEventListener(type, listener, eventListenerOptions);
+        }
       };
 
-      (eventSource as any).removeEventListener = (
+      customEventSource.removeEventListener = (
         type: string,
-        listener: any,
+        listener: EventSourceListener | null,
         eventListenerOptions?: boolean | EventListenerOptions,
-      ) => {
-        const target = (listener && listenerMap.get(listener)) || listener;
-        return origRemoveEventListener(
-          type as any,
-          target,
-          eventListenerOptions,
-        );
+      ): void => {
+        const target =
+          (listener &&
+            (typeof listener === "object" || typeof listener === "function") &&
+            listenerMap.get(listener)) ||
+          listener;
+        if (target) {
+          return origRemoveEventListener(type, target, eventListenerOptions);
+        }
       };
 
       this._startSleepWatchdog();

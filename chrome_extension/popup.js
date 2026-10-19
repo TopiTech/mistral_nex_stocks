@@ -690,3 +690,8 @@ async function loadDetectedTickers() {
     container.appendChild(errorDiv);
   }
 }
+
+// Clean up background polling and active timers when the popup is closed or unloaded
+window.addEventListener("pagehide", stopStockPolling);
+window.addEventListener("unload", stopStockPolling);
+window.addEventListener("beforeunload", stopStockPolling);

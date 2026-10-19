@@ -488,7 +488,12 @@ class APIClient {
       const origRemoveEventListener =
         eventSource.removeEventListener.bind(eventSource);
       const listenerMap = new WeakMap();
-      eventSource.addEventListener = (type, listener, eventListenerOptions) => {
+      const customEventSource = eventSource;
+      customEventSource.addEventListener = (
+        type,
+        listener,
+        eventListenerOptions,
+      ) => {
         if (type !== "error" && type !== "open" && listener) {
           const wrappedListener = (event) => {
             if (event && event.lastEventId) {
@@ -497,7 +502,7 @@ class APIClient {
             this._resetHeartbeatTimer(onError);
             if (typeof listener === "function") {
               listener.call(eventSource, event);
-            } else if (listener && typeof listener.handleEvent === "function") {
+            } else if (typeof listener.handleEvent === "function") {
               listener.handleEvent(event);
             }
           };
@@ -510,15 +515,23 @@ class APIClient {
             eventListenerOptions,
           );
         }
-        return origAddEventListener(type, listener, eventListenerOptions);
+        if (listener) {
+          return origAddEventListener(type, listener, eventListenerOptions);
+        }
       };
-      eventSource.removeEventListener = (
+      customEventSource.removeEventListener = (
         type,
         listener,
         eventListenerOptions,
       ) => {
-        const target = (listener && listenerMap.get(listener)) || listener;
-        return origRemoveEventListener(type, target, eventListenerOptions);
+        const target =
+          (listener &&
+            (typeof listener === "object" || typeof listener === "function") &&
+            listenerMap.get(listener)) ||
+          listener;
+        if (target) {
+          return origRemoveEventListener(type, target, eventListenerOptions);
+        }
       };
       this._startSleepWatchdog();
       eventSource.onopen = () => {

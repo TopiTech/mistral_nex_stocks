@@ -1117,6 +1117,31 @@ function createBaseChartOptions(animate, timeConfig, showVolume) {
   };
 }
 
+function _safeDestroyChart(el) {
+  if (typeof destroyChart === "function") {
+    destroyChart(el);
+    return;
+  }
+  if (!el) return;
+  if (el.__destroyTimer) {
+    clearTimeout(el.__destroyTimer);
+    el.__destroyTimer = null;
+  }
+  if (typeof chartInstances !== "undefined" && chartInstances?.get) {
+    const chart = chartInstances.get(el);
+    if (chart) {
+      try {
+        chart.destroy();
+      } catch (e) {
+        console.warn("Chart destruction failed:", e);
+      } finally {
+        chartInstances.delete(el);
+        if (el.__chart) el.__chart = null;
+      }
+    }
+  }
+}
+
 function drawChart(wrapper, data, ohlcData, options = {}) {
   const animate = getChartAnimationEnabled(options.animate);
   const canvas =
@@ -1154,7 +1179,7 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     typeof getColorSchemePreference === "function" &&
     getColorSchemePreference() === "jp_standard";
 
-  destroyChart(canvas);
+  _safeDestroyChart(canvas);
 
   const isIntradayInterval =
     ["1m", "2m", "5m", "15m", "30m", "60m", "1h"].includes(interval) ||
@@ -1570,7 +1595,7 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
   const animate = getChartAnimationEnabled(options.animate);
   const ctx = canvas.getContext("2d");
   if (!avgPrice || avgPrice <= 0 || !data || data.length < 2) {
-    destroyChart(canvas);
+    _safeDestroyChart(canvas);
     return;
   }
 
@@ -1609,7 +1634,7 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
   }
 
   // 既存チャートがない、またはタイプが違う場合は再生成
-  destroyChart(canvas);
+  _safeDestroyChart(canvas);
 
   const chart = new Chart(ctx, {
     type: "line",

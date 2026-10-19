@@ -176,7 +176,15 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     const errorMessage =
       errorBody?.error || errorBody?.message || `HTTP ${response.status}`;
     const classified = classifyAPIError(null, response);
-    const enhancedMessage = `${classified.message}${errorBody?.details?.reason ? `（${errorBody.details.reason}）` : ""}`;
+    const detailReason =
+      errorBody?.details?.reason ||
+      (errorBody?.message && errorBody.message !== `HTTP ${response.status}`
+        ? errorBody.message
+        : "") ||
+      (typeof errorBody?.error === "string" ? errorBody.error : "");
+    const enhancedMessage = detailReason
+      ? `${classified.message}（${detailReason}）`
+      : classified.message;
     $logger.error(
       `[apiFetch] ${classified.type} ${response.status}: ${errorMessage}`,
     );
@@ -185,6 +193,8 @@ async function apiFetch(url, options = {}, behaviors = {}) {
     err.type = classified.type;
     err.status = response.status;
     err.response = response;
+    err.data = errorBody;
+    err.details = errorBody?.details;
     throw err;
   }
   let data;
@@ -1435,11 +1445,15 @@ async function loadNews(forceRefresh = false) {
       newsRequestController.abort();
     }, CONSTANTS.TIMEOUT.NEWS_REQUEST);
 
-    const { data } = await apiFetch(newsUrl, {
-      method: "POST",
-      headers,
-      signal: newsRequestController.signal,
-    });
+    const { data } = await apiFetch(
+      newsUrl,
+      {
+        method: "POST",
+        headers,
+        signal: newsRequestController.signal,
+      },
+      { showToast: false },
+    );
 
     // apiFetch は !response.ok で既に throw するため、ここでの res.ok 再チェックは不要。
     // タイムアウト timer は fetching ポーリング全体をカバーするため、ここでは解除しない。
@@ -1458,11 +1472,15 @@ async function loadNews(forceRefresh = false) {
         // 初回リクエストと同じ AbortController の signal を引き継ぐことで、
         // NEWS_REQUEST タイムアウトがポーリング全体をカバーする(signal なしの
         // ループはユーザーが中断できない最長2〜3分の固まりになっていた)。
-        const poll = await apiFetch("/api/news", {
-          method: "POST",
-          headers,
-          signal: newsRequestController.signal,
-        });
+        const poll = await apiFetch(
+          "/api/news",
+          {
+            method: "POST",
+            headers,
+            signal: newsRequestController.signal,
+          },
+          { showToast: false },
+        );
         const pollData = poll.data;
         if (pollData && !pollData.fetching) {
           Object.assign(data, pollData);
@@ -1706,12 +1724,25 @@ async function searchStocks() {
   }
 }
 
+function inferMarketFromSymbol(symbol, currentTab) {
+  const s = String(symbol ?? "")
+    .trim()
+    .toUpperCase();
+  if (/^\d{4}$/.test(s) || s.endsWith(".T")) return "jp";
+  if (s.startsWith("^")) return "idx";
+  if (currentTab === "jp" || currentTab === "idx" || currentTab === "us") {
+    return currentTab;
+  }
+  return "us";
+}
+
 function addStockPrompt(symbol, name) {
   let activeTab = document.querySelector(".tab.active")?.id.replace("tab-", "");
   // ポートフォリオタブは市場ではないので、デフォルトで "us" を使う
   if (!activeTab || activeTab === "portfolio") activeTab = "us";
+  const targetMarket = inferMarketFromSymbol(symbol, activeTab);
   const marketNames = { us: "米国", jp: "日本", idx: "インデックス/ETF" };
-  const normalizedSymbol = normalizeSymbolForMarketClient(symbol, activeTab);
+  const normalizedSymbol = normalizeSymbolForMarketClient(symbol, targetMarket);
   const normalizeNote =
     normalizedSymbol !==
     String(symbol || "")
@@ -1721,10 +1752,10 @@ function addStockPrompt(symbol, name) {
       : "";
   if (
     confirm(
-      `${symbol}（${name}）を${marketNames[activeTab]}タブに追加しますか？${normalizeNote}`,
+      `${symbol}（${name}）を${marketNames[targetMarket] || targetMarket}タブに追加しますか？${normalizeNote}`,
     )
   ) {
-    addStock(symbol, name, activeTab);
+    addStock(symbol, name, targetMarket);
   }
 }
 
@@ -1763,7 +1794,11 @@ async function addStock(symbol, name, market) {
     if (!res.ok || data.error) {
       const errorDetail =
         data.details?.reason || data.message || data.error || "不明なエラー";
-      showToast(`❌ 追加エラー: ${errorDetail}`, "#ff7d7d");
+      if (String(errorDetail).includes("既に追加済み")) {
+        showToast(`⚠️ ${normalizedSymbol} は既に追加されています`, "#ffb86c");
+      } else {
+        showToast(`❌ 追加エラー: ${errorDetail}`, "#ff7d7d");
+      }
       return;
     }
     const marketNames = { us: "米国", jp: "日本", idx: "インデックス/ETF" };
@@ -1780,11 +1815,20 @@ async function addStock(symbol, name, market) {
   } catch (e) {
     $logger.error("Add stock error:", e);
     if (e?.type !== APIErrorType.ABORTED) {
-      const msg = e?.message || "通信エラーが発生しました";
-      showToast(
-        msg.startsWith("❌") ? msg : `❌ 追加エラー: ${msg}`,
-        "#ff7d7d",
-      );
+      const detailReason = e?.data?.details?.reason || e?.details?.reason || "";
+      const isDuplicate =
+        String(detailReason).includes("既に追加済み") ||
+        String(e?.message).includes("既に追加済み");
+      if (isDuplicate) {
+        showToast(`⚠️ ${normalizedSymbol} は既に追加されています`, "#ffb86c");
+      } else {
+        const errorMsg =
+          detailReason || e?.message || "通信エラーが発生しました";
+        showToast(
+          errorMsg.startsWith("❌") ? errorMsg : `❌ 追加エラー: ${errorMsg}`,
+          "#ff7d7d",
+        );
+      }
     }
   }
 }
@@ -1924,13 +1968,17 @@ async function chatPollingReply(payload) {
   let data = {};
   let resOk = false;
   for (let attempt = 0; attempt <= CHAT_POLL_MAX_ATTEMPTS; attempt++) {
-    const { response: res, data: fetched } = await apiFetch("/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const { response: res, data: fetched } = await apiFetch(
+      "/api/chat",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload),
-    });
+      { showToast: false },
+    );
     data = fetched || {};
     if (!res.ok) {
       const detailReason = data?.details?.reason
@@ -2342,11 +2390,15 @@ async function requestStockAnalysis(stockKey, onProgress = null) {
   let resOk = false;
 
   for (let attempt = 0; attempt <= ANALYZE_POLL_MAX_ATTEMPTS; attempt++) {
-    const { response: res, data: fetched } = await apiFetch("/api/analyze-v2", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
+    const { response: res, data: fetched } = await apiFetch(
+      "/api/analyze-v2",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      },
+      { showToast: false },
+    );
     data = fetched || {};
     if (!res.ok) {
       const detailMsg = data?.details?.reason ? `: ${data.details.reason}` : "";

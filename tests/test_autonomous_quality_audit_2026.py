@@ -72,19 +72,22 @@ def test_infer_market_from_symbol_logic_via_node() -> None:
     vm.runInContext(match[0], context);
     const { inferMarketFromSymbol } = context;
 
-    // JP 4-digit code
+    // JP 4-character securities code (digits and newer alphanumeric codes)
     assert.strictEqual(inferMarketFromSymbol("7203", "us"), "jp");
     assert.strictEqual(inferMarketFromSymbol("6758", "idx"), "jp");
+    assert.strictEqual(inferMarketFromSymbol("130A", "us"), "jp");
     // JP explicit .T
     assert.strictEqual(inferMarketFromSymbol("7203.T", "us"), "jp");
     assert.strictEqual(inferMarketFromSymbol("6758.t", "us"), "jp");
     // Index starting with ^
     assert.strictEqual(inferMarketFromSymbol("^N225", "jp"), "idx");
     assert.strictEqual(inferMarketFromSymbol("^GSPC", "us"), "idx");
-    // Default US / activeTab pass-through
+    // Plain alphabetic tickers are US tickers even when the JP tab is active:
+    // the JP watchlist forces JPY valuation and rejects their holdings.
     assert.strictEqual(inferMarketFromSymbol("AAPL", "us"), "us");
-    assert.strictEqual(inferMarketFromSymbol("AAPL", "jp"), "jp");
+    assert.strictEqual(inferMarketFromSymbol("AAPL", "jp"), "us");
     assert.strictEqual(inferMarketFromSymbol("AAPL", "portfolio"), "us");
+    assert.strictEqual(inferMarketFromSymbol("SPY", "idx"), "idx");
     assert.strictEqual(inferMarketFromSymbol("", "us"), "us");
 
     console.log("INFER_MARKET_SUCCESS");

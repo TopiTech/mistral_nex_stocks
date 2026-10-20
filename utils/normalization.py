@@ -63,6 +63,44 @@ def normalize_symbol_for_market(symbol, market):
     return s
 
 
+def is_jp_market_symbol(symbol: object) -> bool:
+    """Return True when *symbol* uses the JP-market ``*.T`` spelling.
+
+    Mirrors the convention already enforced by ``/api/stocks/portfolio`` (which
+    accepts any ``*.T`` JP holding and rejects ``*.T`` symbols in the US
+    market). The bare numeric form is rewritten to ``*.T`` by
+    ``normalize_symbol_for_market`` before this check runs, so callers see the
+    persisted spelling. Symbol character validation stays in
+    ``is_valid_symbol`` so synthetic/legacy ``*.T`` rows keep working.
+    """
+    if not isinstance(symbol, str):
+        return False
+    return symbol.strip().upper().endswith(".T")
+
+
+def market_symbol_mismatch(symbol: object, market: object) -> str | None:
+    """Return a reason when *symbol* cannot belong to *market*, else ``None``.
+
+    A watchlist entry carries one ``market`` and that market decides how the
+    payload is valued: ``build_stock_payload`` forces ``JPY`` for every ``jp``
+    entry and portfolio updates reject non ``*.T`` JP holdings. Accepting a US
+    ticker under the ``jp`` market therefore creates an entry whose price is
+    displayed/valued in the wrong currency and whose holdings can never be set,
+    so the write boundary must reject the pair instead of persisting it.
+
+    ``idx`` intentionally accepts any symbol because indices/ETFs are quoted in
+    mixed currencies and are resolved from provider metadata.
+    """
+    if not isinstance(symbol, str) or not symbol.strip():
+        return None
+    s = symbol.strip().upper()
+    if market == "jp" and not is_jp_market_symbol(s):
+        return "market/symbol mismatch: JP market requires JP symbol (e.g., 7203.T)"
+    if market == "us" and s.endswith(".T"):
+        return "market/symbol mismatch: US market cannot accept JP symbol (e.g., 7203.T)"
+    return None
+
+
 def is_valid_symbol(symbol):
     """強化されたシンボル検証（SQLインジェクションやパストラバーサル対策）"""
     # Coerce to str first: this validator's contract is "return bool", so a

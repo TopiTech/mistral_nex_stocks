@@ -206,9 +206,11 @@ def test_r2_copy_to_my_rejects_bulk_add_over_cap_without_partial_apply():
                 assert app_state.market.user_jp == {}
 
             # Same payload split 5 us + 5 jp stays within each market cap.
+            # JP entries use the *.T spelling the JP market requires at the
+            # write boundary (see market_symbol_mismatch).
             items2 = [
                 {
-                    "symbol": f"NEW{i:02d}",
+                    "symbol": f"NEW{i:02d}" if i < 5 else f"{7000 + i}.T",
                     "market": "us" if i < 5 else "jp",
                     "weight_pct": 10.0,
                     "target_price": 100.0,

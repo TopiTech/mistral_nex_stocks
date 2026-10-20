@@ -52,7 +52,11 @@ from services.ai_portfolio_service import (
     sanitize_ai_portfolio,
     save_custom_ai_portfolio,
 )
-from utils.normalization import is_valid_symbol, normalize_symbol_for_market
+from utils.normalization import (
+    is_valid_symbol,
+    market_symbol_mismatch,
+    normalize_symbol_for_market,
+)
 from utils.stock_payload import (
     _get_stock_container,
     error_response,
@@ -664,6 +668,13 @@ def api_copy_ai_portfolio_to_my() -> Any:
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": f"items[{idx}] のシンボルまたは市場が無効です"},
+                status_code=400,
+            )
+        mismatch = market_symbol_mismatch(symbol, market)
+        if mismatch:
+            return error_response(
+                ErrorCode.INVALID_MARKET,
+                details={"reason": f"items[{idx}]: {mismatch}"},
                 status_code=400,
             )
         if (symbol, market) in seen_symbols:

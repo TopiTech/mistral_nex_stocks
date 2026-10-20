@@ -56,6 +56,7 @@ from utils.caching import (
 from utils.normalization import (
     is_jp_stock_code,
     is_valid_symbol,
+    market_symbol_mismatch,
     normalize_market,
     normalize_symbol,
     normalize_symbol_for_market,
@@ -421,6 +422,12 @@ def api_add_stock() -> Any:
     market = parsed["market"]
     symbol = parsed["symbol"]
 
+    mismatch = market_symbol_mismatch(symbol, market)
+    if mismatch:
+        return error_response(
+            ErrorCode.INVALID_MARKET, details={"reason": mismatch}, status_code=400
+        )
+
     with app_state.market.user_stocks_lock:
         container = _get_stock_container(market)
         if container is None:
@@ -614,6 +621,12 @@ def api_add_stock_ext() -> Any:
         )
     market = parsed["market"]
     symbol = parsed["symbol"]
+
+    mismatch = market_symbol_mismatch(symbol, market)
+    if mismatch:
+        return error_response(
+            ErrorCode.INVALID_MARKET, details={"reason": mismatch}, status_code=400
+        )
 
     name = parsed["name"] or _stock_display_name(symbol, market)
     with app_state.market.user_stocks_lock:

@@ -1728,11 +1728,15 @@ function inferMarketFromSymbol(symbol, currentTab) {
   const s = String(symbol ?? "")
     .trim()
     .toUpperCase();
-  if (/^\d{4}$/.test(s) || s.endsWith(".T")) return "jp";
+  if (/^\d{3}[0-9A-Z]$/.test(s) || s.endsWith(".T")) return "jp";
   if (s.startsWith("^")) return "idx";
-  if (currentTab === "jp" || currentTab === "idx" || currentTab === "us") {
-    return currentTab;
-  }
+  // Indices/ETFs are an explicit user choice: any ticker is valid there.
+  if (currentTab === "idx") return "idx";
+  // A plain alphabetic ticker (AAPL, BRK.B, ...) is never a JP securities
+  // code, so the JP tab must not turn it into a JP watchlist entry. Such an
+  // entry would be valued in JPY and its holdings could never be set.
+  if (/^[A-Z]/.test(s)) return "us";
+  if (currentTab === "jp" || currentTab === "us") return currentTab;
   return "us";
 }
 
@@ -1763,7 +1767,10 @@ const normalizeSymbolForMarketClient = (symbol, market) => {
   const s = String(symbol ?? "")
     .trim()
     .toUpperCase();
-  if (market === "jp" && /^\d{4}$/.test(s)) return `${s}.T`;
+  // JP securities codes are 4 characters (7203, 130A, ...); normalize both
+  // forms client-side so the optimistic UI/toast matches the symbol the
+  // backend persists.
+  if (market === "jp" && /^\d{3}[0-9A-Z]$/.test(s)) return `${s}.T`;
   return s;
 };
 

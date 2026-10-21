@@ -2632,7 +2632,7 @@ async function sendAiDrawerMessage() {
                   return { response: res, data: json };
                 }
               : async (url, opts) => {
-                  const res = await fetch(url, opts);
+                  const res = await fetchWithTimeout(url, opts);
                   const json = await res.json().catch(() => ({}));
                   return { response: res, data: json };
                 };

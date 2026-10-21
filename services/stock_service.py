@@ -25,7 +25,7 @@ from utils.caching import (
     history_short_payload_cache_key,
 )
 from utils.market_utils import safe_get_ticker
-from utils.normalization import normalize_history_frame
+from utils.normalization import history_circuit_key, normalize_history_frame
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +57,9 @@ def _history_with_timeout(period_value, interval_value, symbol, market=None):
     # Clean up old circuit states occasionally
     cleanup_history_circuit_state(now_ts=now)
 
-    # Key the circuit breaker by ``market:symbol`` so the same symbol string
-    # under different markets does not share fail-fast state. Callers outside
-    # a market context pass ``market=None`` to preserve the legacy symbol-only
-    # keying.
-    circuit_key = f"{market}:{symbol}" if market else symbol
+    # Derive the key through the shared helper so the route, async task,
+    # service, and provider all count failures in the same breaker bucket.
+    circuit_key = history_circuit_key(symbol, market)
 
     short_cache_key = _history_short_cache_key(symbol, period_value, interval_value)
     with app_state.yfinance_short_cache_lock:
@@ -253,7 +251,7 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
                     fetch_interval = "1d"
 
         if hist.empty:
-            circuit_key = f"{market}:{symbol}" if market else symbol
+            circuit_key = history_circuit_key(symbol, market)
             is_transient = (
                 app_state.market.is_yf_rate_limited()
                 or app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)
@@ -350,7 +348,7 @@ def fetch_history_async_task(
     symbol, market, period, cache_key, duration, interval="auto", probe=False
 ):
     probe_success = False
-    circuit_key = f"{market}:{symbol}" if market else symbol
+    circuit_key = history_circuit_key(symbol, market)
     try:
         res = fetch_history_sync_impl(symbol, market, period, interval=interval)
         probe_success = isinstance(res, dict) and "error" not in res

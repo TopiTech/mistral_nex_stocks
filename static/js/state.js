@@ -492,7 +492,11 @@ let IS_PREVIEW_MODE = !!APP_CONFIG.preview_mode;
 
 async function refreshCredentialState() {
   try {
-    const response = await fetch("/api/credentials", { cache: "no-store" });
+    const response = await fetchWithTimeout(
+      "/api/credentials",
+      { cache: "no-store" },
+      FAST_FETCH_TIMEOUT_MS,
+    );
     const data = await response.json().catch(() => ({}));
     if (response.ok && data && data.ok !== false) {
       // Update credential flags from the backend response (not just static APP_CONFIG)

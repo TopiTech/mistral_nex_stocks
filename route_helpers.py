@@ -10,15 +10,23 @@ import os
 import re
 import threading
 import time
+from collections.abc import Mapping
 from functools import wraps
 from typing import Any, cast
 
 from flask import Flask, current_app, g, request
+from pydantic import ValidationError
 
 from app_state import app_state
-from constants import MAX_STOCK_NAME_LENGTH
+from constants import (
+    MAX_STOCK_NAME_LENGTH,
+    PORTFOLIO_AVG_PRICE_MAX,
+    PORTFOLIO_SHARES_MAX,
+    PORTFOLIO_TOTAL_VALUE_MAX,
+)
 from credential_manager import get_langsearch_api_key, get_mistral_api_key, get_tavily_api_key
 from error_codes import ErrorCode
+from schemas.stocks import PortfolioUpdateRequest
 from utils.caching import clear_cache_key, clear_cache_prefix
 from utils.env_helpers import _env_bool as _route_env_bool
 from utils.env_helpers import _env_int, _is_production_env
@@ -804,6 +812,123 @@ def _parse_stock_request(
         "market": market,
         "symbol": symbol,
     }, None
+
+
+def _portfolio_numeric_error(field: str, err: Mapping[str, Any]) -> str:
+    """Render the exact message ``parse_non_negative_float`` used to return."""
+    err_type = str(err.get("type", ""))
+    ctx = err.get("ctx") or {}
+    if err_type == "finite_number":
+        return f"{field} must be finite"
+    if err_type == "less_than_equal":
+        # Pydantic reports integer bounds as floats; the old route rendered the
+        # int constants directly, so keep that spelling for byte-identical text.
+        if field == "shares":
+            return f"shares must be <= {PORTFOLIO_SHARES_MAX}"
+        if field == "avg_price":
+            return f"avg_price must be <= {PORTFOLIO_AVG_PRICE_MAX}"
+        return f"{field} must be <= {ctx.get('le')}"
+    if err_type == "greater_than_equal":
+        return f"{field} must be >= 0"
+    if err_type == "greater_than":
+        raw_input = err.get("input")
+        try:
+            if raw_input is not None and float(raw_input) < 0:
+                return f"{field} must be >= 0"
+        except (TypeError, ValueError):
+            pass
+        return "avg_fx_rateは正の数値である必要があります"
+    return f"{field} must be a number"
+
+
+def _portfolio_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map canonical-schema failures back to the endpoint's historic errors.
+
+    The old route validated identity fields first, then required-field
+    presence, and only then parsed numbers.  Pydantic reports every error at
+    once in field order, so re-order before picking the single error the
+    client sees (``shares="abc"`` with a missing ``avg_price`` must still say
+    ``avg_price`` is required).
+    """
+    errors = exc.errors()
+    identity_errors = [
+        candidate
+        for candidate in errors
+        if (
+            candidate.get("loc")
+            and str(candidate["loc"][0]) in ("symbol", "market")
+        )
+        or (
+            candidate.get("type") == "value_error"
+            and any(
+                marker in str(candidate.get("msg", ""))
+                for marker in ("invalid_market", "invalid_symbol")
+            )
+        )
+    ]
+    required_numeric = [
+        candidate
+        for candidate in errors
+        if candidate.get("loc")
+        and str(candidate["loc"][0]) in ("shares", "avg_price")
+        and (
+            candidate.get("type") == "missing"
+            or (
+                candidate.get("type") == "value_error"
+                and "field_required" in str(candidate.get("msg", ""))
+            )
+        )
+    ]
+    err: Mapping[str, Any]
+    if identity_errors:
+        err = identity_errors[0]
+    elif required_numeric:
+        err = required_numeric[0]
+    else:
+        err = errors[0] if errors else {"type": "value_error", "msg": str(exc), "loc": ()}
+    loc = err.get("loc") or ()
+    field = str(loc[0]) if loc else ""
+    message = str(err.get("msg", ""))
+    err_type = str(err.get("type", ""))
+
+    if err_type == "value_error" and "invalid_market" in message:
+        return error_response(ErrorCode.INVALID_MARKET)
+    if err_type == "value_error" and "invalid_symbol" in message:
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if field == "market":
+        return error_response(ErrorCode.INVALID_MARKET)
+    if field == "symbol":
+        if err_type in ("missing", "string_too_short") or (
+            err_type == "value_error" and "field_required" in message
+        ):
+            return error_response(
+                ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]}
+            )
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if field in ("shares", "avg_price") and (
+        err_type == "missing" or (err_type == "value_error" and "field_required" in message)
+    ):
+        return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": [field]})
+    if "Portfolio total value" in message:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": f"ポートフォリオ総額は{PORTFOLIO_TOTAL_VALUE_MAX:,}以下である必要があります"
+            },
+        )
+    return error_response(
+        ErrorCode.INVALID_INPUT, details={"reason": _portfolio_numeric_error(field, err)}
+    )
+
+
+def _parse_portfolio_request(
+    data: dict,
+) -> tuple[PortfolioUpdateRequest | None, tuple[Any, int] | None]:
+    """Validate a portfolio update body with the canonical schema."""
+    try:
+        return PortfolioUpdateRequest.model_validate(data), None
+    except ValidationError as exc:
+        return None, _portfolio_error_from_validation(exc)
 
 
 def _invalidate_symbol_caches_internal(symbol: str) -> None:

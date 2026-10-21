@@ -25,6 +25,10 @@ function sanitizeRoute(route) {
 
 const HOST_NAME = "com.mistral_nex_stocks.host";
 const DEFAULT_BACKEND_PORT = 5000;
+const ADD_STOCK_TIMEOUT_MS = 10000;
+const BADGE_FETCH_TIMEOUT_MS = 10000;
+const HEALTH_TIMEOUT_MS = 3000;
+const SHUTDOWN_TIMEOUT_MS = 5000;
 let mnsShutdownToken = null;
 let mnsExtensionToken = null;
 let backendPort = DEFAULT_BACKEND_PORT;
@@ -35,6 +39,42 @@ function normalizeBackendPort(value) {
     return port;
   }
   return DEFAULT_BACKEND_PORT;
+}
+
+/**
+ * fetch with a bounded wait for the backend to answer. A stalled backend must
+ * never leave the service worker waiting forever (badge updates hold a lock,
+ * and add/stop flows hold the popup's button state). The timer is cleared as
+ * soon as the response arrives so streaming bodies are not cut off.
+ */
+function fetchWithTimeout(url, options = {}, timeoutMs = ADD_STOCK_TIMEOUT_MS) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const callerSignal = options.signal;
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else
+      callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  };
+  return fetch(url, { ...options, signal: controller.signal })
+    .catch((error) => {
+      if (timedOut) {
+        const timeoutError = new Error("リクエストがタイムアウトしました");
+        timeoutError.name = "TimeoutError";
+        throw timeoutError;
+      }
+      throw error;
+    })
+    .finally(cleanup);
 }
 
 function buildBackendUrls(port = backendPort) {
@@ -107,7 +147,9 @@ try {
 if (mnsSessionStorage && typeof mnsSessionStorage.get === "function") {
   try {
     const pending = mnsSessionStorage.get(["mnsExtensionToken"], (items) => {
-      if (items?.mnsExtensionToken) {
+      // A token acquired while this read was pending is newer than the copy
+      // this callback started with, so never overwrite it.
+      if (items?.mnsExtensionToken && !mnsExtensionToken) {
         mnsExtensionToken = items.mnsExtensionToken;
       }
     });
@@ -127,6 +169,8 @@ let mnsExtensionTokenInflight = null;
 
 async function getOrFetchExtensionToken(forceRefresh = false) {
   if (forceRefresh) {
+    // The backend rejected the cached value, so drop both copies and ask the
+    // native host again (it owns the token's rotation).
     mnsExtensionToken = null;
     mnsExtensionTokenInflight = null;
     try {
@@ -140,23 +184,26 @@ async function getOrFetchExtensionToken(forceRefresh = false) {
   }
   if (mnsExtensionToken) return mnsExtensionToken;
 
-  // Deduplicate in-flight token fetch requests across concurrent callers
-  if (mnsExtensionTokenInflight) {
-    return mnsExtensionTokenInflight;
-  }
+  // The native host only returns a few secrets per window: concurrent callers
+  // share one acquisition, and getContext/startBackend never read this token.
+  if (mnsExtensionTokenInflight) return mnsExtensionTokenInflight;
 
-  mnsExtensionTokenInflight = (async () => {
-    try {
-      const sessionStorage = getMnsSessionStorage();
-      if (sessionStorage && typeof sessionStorage.get === "function") {
-        const items = await sessionStorage.get("mnsExtensionToken");
-        if (items && items.mnsExtensionToken) {
-          mnsExtensionToken = items.mnsExtensionToken;
-          return mnsExtensionToken;
+  const acquisition = (async () => {
+    // After a forced refresh the persisted copy is known to be rejected (or
+    // could not be removed), so only the native host can provide a valid one.
+    if (!forceRefresh) {
+      try {
+        const sessionStorage = getMnsSessionStorage();
+        if (sessionStorage && typeof sessionStorage.get === "function") {
+          const items = await sessionStorage.get("mnsExtensionToken");
+          if (items && items.mnsExtensionToken) {
+            mnsExtensionToken = items.mnsExtensionToken;
+            return mnsExtensionToken;
+          }
         }
+      } catch (e) {
+        console.warn("Failed to get token from storage.session:", e);
       }
-    } catch (e) {
-      console.warn("Failed to get token from storage.session:", e);
     }
     try {
       const res = await sendNativeMessage({
@@ -170,11 +217,16 @@ async function getOrFetchExtensionToken(forceRefresh = false) {
       console.warn("Failed to query extension api token via native host:", e);
     }
     return "";
-  })().finally(() => {
-    mnsExtensionTokenInflight = null;
-  });
+  })();
 
-  return mnsExtensionTokenInflight;
+  mnsExtensionTokenInflight = acquisition;
+  try {
+    return await acquisition;
+  } finally {
+    if (mnsExtensionTokenInflight === acquisition) {
+      mnsExtensionTokenInflight = null;
+    }
+  }
 }
 
 /**
@@ -187,15 +239,19 @@ async function addStockViaExtension(base, symbol, market) {
   let forceRefresh = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = await getOrFetchExtensionToken(forceRefresh);
-    const res = await fetch(`${base}/api/stocks/add_ext`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-MNS-Extension-Request": "true",
-        Authorization: `Bearer ${token || ""}`,
+    const res = await fetchWithTimeout(
+      `${base}/api/stocks/add_ext`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MNS-Extension-Request": "true",
+          Authorization: `Bearer ${token || ""}`,
+        },
+        body: JSON.stringify({ symbol, market }),
       },
-      body: JSON.stringify({ symbol, market }),
-    });
+      ADD_STOCK_TIMEOUT_MS,
+    );
     const data = await res.json().catch(() => ({}));
     if ((res.status === 401 || res.status === 403) && !forceRefresh) {
       forceRefresh = true;
@@ -228,30 +284,23 @@ async function checkHealth(retries = 1) {
     const urls = buildBackendUrls(port);
     for (const base of urls) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000); // 個人利用向けに最適化: 3秒タイムアウト
-        try {
-          const res = await fetch(`${base}/api/health`, {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-          if (!res.ok) {
-            throw new Error(`HTTP status ${res.status}`);
-          }
-          const data = await res.json();
-          if (
-            data?.ok !== true ||
-            data?.app !== "Mistral NeX Stocks" ||
-            data?.ready !== true
-          ) {
-            throw new Error("Unexpected backend health response");
-          }
-          return { ok: true, base, data };
-        } finally {
-          clearTimeout(timeoutId);
+        const res = await fetchWithTimeout(
+          `${base}/api/health`,
+          { method: "GET", cache: "no-store" },
+          HEALTH_TIMEOUT_MS,
+        );
+        if (!res.ok) {
+          throw new Error(`HTTP status ${res.status}`);
         }
+        const data = await res.json();
+        if (
+          data?.ok !== true ||
+          data?.app !== "Mistral NeX Stocks" ||
+          data?.ready !== true
+        ) {
+          throw new Error("Unexpected backend health response");
+        }
+        return { ok: true, base, data };
       } catch (e) {
         console.debug("checkHealth attempt failed:", e);
         lastError = e;
@@ -536,10 +585,11 @@ async function updateBadge() {
     }
 
     try {
-      const res = await fetch(`${health.base}/api/indices`, {
-        method: "GET",
-        cache: "no-store",
-      });
+      const res = await fetchWithTimeout(
+        `${health.base}/api/indices`,
+        { method: "GET", cache: "no-store" },
+        BADGE_FETCH_TIMEOUT_MS,
+      );
       if (!res.ok) return;
       const data = await res.json();
       const n225 = data["N225"];
@@ -620,26 +670,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.action === "getContext") {
         await refreshBackendPort();
         const health = await checkHealth();
-        try {
-          const tokenRes = await sendNativeMessage({
-            action: "get_shutdown_token",
-          });
-          if (tokenRes && tokenRes.ok) {
-            setMnsShutdownToken(tokenRes.token);
-          }
-        } catch (e) {
-          console.warn("Failed to query shutdown token:", e);
-        }
-        try {
-          const extTokenRes = await sendNativeMessage({
-            action: "get_extension_api_token",
-          });
-          if (extTokenRes && extTokenRes.ok) {
-            setMnsExtensionToken(extTokenRes.token);
-          }
-        } catch (e) {
-          console.warn("Failed to query extension api token:", e);
-        }
+        // Do not read either token here: the popup only needs diagnostics,
+        // and both secrets are acquired lazily by the actions that use them.
         return safeSendResponse({
           ok: true,
           hostName: HOST_NAME,
@@ -657,35 +689,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (res && res.port) {
           setBackendPort(res.port);
         }
-        const queryTokens = async () => {
-          for (let attempt = 0; attempt < 5; attempt++) {
-            try {
-              const tokenRes = await sendNativeMessage({
-                action: "get_shutdown_token",
-              });
-              if (tokenRes && tokenRes.ok) {
-                setMnsShutdownToken(tokenRes.token);
-              }
-              const extTokenRes = await sendNativeMessage({
-                action: "get_extension_api_token",
-              });
-              if (extTokenRes && extTokenRes.ok) {
-                setMnsExtensionToken(extTokenRes.token);
-              }
-              if (tokenRes && tokenRes.ok && extTokenRes && extTokenRes.ok) {
-                break;
-              }
-            } catch (e) {
-              console.warn(
-                "Failed to query tokens on startup attempt:",
-                attempt,
-                e,
-              );
-            }
-            await new Promise((r) => setTimeout(r, 600));
-          }
-        };
-        queryTokens();
+        // Token acquisition is demand-driven (addStockViaExtension /
+        // stopBackend) so startup cannot exhaust the native host's shared
+        // 3-requests-per-30-seconds secret budget.
         // Start badge update soon after backend starts
         setTimeout(updateBadge, 2000);
         return safeSendResponse(res);
@@ -713,15 +719,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         try {
-          const res = await fetch(`${health.base}/api/shutdown`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-MNS-Shutdown-Token": mnsShutdownToken || "",
+          const res = await fetchWithTimeout(
+            `${health.base}/api/shutdown`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-MNS-Shutdown-Token": mnsShutdownToken || "",
+              },
+              body: JSON.stringify({ confirm: true }),
+              cache: "no-store",
             },
-            body: JSON.stringify({ confirm: true }),
-            cache: "no-store",
-          });
+            SHUTDOWN_TIMEOUT_MS,
+          );
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.ok === false) {
             const rawError = String(data?.error || `HTTP ${res.status}`);

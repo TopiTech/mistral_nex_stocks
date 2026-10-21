@@ -90,7 +90,9 @@ def _build_market_row(
         or normalize_optional_number(source.get("currentPrice"))
         or 0.0
     )
-    shares_outstanding = normalize_optional_number(source.get("sharesOutstanding"))
+    shares_outstanding = normalize_optional_number(
+        source.get("sharesOutstanding")
+    ) or normalize_optional_number(source.get("shares_outstanding"))
     market_cap = (
         normalize_optional_number(source.get("market_cap"))
         or normalize_optional_number(source.get("marketCap"))
@@ -161,15 +163,18 @@ def build_heatmap_payload(
             or normalize_optional_number(item.get("close"))
             or 0.0
         )
-        volume = normalize_optional_number(item.get("volume")) or 0.0
-        fallback_size = price * volume if volume > 0 else 0.0
-        shares = normalize_optional_number(item.get("sharesOutstanding"))
-        shares_cap = (shares * price) if (shares is not None) else fallback_size
+        shares = normalize_optional_number(
+            item.get("sharesOutstanding")
+        ) or normalize_optional_number(item.get("shares_outstanding"))
+        # Market cap must stay a capitalisation. ``price * volume`` is trading
+        # value and differs by orders of magnitude, so a symbol with neither a
+        # reported cap nor shares outstanding is omitted rather than sized
+        # with a dimensionally different number.
+        shares_cap = (shares * price) if (shares is not None and shares > 0 and price > 0) else 0.0
         market_cap = (
             normalize_optional_number(item.get("market_cap"))
             or normalize_optional_number(item.get("marketCap"))
             or shares_cap
-            or fallback_size
         )
         if market_cap <= 0:
             continue

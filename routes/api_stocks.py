@@ -134,7 +134,6 @@ from utils.stock_payload import (
 )
 from utils.storage import UserStocksPersistError, save_user_stocks
 from utils.text_utils import _parse_json_request, parse_non_negative_float
-from utils.validators import validate_portfolio_input
 
 __all__ = [
     "AI_PORTFOLIO_RESULT_CACHE_TTL",
@@ -244,6 +243,5 @@ __all__ = [
     "save_user_stocks",
     "schedule_sync_all_stocks_now",
     "stream_bp",
-    "validate_portfolio_input",
     "views_bp",
 ]

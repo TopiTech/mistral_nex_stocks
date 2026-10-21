@@ -9,15 +9,13 @@ import credential_manager
 import crypto_utils
 from error_codes import ErrorCode
 from error_handlers import register_error_handlers
+from schemas.config import TemplateConfigSchema
 from services.realtime_engine import RealtimeMarketEngine, _tv_purge_key_variants
 from services.search.langsearch import langsearch_rerank
 from services.search_service import _get_market_trending_titles, _market_trends_cache_key
 from utils.caching import _set_cached_value
 from utils.stock_payload import _extract_portfolio_fields
-from utils.validators import (
-    AppConfigSchema,
-    safe_parse_analysis_result,
-)
+from utils.validators import safe_parse_analysis_result
 
 
 class TestReviewAutonomousHeadFixes:
@@ -192,7 +190,7 @@ class TestReviewAutonomousHeadFixes:
         assert fx is None
 
     def test_r7_app_config_schema_preserves_ephemeral_fields(self):
-        """R7: AppConfigSchema validates and preserves ephemeral credential warning flags."""
+        """R7: TemplateConfigSchema validates and preserves ephemeral credential warning flags."""
         raw_state = {
             "has_mistral_api_key": True,
             "has_langsearch_api_key": False,
@@ -205,7 +203,7 @@ class TestReviewAutonomousHeadFixes:
             "credentials_ephemeral_warning": "Ephemeral warning text",
         }
 
-        validated = AppConfigSchema.model_validate(raw_state).model_dump()
+        validated = TemplateConfigSchema.model_validate(raw_state).model_dump()
         assert validated["credentials_ephemeral"] is True
         assert validated["credentials_ephemeral_keys"] == ["mistral_api_key"]
         assert validated["credentials_ephemeral_warning"] == "Ephemeral warning text"

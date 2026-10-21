@@ -647,12 +647,16 @@ class YFinanceProvider(BaseStockProvider):
     @with_yfinance_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
     def get_history(self, symbol: str, period: str, interval: str = "1d") -> pd.DataFrame:
         from constants import YFINANCE_TIMEOUT_SINGLE
-        from utils.normalization import normalize_history_frame
+        from utils.normalization import history_circuit_key, normalize_history_frame
 
         m_state = self._get_market_state()
+        # The same canonical key the route/service layer reports. Deriving it
+        # from the symbol keeps callers without an explicit market (the sync
+        # worker) in the same failure bucket.
+        circuit_key = history_circuit_key(symbol)
 
-        if m_state.is_circuit_open("yfinance_history", symbol=symbol):
-            logger.info("stock-history circuit open symbol=%s", symbol)
+        if m_state.is_circuit_open("yfinance_history", symbol=circuit_key):
+            logger.info("stock-history circuit open symbol=%s", circuit_key)
             return pd.DataFrame()
         if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
@@ -689,7 +693,7 @@ class YFinanceProvider(BaseStockProvider):
                 actions=False,
                 timeout=YFINANCE_TIMEOUT_SINGLE,
             )
-            m_state.report_circuit_result("yfinance_history", success=True, symbol=symbol)
+            m_state.report_circuit_result("yfinance_history", success=True, symbol=circuit_key)
             try:
                 yf_session_manager.reset_consecutive_401_count()
             except (AttributeError, RuntimeError):
@@ -711,7 +715,7 @@ class YFinanceProvider(BaseStockProvider):
             m_state.report_circuit_result(
                 "yfinance_history",
                 success=False,
-                symbol=symbol,
+                symbol=circuit_key,
                 threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
                 open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
             )

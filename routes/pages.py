@@ -3,8 +3,9 @@ from pathlib import Path
 from flask import Blueprint, current_app, render_template, send_from_directory
 
 from credential_manager import get_api_credential_state, get_model_badge
+from schemas.config import TemplateConfigSchema
 from utils.stock_payload import get_default_symbols
-from utils.validators import AppConfigSchema, DefaultSymbolsSchema
+from utils.validators import DefaultSymbolsSchema
 
 pages_bp = Blueprint("pages", __name__)
 
@@ -33,7 +34,7 @@ def _get_safe_template_context() -> tuple[dict, dict]:
         safe_symbols = {"us": [], "jp": [], "idx": []}
 
     try:
-        safe_config = AppConfigSchema.model_validate(get_api_credential_state()).model_dump()
+        safe_config = TemplateConfigSchema.model_validate(get_api_credential_state()).model_dump()
     except Exception as exc:
         current_app.logger.warning("Failed to validate app config schema: %s", exc)
         safe_config = {}

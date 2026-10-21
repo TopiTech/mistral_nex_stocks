@@ -210,7 +210,11 @@ async function storeCredentials(options = {}) {
 }
 
 async function getCredentialState() {
-  const response = await fetch("/api/credentials", { cache: "no-store" });
+  const response = await fetchWithTimeout(
+    "/api/credentials",
+    { cache: "no-store" },
+    FAST_FETCH_TIMEOUT_MS,
+  );
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
     throw new Error(

@@ -20,9 +20,10 @@ from schemas.analysis import (
     AITechnicalLinesRequest,
 )
 from schemas.config import (
-    AppConfigSchema,
     LoggingConfigSchema,
+    RuntimeConfigSchema,
     SecurityConfigSchema,
+    TemplateConfigSchema,
 )
 from schemas.stocks import (
     HeatmapQueryRequest,
@@ -48,10 +49,10 @@ __all__ = [
     "AIPortfolioRebalanceRequest",
     "AIPortfolioSaveRequest",
     "AITechnicalLinesRequest",
-    "AppConfigSchema",
     "HeatmapQueryRequest",
     "LoggingConfigSchema",
     "PortfolioUpdateRequest",
+    "RuntimeConfigSchema",
     "ScreenerQueryRequest",
     "SecurityConfigSchema",
     "StockAddExtRequest",
@@ -59,4 +60,5 @@ __all__ = [
     "StockDeleteRequest",
     "StockDetailsQueryRequest",
     "StockHistoryQueryRequest",
+    "TemplateConfigSchema",
 ]

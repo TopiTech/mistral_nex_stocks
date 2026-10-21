@@ -66,10 +66,10 @@ class RouteHelpersCoverageTestCase(unittest.TestCase):
 
 class ValidatorsCoverageTestCase(unittest.TestCase):
     def test_portfolio_schema_rejects_negative_values(self):
-        from utils.validators import PortfolioInputSchema
+        from schemas.stocks import PortfolioUpdateRequest
 
         with self.assertRaises(ValueError):
-            PortfolioInputSchema(symbol="AAPL", market="us", shares=-1, avg_price=1)
+            PortfolioUpdateRequest(symbol="AAPL", market="us", shares=-1, avg_price=1)
 
     def test_validate_analysis_result(self):
         from utils.validators import validate_analysis_result

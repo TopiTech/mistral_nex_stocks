@@ -17,6 +17,30 @@ def normalize_market(market, default="us"):
     return value if value in VALID_MARKETS else None
 
 
+def history_circuit_key(symbol: str, market: str | None = None) -> str:
+    """Return the canonical circuit-breaker key for stock history.
+
+    Every layer (route, async task, service, and provider) must derive the key
+    through this function. When one layer used the bare symbol while another
+    used ``market:symbol``, the two failure counters were independent and a
+    failing upstream kept receiving requests instead of failing fast.
+    """
+    key_symbol = str(symbol or "").strip()
+    if not key_symbol:
+        return ""
+    normalized_market = normalize_market(market, default="")
+    if normalized_market is None:
+        if key_symbol.endswith(".T"):
+            normalized_market = "jp"
+        elif key_symbol.startswith("^"):
+            normalized_market = "idx"
+        elif is_jp_stock_code(key_symbol):
+            normalized_market = "jp"
+        else:
+            normalized_market = "us"
+    return f"{normalized_market}:{key_symbol}"
+
+
 def normalize_symbol(symbol):
     """Clean up stock symbol string and strip exchange prefixes if present."""
     if symbol is None:

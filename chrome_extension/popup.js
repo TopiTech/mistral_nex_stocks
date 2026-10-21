@@ -11,6 +11,7 @@ const browserPill = $("browserPill");
 const diagBox = $("diagBox");
 
 const DEFAULT_BACKEND_PORT = 5000;
+const STOCK_POLL_TIMEOUT_MS = 10000;
 
 function normalizeBackendPort(value) {
   const port = Number(value);
@@ -18,6 +19,44 @@ function normalizeBackendPort(value) {
     return port;
   }
   return DEFAULT_BACKEND_PORT;
+}
+
+/**
+ * fetch with a bounded wait for the backend to answer. A stalled backend must
+ * not freeze the 5-second poll chain (or leave the last result looking fresh).
+ */
+function fetchWithTimeout(
+  url,
+  options = {},
+  timeoutMs = STOCK_POLL_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const callerSignal = options.signal;
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else
+      callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  };
+  return fetch(url, { ...options, signal: controller.signal })
+    .catch((error) => {
+      if (timedOut) {
+        const timeoutError = new Error("リクエストがタイムアウトしました");
+        timeoutError.name = "TimeoutError";
+        throw timeoutError;
+      }
+      throw error;
+    })
+    .finally(cleanup);
 }
 
 // Fallback base used before/without a successful health check. background.js
@@ -280,7 +319,11 @@ function filterAndRenderStocks() {
 
 async function fetchAndRenderStocks(base) {
   try {
-    const res = await fetch(`${base}/api/stocks`, { cache: "no-store" });
+    const res = await fetchWithTimeout(
+      `${base}/api/stocks`,
+      { cache: "no-store" },
+      STOCK_POLL_TIMEOUT_MS,
+    );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     allStocksData = data;

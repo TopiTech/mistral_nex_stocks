@@ -1058,9 +1058,17 @@ class YahooJPRealtimeScraper:
         self._record_fetch_failure(symbol, kind="pts")
         return None
 
-    def _fetch_regular_with_fallback(self, symbol: str) -> TickerPayload | None:
-        """Fetch a regular quote: Yahoo JP first, then fallback providers in priority order."""
-        payload = self.fetch_jp_symbol(symbol)
+    def _fetch_regular_with_fallback(
+        self, symbol: str, *, use_primary: bool = True
+    ) -> TickerPayload | None:
+        """Fetch a regular quote: Yahoo JP first, then fallback providers.
+
+        ``use_primary=False`` skips only the Yahoo JP primary (its per-symbol
+        structure-change pause) and still runs the fallback chain. A pause must
+        never remove the symbol from polling: that silently disabled every
+        fallback source as well.
+        """
+        payload = self.fetch_jp_symbol(symbol) if use_primary else None
         if not payload:
             for fb in self._all_fallback_providers():
                 try:
@@ -1125,7 +1133,10 @@ class YahooJPRealtimeScraper:
                 if paused_count and paused_count >= len(subscribed_symbols) * 0.5:
                     interval *= 2.0
 
-                target_symbols = self._active_symbols(subscribed_symbols)
+                target_symbols = list(subscribed_symbols)
+                # Pausing the primary source must not drop the symbol from the
+                # cycle: the fallback providers still need to serve it.
+                primary_active = set(self._active_symbols(target_symbols))
                 with self.lock:
                     target_tokens = {sym: self._symbol_tokens.get(sym) for sym in target_symbols}
 
@@ -1154,7 +1165,11 @@ class YahooJPRealtimeScraper:
                             if not self.running or not self._is_worker_current(my_epoch):
                                 break
                             try:
-                                fut = executor.submit(self._fetch_regular_with_fallback, sym)
+                                fut = executor.submit(
+                                    self._fetch_regular_with_fallback,
+                                    sym,
+                                    use_primary=sym in primary_active,
+                                )
                                 future_to_sym[fut] = sym
                             except (RuntimeError, AttributeError) as exc:
                                 logger.debug(
@@ -1186,7 +1201,9 @@ class YahooJPRealtimeScraper:
                         for sym in target_symbols:
                             if not self._is_worker_current(my_epoch):
                                 break
-                            payload = self._fetch_regular_with_fallback(sym)
+                            payload = self._fetch_regular_with_fallback(
+                                sym, use_primary=sym in primary_active
+                            )
                             if (
                                 payload
                                 and self._is_worker_current(my_epoch)

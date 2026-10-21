@@ -256,6 +256,9 @@ function success() {
 const context = {
   document: { querySelector: () => meta },
   Headers,
+  AbortController,
+  setTimeout,
+  clearTimeout,
   setInterval: () => 1,
   clearInterval: () => {},
   fetch: (url, options = {}) => {

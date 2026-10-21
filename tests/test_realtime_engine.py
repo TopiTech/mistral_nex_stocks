@@ -751,7 +751,7 @@ def test_yahoo_old_worker_generation_cannot_publish_after_restart():
     fetch_started = threading.Event()
     release_fetch = threading.Event()
 
-    def delayed_fetch(_symbol):
+    def delayed_fetch(_symbol, **_kwargs):
         fetch_started.set()
         release_fetch.wait(timeout=2.0)
         return {

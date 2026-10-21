@@ -23,7 +23,7 @@ from services.stock_provider import YFinanceProvider
 from session_manager import YFinanceSessionManager
 from utils import storage
 from utils.chat_history import SQLiteChatHistoryStore
-from utils.validators import extract_json_payload, validate_portfolio_input
+from utils.validators import extract_json_payload
 
 
 class TestAuditReviewFixes(unittest.TestCase):
@@ -151,14 +151,6 @@ class TestAuditReviewFixes(unittest.TestCase):
             self.assertEqual(quote["symbol"], "7203.T")
             self.assertEqual(quote["regularMarketPrice"], 2800.5)
             self.assertEqual(quote["regularMarketPreviousClose"], 2800.5 - 15.5)
-
-    def test_validators_portfolio_rejects_inf_and_nan(self):
-        """R9: PortfolioInputSchema rejects float('nan') and float('inf')."""
-        errors_nan = validate_portfolio_input(float("nan"), 100.0)
-        self.assertTrue(len(errors_nan) > 0, "NaN shares should produce validation error")
-
-        errors_inf = validate_portfolio_input(10.0, float("inf"))
-        self.assertTrue(len(errors_inf) > 0, "Inf price should produce validation error")
 
     def test_validators_json_salvage_trailing_backslashes(self):
         """R9: extract_json_payload properly handles unescaped vs escaped trailing backslashes."""

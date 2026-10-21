@@ -187,6 +187,8 @@ export default [
         mergeStocksWithExistingHistory: "readonly",
         normalizeHistoryData: "readonly",
         refreshCredentialState: "readonly",
+        fetchWithTimeout: "readonly",
+        FAST_FETCH_TIMEOUT_MS: "readonly",
         renderTrendingBadges: "readonly",
         scheduleHistoryPrefetchWarmup: "readonly",
         setActiveTab: "readonly",

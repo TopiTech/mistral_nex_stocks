@@ -273,7 +273,7 @@ class RealtimeMarketEngine:
 
                 try:
                     self._bg_executor.submit(_bg_fetch)
-                except (RuntimeError, Exception) as exc:
+                except Exception as exc:
                     logger.debug(
                         "Background PTS fetch could not be submitted for %s: %s",
                         sym,
@@ -309,7 +309,7 @@ class RealtimeMarketEngine:
 
             try:
                 self._bg_executor.submit(_priority_fetch)
-            except (RuntimeError, Exception) as exc:
+            except Exception as exc:
                 logger.debug(
                     "Priority fetch could not be submitted for %s: %s",
                     symbol,
@@ -457,9 +457,15 @@ class RealtimeMarketEngine:
                 or self.pts_store.get(clean_sym)
             )
 
-    def _fetch_pts_with_fallback(self, symbol: str) -> TickerPayload | None:
-        """Fetch a PTS quote: Yahoo JP first, then SBI, then Nikkei225JP, then Minkabu as lowest fallback."""
-        payload = self.yahoojp_scraper.fetch_pts_symbol(symbol)
+    def _fetch_pts_with_fallback(
+        self, symbol: str, *, use_primary: bool = True
+    ) -> TickerPayload | None:
+        """Fetch a PTS quote: Yahoo JP first, then SBI, Nikkei225JP, Minkabu.
+
+        ``use_primary=False`` honours the primary source's per-symbol pause
+        while still consulting the other providers.
+        """
+        payload = self.yahoojp_scraper.fetch_pts_symbol(symbol) if use_primary else None
         if not payload:
             try:
                 payload = self.sbi_scraper.fetch_pts_quote(symbol)
@@ -529,7 +535,9 @@ class RealtimeMarketEngine:
                     )
 
                 target_symbols = _dedupe_pts_symbols(scraper_symbols, user_jp_symbols)
-                target_symbols = self.yahoojp_scraper._active_symbols(target_symbols, kind="pts")
+                primary_active = set(
+                    self.yahoojp_scraper._active_symbols(target_symbols, kind="pts")
+                )
 
                 now_ts = time.time()
                 for sym in target_symbols:
@@ -542,7 +550,9 @@ class RealtimeMarketEngine:
                         > PTS_CACHE_STALE_SECONDS
                     )
                     if active or cached_payload is None or is_stale:
-                        payload = self._fetch_pts_with_fallback(sym)
+                        payload = self._fetch_pts_with_fallback(
+                            sym, use_primary=sym in primary_active
+                        )
                         if (
                             payload
                             and self.running
@@ -552,7 +562,12 @@ class RealtimeMarketEngine:
                             self._handle_pts_update(payload)
                         from constants import SCRAPER_REQUEST_STAGGER_SEC
 
-                        time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
+                        # Interruptible: a plain sleep keeps stop()/restart()
+                        # waiting for the full stagger after shutdown begins.
+                        _interruptible_sleep(
+                            lambda: self.running and self._pts_epoch == my_epoch,
+                            SCRAPER_REQUEST_STAGGER_SEC,
+                        )
 
                 _interruptible_sleep(lambda: self.running and self._pts_epoch == my_epoch, interval)
             except Exception as exc:

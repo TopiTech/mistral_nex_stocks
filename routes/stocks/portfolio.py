@@ -16,14 +16,9 @@ from app_bg import (
     schedule_sync_all_stocks_now,
 )
 from app_state import app_state
-from constants import (
-    PORTFOLIO_AVG_FX_RATE_MAX,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
-)
 from error_codes import ErrorCode
 from route_helpers import (
-    _parse_stock_request,
+    _parse_portfolio_request,
     _stock_display_name,
     ensure_stock_placeholder_in_caches,
     invalidate_stock_caches,
@@ -41,8 +36,7 @@ from utils.stock_payload import (
     error_response,
 )
 from utils.storage import UserStocksPersistError
-from utils.text_utils import _parse_json_request, parse_non_negative_float
-from utils.validators import validate_portfolio_input
+from utils.text_utils import _parse_json_request
 
 logger = logging.getLogger(__name__)
 
@@ -68,42 +62,18 @@ def api_update_portfolio() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    parsed, error = _parse_stock_request(data, default_market="")
+    parsed, error = _parse_portfolio_request(data)
     if error:
         return error
     if parsed is None:
         return error_response(
             ErrorCode.MALFORMED_INPUT, details={"reason": "パース結果がありません"}
         )
-    market = parsed["market"]
-    symbol = parsed["symbol"]
-
-    try:
-        shares_raw = data.get("shares")
-        avg_price_raw = data.get("avg_price")
-        avg_fx_rate_raw = data.get("avg_fx_rate")
-        if shares_raw is None or str(shares_raw).strip() == "":
-            return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["shares"]})
-        if avg_price_raw is None or str(avg_price_raw).strip() == "":
-            return error_response(
-                ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["avg_price"]}
-            )
-
-        shares = parse_non_negative_float(shares_raw, "shares", max_value=PORTFOLIO_SHARES_MAX)
-        avg_price = parse_non_negative_float(
-            avg_price_raw, "avg_price", max_value=PORTFOLIO_AVG_PRICE_MAX
-        )
-        avg_fx_rate = None
-        if avg_fx_rate_raw is not None and str(avg_fx_rate_raw).strip():
-            avg_fx_rate = parse_non_negative_float(
-                avg_fx_rate_raw, "avg_fx_rate", max_value=PORTFOLIO_AVG_FX_RATE_MAX
-            )
-
-        portfolio_errors = validate_portfolio_input(shares, avg_price, avg_fx_rate)
-        if portfolio_errors:
-            return error_response(ErrorCode.INVALID_INPUT, details={"reason": portfolio_errors[0]})
-    except ValueError as exc:
-        return error_response(ErrorCode.INVALID_INPUT, details={"reason": str(exc)})
+    market = parsed.market
+    symbol = parsed.symbol
+    shares = parsed.shares
+    avg_price = parsed.avg_price
+    avg_fx_rate = parsed.avg_fx_rate
 
     with app_state.market.user_stocks_lock:
         container = _get_stock_container(market)

@@ -126,7 +126,7 @@ def test_routes_pages_safe_template_context_error_boundary():
             side_effect=ValueError("Schema error"),
         ),
         patch(
-            "utils.validators.AppConfigSchema.model_validate",
+            "schemas.config.TemplateConfigSchema.model_validate",
             side_effect=ValueError("Schema error"),
         ),
     ):

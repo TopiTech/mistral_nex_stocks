@@ -57,6 +57,7 @@ htmlcov/
 reports/
 
 # Temp / Debug / Artifacts
+scratch/
 all_py_files.txt
 dl.txt
 dl_err.txt

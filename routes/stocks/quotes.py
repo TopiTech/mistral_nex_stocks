@@ -43,6 +43,7 @@ from utils.caching import (
 from utils.env_helpers import _env_bool as _stocks_env_bool
 from utils.env_helpers import _is_testing as _stocks_is_testing
 from utils.normalization import (
+    history_circuit_key,
     is_valid_symbol,
     normalize_market,
     normalize_optional_number,
@@ -111,7 +112,7 @@ def _submit_async_history_fetch(
             probe=probe,
         )
         if probe:
-            circuit_key = f"{market}:{symbol}"
+            circuit_key = history_circuit_key(symbol, market)
 
             def _handle_cancelled_probe(done_future: Any) -> None:
                 if not done_future.cancelled():
@@ -316,7 +317,7 @@ def api_stock_history() -> Any:
     if not is_valid_symbol(symbol):
         return error_response(ErrorCode.INVALID_SYMBOL)
 
-    circuit_key = f"{market}:{symbol}"
+    circuit_key = history_circuit_key(symbol, market)
     is_open = app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)
 
     cache_key = (

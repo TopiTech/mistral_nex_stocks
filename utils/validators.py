@@ -12,12 +12,7 @@ from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from constants import (
-    PORTFOLIO_AVG_FX_RATE_MAX,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
-    PORTFOLIO_TOTAL_VALUE_MAX,
-)
+from constants import PORTFOLIO_AVG_PRICE_MAX
 from utils.normalization import is_valid_symbol
 
 logger = logging.getLogger(__name__)
@@ -148,10 +143,6 @@ class HeatmapFilterSchema(BaseModel):
     color_by: Literal["change_pct", "pe_ratio"] = "change_pct"
 
 
-class MnsValidationError(ValueError):
-    """Custom validation exception for Mistral NeX Stocks."""
-
-
 class NewsSummaryModel(BaseModel):
     """ニュース要約用の3セクション構造化モデル"""
 
@@ -216,124 +207,6 @@ class DefaultSymbolsSchema(BaseModel):
     us: list[str]
     jp: list[str]
     idx: list[str]
-
-
-class AppConfigSchema(BaseModel):
-    """Schema for app config passed to templates."""
-
-    has_mistral_api_key: bool
-    has_openai_api_key: bool = False
-    has_langsearch_api_key: bool
-    has_tavily_api_key: bool
-    has_alphavantage_api_key: bool
-    has_ai_access: bool = False
-    ai_provider: str = "mistral"
-    is_beta_provider: bool = False
-    provider_notice: str = ""
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4o-mini"
-    openai_embeddings_model: str = "text-embedding-3-small"
-    is_local_openai_base_url: bool = False
-    api_mode: str = "chat"
-    agent_id: str = ""
-    preview_mode: bool = False
-    model_selectable: bool = True
-    mistral_model: str
-    is_ai_technical_lines_eligible: bool
-    is_free_tier_model: bool = False
-    model_tier: str = "Medium"
-    mistral_api_key_min_length: int = 32
-    langsearch_api_key_min_length: int = 20
-    tavily_api_key_min_length: int = 5
-    credentials_ephemeral: bool = False
-    credentials_ephemeral_keys: list[str] = Field(default_factory=list)
-    credentials_ephemeral_warning: str | None = None
-
-
-
-class PortfolioInputSchema(BaseModel):
-    """Schema for validating portfolio input parameters."""
-
-    model_config = ConfigDict(allow_inf_nan=False)
-
-    symbol: str
-    market: str
-    shares: float
-    avg_price: float
-    avg_fx_rate: float | None = None
-
-    @field_validator("shares", "avg_price", "avg_fx_rate", mode="before")
-    @classmethod
-    def reject_boolean_numeric(cls, v: Any) -> Any:
-        """Reject boolean values for numeric fields."""
-        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
-            raise MnsValidationError("bool_type_not_allowed")
-        return v
-
-    @model_validator(mode="after")
-    def validate_bounds_and_total(self) -> "PortfolioInputSchema":
-        """Validate logical bounds and calculate total value."""
-        # shares validation
-        if self.shares < 0:
-            raise MnsValidationError("sharesは非負の数値である必要があります")
-        if self.shares > PORTFOLIO_SHARES_MAX:
-            raise MnsValidationError(f"sharesは{PORTFOLIO_SHARES_MAX:,}以下である必要があります")
-
-        # avg_price validation
-        if self.avg_price < 0:
-            raise MnsValidationError("avg_priceは非負の数値である必要があります")
-        if self.avg_price > PORTFOLIO_AVG_PRICE_MAX:
-            raise MnsValidationError(
-                f"avg_priceは{PORTFOLIO_AVG_PRICE_MAX:,}以下である必要があります"
-            )
-
-        # avg_fx_rate validation
-        if self.avg_fx_rate is not None:
-            if self.avg_fx_rate <= 0:
-                raise MnsValidationError("avg_fx_rateは正の数値である必要があります")
-            if self.avg_fx_rate > PORTFOLIO_AVG_FX_RATE_MAX:
-                raise MnsValidationError(
-                    f"avg_fx_rateは{PORTFOLIO_AVG_FX_RATE_MAX:,.0f}以下である必要があります"
-                )
-
-        # total value validation
-        total = self.shares * self.avg_price
-        if total > PORTFOLIO_TOTAL_VALUE_MAX:
-            raise MnsValidationError(
-                f"ポートフォリオ総額は{PORTFOLIO_TOTAL_VALUE_MAX:,}以下である必要があります"
-            )
-
-        return self
-
-
-def validate_portfolio_input(shares, avg_price, avg_fx_rate=None):
-    """ポートフォリオ入力の厳格な検証"""
-    errors = []
-    try:
-        PortfolioInputSchema(
-            symbol="dummy",
-            market="us",
-            shares=shares,
-            avg_price=avg_price,
-            avg_fx_rate=avg_fx_rate,
-        )
-    except (MnsValidationError, ValueError, TypeError) as exc:
-        if hasattr(exc, "errors"):
-            for err in exc.errors():
-                msg = err.get("msg")
-                if "Value error, " in msg:
-                    msg = msg.replace("Value error, ", "")
-                if msg == "bool_type_not_allowed" or "Input should be a valid number" in msg:
-                    loc = err.get("loc", [None])[0]
-                    if loc == "avg_fx_rate":
-                        errors.append("avg_fx_rateは正の数値である必要があります")
-                    else:
-                        errors.append(f"{loc}は非負の数値である必要があります")
-                else:
-                    errors.append(msg)
-        else:
-            errors.append(str(exc))
-    return errors
 
 
 def _normalize_content_list_for_history(content: list) -> list:

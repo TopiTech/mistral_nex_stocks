@@ -553,6 +553,57 @@ document.addEventListener("DOMContentLoaded", () => {
 
 const _CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 
+// Matches gunicorn.conf.py's request timeout so a client-side wait is never
+// shorter than the backend's own limit. Quick control-plane calls override it.
+const DEFAULT_FETCH_TIMEOUT_MS = 120000;
+const FAST_FETCH_TIMEOUT_MS = 10000;
+
+/**
+ * fetch with a bounded wait for the backend to answer, preserving the caller's
+ * cancellation signal. The timer stops once the response arrives so streaming
+ * bodies are not cut off. A timeout rejects with name "TimeoutError" (not
+ * "AbortError") so callers can distinguish it from a deliberate cancellation.
+ * @param {string} url
+ * @param {RequestInit} [options]
+ * @param {number} [timeoutMs]
+ * @returns {Promise<Response>}
+ */
+function fetchWithTimeout(
+  url,
+  options = {},
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
+) {
+  const callerSignal = options.signal;
+  if (!timeoutMs || timeoutMs <= 0) return fetch(url, options);
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else
+      callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  };
+  return fetch(url, { ...options, signal: controller.signal })
+    .catch((error) => {
+      if (timedOut) {
+        const timeoutError = new Error("リクエストがタイムアウトしました");
+        timeoutError.name = "TimeoutError";
+        throw timeoutError;
+      }
+      throw error;
+    })
+    .finally(cleanup);
+}
+
 /** Read the CSRF token from the <meta name="csrf-token"> tag. */
 function readCsrfToken() {
   try {
@@ -608,11 +659,15 @@ function refreshCsrfToken() {
 
   const refreshPromise = (async () => {
     try {
-      const res = await fetch("/api/csrf-token", {
-        method: "GET",
-        credentials: "same-origin",
-        headers: { "Cache-Control": "no-store" },
-      });
+      const res = await fetchWithTimeout(
+        "/api/csrf-token",
+        {
+          method: "GET",
+          credentials: "same-origin",
+          headers: { "Cache-Control": "no-store" },
+        },
+        FAST_FETCH_TIMEOUT_MS,
+      );
       if (!res.ok) return false;
       const data = await res.json().catch(() => null);
       const token =
@@ -661,6 +716,11 @@ function startCsrfAutoRefresh() {
  */
 async function csrfFetch(url, options = {}) {
   const opts = { ...options };
+  const timeoutMs =
+    typeof opts.timeoutMs === "number"
+      ? opts.timeoutMs
+      : DEFAULT_FETCH_TIMEOUT_MS;
+  delete opts.timeoutMs;
   let headersObj = {};
   if (typeof Headers !== "undefined" && opts.headers instanceof Headers) {
     opts.headers.forEach((val, key) => {
@@ -685,7 +745,7 @@ async function csrfFetch(url, options = {}) {
       opts.credentials = "same-origin";
     }
   }
-  let response = await fetch(url, opts);
+  let response = await fetchWithTimeout(url, opts, timeoutMs);
   if (unsafe && response.status === 400 && (await isCsrfRejection(response))) {
     const refreshed = await refreshCsrfToken();
     const hasReadableStream =
@@ -695,7 +755,7 @@ async function csrfFetch(url, options = {}) {
       hasReadableStream && opts.body instanceof globalThis.ReadableStream;
     if (refreshed && (!opts.body || !isStream)) {
       opts.headers["X-CSRFToken"] = readCsrfToken();
-      response = await fetch(url, opts);
+      response = await fetchWithTimeout(url, opts, timeoutMs);
     }
   }
   return response;

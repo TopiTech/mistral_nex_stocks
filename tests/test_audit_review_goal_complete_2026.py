@@ -19,14 +19,11 @@ import pytest
 from pydantic import ValidationError
 
 from routes.stocks.common import _json_safe
+from schemas.stocks import PortfolioUpdateRequest
 from services.ai_tools import _tool_calculate_technical_levels
 from utils.normalization import _fmt, _fmt_vol, normalize_optional_number
 from utils.stock_payload import _finite_or_none
-from utils.validators import (
-    AiPortfolioItemSchema,
-    PortfolioInputSchema,
-    validate_portfolio_input,
-)
+from utils.validators import AiPortfolioItemSchema
 
 
 def test_json_safe_numpy_scalars_and_arrays():
@@ -112,7 +109,7 @@ def test_normalization_helpers_reject_numpy_booleans():
 def test_portfolio_validators_reject_numpy_booleans():
     """Verify Pydantic portfolio schema rejects np.bool_."""
     with pytest.raises((ValidationError, ValueError)):
-        PortfolioInputSchema(
+        PortfolioUpdateRequest(
             symbol="AAPL",
             market="us",
             shares=np.bool_(True),  # type: ignore[arg-type]
@@ -120,7 +117,7 @@ def test_portfolio_validators_reject_numpy_booleans():
         )
 
     with pytest.raises((ValidationError, ValueError)):
-        PortfolioInputSchema(
+        PortfolioUpdateRequest(
             symbol="AAPL",
             market="us",
             shares=10.0,
@@ -136,9 +133,6 @@ def test_portfolio_validators_reject_numpy_booleans():
             weight_pct=np.bool_(True),  # type: ignore[arg-type]
             target_price=200.0,
         )
-
-    errors = validate_portfolio_input(shares=np.bool_(True), avg_price=150.0)
-    assert any("sharesは非負の数値である必要があります" in e for e in errors)
 
 
 def test_ai_tools_safe_float_rejects_numpy_booleans():

@@ -16,56 +16,7 @@ from utils.validators import (
     normalize_analysis_result,
     safe_parse_analysis_result,
     validate_analysis_result,
-    validate_portfolio_input,
 )
-
-
-class ValidatePortfolioInputTestCase(unittest.TestCase):
-    """validate_portfolio_input のテスト"""
-
-    def test_valid_input(self):
-        errors = validate_portfolio_input(10.5, 150.25)
-        self.assertEqual(errors, [])
-
-    def test_valid_input_with_fx_rate(self):
-        errors = validate_portfolio_input(10.5, 150.25, avg_fx_rate=145.0)
-        self.assertEqual(errors, [])
-
-    def test_negative_shares(self):
-        errors = validate_portfolio_input(-1, 150.25)
-        self.assertTrue(len(errors) > 0)
-
-    def test_negative_avg_price(self):
-        errors = validate_portfolio_input(10, -100)
-        self.assertTrue(len(errors) > 0)
-
-    def test_zero_valid(self):
-        errors = validate_portfolio_input(0, 0)
-        self.assertEqual(errors, [])
-
-    def test_shares_exceeds_max(self):
-        from constants import PORTFOLIO_SHARES_MAX
-
-        errors = validate_portfolio_input(PORTFOLIO_SHARES_MAX + 1, 100)
-        self.assertTrue(len(errors) > 0)
-
-    def test_avg_price_exceeds_max(self):
-        from constants import PORTFOLIO_AVG_PRICE_MAX
-
-        errors = validate_portfolio_input(1, PORTFOLIO_AVG_PRICE_MAX + 1)
-        self.assertTrue(len(errors) > 0)
-
-    def test_total_value_exceeds_max(self):
-        from constants import PORTFOLIO_TOTAL_VALUE_MAX
-
-        # shares * avg_price > PORTFOLIO_TOTAL_VALUE_MAX (確実に超過させる)
-        huge_shares = PORTFOLIO_TOTAL_VALUE_MAX // 1000 + 1
-        errors = validate_portfolio_input(huge_shares, 1000)
-        self.assertTrue(len(errors) > 0)
-
-    def test_negative_fx_rate(self):
-        errors = validate_portfolio_input(1, 100, avg_fx_rate=-5)
-        self.assertTrue(len(errors) > 0)
 
 
 class NormalizeAnalysisResultTestCase(unittest.TestCase):
@@ -266,11 +217,11 @@ class ExtractJsonPayloadTestCase(unittest.TestCase):
         self.assertIn("recommendation", parsed)
         self.assertEqual(parsed["recommendation"], "Buy")
 
-class AppConfigSchemaTestCase(unittest.TestCase):
-    """Test AppConfigSchema template configuration validation."""
+class TemplateConfigSchemaTestCase(unittest.TestCase):
+    """Test TemplateConfigSchema template configuration validation."""
 
     def test_app_config_schema_openai_fields_preservation(self):
-        from utils.validators import AppConfigSchema
+        from schemas.config import TemplateConfigSchema
 
         data = {
             "has_mistral_api_key": False,
@@ -293,7 +244,7 @@ class AppConfigSchemaTestCase(unittest.TestCase):
             "mistral_model": "mistral-medium-3.5",
             "is_ai_technical_lines_eligible": True,
         }
-        schema = AppConfigSchema.model_validate(data)
+        schema = TemplateConfigSchema.model_validate(data)
         dumped = schema.model_dump()
         self.assertEqual(dumped["ai_provider"], "openai_compatible")
         self.assertTrue(dumped["has_openai_api_key"])

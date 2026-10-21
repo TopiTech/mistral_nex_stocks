@@ -20,7 +20,7 @@ from schemas.analysis import (
     AINewsRequest,
     AITechnicalLinesRequest,
 )
-from schemas.config import AppConfigSchema
+from schemas.config import RuntimeConfigSchema
 from schemas.stocks import (
     HeatmapQueryRequest,
     PortfolioUpdateRequest,
@@ -92,15 +92,19 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(ValidationError):
             PortfolioUpdateRequest(symbol="NVDA", market="us", shares=float("nan"), avg_price=100.0)
 
-    def test_portfolio_update_rejects_fx_rate_for_non_us_market(self):
-        with self.assertRaises(ValidationError):
-            PortfolioUpdateRequest(
-                symbol="^N225", market="idx", shares=1.0, avg_price=38000.0, avg_fx_rate=150.0
-            )
-        with self.assertRaises(ValidationError):
-            PortfolioUpdateRequest(
-                symbol="7203.T", market="jp", shares=100.0, avg_price=2000.0, avg_fx_rate=150.0
-            )
+    def test_portfolio_update_accepts_fx_rate_for_non_us_market(self):
+        # The duplicate schema used to reject this, but the running endpoint
+        # accepts the body and strips avg_fx_rate for non-US markets.  The
+        # production behavior is the resolved contract; storage stripping is
+        # covered by tests/test_portfolio_avg_fx_rate_idx.py.
+        idx = PortfolioUpdateRequest(
+            symbol="^N225", market="idx", shares=1.0, avg_price=38000.0, avg_fx_rate=150.0
+        )
+        jp = PortfolioUpdateRequest(
+            symbol="7203.T", market="jp", shares=100.0, avg_price=2000.0, avg_fx_rate=150.0
+        )
+        self.assertEqual(idx.avg_fx_rate, 150.0)
+        self.assertEqual(jp.avg_fx_rate, 150.0)
 
     def test_screener_query_defaults(self):
         req = ScreenerQueryRequest()
@@ -328,8 +332,8 @@ class TestSchemas(unittest.TestCase):
         with self.assertRaises(ValidationError):
             AIAnalyzeChartImageRequest(image_data="", image="")
 
-    def test_app_config_schema_defaults(self):
-        cfg = AppConfigSchema()
+    def test_runtime_config_schema_defaults(self):
+        cfg = RuntimeConfigSchema()
         self.assertEqual(cfg.port, 5000)
         self.assertEqual(cfg.host, "127.0.0.1")
         self.assertTrue(cfg.simulate_fluctuation)

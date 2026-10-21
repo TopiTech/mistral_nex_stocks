@@ -14,6 +14,12 @@ from constants import (
     PORTFOLIO_SHARES_MAX,
     PORTFOLIO_TOTAL_VALUE_MAX,
 )
+from utils.normalization import (
+    is_valid_symbol,
+    normalize_market,
+    normalize_symbol,
+    normalize_symbol_for_market,
+)
 
 ScreenerSortBy = Literal[
     "market_cap",
@@ -94,7 +100,21 @@ class StockDeleteRequest(BaseModel):
 
 
 class PortfolioUpdateRequest(BaseModel):
-    """Schema for /api/stocks/portfolio request body."""
+    """Canonical contract for the ``POST /api/stocks/portfolio`` body.
+
+    The endpoint used to validate these fields in three places (this model,
+    ``utils.validators.PortfolioInputSchema`` and the route's own
+    ``parse_non_negative_float`` calls) with slightly different rules.  Those
+    duplicates are gone; the HTTP route now validates only through this model.
+
+    Intent resolution (the duplicates disagreed here):
+
+    * ``avg_fx_rate`` is accepted for every market.  The running endpoint keeps
+      a non-US ``avg_fx_rate`` out of storage instead of rejecting the request
+      with a 400 (see ``api_update_portfolio``); that production behavior wins.
+    * ``shares``/``avg_price`` accept numeric strings and reject booleans, NaN
+      and infinity, matching ``parse_non_negative_float``.
+    """
 
     model_config = ConfigDict(allow_inf_nan=False)
 
@@ -103,21 +123,54 @@ class PortfolioUpdateRequest(BaseModel):
     shares: float = Field(..., ge=0.0, le=PORTFOLIO_SHARES_MAX, description="Number of shares held")
     avg_price: float = Field(..., ge=0.0, le=PORTFOLIO_AVG_PRICE_MAX, description="Average purchase price")
     avg_fx_rate: float | None = Field(
-        default=None, gt=0.0, le=PORTFOLIO_AVG_FX_RATE_MAX, description="Average USD/JPY FX rate (US market only)"
+        default=None, gt=0.0, le=PORTFOLIO_AVG_FX_RATE_MAX, description="Average USD/JPY FX rate"
     )
 
-    @field_validator("shares", "avg_price", "avg_fx_rate", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def reject_boolean_numeric(cls, v: Any) -> Any:
-        """Reject boolean values for numeric fields."""
+    def normalize_identity(cls, data: Any) -> Any:
+        """Apply the same symbol/market normalization the route always used."""
+        if not isinstance(data, dict):
+            return data
+        raw_market = data.get("market")
+        if raw_market is not None and not isinstance(raw_market, str):
+            raise ValueError("invalid_market")
+        raw_symbol = data.get("symbol")
+        if raw_symbol is not None and not isinstance(raw_symbol, str):
+            raise ValueError("invalid_symbol")
+        market = normalize_market(raw_market, default="")
+        symbol = normalize_symbol_for_market(normalize_symbol(raw_symbol), market) if market else ""
+        return {**data, "market": market, "symbol": symbol}
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol_format(cls, v: str) -> str:
+        if not v:
+            raise ValueError("field_required")
+        if not is_valid_symbol(v):
+            raise ValueError("invalid_symbol")
+        return v
+
+    @field_validator("shares", "avg_price", mode="before")
+    @classmethod
+    def require_numeric_fields(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("field_required")
+        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+            raise ValueError("bool_type_not_allowed")
+        return v
+
+    @field_validator("avg_fx_rate", mode="before")
+    @classmethod
+    def normalize_optional_fx_rate(cls, v: Any) -> Any:
+        if isinstance(v, str) and not v.strip():
+            return None
         if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
             raise ValueError("bool_type_not_allowed")
         return v
 
     @model_validator(mode="after")
-    def validate_market_fx_rate(self) -> PortfolioUpdateRequest:
-        if self.market != "us" and self.avg_fx_rate is not None:
-            raise ValueError("avg_fx_rate is only supported for the US market")
+    def validate_total_value(self) -> PortfolioUpdateRequest:
         if self.shares * self.avg_price > PORTFOLIO_TOTAL_VALUE_MAX:
             raise ValueError(
                 f"Portfolio total value exceeds maximum allowed ({PORTFOLIO_TOTAL_VALUE_MAX:,})"

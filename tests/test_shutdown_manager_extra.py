@@ -26,7 +26,7 @@ class ShutdownManagerExtraTests(unittest.TestCase):
     def setUp(self):
         self._old_key = os.environ.get("MNS_MASTER_KEY")
         os.environ["MNS_MASTER_KEY"] = TEST_MASTER_KEY
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmp.name)
         self.mgr = ShutdownTokenManager()
         self.mgr.token_file = self.tmp_path / ".mns_shutdown_token"
@@ -41,7 +41,10 @@ class ShutdownManagerExtraTests(unittest.TestCase):
             os.environ.pop("MNS_MASTER_KEY", None)
         else:
             os.environ["MNS_MASTER_KEY"] = self._old_key
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except Exception:
+            pass
 
     def _new_manager_same_files(self):
         mgr2 = ShutdownTokenManager()

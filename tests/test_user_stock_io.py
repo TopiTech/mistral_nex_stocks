@@ -30,7 +30,7 @@ class UserStockLoadTests(unittest.TestCase):
             app_state.market.user_stocks_load_error = self._original_load_error
 
     def test_load_user_stocks_preserves_memory_for_invalid_json_root(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             stocks_file = Path(tmpdir) / "user_stocks.json"
             stocks_file.write_text(json.dumps(["unexpected"]), encoding="utf-8")
 

@@ -15,7 +15,7 @@ import crypto_utils
 
 class ConfigUtilsTestCase(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.config_file = Path(self.temp_dir.name) / "config.json"
         # Patch CONFIG_FILE in config_store (where load_config/save_config actually use it)

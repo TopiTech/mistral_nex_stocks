@@ -226,12 +226,15 @@ class TextUtilsCoverageTestCase(unittest.TestCase):
 
 class StorageCoverageTestCase(unittest.TestCase):
     def setUp(self):
-        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmpdir.name)
         self.test_stocks_file = self.tmp_path / "user_stocks.json"
 
     def tearDown(self):
-        self.tmpdir.cleanup()
+        try:
+            self.tmpdir.cleanup()
+        except Exception:
+            pass
 
     def test_mark_user_stocks_load_failure_and_backup(self):
         with (
@@ -263,7 +266,7 @@ class StorageCoverageTestCase(unittest.TestCase):
             self.assertTrue(self.test_stocks_file.exists())
 
     def test_load_and_save_user_stocks_roundtrip(self):
-        with tempfile.TemporaryDirectory() as td:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
             stock_file = Path(td) / "user_stocks.json"
             with (
                 patch.object(storage, "USER_STOCKS_FILE", str(stock_file)),

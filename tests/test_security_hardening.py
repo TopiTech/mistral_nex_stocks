@@ -20,7 +20,7 @@ class LoadConfigDeepCopyTestCase(unittest.TestCase):
     """H-1: load_config must never return a mutable reference to the cache."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.config_file = Path(self.temp_dir.name) / "config.json"
         self.patcher = patch.object(config_store, "CONFIG_FILE", self.config_file)
@@ -365,7 +365,7 @@ class UserStocksPersistTestCase(unittest.TestCase):
     """H-5: Windows lock busy / write failure must raise, not silent-skip."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.stocks_file = Path(self.temp_dir.name) / "user_stocks.json"
         self.patcher = patch.object(storage, "USER_STOCKS_FILE", str(self.stocks_file))

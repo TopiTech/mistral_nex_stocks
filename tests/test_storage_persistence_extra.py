@@ -40,11 +40,14 @@ class NormalizeJpHoldingKeysTests(unittest.TestCase):
 
 class LegacyMigrationTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmp.name)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except Exception:
+            pass
 
     def test_migrates_and_removes_legacy_plaintext(self):
         legacy = self.tmp_path / "legacy_user_stocks.json"
@@ -117,13 +120,16 @@ class LegacyMigrationTests(unittest.TestCase):
 
 class LockedReadRetryTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmp.name)
         self.stocks_file = self.tmp_path / "user_stocks.json"
         self.lock_file = self.stocks_file.with_suffix(".lock")
 
     def tearDown(self):
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except Exception:
+            pass
 
     def test_retry_then_unlocked_read_recovers(self):
         """Locked read fails twice; the unlocked plaintext fallback recovers."""
@@ -203,11 +209,14 @@ class LoadFailureBackupTests(unittest.TestCase):
 
 class BackupUnreadableTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmp.name)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except Exception:
+            pass
 
     def test_backs_up_and_rotates(self):
         stocks_file = self.tmp_path / "user_stocks.json"
@@ -234,14 +243,17 @@ class BackupUnreadableTests(unittest.TestCase):
 
 class WriteWithLockWindowsTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmp.name)
         self.target = self.tmp_path / "user_stocks.json"
         self.tmp_file = self.tmp_path / "user_stocks.abc123.tmp"
         self.lock_file = self.tmp_path / "user_stocks.lock"
 
     def tearDown(self):
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except Exception:
+            pass
 
     def test_windows_lock_busy_exhausts_retries(self):
         """LK_NBLCK busy on every attempt raises UserStocksPersistError."""
@@ -294,14 +306,17 @@ class WriteWithLockPosixTests(unittest.TestCase):
     """The POSIX branch is never exercised on Windows CI; cover it with a fake fcntl."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmp.name)
         self.target = self.tmp_path / "user_stocks.json"
         self.tmp_file = self.tmp_path / "user_stocks.abc123.tmp"
         self.lock_file = self.tmp_path / "user_stocks.lock"
 
     def tearDown(self):
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except Exception:
+            pass
 
     def test_posix_success_path_writes_and_promotes(self):
         import builtins
@@ -357,12 +372,15 @@ class WriteWithLockPosixTests(unittest.TestCase):
 
 class SaveRoundTripTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.tmp_path = Path(self.tmp.name)
         self.stocks_file = self.tmp_path / "user_stocks.json"
 
     def tearDown(self):
-        self.tmp.cleanup()
+        try:
+            self.tmp.cleanup()
+        except Exception:
+            pass
 
     def test_save_then_reload_round_trip(self):
         with (

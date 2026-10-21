@@ -24,7 +24,7 @@ class StartBackendTests(unittest.TestCase):
         self.assertTrue(sb._is_expected_backend_response(response))
 
     def test_live_pid_with_unhealthy_occupied_port_is_not_reported_as_running(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             pid_file = Path(tmp) / ".backend.pid"
             pid_file.write_text("12345", encoding="utf-8")
 
@@ -43,7 +43,7 @@ class StartBackendTests(unittest.TestCase):
             popen.assert_not_called()
 
     def test_stale_running_pid_file_is_replaced_and_backend_starts(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             tmpdir = Path(tmp)
             pid_file = tmpdir / ".backend.pid"
             log_file = tmpdir / "backend.log"
@@ -85,7 +85,7 @@ class StartBackendTests(unittest.TestCase):
         import threading
         import time
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             lock_path = Path(tmp) / ".backend.start.lock"
             with patch.object(sb, "STARTUP_LOCK_FILE", lock_path):
                 acquired_count = 0
@@ -113,7 +113,7 @@ class StartBackendTests(unittest.TestCase):
                 self.assertEqual(acquired_count, 2)
 
     def test_startup_lock_pre_lock_write_os_error_resilience(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             lock_path = Path(tmp) / ".backend.start.lock"
             with patch.object(sb, "STARTUP_LOCK_FILE", lock_path):
                 # Even if os.write raises OSError during pre-lock check, lock succeeds

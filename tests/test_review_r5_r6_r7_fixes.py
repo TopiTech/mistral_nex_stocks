@@ -238,11 +238,14 @@ class R7DiskCacheListShapeTest(unittest.TestCase):
     """StockDiskCache.get must return None for list-shaped (non-dict) cache files."""
 
     def setUp(self):
-        self._tmpdir = tempfile.TemporaryDirectory()
+        self._tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self._cache_dir = Path(self._tmpdir.name)
 
     def tearDown(self):
-        self._tmpdir.cleanup()
+        try:
+            self._tmpdir.cleanup()
+        except Exception:
+            pass
 
     # --- Helper to create a cache file with arbitrary content ---
 

@@ -22,7 +22,7 @@ class ConfigStoreCoverageTestCase(unittest.TestCase):
     """Tests for config_store.py low-coverage paths."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.config_path = Path(self.temp_dir.name) / "config.json"
         self.patcher = patch.object(config_store, "CONFIG_FILE", self.config_path)
@@ -178,7 +178,7 @@ class CredentialManagerCoverageTestCase(unittest.TestCase):
     """Tests for credential_manager.py low-coverage paths."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.config_path = Path(self.temp_dir.name) / "config.json"
         self.patcher = patch.object(config_store, "CONFIG_FILE", self.config_path)

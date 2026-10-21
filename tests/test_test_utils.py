@@ -57,6 +57,19 @@ def test_support_create_temp_config_direct():
     assert not path.exists()
 
 
+def test_safe_temp_dir_windows_cleanup():
+    """Test safe_temp_dir has ignore_cleanup_errors enabled for Windows resilience."""
+    from tests.test_support import safe_temp_dir
+
+    with safe_temp_dir() as td:
+        p = Path(td) / "dummy.txt"
+        p.write_text("test", encoding="utf-8")
+        assert p.exists()
+    # Directory should be gone
+    assert not Path(td).exists()
+
+
+
 def test_memory_keyring_operations():
     """Test MemoryKeyring set, get, delete, clear, and error handling."""
     kr = MemoryKeyring()

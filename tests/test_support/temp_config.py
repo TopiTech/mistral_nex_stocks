@@ -51,3 +51,16 @@ def cleanup_temp_files() -> None:
                 path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def safe_temp_dir(**kwargs: Any) -> tempfile.TemporaryDirectory:
+    """Create a TemporaryDirectory with Windows-safe cleanup handling.
+
+    Defaults ignore_cleanup_errors=True to prevent [WinError 145] Directory not empty
+    and [WinError 32] Sharing violation when background processes or virus scanners
+    temporarily hold file handles during directory removal on Windows.
+    """
+    kwargs.setdefault("ignore_cleanup_errors", True)
+    return tempfile.TemporaryDirectory(**kwargs)
+
+

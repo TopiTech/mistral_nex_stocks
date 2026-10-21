@@ -13,7 +13,7 @@ from tests.test_support.patches import (
     apply_yfinance_cache_isolation,
 )
 from tests.test_support.state_reset import reset_app_state_internals
-from tests.test_support.temp_config import cleanup_temp_files, create_temp_config
+from tests.test_support.temp_config import cleanup_temp_files, create_temp_config, safe_temp_dir
 
 __all__ = [
     "MemoryKeyring",
@@ -28,4 +28,5 @@ __all__ = [
     "create_temp_config",
     "get_baseline_test_env",
     "reset_app_state_internals",
+    "safe_temp_dir",
 ]

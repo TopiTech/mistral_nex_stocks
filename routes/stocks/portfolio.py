@@ -200,40 +200,42 @@ def api_update_portfolio() -> Any:
 
         container[symbol] = val
 
-        try:
-            save_user_stocks()
-        except UserStocksPersistError as exc:
-            container.pop(symbol, None)
-            if matching_symbol is not None and previous_value is not None:
-                container[matching_symbol] = previous_value
-            current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
-            return error_response(
-                ErrorCode.FILE_ERROR,
-                details={"reason": "ポートフォリオの保存に失敗しました。再試行してください。"},
-                status_code=503,
-            )
-
-        invalidate_stock_caches(symbol)
-        ensure_stock_placeholder_in_caches(symbol, _stock_display_name(symbol, market), market)
-        with app_state.cache.sse_data_lock:
-            for cache in (
-                app_state.market.target_stocks_cache,
-                app_state.market.current_stocks_cache,
-            ):
-                if market not in cache:
-                    cache[market] = []
-                target_list = cache.get(market, [])
-                for s in target_list:
-                    if s.get("symbol") == symbol:
-                        s["shares"] = shares
-                        s["avg_price"] = avg_price
-                        if market == "jp" or market == "idx":
-                            s.pop("avg_fx_rate", None)
-                        elif avg_fx_rate is not None:
-                            s["avg_fx_rate"] = avg_fx_rate
-                        else:
-                            s.pop("avg_fx_rate", None)
-                        break
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        with app_state.market.user_stocks_lock:
+            container = _get_stock_container(market)
+            if container is not None:
+                container.pop(symbol, None)
+                if matching_symbol is not None and previous_value is not None:
+                    container[matching_symbol] = previous_value
+        current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "ポートフォリオの保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
+    invalidate_stock_caches(symbol)
+    ensure_stock_placeholder_in_caches(symbol, _stock_display_name(symbol, market), market)
+    with app_state.cache.sse_data_lock:
+        for cache in (
+            app_state.market.target_stocks_cache,
+            app_state.market.current_stocks_cache,
+        ):
+            if market not in cache:
+                cache[market] = []
+            target_list = cache.get(market, [])
+            for s in target_list:
+                if s.get("symbol") == symbol:
+                    s["shares"] = shares
+                    s["avg_price"] = avg_price
+                    if market == "jp" or market == "idx":
+                        s.pop("avg_fx_rate", None)
+                    elif avg_fx_rate is not None:
+                        s["avg_fx_rate"] = avg_fx_rate
+                    else:
+                        s.pop("avg_fx_rate", None)
+                    break
 
     _invalidate_sse_payload_cache()
     announce_current_market_state()

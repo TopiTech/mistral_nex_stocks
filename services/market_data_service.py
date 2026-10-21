@@ -77,46 +77,66 @@ def _extract_change_val(data_dict: dict[str, Any]) -> float:
     return 0.0
 
 
+def _first_not_none(*values: Any) -> Any:
+    """Return the first value that is not None, preserving valid 0.0 numbers."""
+    for val in values:
+        if val is not None:
+            return val
+    return None
+
+
 def _build_market_row(
     symbol: str,
     market: str,
     source: dict[str, Any],
     fallback_name: str,
 ) -> dict[str, Any]:
-    price = (
-        normalize_optional_number(source.get("price"))
-        or normalize_optional_number(source.get("close"))
-        or normalize_optional_number(source.get("regularMarketPrice"))
-        or normalize_optional_number(source.get("currentPrice"))
-        or 0.0
+    price_val = _first_not_none(
+        normalize_optional_number(source.get("price")),
+        normalize_optional_number(source.get("close")),
+        normalize_optional_number(source.get("regularMarketPrice")),
+        normalize_optional_number(source.get("currentPrice")),
     )
-    shares_outstanding = normalize_optional_number(
-        source.get("sharesOutstanding")
-    ) or normalize_optional_number(source.get("shares_outstanding"))
-    market_cap = (
-        normalize_optional_number(source.get("market_cap"))
-        or normalize_optional_number(source.get("marketCap"))
-        or ((shares_outstanding * price) if shares_outstanding and price > 0 else 0.0)
+    price = price_val if price_val is not None else 0.0
+
+    shares_outstanding = _first_not_none(
+        normalize_optional_number(source.get("sharesOutstanding")),
+        normalize_optional_number(source.get("shares_outstanding")),
     )
-    volume = normalize_optional_number(source.get("volume")) or 0.0
-    high = (
-        normalize_optional_number(source.get("high"))
-        or normalize_optional_number(source.get("regularMarketDayHigh"))
-        or normalize_optional_number(source.get("dayHigh"))
-        or price
+    shares_cap = (
+        (shares_outstanding * price)
+        if shares_outstanding is not None and shares_outstanding > 0 and price > 0
+        else 0.0
     )
-    low = (
-        normalize_optional_number(source.get("low"))
-        or normalize_optional_number(source.get("regularMarketDayLow"))
-        or normalize_optional_number(source.get("dayLow"))
-        or price
+    mkt_cap_val = _first_not_none(
+        normalize_optional_number(source.get("market_cap")),
+        normalize_optional_number(source.get("marketCap")),
     )
+    market_cap = mkt_cap_val if mkt_cap_val is not None else shares_cap
+
+    vol_val = normalize_optional_number(source.get("volume"), allow_zero=True)
+    volume = vol_val if vol_val is not None else 0.0
+
+    high_val = _first_not_none(
+        normalize_optional_number(source.get("high")),
+        normalize_optional_number(source.get("regularMarketDayHigh")),
+        normalize_optional_number(source.get("dayHigh")),
+    )
+    high = high_val if high_val is not None else price
+
+    low_val = _first_not_none(
+        normalize_optional_number(source.get("low")),
+        normalize_optional_number(source.get("regularMarketDayLow")),
+        normalize_optional_number(source.get("dayLow")),
+    )
+    low = low_val if low_val is not None else price
+
     sector = source.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other")
-    pe_ratio = (
-        normalize_optional_number(source.get("pe_ratio"))
-        or normalize_optional_number(source.get("trailingPE"))
-        or normalize_optional_number(source.get("forwardPE"))
-        or normalize_optional_number(source.get("pe"))
+    pe_ratio = _first_not_none(
+        normalize_optional_number(source.get("pe_ratio"), allow_zero=True),
+        normalize_optional_number(source.get("trailingPE"), allow_zero=True),
+        normalize_optional_number(source.get("forwardPE"), allow_zero=True),
+        normalize_optional_number(source.get("pe"), allow_zero=True),
     )
     return {
         "symbol": symbol,
@@ -158,24 +178,25 @@ def build_heatmap_payload(
         if not item:
             continue
 
-        price = (
-            normalize_optional_number(item.get("price"))
-            or normalize_optional_number(item.get("close"))
-            or 0.0
+        price_val = _first_not_none(
+            normalize_optional_number(item.get("price")),
+            normalize_optional_number(item.get("close")),
         )
-        shares = normalize_optional_number(
-            item.get("sharesOutstanding")
-        ) or normalize_optional_number(item.get("shares_outstanding"))
+        price = price_val if price_val is not None else 0.0
+        shares = _first_not_none(
+            normalize_optional_number(item.get("sharesOutstanding")),
+            normalize_optional_number(item.get("shares_outstanding")),
+        )
         # Market cap must stay a capitalisation. ``price * volume`` is trading
         # value and differs by orders of magnitude, so a symbol with neither a
         # reported cap nor shares outstanding is omitted rather than sized
         # with a dimensionally different number.
         shares_cap = (shares * price) if (shares is not None and shares > 0 and price > 0) else 0.0
-        market_cap = (
-            normalize_optional_number(item.get("market_cap"))
-            or normalize_optional_number(item.get("marketCap"))
-            or shares_cap
+        mkt_cap_val = _first_not_none(
+            normalize_optional_number(item.get("market_cap")),
+            normalize_optional_number(item.get("marketCap")),
         )
+        market_cap = mkt_cap_val if mkt_cap_val is not None else shares_cap
         if market_cap <= 0:
             continue
 

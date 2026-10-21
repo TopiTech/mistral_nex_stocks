@@ -440,16 +440,19 @@ def api_add_stock() -> Any:
             return _watchlist_capacity_error(market)
         container[symbol] = name
 
-        try:
-            save_user_stocks()
-        except UserStocksPersistError as exc:
-            container.pop(symbol, None)
-            current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
-            return error_response(
-                ErrorCode.FILE_ERROR,
-                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-                status_code=503,
-            )
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        with app_state.market.user_stocks_lock:
+            container = _get_stock_container(market)
+            if container is not None:
+                container.pop(symbol, None)
+        current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 
@@ -499,16 +502,19 @@ def api_delete_stock() -> Any:
             if stored_symbol in container
         }
 
-        try:
-            save_user_stocks()
-        except UserStocksPersistError as exc:
-            container.update(previous_values)
-            current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
-            return error_response(
-                ErrorCode.FILE_ERROR,
-                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-                status_code=503,
-            )
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        with app_state.market.user_stocks_lock:
+            container = _get_stock_container(market)
+            if container is not None:
+                container.update(previous_values)
+        current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
     for stored_symbol in storage_aliases:
         invalidate_stock_caches(stored_symbol)
         remove_stock_from_caches(stored_symbol, market)
@@ -675,29 +681,32 @@ def api_reset_stocks() -> Any:
         )
 
     with app_state.market.user_stocks_lock:
-        previous_us = app_state.market.user_us
-        previous_jp = app_state.market.user_jp
-        previous_idx = app_state.market.user_idx
+        previous_us = dict(app_state.market.user_us)
+        previous_jp = dict(app_state.market.user_jp)
+        previous_idx = dict(app_state.market.user_idx)
         app_state.market.user_us, app_state.market.user_jp, app_state.market.user_idx = {}, {}, {}
-        try:
-            save_user_stocks()
-        except UserStocksPersistError as exc:
+
+    try:
+        save_user_stocks()
+    except UserStocksPersistError as exc:
+        with app_state.market.user_stocks_lock:
             (
                 app_state.market.user_us,
                 app_state.market.user_jp,
                 app_state.market.user_idx,
             ) = previous_us, previous_jp, previous_idx
-            current_app.logger.error("Failed to persist stock reset: %s", exc)
-            return error_response(
-                ErrorCode.FILE_ERROR,
-                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-                status_code=503,
-            )
-        with app_state.cache.sse_data_lock:
-            app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-            app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
-            app_state.market.current_indices_cache = {}
-            app_state.market.target_indices_cache = {}
+        current_app.logger.error("Failed to persist stock reset: %s", exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
+
+    with app_state.cache.sse_data_lock:
+        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.current_indices_cache = {}
+        app_state.market.target_indices_cache = {}
     for market, previous in (
         ("us", previous_us),
         ("jp", previous_jp),

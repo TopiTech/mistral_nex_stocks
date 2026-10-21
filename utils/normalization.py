@@ -142,7 +142,7 @@ def is_valid_symbol(symbol):
     return bool(SYMBOL_PATTERN.match(symbol_normalized))
 
 
-def normalize_optional_number(value, allow_negative=False):
+def normalize_optional_number(value, allow_negative=False, allow_zero=False):
     """Noneや不正値を除外して数値に変換する"""
     try:
         if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
@@ -150,8 +150,12 @@ def normalize_optional_number(value, allow_negative=False):
         num = float(value)
         if pd.isna(num) or not math.isfinite(num):
             return None
-        if not allow_negative and num <= 0:
-            return None
+        if not allow_negative:
+            if allow_zero:
+                if num < 0:
+                    return None
+            elif num <= 0:
+                return None
         return num
     except (ValueError, TypeError, OverflowError):
         return None

@@ -69,7 +69,7 @@ def is_market_open(market: str) -> bool:
 
 
 def resolve_stocks_for_response(
-    include_portfolio: bool = True, real_data_only: bool = False
+    include_portfolio: bool = False, real_data_only: bool = False
 ) -> dict[str, list[Any]]:
     target = _get_api_stocks_attr(
         "_resolve_stocks_for_response", _payload_mod._resolve_stocks_for_response

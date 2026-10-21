@@ -71,8 +71,113 @@ ai_portfolio_bp = Blueprint("ai_portfolio", __name__)
 
 import httpx
 import requests
+from pydantic import ValidationError
 
+from schemas.ai_portfolio import (
+    AIPortfolioDeleteRequest,
+    AIPortfolioGenerateRequest,
+    AIPortfolioRebalanceRequest,
+    AIPortfolioSaveRequest,
+)
 from services.ai_service import ProviderAPIError
+
+
+def _parse_ai_generate_request(data: dict) -> tuple[str | None, tuple[Any, int] | None]:
+    raw_theme = data.get("theme")
+    if raw_theme is None:
+        return None, error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
+        )
+    if not isinstance(raw_theme, str):
+        return None, error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
+            status_code=400,
+        )
+    try:
+        req_obj = AIPortfolioGenerateRequest.model_validate(data)
+        return req_obj.theme, None
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        err_type = str(err.get("type", ""))
+        if err_type == "string_too_long":
+            return None, error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "themeは120文字以内で指定してください"},
+                status_code=400,
+            )
+        return None, error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
+        )
+
+
+def _parse_ai_rebalance_request(data: dict) -> tuple[str | None, tuple[Any, int] | None]:
+    raw_theme = data.get("theme")
+    if raw_theme is not None and not isinstance(raw_theme, str):
+        return None, error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
+            status_code=400,
+        )
+    try:
+        req_obj = AIPortfolioRebalanceRequest.model_validate(data)
+        theme = req_obj.theme.strip() if req_obj.theme else ""
+        return (theme if theme else "tech"), None
+    except ValidationError:
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "テーマは120文字以内で入力してください"},
+            status_code=400,
+        )
+
+
+def _parse_ai_delete_request(data: dict) -> tuple[str | None, tuple[Any, int] | None]:
+    raw_id = data.get("id")
+    if raw_id is None:
+        return None, error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
+        )
+    if not isinstance(raw_id, str):
+        return None, error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "idは文字列で指定してください", "fields": ["id"]},
+            status_code=400,
+        )
+    try:
+        req_obj = AIPortfolioDeleteRequest.model_validate(data)
+        return req_obj.id.strip(), None
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        err_type = str(err.get("type", ""))
+        if err_type == "string_too_long":
+            return None, error_response(
+                ErrorCode.MALFORMED_INPUT,
+                details={"reason": "IDは256文字以内で指定してください"},
+                status_code=400,
+            )
+        return None, error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
+        )
+
+
+def _parse_ai_save_request(
+    data: dict,
+) -> tuple[AIPortfolioSaveRequest | None, tuple[Any, int] | None]:
+    portfolio = data.get("portfolio")
+    if not isinstance(portfolio, dict):
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "無効なポートフォリオデータです"},
+            status_code=400,
+        )
+    try:
+        return AIPortfolioSaveRequest.model_validate(data), None
+    except ValidationError:
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "無効なポートフォリオデータです"},
+            status_code=400,
+        )
 
 
 class FetchJob(TypedDict, total=False):
@@ -204,27 +309,12 @@ def api_generate_ai_portfolio() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    raw_theme = data.get("theme")
-    if raw_theme is None:
+    theme, err = _parse_ai_generate_request(data)
+    if err is not None:
+        return err
+    if theme is None:
         return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
-        )
-    if not isinstance(raw_theme, str):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
-            status_code=400,
-        )
-    theme = raw_theme.strip()
-    if not theme:
-        return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
-        )
-    if len(theme) > 120:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "themeは120文字以内で指定してください"},
-            status_code=400,
+            ErrorCode.MALFORMED_INPUT, details={"reason": "themeが無効です"}, status_code=400
         )
 
     api_key = extract_api_key(request)
@@ -257,10 +347,10 @@ def api_generate_ai_portfolio() -> Any:
             result_holder = new_result_holder
             already_fetching = False
 
+    req_id = getattr(g, "request_id", "-")
     if not already_fetching:
 
         def _run_ai_portfolio_job() -> None:
-            req_id = getattr(g, "request_id", "-")
             current_app.logger.info("Starting background AI portfolio generation job id=%s theme=%s", req_id, theme)
             try:
                 gen_fn = _get_api_stocks_attr(
@@ -349,21 +439,12 @@ def api_rebalance_ai_portfolio() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    raw_theme = data.get("theme")
-    if raw_theme is not None and not isinstance(raw_theme, str):
+    theme, err = _parse_ai_rebalance_request(data)
+    if err is not None:
+        return err
+    if theme is None:
         return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
-            status_code=400,
-        )
-    theme = raw_theme.strip() if isinstance(raw_theme, str) else ""
-    if not theme:
-        theme = "tech"
-    if len(theme) > 120:
-        return error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "テーマは120文字以内で入力してください"},
-            status_code=400,
+            ErrorCode.MALFORMED_INPUT, details={"reason": "themeが無効です"}, status_code=400
         )
 
     api_key = extract_api_key(request)
@@ -400,10 +481,10 @@ def api_rebalance_ai_portfolio() -> Any:
             result_holder = new_result_holder
             already_fetching = False
 
+    req_id = getattr(g, "request_id", "-")
     if not already_fetching:
 
         def _run_ai_rebalance_job() -> None:
-            req_id = getattr(g, "request_id", "-")
             current_app.logger.info("Starting background AI portfolio rebalance job id=%s theme=%s", req_id, theme)
             try:
                 gen_fn = _get_api_stocks_attr(
@@ -505,13 +586,16 @@ def api_save_ai_portfolio() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    portfolio = data.get("portfolio")
-    if not isinstance(portfolio, dict):
+    save_req, err = _parse_ai_save_request(data)
+    if err is not None:
+        return err
+    if save_req is None:
         return error_response(
             ErrorCode.MALFORMED_INPUT,
             details={"reason": "無効なポートフォリオデータです"},
             status_code=400,
         )
+    portfolio = save_req.portfolio
 
     canonical_portfolio = sanitize_ai_portfolio(portfolio)
     if not canonical_portfolio.get("title"):
@@ -565,27 +649,12 @@ def api_delete_ai_portfolio() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    raw_id = data.get("id")
-    if raw_id is None:
+    portfolio_id, err = _parse_ai_delete_request(data)
+    if err is not None:
+        return err
+    if portfolio_id is None:
         return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
-        )
-    if not isinstance(raw_id, str):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "idは文字列で指定してください", "fields": ["id"]},
-            status_code=400,
-        )
-    portfolio_id = raw_id.strip()
-    if not portfolio_id:
-        return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
-        )
-    if len(portfolio_id) > 256:
-        return error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "IDは256文字以内で指定してください"},
-            status_code=400,
+            ErrorCode.MALFORMED_INPUT, details={"reason": "idが無効です"}, status_code=400
         )
 
     delete_fn = _get_api_stocks_attr("delete_custom_ai_portfolio", delete_custom_ai_portfolio)
@@ -864,20 +933,21 @@ def api_copy_ai_portfolio_to_my() -> Any:
             added_symbols.append((symbol, market))
             added_count += 1
 
-        if added_count > 0:
-            try:
-                save_user_stocks()
-            except Exception as exc:
-                logger.warning("save_user_stocks during copy-to-my: %s", exc)
+    if added_count > 0:
+        try:
+            save_user_stocks()
+        except Exception as exc:
+            logger.warning("save_user_stocks during copy-to-my: %s", exc)
+            with app_state.market.user_stocks_lock:
                 for symbol, market in added_symbols:
                     container = _get_stock_container(market)
                     if container is not None:
                         container.pop(symbol, None)
-                return error_response(
-                    ErrorCode.FILE_ERROR,
-                    details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-                    status_code=503,
-                )
+            return error_response(
+                ErrorCode.FILE_ERROR,
+                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+                status_code=503,
+            )
 
     if added_symbols:
         for sym, mkt in added_symbols:

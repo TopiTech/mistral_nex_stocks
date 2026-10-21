@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -571,72 +572,78 @@ def _write_user_stocks_with_lock(
             ) from exc
 
 
+_user_stocks_save_lock = threading.Lock()
+
+
 def save_user_stocks():
     """ユーザーの銘柄設定をファイルに保存する。
 
-    Uses threading.RLock for write-order safety. The lock is acquired
-    externally (via app_state.market.user_stocks_lock), which callers must
-    already hold for read operations. A process-internal monotonic version
-    counter (user_stocks_rev) is bumped inside the lock after the atomic
-    os.replace so that concurrent load_user_stocks() calls reliably detect the
-    newer content without relying solely on filesystem mtime (which is also
-    bumped here, inside the lock, to stay consistent across processes).
-    File-level locking (fcntl/msvcrt) is used to prevent corruption when
-    multiple processes (e.g. Gunicorn workers) write concurrently.
+    Uses threading.Lock (_user_stocks_save_lock) to serialize filesystem persistence
+    across threads. In-memory data is validated and snapshotted under user_stocks_lock,
+    which is then released before JSON serialization, encryption, and disk I/O / fsync.
+    This prevents blocking concurrent SSE broadcasts and watchlist reads during slow disk writes.
+    A process-internal monotonic version counter (user_stocks_rev) and mtime are updated
+    under user_stocks_lock after the atomic file swap.
 
     Raises:
         UserStocksPersistError: if the write cannot complete safely. Callers
             must treat this as failure (do not report success to the client).
     """
     try:
-        with app_state.market.user_stocks_lock:
-            # MNS-001: Never persist over the on-disk data when the previous
-            # load failed. In that state the only recoverable
-            # artifact is the encrypted file on disk (backed up to .bak by
-            # load_user_stocks). Writing would overwrite it with the in-memory
-            # state (which may be stale or empty) and cause irreversible loss.
-            # The load path deliberately keeps in-memory state and flags this
-            # error instead of wiping the lists; the save path must honor it.
-            if getattr(app_state.market, "user_stocks_load_error", False):
-                logger.error(
-                    "Refusing to save user stocks: previous load failed "
-                    "(user_stocks_load_error is set). Repair the file or restore "
-                    "the key material, then reload before saving."
-                )
-                raise UserStocksPersistError(
-                    "Cannot save: user_stocks.json could not be loaded safely. "
-                    "Repair the file or restore the key material first."
-                )
+        with _user_stocks_save_lock:
+            with app_state.market.user_stocks_lock:
+                # MNS-001: Never persist over the on-disk data when the previous
+                # load failed. In that state the only recoverable
+                # artifact is the encrypted file on disk (backed up to .bak by
+                # load_user_stocks). Writing would overwrite it with the in-memory
+                # state (which may be stale or empty) and cause irreversible loss.
+                # The load path deliberately keeps in-memory state and flags this
+                # error instead of wiping the lists; the save path must honor it.
+                if getattr(app_state.market, "user_stocks_load_error", False):
+                    logger.error(
+                        "Refusing to save user stocks: previous load failed "
+                        "(user_stocks_load_error is set). Repair the file or restore "
+                        "the key material, then reload before saving."
+                    )
+                    raise UserStocksPersistError(
+                        "Cannot save: user_stocks.json could not be loaded safely. "
+                        "Repair the file or restore the key material first."
+                    )
 
-            # Retain the canonical representation at the persistence boundary
-            # too, so a legacy in-memory state cannot reintroduce a bare JP
-            # ticker after it has been normalized on load/API ingress.
-            normalized_jp = _normalize_jp_holding_keys(app_state.market.user_jp)
-            app_state.market.user_jp.clear()
-            app_state.market.user_jp.update(normalized_jp)
-            normalized_idx = _normalize_idx_holding_fields(app_state.market.user_idx)
-            app_state.market.user_idx.clear()
-            app_state.market.user_idx.update(normalized_idx)
+                # Retain the canonical representation at the persistence boundary
+                # too, so a legacy in-memory state cannot reintroduce a bare JP
+                # ticker after it has been normalized on load/API ingress.
+                normalized_jp = _normalize_jp_holding_keys(app_state.market.user_jp)
+                app_state.market.user_jp.clear()
+                app_state.market.user_jp.update(normalized_jp)
+                normalized_idx = _normalize_idx_holding_fields(app_state.market.user_idx)
+                app_state.market.user_idx.clear()
+                app_state.market.user_idx.update(normalized_idx)
 
-            try:
-                rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0))
-            except (TypeError, ValueError):
-                rate_ts = 0.0
-            if not math.isfinite(rate_ts) or rate_ts <= 0.0:
-                rate_ts = 0.0
-            try:
-                rate_val = float(getattr(app_state.market, "last_usdjpy_rate", 150.00))
-                if not math.isfinite(rate_val) or rate_val <= 0.0:
+                try:
+                    rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0))
+                except (TypeError, ValueError):
+                    rate_ts = 0.0
+                if not math.isfinite(rate_ts) or rate_ts <= 0.0:
+                    rate_ts = 0.0
+                try:
+                    rate_val = float(getattr(app_state.market, "last_usdjpy_rate", 150.00))
+                    if not math.isfinite(rate_val) or rate_val <= 0.0:
+                        rate_val = 150.00
+                except (TypeError, ValueError):
                     rate_val = 150.00
-            except (TypeError, ValueError):
-                rate_val = 150.00
-            data = {
-                "us": copy.deepcopy(app_state.market.user_us),
-                "jp": copy.deepcopy(app_state.market.user_jp),
-                "idx": copy.deepcopy(app_state.market.user_idx),
-                "last_usdjpy_rate": rate_val,
-                "last_usdjpy_rate_ts": rate_ts,
-            }
+                data = {
+                    "us": copy.deepcopy(app_state.market.user_us),
+                    "jp": copy.deepcopy(app_state.market.user_jp),
+                    "idx": copy.deepcopy(app_state.market.user_idx),
+                    "last_usdjpy_rate": rate_val,
+                    "last_usdjpy_rate_ts": rate_ts,
+                }
+                saved_us_keys = list(app_state.market.user_us.keys())
+                saved_jp_keys = list(app_state.market.user_jp.keys())
+
+            # Data snapshot completed; release user_stocks_lock during slow serialization,
+            # encryption, and filesystem disk I/O (fsync)
             encoded = json.dumps(data, ensure_ascii=False, indent=2)
             _master_key = config_store.get_or_create_master_key()
             protected = protect_data(encoded, key_name="user_stocks", master_key=_master_key)
@@ -661,10 +668,10 @@ def save_user_stocks():
                         "Failed to set restrictive permissions on %s: %s", USER_STOCKS_FILE, exc
                     )
 
-            app_state.market.user_stocks_rev += 1
-            app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
-            saved_us_keys = list(app_state.market.user_us.keys())
-            saved_jp_keys = list(app_state.market.user_jp.keys())
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_stocks_rev += 1
+                app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
+
         # register_symbols acquires yahoojp_scraper.lock; publish outside
         # user_stocks_lock to avoid deadlock with _pts_worker_loop (R-deadlock).
         try:

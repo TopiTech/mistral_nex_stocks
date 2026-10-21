@@ -1,5 +1,7 @@
 """Unit tests verifying test utilities, helpers, fixtures, and state reset logic."""
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -8,6 +10,21 @@ import pytest
 
 from tests import cleanup_temp_files, create_temp_config, reset_app_state_internals
 from tests.conftest import MemoryKeyring, SynchronousExecutor
+from tests.test_support import (
+    apply_background_stubs,
+    apply_baseline_test_env,
+    apply_synchronous_executors,
+    get_baseline_test_env,
+)
+from tests.test_support import (
+    cleanup_temp_files as support_cleanup_temp_files,
+)
+from tests.test_support import (
+    create_temp_config as support_create_temp_config,
+)
+from tests.test_support import (
+    reset_app_state_internals as support_reset_app_state_internals,
+)
 
 
 def test_create_temp_config_and_cleanup():
@@ -32,8 +49,16 @@ def test_create_temp_config_and_cleanup():
     assert not path.exists()
 
 
+def test_support_create_temp_config_direct():
+    """Test direct import from tests.test_support."""
+    path = support_create_temp_config({"foo": "bar"}, register_for_cleanup=True)
+    assert path.exists()
+    support_cleanup_temp_files()
+    assert not path.exists()
+
+
 def test_memory_keyring_operations():
-    """Test MemoryKeyring set, get, delete, and error handling."""
+    """Test MemoryKeyring set, get, delete, clear, and error handling."""
     kr = MemoryKeyring()
     service = "test_service"
     username = "test_user"
@@ -44,6 +69,10 @@ def test_memory_keyring_operations():
     kr.set_password(service, username, password)
     assert kr.get_password(service, username) == password
 
+    kr.clear()
+    assert kr.get_password(service, username) is None
+
+    kr.set_password(service, username, password)
     kr.delete_password(service, username)
     assert kr.get_password(service, username) is None
 
@@ -92,6 +121,15 @@ def test_reset_app_state_internals_execution():
     with api_analysis.news_fetch_lock:
         assert "test-isolation" not in api_analysis.news_fetch_inflight
 
+    # Test modular support function works identically
+    with api_analysis.news_fetch_lock:
+        api_analysis.news_fetch_inflight["test-isolation-2"] = {"done": object()}
+
+    support_reset_app_state_internals()
+
+    with api_analysis.news_fetch_lock:
+        assert "test-isolation-2" not in api_analysis.news_fetch_inflight
+
 
 def test_fixtures_client_and_temp_config(client, temp_config_file):
     """Test the reusable client and temp_config_file pytest fixtures."""
@@ -101,3 +139,16 @@ def test_fixtures_client_and_temp_config(client, temp_config_file):
 
     assert isinstance(temp_config_file, Path)
     assert temp_config_file.exists()
+
+
+def test_environment_and_patch_helpers():
+    """Test environment baseline and patch application helpers."""
+    env = get_baseline_test_env("dummy_dir")
+    assert env["MNS_DATA_DIR"] == "dummy_dir"
+    assert env["MNS_SKIP_BOOTSTRAP"] == "1"
+
+    apply_baseline_test_env("dummy_dir")
+    assert pytest.MonkeyPatch is not None
+
+    apply_synchronous_executors()
+    apply_background_stubs()

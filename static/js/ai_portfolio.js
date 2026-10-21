@@ -527,15 +527,23 @@
         reject(new DOMException("Aborted", "AbortError"));
         return;
       }
-      const timer = setTimeout(resolve, ms);
-      signal?.addEventListener(
-        "abort",
-        () => {
+      let timer = null;
+      const onAbort = () => {
+        cleanup();
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+      const cleanup = () => {
+        if (timer !== null) {
           clearTimeout(timer);
-          reject(new DOMException("Aborted", "AbortError"));
-        },
-        { once: true },
-      );
+          timer = null;
+        }
+        signal?.removeEventListener("abort", onAbort);
+      };
+      timer = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, ms);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 
@@ -792,12 +800,26 @@
 
   async function copyAiPortfolioToMy(items) {
     try {
+      const sanitizedItems = (Array.isArray(items) ? items : []).map((item) => {
+        if (!item || typeof item !== "object") return item;
+        const itemCopy = { ...item };
+        const targetNum = Number(itemCopy.target_price);
+        if (
+          itemCopy.target_price === null ||
+          itemCopy.target_price === undefined ||
+          !Number.isFinite(targetNum) ||
+          targetNum <= 0
+        ) {
+          itemCopy.target_price = 100.0;
+        }
+        return itemCopy;
+      });
       const resp = await csrfFetch("/api/ai-portfolio/copy-to-my", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ items: items }),
+        body: JSON.stringify({ items: sanitizedItems }),
       });
 
       const data = await resp.json().catch(() => ({}));

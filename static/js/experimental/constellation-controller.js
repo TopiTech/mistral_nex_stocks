@@ -424,15 +424,27 @@
 
     waitForAiPoll(delayMs, signal) {
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, delayMs);
-        signal.addEventListener(
-          "abort",
-          () => {
+        if (signal?.aborted) {
+          reject(new DOMException("AI comparison cancelled", "AbortError"));
+          return;
+        }
+        let timer = null;
+        const onAbort = () => {
+          cleanup();
+          reject(new DOMException("AI comparison cancelled", "AbortError"));
+        };
+        const cleanup = () => {
+          if (timer !== null) {
             clearTimeout(timer);
-            reject(new DOMException("AI comparison cancelled", "AbortError"));
-          },
-          { once: true },
-        );
+            timer = null;
+          }
+          signal?.removeEventListener("abort", onAbort);
+        };
+        timer = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, delayMs);
+        signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
   }

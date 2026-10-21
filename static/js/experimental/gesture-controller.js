@@ -34,6 +34,7 @@
       window.addEventListener("pointermove", this._onPointerMove);
       window.addEventListener("pointerup", this._onPointerUp);
       window.addEventListener("pointercancel", this._onPointerCancel);
+      window.addEventListener("blur", this._onPointerCancel);
     }
 
     destroy() {
@@ -42,6 +43,7 @@
       window.removeEventListener("pointermove", this._onPointerMove);
       window.removeEventListener("pointerup", this._onPointerUp);
       window.removeEventListener("pointercancel", this._onPointerCancel);
+      window.removeEventListener("blur", this._onPointerCancel);
     }
 
     getCanvasPos(e) {

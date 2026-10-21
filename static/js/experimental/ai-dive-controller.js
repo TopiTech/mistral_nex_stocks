@@ -332,15 +332,23 @@
           reject(new DOMException("Request cancelled", "AbortError"));
           return;
         }
-        const timer = setTimeout(resolve, delayMs);
-        signal?.addEventListener(
-          "abort",
-          () => {
+        let timer = null;
+        const onAbort = () => {
+          cleanup();
+          reject(new DOMException("Request cancelled", "AbortError"));
+        };
+        const cleanup = () => {
+          if (timer !== null) {
             clearTimeout(timer);
-            reject(new DOMException("Request cancelled", "AbortError"));
-          },
-          { once: true },
-        );
+            timer = null;
+          }
+          signal?.removeEventListener("abort", onAbort);
+        };
+        timer = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, delayMs);
+        signal?.addEventListener("abort", onAbort, { once: true });
       });
     }
 

@@ -25,3 +25,4 @@ cryptography>=48.0.1,<51.0.0
 # mode is unsupported because of in-memory singleton state).
 gunicorn>=26.0.0,<27.0; sys_platform != 'win32'
 h2>=4.4.1,<5.0
+certifi>=2026.10.19

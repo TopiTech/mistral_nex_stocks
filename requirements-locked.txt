@@ -76,10 +76,8 @@ idna==3.19
     #   anyio
     #   httpx
     #   requests
-importlib-metadata==8.7.1
-    # via
-    #   keyring
-    #   opentelemetry-api
+importlib-metadata==8.7.1 ; python_full_version < '3.12'
+    # via keyring
 itsdangerous==2.2.0
     # via
     #   flask
@@ -127,11 +125,11 @@ numpy==2.5.1 ; python_full_version >= '3.12'
     # via
     #   pandas
     #   yfinance
-opentelemetry-api==1.39.1
+opentelemetry-api==1.45.1
     # via
     #   mistralai
     #   opentelemetry-semantic-conventions
-opentelemetry-semantic-conventions==0.60b1
+opentelemetry-semantic-conventions==0.66b1
     # via mistralai
 pandas==3.0.6
     # via
@@ -218,5 +216,5 @@ wtforms==3.2.2
     # via flask-wtf
 yfinance==1.7.0
     # via mistral-nex-stocks
-zipp==4.1.0
+zipp==4.1.0 ; python_full_version < '3.12'
     # via importlib-metadata

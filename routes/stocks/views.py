@@ -647,17 +647,20 @@ def api_add_stock_ext() -> Any:
             return _watchlist_capacity_error(market)
         container[symbol] = name
 
-        try:
-            save_fn = _get_api_stocks_attr("save_user_stocks", save_user_stocks)
-            save_fn()
-        except UserStocksPersistError as exc:
-            container.pop(symbol, None)
-            current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
-            return error_response(
-                ErrorCode.FILE_ERROR,
-                details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
-                status_code=503,
-            )
+    try:
+        save_fn = _get_api_stocks_attr("save_user_stocks", save_user_stocks)
+        save_fn()
+    except UserStocksPersistError as exc:
+        with app_state.market.user_stocks_lock:
+            container = _get_stock_container(market)
+            if container is not None:
+                container.pop(symbol, None)
+        current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
+        return error_response(
+            ErrorCode.FILE_ERROR,
+            details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},
+            status_code=503,
+        )
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 

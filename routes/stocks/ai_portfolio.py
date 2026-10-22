@@ -901,7 +901,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
 
     added_count = 0
     skipped_symbols: list[str] = []
-    added_symbols: list[tuple[str, str]] = []
+    added_symbols: list[tuple[str, str, float, float, float | None]] = []
     with app_state.market.user_stocks_lock:
         new_by_market: dict[str, int] = {}
         for symbol, market, _target, _shares in parsed_items:
@@ -927,10 +927,11 @@ def api_copy_ai_portfolio_to_my() -> Any:
                 "shares": shares,
                 "avg_price": target_price,
             }
-            if market == "us":
-                holding_entry["avg_fx_rate"] = resolved_usdjpy_rate
+            avg_fx_val = resolved_usdjpy_rate if market == "us" else None
+            if avg_fx_val is not None:
+                holding_entry["avg_fx_rate"] = avg_fx_val
             container[symbol] = holding_entry
-            added_symbols.append((symbol, market))
+            added_symbols.append((symbol, market, target_price, shares, avg_fx_val))
             added_count += 1
 
     if added_count > 0:
@@ -939,7 +940,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
         except Exception as exc:
             logger.warning("save_user_stocks during copy-to-my: %s", exc)
             with app_state.market.user_stocks_lock:
-                for symbol, market in added_symbols:
+                for symbol, market, _, _, _ in added_symbols:
                     container = _get_stock_container(market)
                     if container is not None:
                         container.pop(symbol, None)
@@ -950,40 +951,18 @@ def api_copy_ai_portfolio_to_my() -> Any:
             )
 
     if added_symbols:
-        for sym, mkt in added_symbols:
+        for sym, mkt, target_price, shares, fx_rate in added_symbols:
             invalidate_stock_caches(sym)
-            ensure_stock_placeholder_in_caches(sym, _stock_display_name(sym, mkt), mkt)
+            ensure_stock_placeholder_in_caches(
+                sym,
+                _stock_display_name(sym, mkt),
+                mkt,
+                shares=shares,
+                avg_price=target_price,
+                avg_fx_rate=fx_rate,
+            )
 
-        with app_state.cache.sse_data_lock:
-            for sym, mkt in added_symbols:
-                container = _get_stock_container(mkt)
-                holding_info = container.get(sym) if container else None
-                if holding_info and isinstance(holding_info, dict):
-                    shares_val = holding_info.get("shares")
-                    avg_price_val = holding_info.get("avg_price")
-                    avg_fx_val = holding_info.get("avg_fx_rate")
-                    for cache in (
-                        app_state.market.current_stocks_cache,
-                        app_state.market.target_stocks_cache,
-                    ):
-                        if mkt not in cache:
-                            cache[mkt] = []
-                        target_list = cache.get(mkt, [])
-                        for s in target_list:
-                            if isinstance(s, dict) and s.get("symbol") == sym:
-                                if shares_val is not None:
-                                    s["shares"] = shares_val
-                                if avg_price_val is not None:
-                                    s["avg_price"] = avg_price_val
-                                if mkt in ("jp", "idx"):
-                                    s.pop("avg_fx_rate", None)
-                                elif avg_fx_val is not None:
-                                    s["avg_fx_rate"] = avg_fx_val
-                                else:
-                                    s.pop("avg_fx_rate", None)
-                                break
-
-        for sym, mkt in added_symbols:
+        for sym, mkt, _, _, _ in added_symbols:
             _sync_realtime_symbol(sym, mkt, register=True)
 
         _announce_watchlist_state()

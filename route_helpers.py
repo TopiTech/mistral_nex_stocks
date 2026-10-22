@@ -977,38 +977,58 @@ def invalidate_single_stock_cache(symbol: str) -> None:
     _invalidate_symbol_caches_internal(symbol)
 
 
-def ensure_stock_placeholder_in_caches(symbol, name, market):
-    """Ensure a placeholder entry exists in the stock caches for a new symbol."""
+def ensure_stock_placeholder_in_caches(
+    symbol: str,
+    name: str,
+    market: str,
+    shares: float | None = None,
+    avg_price: float | None = None,
+    avg_fx_rate: float | None = None,
+) -> None:
+    """Ensure a placeholder entry exists in the stock caches for a symbol and update holdings atomically."""
     with app_state.cache.sse_data_lock:
         for cache in (
-            app_state.market.current_stocks_cache,
             app_state.market.target_stocks_cache,
+            app_state.market.current_stocks_cache,
         ):
             if market not in cache:
                 cache[market] = []
             target_list = cache[market]
-            if not any(s.get("symbol") == symbol for s in target_list):
-                target_list.append(
-                    {
-                        "symbol": symbol,
-                        "name": name,
-                        "market": market,
-                        "price": "--",
-                        "change": "--",
-                        "change_percent": "--",
-                        "chart_data": [],
-                        "shares": 0,
-                        "avg_price": 0,
-                    }
-                )
+            entry = next((s for s in target_list if s.get("symbol") == symbol), None)
+            if entry is None:
+                new_entry: dict[str, Any] = {
+                    "symbol": symbol,
+                    "name": name,
+                    "market": market,
+                    "price": "--",
+                    "change": "--",
+                    "change_percent": "--",
+                    "chart_data": [],
+                    "shares": shares if shares is not None else 0,
+                    "avg_price": avg_price if avg_price is not None else 0,
+                }
+                if market not in ("jp", "idx") and avg_fx_rate is not None:
+                    new_entry["avg_fx_rate"] = avg_fx_rate
+                target_list.append(new_entry)
+            else:
+                if shares is not None:
+                    entry["shares"] = shares
+                if avg_price is not None:
+                    entry["avg_price"] = avg_price
+                if market in ("jp", "idx"):
+                    entry.pop("avg_fx_rate", None)
+                elif avg_fx_rate is not None:
+                    entry["avg_fx_rate"] = avg_fx_rate
+                elif shares is not None or avg_price is not None:
+                    entry.pop("avg_fx_rate", None)
 
 
 def remove_stock_from_caches(symbol, market):
     """Remove a symbol from both in-memory and disk caches."""
     with app_state.cache.sse_data_lock:
         for cache in (
-            app_state.market.current_stocks_cache,
             app_state.market.target_stocks_cache,
+            app_state.market.current_stocks_cache,
         ):
             if market not in cache:
                 cache[market] = []

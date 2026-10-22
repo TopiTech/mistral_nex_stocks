@@ -1359,10 +1359,13 @@ def api_analyze_v2():
                 details={"reason": "price must be a finite number", "fields": ["price"]},
                 status_code=400,
             )
-        if not math.isfinite(float(price)):
+        if not math.isfinite(float(price)) or float(price) < 0.0:
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": "price must be a finite number", "fields": ["price"]},
+                details={
+                    "reason": "price must be a finite non-negative number",
+                    "fields": ["price"],
+                },
                 status_code=400,
             )
 

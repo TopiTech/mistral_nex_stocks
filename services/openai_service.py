@@ -1067,6 +1067,15 @@ def call_openai_chat_with_tools(
     )
 
 
+def _sanitize_prompt_text(value: Any, max_len: int = 120) -> str:
+    """Strip control/XML metacharacters from client-influenced values before
+    they are interpolated into an LLM prompt (mirrors services.ai_service._sanitize_prompt_text)."""
+    text = str(value if value is not None else "")
+    text = "".join(c for c in text if ord(c) >= 0x20 or c in ("\t", "\n", "\r"))
+    text = text.replace("<", " ").replace(">", " ")
+    return text.strip()[:max_len]
+
+
 def analyze_chart_image_with_openai(
     api_key: str,
     image_data: str,
@@ -1085,7 +1094,7 @@ def analyze_chart_image_with_openai(
         clean_b64 = "".join(clean_img.split())
         image_url = f"data:image/png;base64,{clean_b64}"
 
-    safe_sym = symbol.strip()[:16] if symbol else "対象銘柄"
+    safe_sym = _sanitize_prompt_text(symbol, 16) if symbol else "対象銘柄"
     user_text = (
         f"{safe_sym} の株価チャート画像を視覚的に分析してください。\n"
         "【分析タスク】\n"
@@ -1096,7 +1105,7 @@ def analyze_chart_image_with_openai(
         "5. 短期・中期の見通しと注目すべき価格ブレイクアウトポイント\n"
     )
     if custom_prompt:
-        user_text += f"\n【ユーザーからの追加指示】\n{custom_prompt.strip()[:500]}\n"
+        user_text += f"\n【ユーザーからの追加指示】\n{_sanitize_prompt_text(custom_prompt, 500)}\n"
 
     messages = [
         {

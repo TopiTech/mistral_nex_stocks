@@ -216,26 +216,14 @@ def api_update_portfolio() -> Any:
             status_code=503,
         )
     invalidate_stock_caches(symbol)
-    ensure_stock_placeholder_in_caches(symbol, _stock_display_name(symbol, market), market)
-    with app_state.cache.sse_data_lock:
-        for cache in (
-            app_state.market.target_stocks_cache,
-            app_state.market.current_stocks_cache,
-        ):
-            if market not in cache:
-                cache[market] = []
-            target_list = cache.get(market, [])
-            for s in target_list:
-                if s.get("symbol") == symbol:
-                    s["shares"] = shares
-                    s["avg_price"] = avg_price
-                    if market == "jp" or market == "idx":
-                        s.pop("avg_fx_rate", None)
-                    elif avg_fx_rate is not None:
-                        s["avg_fx_rate"] = avg_fx_rate
-                    else:
-                        s.pop("avg_fx_rate", None)
-                    break
+    ensure_stock_placeholder_in_caches(
+        symbol,
+        _stock_display_name(symbol, market),
+        market,
+        shares=shares,
+        avg_price=avg_price,
+        avg_fx_rate=avg_fx_rate,
+    )
 
     _invalidate_sse_payload_cache()
     announce_current_market_state()

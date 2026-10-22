@@ -113,7 +113,7 @@ markupsafe==3.0.3
     #   wtforms
 mistralai==2.10.0
     # via mistral-nex-stocks
-more-itertools==11.1.0
+more-itertools==11.2.1
     # via
     #   jaraco-classes
     #   jaraco-functools

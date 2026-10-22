@@ -9,7 +9,10 @@ from schemas.ai_portfolio import (
     AIPortfolioDeleteRequest,
     AIPortfolioGenerateRequest,
     AIPortfolioItemSchema,
+    AiPortfolioItemSchema,
     AIPortfolioRebalanceRequest,
+    AIPortfolioResponseSchema,
+    AiPortfolioResponseSchema,
     AIPortfolioSaveRequest,
 )
 from schemas.analysis import (
@@ -47,8 +50,11 @@ __all__ = [
     "AIPortfolioGenerateRequest",
     "AIPortfolioItemSchema",
     "AIPortfolioRebalanceRequest",
+    "AIPortfolioResponseSchema",
     "AIPortfolioSaveRequest",
     "AITechnicalLinesRequest",
+    "AiPortfolioItemSchema",
+    "AiPortfolioResponseSchema",
     "HeatmapQueryRequest",
     "LoggingConfigSchema",
     "PortfolioUpdateRequest",

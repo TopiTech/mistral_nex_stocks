@@ -1339,3 +1339,9 @@ class AiPortfolioResponseSchema(BaseModel):
     expected_return: str = Field(default="8-12%", min_length=1, max_length=500)
     commentary: str = Field(default="", max_length=500)
     items: list[AiPortfolioItemSchema] = Field(min_length=1, max_length=20)
+
+
+# Aliases for naming symmetry across schemas and validators
+AIPortfolioItemSchema = AiPortfolioItemSchema
+AIPortfolioResponseSchema = AiPortfolioResponseSchema
+

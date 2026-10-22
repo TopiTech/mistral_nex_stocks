@@ -418,6 +418,22 @@ def api_credentials():
                 },
             )
 
+    if openai_api_key is not None:
+        openai_api_key = openai_api_key.strip()
+        if openai_api_key and not _is_valid_api_key(openai_api_key, min_length=8):
+            current_app.logger.warning(
+                "Credentials save rejected id=%s reason=invalid_openai_key len=%s min_len=8",
+                getattr(g, "request_id", "-"),
+                len(openai_api_key),
+            )
+            return error_response(
+                ErrorCode.UNSAFE_INPUT,
+                details={
+                    "fields": ["openai_api_key"],
+                    "min_length": 8,
+                },
+            )
+
     if langsearch_api_key is not None:
         langsearch_api_key = langsearch_api_key.strip()
         if langsearch_api_key and not _is_valid_api_key(
@@ -772,7 +788,10 @@ def api_credentials_verify():
                 {
                     "ok": False,
                     "valid": False,
+                    "code": "INVALID_API_KEY",
+                    "error_code": ErrorCode.INVALID_API_KEY.value,
                     "error": "Mistral APIキーが指定されていません。",
+                    "message": "Mistral APIキーが指定されていません。",
                 }
             ),
             400,
@@ -809,13 +828,31 @@ def api_credentials_verify():
                 agent_id = get_agent_id()
             if not agent_id:
                 return (
-                    jsonify({"ok": False, "valid": False, "error": "Agent IDが指定されていません。"}),
+                    jsonify(
+                        {
+                            "ok": False,
+                            "valid": False,
+                            "code": "MISSING_REQUIRED_FIELD",
+                            "error_code": ErrorCode.MISSING_REQUIRED_FIELD.value,
+                            "error": "Agent IDが指定されていません。",
+                            "message": "Agent IDが指定されていません。",
+                        }
+                    ),
                     400,
                 )
             beta_api = getattr(client, "beta", None)
             if not beta_api or not hasattr(beta_api, "agents"):
                 return (
-                    jsonify({"ok": False, "valid": False, "error": "Agents APIが現在のSDKでサポートされていません。"}),
+                    jsonify(
+                        {
+                            "ok": False,
+                            "valid": False,
+                            "code": "INVALID_API_KEY",
+                            "error_code": ErrorCode.INVALID_API_KEY.value,
+                            "error": "Agents APIが現在のSDKでサポートされていません。",
+                            "message": "Agents APIが現在のSDKでサポートされていません。",
+                        }
+                    ),
                     400,
                 )
             agent = beta_api.agents.get(agent_id=agent_id.strip())
@@ -880,11 +917,14 @@ def api_credentials_verify():
                 {
                     "ok": False,
                     "valid": False,
+                    "code": "INVALID_API_KEY",
+                    "error_code": ErrorCode.INVALID_API_KEY.value,
                     "latency_ms": latency_ms,
                     # Provider exceptions can contain request URLs, account
                     # metadata, or credentials. Return a stable,
                     # user-actionable message without recording that text.
                     "error": "APIキーの検証に失敗しました。設定と接続を確認してください。",
+                    "message": "APIキーの検証に失敗しました。設定と接続を確認してください。",
                 }
             ),
             400,

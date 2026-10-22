@@ -159,3 +159,22 @@ class AIPortfolioCopyToMyRequest(BaseModel):
                 f"Total weight_pct exceeds 100% (got {total_weight:.2f}%)"
             )
         return self
+
+
+class AIPortfolioResponseSchema(BaseModel):
+    """Schema for complete AI Portfolio response."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=500)
+    description: str = Field(min_length=1, max_length=500)
+    risk_level: str = Field(default="中リスク", min_length=1, max_length=500)
+    expected_return: str = Field(default="8-12%", min_length=1, max_length=500)
+    commentary: str = Field(default="", max_length=500)
+    items: list[AIPortfolioItemSchema] = Field(min_length=1, max_length=20)
+
+
+# Aliases for backward compatibility and uniform imports across modules
+AiPortfolioItemSchema = AIPortfolioItemSchema
+AiPortfolioResponseSchema = AIPortfolioResponseSchema
+

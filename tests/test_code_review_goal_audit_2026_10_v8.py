@@ -71,7 +71,24 @@ def test_api_analyze_v2_rejects_negative_price(client):
         assert resp_small.get_json()["error_code"] == ErrorCode.INVALID_INPUT.value
 
         # Non-negative price 0.0 (valid in schema, should pass price validation)
-        with patch("routes.api_analysis.is_valid_symbol", return_value=True):
+        with (
+            patch("routes.api_analysis.is_valid_symbol", return_value=True),
+            patch("routes.api_analysis.fetch_stock", return_value={"price": 0.0, "chart_data": []}),
+            patch("routes.api_analysis.collect_symbol_research_context", return_value=""),
+            patch("routes.api_analysis.get_stock_info_cached", return_value={}),
+            patch(
+                "routes.api_analysis.call_mistral_chat",
+                return_value={
+                    "recommendation": "HOLD",
+                    "reasoning": "Test reasoning",
+                    "time_horizon": "短期",
+                    "risk_level": "中",
+                    "catalysts": [],
+                    "risks": [],
+                    "sentiment": "NEUTRAL",
+                },
+            ),
+        ):
             resp_zero = client.post(
                 "/api/analyze-v2",
                 json={"symbol": "AAPL", "market": "us", "price": 0.0, "request_token": "a" * 32},

@@ -226,14 +226,7 @@
         <div
           id="mistral-model-blackout-overlay"
           class="model-section-blackout-overlay"
-          {%
-          if
-          app_config.ai_provider
-          !="openai_compatible"
-          %}style="display: none;"
-          {%
-          endif
-          %}
+          {% if app_config.ai_provider != 'openai_compatible' %}style="display: none;"{% endif %}
           aria-hidden="{% if app_config.ai_provider == 'openai_compatible' %}false{% else %}true{% endif %}"
         >
           <div class="blackout-notice-card">
@@ -287,13 +280,7 @@
               class="save-prompt-btn"
               type="button"
               id="save-model-btn"
-              {%
-              if
-              app_config.ai_provider=""
-              ="openai_compatible"
-              %}disabled{%
-              endif
-              %}
+              {% if app_config.ai_provider == 'openai_compatible' %}disabled{% endif %}
             >
               モデル設定を保存
             </button>
@@ -363,18 +350,7 @@
           aria-label="LLMプロバイダ選択"
         >
           <label class="provider-toggle-label">
-            <input
-              type="radio"
-              name="aiProvider"
-              value="mistral"
-              {%
-              if
-              app_config.ai_provider
-              !="openai_compatible"
-              %}checked{%
-              endif
-              %}
-            />
+            <input type="radio" name="aiProvider" value="mistral" {% if app_config.ai_provider != 'openai_compatible' %}checked{% endif %} />
             <span class="provider-toggle-card">
               <span class="provider-card-header">
                 <span class="provider-title">⚡ Mistral AI</span>
@@ -388,18 +364,7 @@
             </span>
           </label>
           <label class="provider-toggle-label">
-            <input
-              type="radio"
-              name="aiProvider"
-              value="openai_compatible"
-              {%
-              if
-              app_config.ai_provider=""
-              ="openai_compatible"
-              %}checked{%
-              endif
-              %}
-            />
+            <input type="radio" name="aiProvider" value="openai_compatible" {% if app_config.ai_provider == 'openai_compatible' %}checked{% endif %} />
             <span class="provider-toggle-card">
               <span class="provider-card-header">
                 <span class="provider-title">🧪 OpenAI互換 API</span>
@@ -434,28 +399,17 @@
             <span style="opacity: 0.75; font-size: 0.8rem; display: block"
               >現在の接続方式</span
             >
-            <strong id="current-api-mode-label"
-              >{% if app_config.ai_provider == 'openai_compatible' %}OpenAI互換
-              (Beta): {{ app_config.openai_model or "gpt-4o-mini" }}{% elif
-              app_config.api_mode == 'agents' %}Agents API (Mistral Agent連携){%
-              elif app_config.preview_mode %}プレビューモード (APIキー未設定){%
-              else %}通常 API (Chat Completions){% endif %}</strong
-            >
+            <strong id="current-api-mode-label">{% if app_config.ai_provider == 'openai_compatible' %}OpenAI互換 (Beta): {{ app_config.openai_model or "gpt-4o-mini" }}{% elif app_config.api_mode == 'agents' %}Agents API (Mistral Agent連携){% elif app_config.preview_mode %}プレビューモード (APIキー未設定){% else %}通常 API (Chat Completions){% endif %}</strong>
             <span
               id="current-agent-id-display"
               style="{% if app_config.ai_provider == 'openai_compatible' or app_config.api_mode != 'agents' or not app_config.agent_id %}display: none;{% endif %} font-size: 0.8rem; opacity: 0.85; margin-left: 6px;"
-              >{% if app_config.agent_id %}(ID: {{ app_config.agent_id }}){%
-              endif %}</span
+              >{% if app_config.agent_id %}(ID: {{ app_config.agent_id }}){% endif %}</span
             >
           </div>
           <span
             class="api-connection-mode-badge{% if app_config.ai_provider == 'openai_compatible' or app_config.preview_mode %} badge-preview{% elif app_config.api_mode == 'agents' %} badge-agents{% endif %}"
             id="api-connection-mode-badge"
-            >{% if app_config.ai_provider == 'openai_compatible' %}OpenAI Beta{%
-            elif app_config.api_mode == 'agents' %}Agents API{% elif
-            app_config.preview_mode %}プレビュー{% else %}通常API{% endif
-            %}</span
-          >
+            >{% if app_config.ai_provider == 'openai_compatible' %}OpenAI Beta{% elif app_config.api_mode == 'agents' %}Agents API{% elif app_config.preview_mode %}プレビュー{% else %}通常API{% endif %}</span>
         </div>
 
         <!-- Mistral Specific Settings Group -->

@@ -108,6 +108,7 @@ class TestAuditReviewFixes(unittest.TestCase):
         with (
             patch("services.stock_provider.yf.download", return_value=flat_df),
             patch.object(provider, "_fetch_single_history", side_effect=mock_single_fetch),
+            patch.object(provider, "get_ticker", return_value=None),
         ):
             # Two symbols requested, flat dataframe returned from batch
             result = provider.download_batch(["INVALID_SYM", "VALID_SYM"], period="1mo")

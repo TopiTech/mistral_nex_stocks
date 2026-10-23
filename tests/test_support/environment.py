@@ -26,6 +26,15 @@ def apply_baseline_test_env(temp_dir_name: str) -> None:
     for key, value in env.items():
         os.environ[key] = value
 
-    # Clear external API keys
-    os.environ.pop("OPENAI_API_KEY", None)
-    os.environ.pop("MISTRAL_API_KEY", None)
+    # Clear external API keys and tokens to prevent leaking local environment into tests
+    for key in (
+        "OPENAI_API_KEY",
+        "MISTRAL_API_KEY",
+        "TAVILY_API_KEY",
+        "ALPHAVANTAGE_API_KEY",
+        "LANGSEARCH_API_KEY",
+        "MNS_ADMIN_TOKEN",
+        "MNS_API_TOKEN",
+        "MNS_MASTER_KEY",
+    ):
+        os.environ.pop(key, None)

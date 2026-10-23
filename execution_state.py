@@ -30,7 +30,7 @@ class ExecutionState:
         self.shutdown_event = threading.Event()
         self.background_threads: list[threading.Thread] = []
 
-    def shutdown(self, wait: bool = False):
+    def shutdown(self, wait: bool = False, max_join_timeout: float = 3.0):
         """Shut down all executors with optional task completion wait.
 
         Idempotent: calling twice (e.g. signal handler + atexit) is safe.
@@ -49,11 +49,11 @@ class ExecutionState:
             except TypeError:
                 ex.shutdown(wait=wait)
 
-        deadline = time.time() + 3.0
+        deadline = time.time() + max_join_timeout
         for t in self.background_threads:
             try:
                 if t.is_alive():
-                    remaining = max(0.1, deadline - time.time())
+                    remaining = max(0.01, deadline - time.time())
                     t.join(timeout=remaining)
             except Exception:
                 logger.debug("Background thread join failed (expected during shutdown)")

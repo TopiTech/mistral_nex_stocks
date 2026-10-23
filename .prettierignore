@@ -1,0 +1,15 @@
+# Templates contain Jinja2 control syntax which Prettier's HTML parser corrupts
+templates/
+
+# Python virtual environment and build artifacts
+.venv/
+build/
+dist/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.coverage
+coverage.xml
+
+# Git and OS
+.git/

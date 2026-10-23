@@ -110,12 +110,12 @@ class TestBackendConcurrencyAndState:
         exec_state.background_threads.append(t)
 
         start_t = time.time()
-        exec_state.shutdown(wait=False)
+        exec_state.shutdown(wait=False, max_join_timeout=0.1)
         elapsed = time.time() - start_t
         stop_event.set()
 
-        # Shutdown should finish bounded by ~3.5 seconds
-        assert elapsed < 4.0
+        # Shutdown should finish bounded by ~0.15 seconds
+        assert elapsed < 0.5
 
     def test_app_state_shutdown_executors_idempotence(self):
         """Verify shutdown_executors is safe to call repeatedly."""

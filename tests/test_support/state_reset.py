@@ -278,6 +278,7 @@ def reset_app_state_internals() -> None:
     - Realtime market engine quote and PTS stores
     - Background worker leader election states and locks
     - Tracked temporary configuration files
+    - API credentials and ephemeral encryption keys
     """
     from app_state import app_state
 
@@ -287,3 +288,15 @@ def reset_app_state_internals() -> None:
     _reset_realtime_engine()
     _reset_sync_and_leader()
     cleanup_temp_files()
+    try:
+        from credential_manager import clear_api_credentials
+
+        clear_api_credentials()
+    except Exception:
+        pass
+    try:
+        import crypto_utils
+
+        crypto_utils.clear_ephemeral_credentials()
+    except Exception:
+        pass

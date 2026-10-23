@@ -21,11 +21,13 @@ from constants import (
     HISTORY_CACHE_DURATION_OPEN_LONG,
     HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
     HISTORY_CIRCUIT_BREAKER_THRESHOLD,
-    VALID_HISTORY_INTERVALS,
-    VALID_HISTORY_PERIODS,
 )
 from error_codes import ErrorCode, get_error_message
-from route_helpers import rate_limit
+from route_helpers import (
+    _parse_stock_details_request,
+    _parse_stock_history_request,
+    rate_limit,
+)
 from routes.stocks.common import (
     is_market_open,
     require_trusted_or_admin,
@@ -43,11 +45,7 @@ from utils.env_helpers import _env_bool as _stocks_env_bool
 from utils.env_helpers import _is_testing as _stocks_is_testing
 from utils.normalization import (
     history_circuit_key,
-    is_valid_symbol,
-    normalize_market,
     normalize_optional_number,
-    normalize_symbol,
-    normalize_symbol_for_market,
 )
 from utils.stock_payload import (
     _wait_for_initial_market_snapshot,
@@ -230,16 +228,11 @@ def api_stock_details() -> Any:
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
-    symbol = normalize_symbol(request.args.get("symbol"))
-    market = normalize_market(request.args.get("market"), default="us")
-    if not symbol:
-        return error_response(ErrorCode.INVALID_SYMBOL)
-    if not market:
-        return error_response(ErrorCode.INVALID_MARKET)
-
-    symbol = normalize_symbol_for_market(symbol, market)
-    if not is_valid_symbol(symbol):
-        return error_response(ErrorCode.INVALID_SYMBOL)
+    parsed, err_resp = _parse_stock_details_request(request.args)
+    if err_resp:
+        return err_resp
+    assert parsed is not None
+    symbol = parsed.symbol
 
     short_cache_key = f"info_short_{symbol}"
     with app_state.yfinance_short_cache_lock:
@@ -296,25 +289,14 @@ def api_stock_history() -> Any:
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
-    symbol = normalize_symbol(request.args.get("symbol"))
-    market = normalize_market(request.args.get("market"), default="us")
-    period = (request.args.get("period") or "3mo").strip().lower()
-    interval = (request.args.get("interval") or "auto").strip().lower()
-
-    if not symbol:
-        return error_response(ErrorCode.INVALID_SYMBOL)
-    if not market:
-        return error_response(ErrorCode.INVALID_MARKET)
-    if period not in VALID_HISTORY_PERIODS:
-        return error_response(ErrorCode.INVALID_PERIOD)
-    if interval not in VALID_HISTORY_INTERVALS:
-        return error_response(
-            ErrorCode.INVALID_INTERVAL,
-            details={"allowed": sorted(VALID_HISTORY_INTERVALS)},
-        )
-    symbol = normalize_symbol_for_market(symbol, market)
-    if not is_valid_symbol(symbol):
-        return error_response(ErrorCode.INVALID_SYMBOL)
+    parsed, err_resp = _parse_stock_history_request(request.args)
+    if err_resp:
+        return err_resp
+    assert parsed is not None
+    symbol = parsed.symbol
+    market = parsed.market
+    period = parsed.period
+    interval = parsed.interval or "auto"
 
     circuit_key = history_circuit_key(symbol, market)
     is_open = app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)

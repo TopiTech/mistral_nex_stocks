@@ -28,6 +28,7 @@ from constants import (
     PORTFOLIO_SHARES_MAX,
     PORTFOLIO_TOTAL_VALUE_MAX,
     TAVILY_API_KEY_MIN_LENGTH,
+    VALID_HISTORY_INTERVALS,
 )
 from credential_manager import get_langsearch_api_key, get_mistral_api_key, get_tavily_api_key
 from error_codes import ErrorCode
@@ -42,6 +43,7 @@ from schemas.analysis import (
     AIAnalyzeChartImageRequest,
     AIAnalyzeV2Request,
     AIChatRequest,
+    AINewsRequest,
     AITechnicalLinesRequest,
 )
 from schemas.config import CredentialsSaveRequest
@@ -50,6 +52,8 @@ from schemas.stocks import (
     StockAddExtRequest,
     StockAddRequest,
     StockDeleteRequest,
+    StockDetailsQueryRequest,
+    StockHistoryQueryRequest,
 )
 from utils.caching import clear_cache_key, clear_cache_prefix
 from utils.env_helpers import _env_bool as _route_env_bool
@@ -66,7 +70,11 @@ from utils.stock_payload import (
     clear_yfinance_short_cache_prefix,
     error_response,
 )
-from utils.text_utils import _parse_json_request, _token_fingerprint
+from utils.text_utils import (
+    _parse_json_request,
+    _parse_optional_json_request,
+    _token_fingerprint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -944,6 +952,71 @@ def _parse_stock_request(
     return _parse_stock_add_ext_request(data)
 
 
+def _history_query_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map StockHistoryQueryRequest validation errors to historical endpoint error responses."""
+    errors = exc.errors()
+    for err in errors:
+        loc = err.get("loc", ())
+        msg = str(err.get("msg", "")).lower()
+        if "symbol" in loc or "symbol" in msg:
+            return error_response(ErrorCode.INVALID_SYMBOL)
+    for err in errors:
+        loc = err.get("loc", ())
+        if "market" in loc:
+            return error_response(ErrorCode.INVALID_MARKET)
+    for err in errors:
+        loc = err.get("loc", ())
+        if "period" in loc:
+            return error_response(ErrorCode.INVALID_PERIOD)
+    for err in errors:
+        loc = err.get("loc", ())
+        if "interval" in loc:
+            return error_response(
+                ErrorCode.INVALID_INTERVAL,
+                details={"allowed": sorted(VALID_HISTORY_INTERVALS)},
+            )
+    return error_response(ErrorCode.INVALID_SYMBOL)
+
+
+def _parse_stock_history_request(
+    args: Any,
+) -> tuple[StockHistoryQueryRequest | None, tuple[Any, int] | None]:
+    """Validate /api/stock-history query parameters with StockHistoryQueryRequest."""
+    raw_dict = args.to_dict() if hasattr(args, "to_dict") else dict(args)
+    try:
+        validated = StockHistoryQueryRequest.model_validate(raw_dict)
+        return validated, None
+    except ValidationError as exc:
+        return None, _history_query_error_from_validation(exc)
+
+
+def _details_query_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map StockDetailsQueryRequest validation errors to historical endpoint error responses."""
+    errors = exc.errors()
+    for err in errors:
+        loc = err.get("loc", ())
+        msg = str(err.get("msg", "")).lower()
+        if "symbol" in loc or "symbol" in msg:
+            return error_response(ErrorCode.INVALID_SYMBOL)
+    for err in errors:
+        loc = err.get("loc", ())
+        if "market" in loc:
+            return error_response(ErrorCode.INVALID_MARKET)
+    return error_response(ErrorCode.INVALID_SYMBOL)
+
+
+def _parse_stock_details_request(
+    args: Any,
+) -> tuple[StockDetailsQueryRequest | None, tuple[Any, int] | None]:
+    """Validate /api/stock-details query parameters with StockDetailsQueryRequest."""
+    raw_dict = args.to_dict() if hasattr(args, "to_dict") else dict(args)
+    try:
+        validated = StockDetailsQueryRequest.model_validate(raw_dict)
+        return validated, None
+    except ValidationError as exc:
+        return None, _details_query_error_from_validation(exc)
+
+
 def _portfolio_numeric_error(field: str, err: Mapping[str, Any]) -> str:
     """Render the exact message ``parse_non_negative_float`` used to return."""
     err_type = str(err.get("type", ""))
@@ -1399,6 +1472,31 @@ def _parse_chart_image_request(
         return AIAnalyzeChartImageRequest.model_validate(data), None
     except ValidationError as exc:
         return None, _chart_image_error_from_validation(exc)
+
+
+def _parse_news_request(
+    req: Any,
+) -> tuple[bool | None, tuple[Any, int] | None]:
+    """Validate POST /api/news request body and query parameters via AINewsRequest."""
+    body = _parse_optional_json_request()
+    if body is None:
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
+    try:
+        validated = AINewsRequest.model_validate(body)
+        body_force = validated.force
+    except ValidationError:
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
+    query_force = (req.args.get("force") or "").strip().lower() in ("true", "1", "yes")
+    force_refresh = bool(query_force or body_force)
+    return force_refresh, None
 
 
 _CREDENTIALS_KEY_SPECS: dict[str, tuple[Any, int]] = {

@@ -24,7 +24,7 @@ from utils.normalization import (
 class AIPortfolioItemSchema(BaseModel):
     """Schema for individual stock in AI portfolio."""
 
-    model_config = ConfigDict(allow_inf_nan=False)
+    model_config = ConfigDict(allow_inf_nan=False, str_strip_whitespace=True)
 
     symbol: str = Field(..., min_length=1, max_length=20)
     name: str = Field(default="", max_length=MAX_STOCK_NAME_LENGTH)
@@ -37,6 +37,19 @@ class AIPortfolioItemSchema(BaseModel):
     weight: float | None = Field(default=None, ge=0.0, le=1.0)
     thesis: str = Field(default="", max_length=1000)
     estimated_price_jpy: float | None = Field(default=None, ge=0.0)
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, value: str) -> str:
+        symbol = value.strip().upper()
+        if not is_valid_symbol(symbol):
+            raise ValueError("invalid stock symbol")
+        return symbol
+
+    @field_validator("market", "risk_level", mode="before")
+    @classmethod
+    def normalize_choice(cls, value: Any) -> Any:
+        return value.strip().lower() if isinstance(value, str) else value
 
     @field_validator(
         "weight_pct",

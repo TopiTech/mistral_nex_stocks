@@ -49,6 +49,7 @@ from route_helpers import (
     _parse_analyze_v2_request,
     _parse_chart_image_request,
     _parse_chat_request,
+    _parse_news_request,
     _parse_technical_lines_request,
     _submit_in_app_context,
     extract_api_key,
@@ -79,7 +80,6 @@ from utils.normalization import normalize_market
 from utils.stock_payload import error_response, get_stock_info_cached, ok_response
 from utils.text_utils import (
     _parse_json_request,
-    _parse_optional_json_request,
     _sanitize_error_message,
 )
 from utils.validators import (
@@ -1040,18 +1040,10 @@ def api_news():
         return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
-    body = _parse_optional_json_request()
-    if body is None:
-        return error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "JSON形式が不正です"},
-            status_code=400,
-        )
-    force_refresh = (
-        (request.args.get("force") or "").strip().lower() == "true"
-        or body.get("force") is True
-        or str(body.get("force", "")).strip().lower() == "true"
-    )
+    force_refresh, err_resp = _parse_news_request(request)
+    if err_resp:
+        return err_resp
+    assert force_refresh is not None
 
     current_app.logger.info(
         "api_news start id=%s langsearch=%s tavily=%s strategy=%s force_refresh=%s",

@@ -169,6 +169,8 @@ def _sanitize_error_message(error_msg):
         r"bearer\s+[a-z0-9\._\-]{10,}",
         r"https?://[a-z0-9]+:[a-z0-9]+@",
         r"secret['\"]?\s*[:=]\s*['\"]?[^\s'\"]+",
+        r"\bsk-[a-zA-Z0-9_\-]{20,}\b",
+        r"\btvly-[a-zA-Z0-9_\-]{20,}\b",
     ]
     sanitized = str(error_msg)
     for pattern in sensitive_patterns:

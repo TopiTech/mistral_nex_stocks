@@ -348,6 +348,8 @@ class ScreenerQueryRequest(BaseModel):
 class StockHistoryQueryRequest(BaseModel):
     """Schema for /api/stock-history query parameters."""
 
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")
     period: StockHistoryPeriod = Field(
@@ -359,28 +361,90 @@ class StockHistoryQueryRequest(BaseModel):
         | None
     ) = Field(default=None, description="Data interval")
 
-    @field_validator("symbol")
+    @field_validator("market", mode="before")
     @classmethod
-    def validate_symbol_format(cls, v: str) -> str:
-        s = v.strip().upper()
-        if not s:
+    def _normalize_market_val(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return "us"
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("period", mode="before")
+    @classmethod
+    def _normalize_period_val(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return DEFAULT_STOCK_HISTORY_PERIOD
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("interval", mode="before")
+    @classmethod
+    def _normalize_interval_val(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def validate_symbol_format(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            norm = normalize_symbol(v)
+            if not norm:
+                raise ValueError("Symbol cannot be empty")
+            return norm
+        if not v:
             raise ValueError("Symbol cannot be empty")
-        return s
+        return v
+
+    @model_validator(mode="after")
+    def _validate_symbol_and_market(self) -> StockHistoryQueryRequest:
+        norm_sym = normalize_symbol_for_market(self.symbol, self.market)
+        if not is_valid_symbol(norm_sym):
+            raise ValueError("Invalid symbol format")
+        self.symbol = norm_sym
+        return self
 
 
 class StockDetailsQueryRequest(BaseModel):
     """Schema for /api/stock-details query parameters."""
 
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: Literal["us", "jp", "idx"] = Field(default="us", description="Target market")
 
-    @field_validator("symbol")
+    @field_validator("market", mode="before")
     @classmethod
-    def validate_symbol_format(cls, v: str) -> str:
-        s = v.strip().upper()
-        if not s:
+    def _normalize_market_val(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return "us"
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def validate_symbol_format(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            norm = normalize_symbol(v)
+            if not norm:
+                raise ValueError("Symbol cannot be empty")
+            return norm
+        if not v:
             raise ValueError("Symbol cannot be empty")
-        return s
+        return v
+
+    @model_validator(mode="after")
+    def _validate_symbol_and_market(self) -> StockDetailsQueryRequest:
+        norm_sym = normalize_symbol_for_market(self.symbol, self.market)
+        if not is_valid_symbol(norm_sym):
+            raise ValueError("Invalid symbol format")
+        self.symbol = norm_sym
+        return self
 
 
 class HeatmapQueryRequest(BaseModel):

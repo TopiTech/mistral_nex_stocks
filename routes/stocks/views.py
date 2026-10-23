@@ -390,9 +390,8 @@ def api_screener() -> Any:
         sort_field = "market_cap"
     filtered.sort(key=lambda x: _safe_sort_key(x, sort_field), reverse=reverse)
 
-    return jsonify(
+    return ok_response(
         {
-            "ok": True,
             "total": min(len(filtered), limit_val),
             "totalFiltered": len(filtered),
             "stocks": filtered[:limit_val],

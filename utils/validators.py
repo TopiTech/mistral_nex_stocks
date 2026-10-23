@@ -10,9 +10,10 @@ import math
 import re
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from constants import PORTFOLIO_AVG_PRICE_MAX
+from schemas.stocks import HeatmapQueryRequest, ScreenerQueryRequest
 from utils.normalization import is_valid_symbol
 
 logger = logging.getLogger(__name__)
@@ -56,88 +57,19 @@ class StockPayloadDict(TypedDict, total=False):
     tv_symbol: str
 
 
-class ScreenerFilterSchema(BaseModel):
+class ScreenerFilterSchema(ScreenerQueryRequest):
     """Schema for validating screener query parameters."""
 
     model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False)
 
-    market: Literal["all", "us", "jp"] = "all"
     sector: str = ""
-    q: str = ""
-    min_price: float | None = Field(default=None, ge=0.0)
-    max_price: float | None = Field(default=None, ge=0.0)
-    min_market_cap: float | None = Field(default=None, ge=0.0)
-    max_market_cap: float | None = Field(default=None, ge=0.0)
-    min_pe: float | None = Field(default=None, ge=0.0)
-    max_pe: float | None = Field(default=None, ge=0.0)
-    min_change: float | None = Field(default=None, ge=-100.0, le=10000.0)
-    max_change: float | None = Field(default=None, ge=-100.0, le=10000.0)
-    sort_by: Literal[
-        "market_cap",
-        "price",
-        "change_percent",
-        "change_pct",
-        "volume",
-        "symbol",
-        "pe_ratio",
-        "pe",
-    ] = "market_cap"
-    sort_order: Literal["asc", "desc"] = "desc"
-    limit: int = Field(default=150, ge=1, le=500)
-
-    @field_validator(
-        "min_price",
-        "max_price",
-        "min_change",
-        "max_change",
-        "min_market_cap",
-        "max_market_cap",
-        "min_pe",
-        "max_pe",
-        mode="before",
-    )
-    @classmethod
-    def reject_boolean_numeric(cls, v: Any) -> Any:
-        """Reject boolean values for numeric screener filter fields."""
-        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
-            raise ValueError("bool_type_not_allowed")
-        return v
-
-    @model_validator(mode="after")
-    def validate_bounds(self) -> "ScreenerFilterSchema":
-        if (
-            self.min_price is not None
-            and self.max_price is not None
-            and self.min_price > self.max_price
-        ):
-            raise ValueError("min_price cannot be greater than max_price")
-        if (
-            self.min_change is not None
-            and self.max_change is not None
-            and self.min_change > self.max_change
-        ):
-            raise ValueError("min_change cannot be greater than max_change")
-        if (
-            self.min_market_cap is not None
-            and self.max_market_cap is not None
-            and self.min_market_cap > self.max_market_cap
-        ):
-            raise ValueError("min_market_cap cannot be greater than max_market_cap")
-        if (
-            self.min_pe is not None
-            and self.max_pe is not None
-            and self.min_pe > self.max_pe
-        ):
-            raise ValueError("min_pe cannot be greater than max_pe")
-        return self
 
 
-class HeatmapFilterSchema(BaseModel):
+class HeatmapFilterSchema(HeatmapQueryRequest):
     """Schema for validating heatmap query parameters."""
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    market: Literal["us", "jp"] = "us"
     group_by: Literal["sector", "industry", "market_cap"] = "sector"
     size_by: Literal["market_cap", "volume", "equal"] = "market_cap"
     color_by: Literal["change_pct", "pe_ratio"] = "change_pct"

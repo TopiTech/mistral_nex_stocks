@@ -114,41 +114,45 @@ class TradingViewWSClient:
     def add_symbol(self, symbol: str) -> None:
         with self.lock:
             self._subscriptions_managed = True
-            if symbol not in self.symbols:
-                self.symbols.add(symbol)
-                ws_to_send = None
-                session_id = None
-                can_send = False
-                if self._lifecycle_lock.acquire(timeout=1.0):
-                    try:
-                        can_send = self.ws is not None and self.running and self.connected
-                        ws_to_send = self.ws
-                        session_id = self.session_id
-                    finally:
-                        self._lifecycle_lock.release()
-                if can_send and ws_to_send:
-                    msg = self.format_tv_message("quote_add_symbols", [session_id, symbol])
-                    self._safe_send(ws_to_send, msg)
+            if symbol in self.symbols:
+                return
+            self.symbols.add(symbol)
+
+        ws_to_send = None
+        session_id = None
+        can_send = False
+        if self._lifecycle_lock.acquire(timeout=1.0):
+            try:
+                can_send = self.ws is not None and self.running and self.connected
+                ws_to_send = self.ws
+                session_id = self.session_id
+            finally:
+                self._lifecycle_lock.release()
+        if can_send and ws_to_send:
+            msg = self.format_tv_message("quote_add_symbols", [session_id, symbol])
+            self._safe_send(ws_to_send, msg)
 
     def remove_symbol(self, symbol: str) -> None:
         with self.lock:
             self._subscriptions_managed = True
-            if symbol in self.symbols:
-                self.symbols.remove(symbol)
-                self._last_quotes.pop(symbol, None)
-                ws_to_send = None
-                session_id = None
-                can_send = False
-                if self._lifecycle_lock.acquire(timeout=1.0):
-                    try:
-                        can_send = self.ws is not None and self.running and self.connected
-                        ws_to_send = self.ws
-                        session_id = self.session_id
-                    finally:
-                        self._lifecycle_lock.release()
-                if can_send and ws_to_send:
-                    msg = self.format_tv_message("quote_remove_symbols", [session_id, symbol])
-                    self._safe_send(ws_to_send, msg)
+            if symbol not in self.symbols:
+                return
+            self.symbols.remove(symbol)
+            self._last_quotes.pop(symbol, None)
+
+        ws_to_send = None
+        session_id = None
+        can_send = False
+        if self._lifecycle_lock.acquire(timeout=1.0):
+            try:
+                can_send = self.ws is not None and self.running and self.connected
+                ws_to_send = self.ws
+                session_id = self.session_id
+            finally:
+                self._lifecycle_lock.release()
+        if can_send and ws_to_send:
+            msg = self.format_tv_message("quote_remove_symbols", [session_id, symbol])
+            self._safe_send(ws_to_send, msg)
 
     def _on_message(self, ws: Any, message: str) -> None:
         pos = 0

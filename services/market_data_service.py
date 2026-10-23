@@ -344,5 +344,3 @@ def build_popular_symbol_items(
 
 def should_include_market(market_filter: str, market: str) -> bool:
     return market_filter == "all" or market_filter == market
-
-

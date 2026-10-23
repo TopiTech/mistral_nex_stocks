@@ -467,6 +467,7 @@ def _build_mistral_cache_key(
         },
         ensure_ascii=False,
         sort_keys=True,
+        default=str,
     )
     digest = hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
     return f"mistral_chat_{digest}"

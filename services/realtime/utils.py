@@ -189,8 +189,6 @@ _scraper_market_ref: Any | None = None
 def _scraper_market_state() -> Any | None:
     """Return the shared MarketDataState (cached) or None."""
     global _scraper_market_ref
-    if _scraper_market_ref is not None:
-        return _scraper_market_ref
     try:
         from app_state import app_state
 
@@ -200,7 +198,7 @@ def _scraper_market_state() -> Any | None:
             return market
     except Exception as exc:
         logger.debug("Failed to obtain scraper market state: %s", exc)
-    return None
+    return _scraper_market_ref
 
 
 def _is_scraper_blocked() -> bool:

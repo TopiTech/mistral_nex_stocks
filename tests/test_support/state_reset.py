@@ -103,6 +103,14 @@ def _reset_market_state(app_state: object) -> None:
     except (AttributeError, RuntimeError):
         pass
 
+    # Reset scraper market ref cache
+    try:
+        import services.realtime.utils as _rt_utils
+
+        _rt_utils._scraper_market_ref = None
+    except (ImportError, AttributeError):
+        pass
+
 
 def _reset_caches_and_sessions(app_state: object) -> None:
     """Clear in-memory and disk caches, SSE tickets, and session rate limits."""

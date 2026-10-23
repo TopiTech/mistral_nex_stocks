@@ -653,10 +653,13 @@ def call_openai_chat(
             return copy.deepcopy(data)
 
     except Exception as exc:
-        app_state.market.report_circuit_result("openai_compatible", success=False)
         status_code = getattr(getattr(exc, "response", None), "status_code", 500)
         if isinstance(exc, httpx.TimeoutException):
             status_code = 504
+        elif isinstance(exc, (httpx.NetworkError, ConnectionError, OSError)):
+            status_code = 503
+        if status_code >= 500:
+            app_state.market.report_circuit_result("openai_compatible", success=False)
         logger.error(
             "OpenAI-compat request failed model=%s url=%s error_type=%s status=%s: %s",
             model,
@@ -893,12 +896,13 @@ def stream_openai_chat(
         yield {"type": "done", "text": "".join(full_parts)}
 
     except Exception as exc:
-        app_state.market.report_circuit_result("openai_compatible", success=False)
         status_code = getattr(getattr(exc, "response", None), "status_code", 500)
         if isinstance(exc, httpx.TimeoutException):
             status_code = 504
         elif isinstance(exc, (httpx.NetworkError, ConnectionError, OSError)):
             status_code = 503
+        if status_code >= 500:
+            app_state.market.report_circuit_result("openai_compatible", success=False)
         logger.error(
             "OpenAI stream exception error_type=%s status=%d: %s",
             type(exc).__name__,

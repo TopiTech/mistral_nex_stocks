@@ -282,8 +282,12 @@ class ScreenerQueryRequest(BaseModel):
     sort_order: Literal["asc", "desc"] = Field(default="desc", description="Sort direction")
     min_price: float | None = Field(default=None, ge=0.0, description="Minimum price filter")
     max_price: float | None = Field(default=None, ge=0.0, description="Maximum price filter")
-    min_change: float | None = Field(default=None, description="Minimum change percentage")
-    max_change: float | None = Field(default=None, description="Maximum change percentage")
+    min_change: float | None = Field(
+        default=None, ge=-100.0, le=10000.0, description="Minimum change percentage"
+    )
+    max_change: float | None = Field(
+        default=None, ge=-100.0, le=10000.0, description="Maximum change percentage"
+    )
     min_market_cap: float | None = Field(
         default=None, ge=0.0, description="Minimum market cap filter"
     )

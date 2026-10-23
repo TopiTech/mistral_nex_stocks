@@ -1,7 +1,13 @@
 """Regression test suite verifying review fixes for R1, R3, R4."""
 
+import ctypes
+import os
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
+import pytest
+
+import config.locks
 from config_store import _master_key_update_lock
 from services.realtime_engine import TradingViewWSClient
 
@@ -33,6 +39,31 @@ def test_r3_master_key_update_lock_acquisition():
     # Run the lock context manager
     with _master_key_update_lock():
         assert True
+
+
+def test_r3_master_key_update_lock_posix(monkeypatch):
+    """Verify posix path delegates to config_update_lock cleanly."""
+    called = []
+
+    @contextmanager
+    def _mock_lock():
+        called.append(True)
+        yield
+
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(config.locks, "config_update_lock", _mock_lock)
+    with _master_key_update_lock():
+        pass
+    assert called == [True]
+
+
+def test_r3_master_key_update_lock_no_windll(monkeypatch):
+    """Verify RuntimeError when ctypes.windll is not available on Windows."""
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.delattr(ctypes, "windll", raising=False)
+    with pytest.raises(RuntimeError, match=r"Windows API \(ctypes\.windll\) is not available"):
+        with _master_key_update_lock():
+            pass
 
 
 def test_r4_api_analyze_v2_result_partial_success_structure():

@@ -674,6 +674,24 @@ def call_openai_chat(
         }
 
 
+def _close_stream_context(stream_cm: Any, stream: Any = None) -> None:
+    """Safely close an httpx streaming context manager and response on every exit path."""
+    if stream is not None:
+        try:
+            close_fn = getattr(stream, "close", None)
+            if callable(close_fn):
+                close_fn()
+        except Exception as exc:
+            logger.debug("Failed closing stream response: %s", exc)
+    if stream_cm is not None:
+        try:
+            exit_fn = getattr(stream_cm, "__exit__", None)
+            if callable(exit_fn):
+                exit_fn(None, None, None)
+        except Exception as exc:
+            logger.debug("Failed exiting stream context: %s", exc)
+
+
 def stream_openai_chat(
     api_key: str,
     messages: list[Any],
@@ -740,9 +758,12 @@ def stream_openai_chat(
             def _open_stream(p: dict[str, Any]):
                 return client.stream("POST", endpoint, json=p, headers=headers)
 
-            stream_cm = _open_stream(payload)
-            stream = stream_cm.__enter__()
+            stream_cm = None
+            stream = None
             try:
+                stream_cm = _open_stream(payload)
+                stream = stream_cm.__enter__()
+
                 # Retry handler for common 400 parameter rejections (e.g. reasoning_effort / temperature / max_tokens)
                 if stream.status_code in (400, 422):
                     stream.read()
@@ -782,7 +803,9 @@ def stream_openai_chat(
                             modified = True
 
                     if modified:
-                        stream_cm.__exit__(None, None, None)
+                        _close_stream_context(stream_cm, stream)
+                        stream_cm = None
+                        stream = None
                         stream_cm = _open_stream(payload)
                         stream = stream_cm.__enter__()
 
@@ -865,17 +888,27 @@ def stream_openai_chat(
 
                 app_state.market.report_circuit_result("openai_compatible", success=True)
             finally:
-                stream_cm.__exit__(None, None, None)
+                _close_stream_context(stream_cm, stream)
 
         yield {"type": "done", "text": "".join(full_parts)}
 
     except Exception as exc:
         app_state.market.report_circuit_result("openai_compatible", success=False)
-        logger.error("OpenAI stream exception error_type=%s: %s", type(exc).__name__, exc)
+        status_code = getattr(getattr(exc, "response", None), "status_code", 500)
+        if isinstance(exc, httpx.TimeoutException):
+            status_code = 504
+        elif isinstance(exc, (httpx.NetworkError, ConnectionError, OSError)):
+            status_code = 503
+        logger.error(
+            "OpenAI stream exception error_type=%s status=%d: %s",
+            type(exc).__name__,
+            status_code,
+            exc,
+        )
         yield {
             "type": "error",
-            "message": _public_openai_error_message(exc),
-            "status_code": 500,
+            "message": _public_openai_error_message(exc, status_code),
+            "status_code": status_code,
         }
 
 

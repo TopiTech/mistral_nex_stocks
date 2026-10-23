@@ -224,6 +224,17 @@ def _ai_portfolio_error_response(
             status_code=504,
         )
 
+    if isinstance(job_err, httpx.HTTPStatusError) and job_err.response is not None:
+        status = job_err.response.status_code
+        current_app.logger.error(
+            "AI portfolio HTTP status error id=%s status=%d: %s", req_id, status, err_msg
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": f"AIサービスエラー (HTTP {status}): {err_msg}", "error_type": err_type},
+            status_code=status,
+        )
+
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):
         current_app.logger.error(
             "AI portfolio network error id=%s error_type=%s: %s", req_id, err_type, err_msg

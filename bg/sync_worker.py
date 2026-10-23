@@ -1302,7 +1302,7 @@ def start_background_worker() -> None:
         write shared state, so match on an explicit marker attribute rather
         than closure identity (``wrapped_loop`` is re-created on every call).
         """
-        for existing in list(app_state.execution.background_threads):
+        for existing in app_state.execution.get_background_threads():
             if (
                 getattr(existing, _BG_LOOP_MARKER_ATTR, None) == loop_name
                 and existing.is_alive()
@@ -1311,7 +1311,7 @@ def start_background_worker() -> None:
                 return
         t = threading.Thread(target=wrapped_loop, args=(loop_fn, loop_name), daemon=True)
         setattr(t, _BG_LOOP_MARKER_ATTR, loop_name)
-        app_state.execution.background_threads.append(t)
+        app_state.execution.register_background_thread(t)
         t.start()
 
     _spawn_loop(yahoo_loop, "Yahoo")
@@ -1350,7 +1350,7 @@ def start_background_worker() -> None:
             if app_state.execution.shutdown_event.is_set():
                 break
             dead_threads = [
-                t for t in list(app_state.execution.background_threads) if not t.is_alive()
+                t for t in app_state.execution.get_background_threads() if not t.is_alive()
             ]
             if dead_threads:
                 logger.warning(
@@ -1365,12 +1365,12 @@ def start_background_worker() -> None:
 
     watchdog_running = any(
         getattr(existing, _BG_LOOP_MARKER_ATTR, None) == "Watchdog" and existing.is_alive()
-        for existing in list(app_state.execution.background_threads)
+        for existing in app_state.execution.get_background_threads()
     )
     if not watchdog_running:
         t_watchdog = threading.Thread(target=bg_threads_watchdog_loop, name="Watchdog", daemon=True)
         setattr(t_watchdog, _BG_LOOP_MARKER_ATTR, "Watchdog")
-        app_state.execution.background_threads.append(t_watchdog)
+        app_state.execution.register_background_thread(t_watchdog)
         t_watchdog.start()
 
 

@@ -29,6 +29,18 @@ class ExecutionState:
         self.sync_refresh_executor = DaemonThreadPoolExecutor(max_workers=1, max_queue_size=5)
         self.shutdown_event = threading.Event()
         self.background_threads: list[threading.Thread] = []
+        self._threads_lock = threading.Lock()
+
+    def register_background_thread(self, thread: threading.Thread) -> None:
+        """Register a background thread under lock for lifecycle tracking."""
+        with self._threads_lock:
+            if thread not in self.background_threads:
+                self.background_threads.append(thread)
+
+    def get_background_threads(self) -> list[threading.Thread]:
+        """Return a snapshot list of registered background threads under lock."""
+        with self._threads_lock:
+            return list(self.background_threads)
 
     def shutdown(self, wait: bool = False, max_join_timeout: float = 3.0):
         """Shut down all executors with optional task completion wait.
@@ -50,7 +62,8 @@ class ExecutionState:
                 ex.shutdown(wait=wait)
 
         deadline = time.time() + max_join_timeout
-        for t in self.background_threads:
+        threads_to_join = self.get_background_threads()
+        for t in threads_to_join:
             try:
                 if t.is_alive():
                     remaining = max(0.01, deadline - time.time())

@@ -181,6 +181,7 @@ def get_mistral_embeddings_batch(
 
             if status_code == 429 or _is_mistral_capacity_error(err_payload):
                 app_state.ai.mark_mistral_429(retry_after_sec)
+                break
             elif (
                 status_code >= 500
                 or "timeout" in str(exc).lower()
@@ -189,6 +190,8 @@ def get_mistral_embeddings_batch(
                 app_state.market.report_circuit_result(
                     "mistral", success=False, threshold=3, open_sec=60
                 )
+                if app_state.market.is_circuit_open("mistral"):
+                    break
 
     return results
 

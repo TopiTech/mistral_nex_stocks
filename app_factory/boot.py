@@ -15,7 +15,6 @@ import time
 
 from flask import Flask
 
-import app as app_module
 from app_state import app_state
 from utils.env_helpers import _env_bool, _env_int
 from utils.storage import load_user_stocks
@@ -37,6 +36,8 @@ def bootstrap(app: Flask) -> None:
     if _env_bool("MNS_SKIP_BOOTSTRAP"):
         logger.info("Skipping runtime bootstrap per MNS_SKIP_BOOTSTRAP")
         return
+
+    import app as app_module
 
     with app_module._app_bootstrap_lock:
         if app_module._app_bootstrap_done:

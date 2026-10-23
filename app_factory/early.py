@@ -13,7 +13,6 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-import app
 from app_state import app_state
 
 logger = logging.getLogger("app")
@@ -21,6 +20,15 @@ logger = logging.getLogger("app")
 
 def _is_windows_runtime() -> bool:
     return sys.platform.startswith("win") or os.name == "nt"
+
+
+def _resolve_is_windows_runtime() -> bool:
+    try:
+        import app
+
+        return app._is_windows_runtime()
+    except (ImportError, AttributeError):
+        return _is_windows_runtime()
 
 
 def _early_excepthook(exc_type, exc_value, exc_tb):
@@ -42,7 +50,7 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
         log_dirs: list[Path] = []
         if data_dir_override:
             log_dirs.append(Path(data_dir_override).expanduser())
-        elif app._is_windows_runtime():
+        elif _resolve_is_windows_runtime():
             root = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
             if root:
                 log_dirs.append(Path(root) / "MistralNeXStocks")

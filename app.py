@@ -17,7 +17,11 @@
 
 import logging
 import os
+import sys
 import threading
+
+if __name__ == "__main__":
+    sys.modules.setdefault("app", sys.modules[__name__])
 
 from app_bg import (  # noqa: F401 -- 再エクスポート互換 + patch 対象
     _start_background_threads,

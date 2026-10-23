@@ -13,7 +13,6 @@ from typing import Any
 
 from requests.exceptions import RequestException
 
-import app
 from app_state import KeyringError, app_state
 from constants import CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL
 from services.search_service import (
@@ -28,6 +27,8 @@ logger = logging.getLogger("app")
 
 def schedule_news_warmup():
     """Warm up news/trends caches in background."""
+    import app
+
     try:
         langsearch_api_key = app.get_langsearch_api_key() or ""
         tavily_api_key = app.get_tavily_api_key() or ""

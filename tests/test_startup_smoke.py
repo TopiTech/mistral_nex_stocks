@@ -84,3 +84,65 @@ def test_bg_loops_dispatch_to_app_bg_overrides():
     assert res_yahoo == "yahoo_delegated"
     assert res_interp == "interp_delegated"
     assert res_watchdog == ["mocked_thread"]
+
+
+def test_app_factory_modules_import_cleanly_without_circular_dependency():
+    """Ensure app_factory modules can be imported directly in fresh processes."""
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    modules_to_test = [
+        "from app_factory.boot import bootstrap",
+        "from app_factory.factory import create_app",
+        "from app_factory.warmup import schedule_news_warmup",
+        "from app_factory.early import _early_excepthook",
+    ]
+    for import_stmt in modules_to_test:
+        proc = subprocess.run(
+            [sys.executable, "-c", import_stmt],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert proc.returncode == 0, (
+            f"Import failed: {import_stmt}\nstderr: {proc.stderr}\nstdout: {proc.stdout}"
+        )
+
+
+def test_app_entrypoint_submodule_circular_import_prevention():
+    """Ensure running app.py as __main__ does not trigger circular import or duplicate load."""
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["MNS_SKIP_BOOTSTRAP"] = "1"
+    # Execute a snippet that tests running app.py with runpy (simulating python app.py)
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "root = Path(r'" + str(root).replace('\\', '\\\\') + "')\n"
+        "if str(root) not in sys.path:\n"
+        "    sys.path.insert(0, str(root))\n"
+        "from unittest.mock import patch\n"
+        "from flask import Flask\n"
+        "import runpy\n"
+        "with patch.object(Flask, 'run'):\n"
+        "    runpy.run_path(str(root / 'app.py'), run_name='__main__')\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(root),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert proc.returncode == 0, (
+        f"Execution failed:\nstderr: {proc.stderr}\nstdout: {proc.stdout}"
+    )

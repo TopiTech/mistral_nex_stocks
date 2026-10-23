@@ -12,7 +12,6 @@ from typing import Any, cast
 
 from flask import Flask, current_app
 
-import app
 from app_factory.hooks import (
     _enforce_sec_fetch_site_check,
     _log_request_start,
@@ -71,6 +70,8 @@ def _ensure_bootstrap_called():
     which is a fast O(1) read after the first bootstrap completes.
     """
     # _env_bool は `patch.object(app, "_env_bool")` 対象のため app 経由で解決する。
+    import app
+
     if current_app.config.get("MNS_SKIP_BOOTSTRAP", False) or app._env_bool(
         "MNS_SKIP_BOOTSTRAP"
     ):

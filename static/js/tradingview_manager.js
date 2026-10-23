@@ -274,10 +274,10 @@
     }
 
     // 3. Dynamic lookup from the global state (window.state.stocks is keyed by
-    //    market: {"us": [...], "jp": [...]}). (R20: replaces the dead
+    //    market: {"us": [...], "jp": [...], "idx": [...]}). (R20: replaces the dead
     //    ``window.appState`` reference which was never assigned anywhere.)
     if (window.state && window.state.stocks) {
-      const match = ["us", "jp"]
+      const match = ["us", "jp", "idx"]
         .map((m) =>
           Array.isArray(window.state.stocks[m])
             ? window.state.stocks[m].find(
@@ -705,7 +705,7 @@
         // Update global state if the stock is tracked there (window.state.stocks
         // is keyed by market). (R20: replaces the dead ``window.appState`` lookup.)
         if (window.state && window.state.stocks) {
-          const markets = ["us", "jp"];
+          const markets = ["us", "jp", "idx"];
           for (const m of markets) {
             const list = window.state.stocks[m];
             if (!Array.isArray(list)) continue;

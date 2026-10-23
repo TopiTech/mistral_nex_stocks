@@ -25,7 +25,6 @@
       const isStale =
         !cached ||
         cached.wrappers.length === 0 ||
-        cached.ptsElements.length === 0 ||
         cached.wrappers.some((el) => !el.isConnected) ||
         cached.ptsElements.some((el) => !el.isConnected);
 
@@ -145,7 +144,7 @@
           }
 
           if (window.state && window.state.stocks) {
-            ["us", "jp"].forEach((m) => {
+            ["us", "jp", "idx"].forEach((m) => {
               if (Array.isArray(window.state.stocks[m])) {
                 const sItem = window.state.stocks[m].find(
                   (st) =>

@@ -177,4 +177,3 @@ class AIPortfolioResponseSchema(BaseModel):
 # Aliases for backward compatibility and uniform imports across modules
 AiPortfolioItemSchema = AIPortfolioItemSchema
 AiPortfolioResponseSchema = AIPortfolioResponseSchema
-

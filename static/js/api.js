@@ -910,17 +910,23 @@ function connectSSE(overrideMode) {
         signal: ticketAbortController.signal,
       });
       if (!isCurrentConnection()) return null;
-      if (ticketResponse.ok) {
-        const ticketData = await ticketResponse.json();
-        if (!ticketData?.ok) {
-          $logger.warn(
-            "[connectSSE] Ticket endpoint returned an invalid response",
-          );
-        }
+      if (!ticketResponse.ok) {
+        $logger.warn(
+          `[connectSSE] Failed to obtain SSE ticket: HTTP ${ticketResponse.status}`,
+        );
+        return null;
+      }
+      const ticketData = await ticketResponse.json();
+      if (!ticketData?.ok) {
+        $logger.warn(
+          "[connectSSE] Ticket endpoint returned an invalid response",
+        );
+        return null;
       }
     } catch (e) {
       if (e?.name === "AbortError" || !isCurrentConnection()) return null;
       $logger.warn("[connectSSE] Failed to obtain SSE ticket:", e);
+      return null;
     }
     // Last-Event-ID resume: the server replays any events missed during the
     // disconnect window from its sliding event log (falling back to a full
@@ -2371,7 +2377,16 @@ function applyAnalysisError(wrapper, message) {
 const ANALYZE_POLL_MAX_ATTEMPTS = 30; // 30 attempts * (8s wait + 2s sleep) allows up to ~150s for heavy reasoning models
 const ANALYZE_POLL_INTERVAL_MS = 2000;
 
-async function requestStockAnalysis(stockKey, onProgress = null) {
+async function requestStockAnalysis(
+  stockKey,
+  onProgress = null,
+  signal = null,
+) {
+  if (signal?.aborted) {
+    const err = new Error("Request aborted");
+    err.name = "AbortError";
+    throw err;
+  }
   if (!HAS_MISTRAL_API_KEY) throw new Error("APIキーが未設定です");
   const stock = getStockByKey(stockKey);
   if (!stock) throw new Error("最新の銘柄データを取得できませんでした");
@@ -2397,12 +2412,18 @@ async function requestStockAnalysis(stockKey, onProgress = null) {
   let resOk = false;
 
   for (let attempt = 0; attempt <= ANALYZE_POLL_MAX_ATTEMPTS; attempt++) {
+    if (signal?.aborted) {
+      const err = new Error("Request aborted");
+      err.name = "AbortError";
+      throw err;
+    }
     const { response: res, data: fetched } = await apiFetch(
       "/api/analyze-v2",
       {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
+        signal,
       },
       { showToast: false },
     );
@@ -2422,7 +2443,33 @@ async function requestStockAnalysis(stockKey, onProgress = null) {
       const stepMsg = data.message || "AI分析・思考中...";
       onProgress(`${stepMsg} (${elapsed})`);
     }
-    await sleep(ANALYZE_POLL_INTERVAL_MS);
+    if (signal?.aborted) {
+      const err = new Error("Request aborted");
+      err.name = "AbortError";
+      throw err;
+    }
+    if (signal) {
+      await new Promise((resolve, reject) => {
+        if (signal.aborted) {
+          const err = new Error("Request aborted");
+          err.name = "AbortError";
+          return reject(err);
+        }
+        const timer = setTimeout(() => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        }, ANALYZE_POLL_INTERVAL_MS);
+        const onAbort = () => {
+          clearTimeout(timer);
+          const err = new Error("Request aborted");
+          err.name = "AbortError";
+          reject(err);
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    } else {
+      await sleep(ANALYZE_POLL_INTERVAL_MS);
+    }
   }
 
   if (!resOk) {
@@ -2493,6 +2540,7 @@ async function analyzeStock(btnEl, wrapper) {
 }
 
 let bulkAnalyzeCancelled = false;
+let bulkAnalyzeAbortController = null;
 
 async function bulkAnalyzeFavorites() {
   if (state.isAnalyzing || !HAS_MISTRAL_API_KEY) {
@@ -2521,6 +2569,11 @@ async function bulkAnalyzeFavorites() {
   }
   state.isAnalyzing = true;
   bulkAnalyzeCancelled = false;
+  if (bulkAnalyzeAbortController) {
+    bulkAnalyzeAbortController.abort();
+  }
+  bulkAnalyzeAbortController = new AbortController();
+  const bulkSignal = bulkAnalyzeAbortController.signal;
 
   if (btn) setButtonLoading(btn, "お気に入り分析中...");
   if (cancelBtn) {
@@ -2528,6 +2581,9 @@ async function bulkAnalyzeFavorites() {
     cancelBtn.disabled = false;
     cancelBtn.onclick = () => {
       bulkAnalyzeCancelled = true;
+      if (bulkAnalyzeAbortController) {
+        bulkAnalyzeAbortController.abort();
+      }
       cancelBtn.disabled = true;
       setBulkAnalyzeStatus("キャンセル処理中...", "running");
     };
@@ -2553,13 +2609,19 @@ async function bulkAnalyzeFavorites() {
     const queue = targetKeys.map((stockKey, idx) => ({ stockKey, idx }));
     let queueIndex = 0;
     const queueLock = () => {
-      if (bulkAnalyzeCancelled || queueIndex >= queue.length) return null;
+      if (
+        bulkAnalyzeCancelled ||
+        bulkSignal.aborted ||
+        queueIndex >= queue.length
+      )
+        return null;
       const item = queue[queueIndex++];
       return item;
     };
 
     const worker = async () => {
       while (true) {
+        if (bulkAnalyzeCancelled || bulkSignal.aborted) break;
         const item = queueLock();
         if (!item) break;
         const { stockKey, idx: _idx } = item;
@@ -2604,7 +2666,7 @@ async function bulkAnalyzeFavorites() {
         });
 
         try {
-          const result = await requestStockAnalysis(stockKey);
+          const result = await requestStockAnalysis(stockKey, null, bulkSignal);
           findAllWrappersByStockKey(stockKey).forEach((w) =>
             applyAnalysisResult(w, result.stock, result.data),
           );
@@ -2617,6 +2679,13 @@ async function bulkAnalyzeFavorites() {
             sentiment: result.data.sentiment ?? "--",
           });
         } catch (e) {
+          if (
+            e.name === "AbortError" ||
+            bulkSignal.aborted ||
+            bulkAnalyzeCancelled
+          ) {
+            break;
+          }
           $logger.error(`Bulk analysis failed (${stock.symbol}):`, e);
           findAllWrappersByStockKey(stockKey).forEach((w) =>
             applyAnalysisError(w, e.message),
@@ -2633,6 +2702,7 @@ async function bulkAnalyzeFavorites() {
         completedCount++;
 
         // Small delay between items to avoid overwhelming the API
+        if (bulkAnalyzeCancelled || bulkSignal.aborted) break;
         await sleep(250);
       }
     };
@@ -2645,7 +2715,7 @@ async function bulkAnalyzeFavorites() {
       progressBar.style.width = "100%";
     }
 
-    if (bulkAnalyzeCancelled) {
+    if (bulkAnalyzeCancelled || bulkSignal.aborted) {
       const message =
         `一括AI分析がキャンセルされました。\n` +
         `完了分 成功: ${success.length}件 / 失敗: ${failed.length}件`;
@@ -2666,6 +2736,7 @@ async function bulkAnalyzeFavorites() {
       });
     }
   } finally {
+    bulkAnalyzeAbortController = null;
     state.isAnalyzing = false;
     if (btn) resetButton(btn);
     if (cancelBtn) {

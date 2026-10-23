@@ -3125,6 +3125,27 @@ function closeStockDetailDrawer() {
           detailInner.appendChild(child),
         );
       }
+      // TASK-13: buildDetailPanelでの標準順序を完全復元
+      // [expandButton, pfBlock, info, actions, chartControls, chartContainer, pnlContainer, analyzeBtn, aiSection, chatToggleBtn, chatSection]
+      const orderedSelectors = [
+        ".expand-toggle-btn",
+        ".pf-detail-block",
+        ".detail-info",
+        ".detail-actions",
+        ".chart-controls",
+        ".chart-container:not(.pnl-chart-container)",
+        ".pnl-chart-container",
+        ".analyze-btn",
+        ".ai-section",
+        ".chat-toggle-btn",
+        ".chat-section",
+      ];
+      orderedSelectors.forEach((sel) => {
+        const el = detailInner.querySelector(`:scope > ${sel}`);
+        if (el) {
+          detailInner.appendChild(el);
+        }
+      });
       const analyzeBtn = detailInner.querySelector(".analyze-btn");
       if (analyzeBtn) {
         analyzeBtn.style.display = "";

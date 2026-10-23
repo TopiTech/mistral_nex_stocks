@@ -853,6 +853,8 @@ function openAlertModal(stockKey) {
       maCross: DOM.get("alert-ma-cross").checked,
       triggeredUp: false,
       triggeredDown: false,
+      triggeredMaCrossUp: false,
+      triggeredMaCrossDown: false,
     };
     saveAlertsConfig(alerts);
     showToast("✅ アラート設定を保存しました", "#7dffb0");
@@ -1003,13 +1005,32 @@ function checkAlerts(stock, oldPrice) {
       const ma5 = history[history.length - 1].ma5;
       if (ma5) {
         if (oldPrice < ma5 && currentPrice >= ma5) {
-          const msg = `5日移動平均線を上抜けました！`;
-          showToast(`🚀 【${stock.symbol}】 ${msg}`, "#ffcc66");
-          showBrowserNotification(`テクニカルアラート: ${stock.symbol}`, msg);
+          if (!cfg.triggeredMaCrossUp) {
+            const msg = `5日移動平均線を上抜けました！`;
+            showToast(`🚀 【${stock.symbol}】 ${msg}`, "#ffcc66");
+            showBrowserNotification(`テクニカルアラート: ${stock.symbol}`, msg);
+            cfg.triggeredMaCrossUp = true;
+            cfg.triggeredMaCrossDown = false;
+            updateRequired = true;
+          }
         } else if (oldPrice > ma5 && currentPrice <= ma5) {
-          const msg = `5日移動平均線を下抜けました。`;
-          showToast(`⚠️ 【${stock.symbol}】 ${msg}`, "#ffcc66");
-          showBrowserNotification(`テクニカルアラート: ${stock.symbol}`, msg);
+          if (!cfg.triggeredMaCrossDown) {
+            const msg = `5日移動平均線を下抜けました。`;
+            showToast(`⚠️ 【${stock.symbol}】 ${msg}`, "#ffcc66");
+            showBrowserNotification(`テクニカルアラート: ${stock.symbol}`, msg);
+            cfg.triggeredMaCrossDown = true;
+            cfg.triggeredMaCrossUp = false;
+            updateRequired = true;
+          }
+        } else {
+          if (cfg.triggeredMaCrossUp && currentPrice < ma5) {
+            cfg.triggeredMaCrossUp = false;
+            updateRequired = true;
+          }
+          if (cfg.triggeredMaCrossDown && currentPrice > ma5) {
+            cfg.triggeredMaCrossDown = false;
+            updateRequired = true;
+          }
         }
       }
     }

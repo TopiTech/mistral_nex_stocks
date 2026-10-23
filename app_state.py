@@ -201,6 +201,7 @@ class AppState:
     heatmap_fetch_inflight: set[str]
     heatmap_fetch_start_times: dict[str, float]
     heatmap_fetch_lock: threading.Lock
+    _config: dict[str, Any] | None
 
     def __init__(self):
         self.execution = ExecutionState()
@@ -222,6 +223,7 @@ class AppState:
         self.heatmap_fetch_inflight = set()
         self.heatmap_fetch_start_times = {}
         self.heatmap_fetch_lock = threading.Lock()
+        self._config = None
 
         self.sse_announcer_mode1 = MessageAnnouncer()
         self.sse_announcer_mode2 = MessageAnnouncer()
@@ -332,6 +334,23 @@ class AppState:
             shutil.rmtree(cache_dir, ignore_errors=True)
         except OSError as exc:
             logger.debug("Failed to remove yfinance cache directory: %s", exc)
+
+    @property
+    def config(self) -> dict[str, Any]:
+        """Return the current configuration dictionary."""
+        if self._config is not None:
+            return self._config
+        from config_store import load_config
+
+        return load_config()
+
+    @config.setter
+    def config(self, val: dict[str, Any] | None) -> None:
+        self._config = val
+
+    @config.deleter
+    def config(self) -> None:
+        self._config = None
 
     # --- yfinance (active: used by routes, services, tests) ---
 

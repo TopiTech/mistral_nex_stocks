@@ -340,7 +340,7 @@ class APIClient {
 
           if (!SAFE_METHODS.has(method) && isCsrfErr && attempt === 0) {
             try {
-              const freshRes = await fetch("/api/csrf-token", {
+              const freshRes = await fetch(this.resolveURL("/csrf-token"), {
                 method: "GET",
                 credentials: "same-origin",
                 headers: { "Cache-Control": "no-store" },

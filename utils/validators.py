@@ -1344,4 +1344,3 @@ class AiPortfolioResponseSchema(BaseModel):
 # Aliases for naming symmetry across schemas and validators
 AIPortfolioItemSchema = AiPortfolioItemSchema
 AIPortfolioResponseSchema = AiPortfolioResponseSchema
-

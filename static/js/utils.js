@@ -238,10 +238,19 @@ function openModal(modalId, onOpenCallback) {
     if (!elements.length) return;
     const first = elements[0];
     const last = elements[elements.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    const isOutsideOrContainer =
+      !modal.contains(document.activeElement) ||
+      document.activeElement === modal;
+    if (
+      event.shiftKey &&
+      (document.activeElement === first || isOutsideOrContainer)
+    ) {
       event.preventDefault();
       last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
+    } else if (
+      !event.shiftKey &&
+      (document.activeElement === last || isOutsideOrContainer)
+    ) {
       event.preventDefault();
       first.focus();
     }

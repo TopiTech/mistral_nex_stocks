@@ -275,7 +275,7 @@ async function refreshBackendPort() {
   return backendPort;
 }
 
-async function checkHealth(retries = 1) {
+async function checkHealth(retries = 1, timeoutMs = HEALTH_TIMEOUT_MS) {
   let lastError = null;
   const attempts = [];
 
@@ -287,7 +287,7 @@ async function checkHealth(retries = 1) {
         const res = await fetchWithTimeout(
           `${base}/api/health`,
           { method: "GET", cache: "no-store" },
-          HEALTH_TIMEOUT_MS,
+          timeoutMs,
         );
         if (!res.ok) {
           throw new Error(`HTTP status ${res.status}`);
@@ -665,7 +665,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
       if (message.action === "health") {
-        return safeSendResponse(await checkHealth());
+        const retries =
+          typeof message.retries === "number" ? message.retries : 1;
+        const timeoutMs =
+          typeof message.timeoutMs === "number"
+            ? message.timeoutMs
+            : HEALTH_TIMEOUT_MS;
+        return safeSendResponse(await checkHealth(retries, timeoutMs));
       }
       if (message.action === "getContext") {
         await refreshBackendPort();

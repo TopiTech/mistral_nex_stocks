@@ -445,6 +445,7 @@ async function fetchStockHistoryPayload(
   market,
   period,
   interval = "auto",
+  signal = null,
 ) {
   const cleanSymbol =
     symbol && typeof symbol === "string" && symbol.includes(":")
@@ -453,6 +454,15 @@ async function fetchStockHistoryPayload(
   const fetchUrl = `/api/stock-history?symbol=${encodeURIComponent(cleanSymbol)}&market=${market}&period=${period}&interval=${encodeURIComponent(interval || "auto")}`;
 
   const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+
   const timeoutId = setTimeout(
     () => controller.abort(),
     CONSTANTS.TIMEOUT.STOCK_HISTORY,
@@ -463,6 +473,11 @@ async function fetchStockHistoryPayload(
     const maxAttempts = 6;
     const delay = 1500;
     while (attempts < maxAttempts) {
+      if (controller.signal.aborted || signal?.aborted) {
+        const err = new Error("Request aborted");
+        err.name = "AbortError";
+        throw err;
+      }
       try {
         const { data } = await apiFetch(
           fetchUrl,
@@ -488,7 +503,11 @@ async function fetchStockHistoryPayload(
         }
         return normalizeHistoryData(data.history);
       } catch (err) {
-        if (err.name === "AbortError") {
+        if (
+          err.name === "AbortError" ||
+          signal?.aborted ||
+          controller.signal.aborted
+        ) {
           throw err;
         }
         if (err instanceof TypeError) {
@@ -548,6 +567,9 @@ async function fetchStockHistoryPayload(
     return await doFetch();
   } finally {
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener("abort", onExternalAbort);
+    }
   }
 }
 
@@ -1782,6 +1804,12 @@ async function refreshStockChart(wrapper, period, interval) {
       );
   }
 
+  // 先行する取得要求があれば直ちに中断
+  if (wrapper._chartAbortController) {
+    wrapper._chartAbortController.abort();
+    wrapper._chartAbortController = null;
+  }
+
   const prefetchEntry = getFreshPrefetchedHistory(
     stockKey,
     targetPeriod,
@@ -1822,6 +1850,10 @@ async function refreshStockChart(wrapper, period, interval) {
     document.querySelector("#stock-detail-drawer .chart-container");
   container?.classList?.add("loading");
 
+  const chartAbortController = new AbortController();
+  wrapper._chartAbortController = chartAbortController;
+  const signal = chartAbortController.signal;
+
   try {
     let result;
     try {
@@ -1830,8 +1862,12 @@ async function refreshStockChart(wrapper, period, interval) {
         stock.market,
         targetPeriod,
         targetInterval,
+        signal,
       );
     } catch (firstErr) {
+      if (firstErr.name === "AbortError" || signal.aborted) {
+        return;
+      }
       // 初回読み込み時にバックエンドがデータ未キャッシュの場合、
       // 一時的に空の履歴が返る可能性がある。短い遅延後にリトライする。
       const firstMsg = firstErr?.message ?? "";
@@ -1842,6 +1878,7 @@ async function refreshStockChart(wrapper, period, interval) {
         clearChartError(wrapper);
         showChartError(wrapper, "データを読み込み中です...", "info");
         await new Promise((r) => setTimeout(r, 3000));
+        if (signal.aborted) return;
         // 再試行前にプレフェッチキャッシュを再チェック
         const retryPrefetch = getFreshPrefetchedHistory(
           stockKey,
@@ -1856,6 +1893,7 @@ async function refreshStockChart(wrapper, period, interval) {
             stock.market,
             targetPeriod,
             targetInterval,
+            signal,
           );
         }
       } else {
@@ -1863,7 +1901,7 @@ async function refreshStockChart(wrapper, period, interval) {
       }
     }
 
-    if (wrapper.dataset.chartFetchId !== currentFetchId) {
+    if (signal.aborted || wrapper.dataset.chartFetchId !== currentFetchId) {
       logger.debug(
         `Stale chart data fetch resolved for ${stock.symbol}, discarding.`,
       );
@@ -1907,6 +1945,9 @@ async function refreshStockChart(wrapper, period, interval) {
         });
     }
   } catch (e) {
+    if (e.name === "AbortError" || signal.aborted) {
+      return;
+    }
     logger.error("History fetch error:", e);
     const msg = e?.message ?? "";
     const isInformational =
@@ -1921,6 +1962,9 @@ async function refreshStockChart(wrapper, period, interval) {
       isInformational ? "info" : "error",
     );
   } finally {
+    if (wrapper._chartAbortController === chartAbortController) {
+      wrapper._chartAbortController = null;
+    }
     container?.classList?.remove("loading");
   }
 }

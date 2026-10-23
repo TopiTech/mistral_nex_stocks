@@ -1204,6 +1204,7 @@ document.addEventListener("DOMContentLoaded", () => {
       clearTimeout(state.timeoutId);
     }
     state.controller?.abort();
+    state.three.controls?.dispose?.();
     if (state.three.stockMeshes) {
       state.three.stockMeshes.forEach((mesh) => {
         if (state.three.scene) state.three.scene.remove(mesh);

@@ -372,8 +372,36 @@
         // If explicitly suffixed with .T (e.g. 2002.T), it is a TSE stock ticker, not a calendar year.
         const yearVal = parseInt(code, 10);
         const currentYear = new Date().getFullYear();
-        if (!hasTSuffix && yearVal >= 1990 && yearVal <= currentYear + 1)
-          continue; // skip year numbers
+        if (!hasTSuffix && yearVal >= 1990 && yearVal <= currentYear + 1) {
+          // Check surrounding context (approx +/-20 chars) for Japanese stock indicators
+          // or bracket notations like (2002) / （2002） to allow valid tickers (e.g. 2001, 2002).
+          const contextStart = Math.max(0, match.index - 20);
+          const contextEnd = Math.min(
+            text.length,
+            match.index + match[0].length + 20,
+          );
+          const surrounding = text.slice(contextStart, contextEnd);
+
+          const beforeChar = match.index > 0 ? text[match.index - 1] : "";
+          const afterChar =
+            match.index + match[0].length < text.length
+              ? text[match.index + match[0].length]
+              : "";
+          const isParenthesized =
+            (beforeChar === "(" && afterChar === ")") ||
+            (beforeChar === "（" && afterChar === "）") ||
+            new RegExp(`[（(]\\s*${code}(?:\\.T)?\\s*[)）]`).test(surrounding);
+
+          const hasStockContext =
+            isParenthesized ||
+            /(?:株|コード|銘柄|東証|証券|プライム|スタンダード|グロース|ホールディングス)/.test(
+              surrounding,
+            );
+
+          if (!hasStockContext) {
+            continue; // skip year numbers
+          }
+        }
 
         // Check surrounding context for Japanese stock indicators or just numeric stock code
         const symbol = `${code}.T`;

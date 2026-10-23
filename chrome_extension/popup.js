@@ -481,10 +481,10 @@ async function openAppPage(path = "/") {
   chrome.tabs.create({ url: `${base}${path}` });
 }
 
-async function waitForBackendReady(maxWaitMs = 20000) {
+async function waitForBackendReady(maxWaitMs = 30000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
-    const health = await send("health");
+    const health = await send("health", { retries: 0, timeoutMs: 1500 });
     if (health?.ok) {
       return await send("getContext");
     }

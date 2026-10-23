@@ -364,55 +364,80 @@ class WikipediaProjectTestCase(unittest.TestCase):
 class RequestJsonTestCase(unittest.TestCase):
     """_request_json tests (mocked)"""
 
-    @patch("trend_sources.requests.get")
-    def test_makes_request_with_user_agent(self, mock_get):
+    @patch("trend_sources._get_trend_session")
+    def test_makes_request_with_user_agent(self, mock_get_session):
         from trend_sources import _request_json
 
+        mock_session = MagicMock()
+        mock_get_session.return_value = mock_session
         mock_response = MagicMock()
         mock_response.json.return_value = {"key": "value"}
-        mock_get.return_value = mock_response
+        mock_session.get.return_value = mock_response
 
         result = _request_json("https://example.com/api")
         self.assertEqual(result, {"key": "value"})
-        mock_get.assert_called_once()
-        headers = mock_get.call_args[1].get("headers", {})
+        mock_session.get.assert_called_once()
+        headers = mock_session.get.call_args[1].get("headers", {})
         self.assertIn("User-Agent", headers)
 
-    @patch("trend_sources.requests.get")
-    def test_non_dict_response_returns_empty(self, mock_get):
+    @patch("trend_sources._get_trend_session")
+    def test_non_dict_response_returns_empty(self, mock_get_session):
         from trend_sources import _request_json
 
+        mock_session = MagicMock()
+        mock_get_session.return_value = mock_session
         mock_response = MagicMock()
         mock_response.json.return_value = "not a dict"
-        mock_get.return_value = mock_response
+        mock_session.get.return_value = mock_response
 
         result = _request_json("https://example.com/api")
         self.assertEqual(result, {})
 
-    @patch("trend_sources.requests.get")
-    def test_passes_custom_headers(self, mock_get):
+    @patch("trend_sources._get_trend_session")
+    def test_passes_custom_headers(self, mock_get_session):
         from trend_sources import _request_json
 
+        mock_session = MagicMock()
+        mock_get_session.return_value = mock_session
         mock_response = MagicMock()
         mock_response.json.return_value = {"ok": True}
-        mock_get.return_value = mock_response
+        mock_session.get.return_value = mock_response
 
         result = _request_json("https://example.com/api", headers={"Authorization": "Bearer test"})
         self.assertEqual(result, {"ok": True})
-        call_headers = mock_get.call_args[1]["headers"]
+        call_headers = mock_session.get.call_args[1]["headers"]
         self.assertEqual(call_headers["Authorization"], "Bearer test")
 
-    @patch("trend_sources.requests.get")
-    def test_passes_params(self, mock_get):
+    @patch("trend_sources._get_trend_session")
+    def test_passes_params(self, mock_get_session):
         from trend_sources import _request_json
 
+        mock_session = MagicMock()
+        mock_get_session.return_value = mock_session
         mock_response = MagicMock()
         mock_response.json.return_value = {}
-        mock_get.return_value = mock_response
+        mock_session.get.return_value = mock_response
 
         _request_json("https://example.com/api", params={"q": "test"})
-        call_params = mock_get.call_args[1].get("params", {})
+        call_params = mock_session.get.call_args[1].get("params", {})
         self.assertEqual(call_params["q"], "test")
+
+    @patch("trend_sources.feedparser.parse")
+    @patch("trend_sources._get_trend_session")
+    def test_fetch_rss_feed_uses_trend_session(self, mock_get_session, mock_feedparser_parse):
+        from trend_sources import _fetch_rss_feed
+
+        mock_session = MagicMock()
+        mock_get_session.return_value = mock_session
+        mock_response = MagicMock()
+        mock_response.text = "<rss></rss>"
+        mock_session.get.return_value = mock_response
+        mock_feedparser_parse.return_value = {"entries": []}
+
+        result = _fetch_rss_feed("https://example.com/rss")
+        self.assertEqual(result, {"entries": []})
+        mock_session.get.assert_called_once()
+        mock_feedparser_parse.assert_called_once_with("<rss></rss>")
 
 
 class QueryTemplatesTestCase(unittest.TestCase):

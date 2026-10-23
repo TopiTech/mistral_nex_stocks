@@ -284,7 +284,7 @@ def _request_json(
     req_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if isinstance(headers, dict):
         req_headers.update(headers)
-    response = requests.get(
+    response = _get_trend_session().get(
         url,
         params=params,
         timeout=TREND_REQUEST_TIMEOUT,
@@ -299,7 +299,7 @@ def _fetch_rss_feed(rss_url: str):
     if feedparser is None:
         raise RuntimeError("feedparser is not installed")
     # Fetch feed body with explicit timeout so one hung feed does not block the whole analysis.
-    response = requests.get(
+    response = _get_trend_session().get(
         rss_url,
         timeout=TREND_REQUEST_TIMEOUT,
         headers={

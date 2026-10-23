@@ -757,5 +757,70 @@ class ShutdownEndpointTestCase(unittest.TestCase):
             self.assertIn("remote API mode", data.get("details", {}).get("reason", ""))
 
 
+class AiUsageEndpointTestCase(unittest.TestCase):
+    def setUp(self):
+        app.config["TESTING"] = True
+        app.config["WTF_CSRF_ENABLED"] = False
+        self.client = app.test_client()
+
+    def test_ai_usage_options(self):
+        response = self.client.options("/api/system/ai-usage")
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data.get("ok"))
+
+    def test_ai_usage_remote_forbidden(self):
+        response = self.client.get(
+            "/api/system/ai-usage",
+            environ_base={"REMOTE_ADDR": "192.168.1.1"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_ai_usage_mistral_provider(self):
+        from app_state import app_state
+
+        app_state.ai.record_mistral_usage(
+            {"prompt_tokens": 120, "completion_tokens": 30}, model="mistral-small-2603"
+        )
+        with patch.object(app_state, "config", {"ai_provider": "mistral"}):
+            response = self.client.get(
+                "/api/system/ai-usage",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.data)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["active_provider"], "mistral")
+            self.assertIn("usage", data)
+            self.assertIn("providers", data)
+            self.assertIn("mistral", data["providers"])
+            self.assertIn("openai_compatible", data["providers"])
+            self.assertIn("estimated_cost_usd", data["usage"])
+
+    def test_ai_usage_openai_provider(self):
+        from app_state import app_state
+
+        app_state.ai.record_openai_usage(
+            {"prompt_tokens": 450, "completion_tokens": 50}, model="gpt-4o-mini"
+        )
+        with patch.object(app_state, "config", {"ai_provider": "openai_compatible"}):
+            response = self.client.get(
+                "/api/system/ai-usage",
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.data)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["active_provider"], "openai_compatible")
+            self.assertIn("usage", data)
+            self.assertEqual(
+                data["usage"]["prompt_tokens"],
+                app_state.ai.openai_usage_stats()["prompt_tokens"],
+            )
+            self.assertIn("providers", data)
+            self.assertIn("mistral", data["providers"])
+            self.assertIn("openai_compatible", data["providers"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mistral NeX Stocks Launcher",
-  "version": "1.2.3",
+  "version": "3.0.0",
   "description": "ローカル Flask バックエンドを起動し、Mistral NeX Stocks を開く個人用ランチャー。",
   "permissions": [
     "nativeMessaging",

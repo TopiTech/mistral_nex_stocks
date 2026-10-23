@@ -1434,7 +1434,7 @@ def api_shutdown():
 @api_system_bp.route("/api/system/ai-usage", methods=["GET", "OPTIONS"])
 @rate_limit(max_requests=30, window_seconds=60)
 def get_ai_usage():
-    """Return aggregated Mistral AI token usage statistics and cost estimates."""
+    """Return aggregated AI token usage statistics and cost estimates."""
     if request.method == "OPTIONS":
         return jsonify({"ok": True})
     ok, denied = _require_admin_token_if_remote(request)
@@ -1447,5 +1447,21 @@ def get_ai_usage():
         return error_response(
             ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
         )
-    stats = app_state.ai.mistral_usage_stats()
-    return jsonify({"ok": True, "usage": stats})
+    cfg = (
+        app_state.config
+        if hasattr(app_state, "config") and isinstance(app_state.config, dict)
+        else {}
+    )
+    raw_provider = cfg.get("ai_provider") or get_ai_provider()
+    active_provider = "openai_compatible" if raw_provider == "openai_compatible" else "mistral"
+    if active_provider == "openai_compatible":
+        stats = app_state.ai.openai_usage_stats()
+    else:
+        stats = app_state.ai.mistral_usage_stats()
+    providers_stats = app_state.ai.ai_usage_stats()
+    return jsonify({
+        "ok": True,
+        "usage": stats,
+        "active_provider": active_provider,
+        "providers": providers_stats,
+    })

@@ -630,10 +630,7 @@ document.addEventListener("DOMContentLoaded", () => {
       radio.type = "radio";
       radio.name = "mistralModel";
       radio.value = m.name;
-      if (
-        m.name === currentModelName ||
-        (currentModelName && currentModelName.includes(m.name))
-      ) {
+      if (m.name === currentModelName) {
         radio.checked = true;
       }
 
@@ -730,7 +727,12 @@ document.addEventListener("DOMContentLoaded", () => {
       'input[name="mistralModel"]:checked',
     );
     if (!anyChecked) {
+      const recommendedModel = models.find((m) => m.recommended);
       const defaultRadio =
+        (recommendedModel &&
+          container.querySelector(
+            `input[name="mistralModel"][value="${recommendedModel.name}"]`,
+          )) ||
         container.querySelector(
           'input[name="mistralModel"][value="mistral-small-2603"]',
         ) ||

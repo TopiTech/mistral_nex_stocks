@@ -20,6 +20,7 @@
       this.dragThreshold = 6;
       this.longPressTimer = null;
       this.longPressDuration = 600; // 600ms long-press
+      this.longPressTriggered = false;
 
       this.bindEvents();
     }
@@ -62,6 +63,7 @@
       this.pointerDownTarget = hitNode;
       this.pointerDownPos = pos;
       this.isDragging = false;
+      this.longPressTriggered = false;
 
       this.clearLongPressTimer();
 
@@ -70,6 +72,7 @@
         this.longPressTimer = setTimeout(() => {
           this.longPressTimer = null;
           if (!this.isDragging && this.pointerDownTarget) {
+            this.longPressTriggered = true;
             // Trigger AI Dive for long-pressed stock
             this.state.openAiDive(this.pointerDownTarget.symbol);
             if (typeof global.showToast === "function") {
@@ -129,6 +132,14 @@
     handlePointerUp(_e) {
       this.clearLongPressTimer();
 
+      if (this.longPressTriggered) {
+        this.longPressTriggered = false;
+        this.pointerDownTarget = null;
+        this.isDragging = false;
+        this.canvas.style.cursor = "default";
+        return;
+      }
+
       if (this.isDragging && this.pointerDownTarget) {
         const stateData = this.state.state;
         if (stateData.isOverCenterDrop) {
@@ -175,6 +186,7 @@
 
     handlePointerCancel(_e) {
       this.clearLongPressTimer();
+      this.longPressTriggered = false;
       if (this.isDragging) {
         this.state.setDraggedSymbol(null, null, false);
       }

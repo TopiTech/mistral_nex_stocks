@@ -89,43 +89,47 @@ def test_api_add_stock_ext_releases_user_stocks_lock_before_save(test_app):
 
     def mock_save():
         nonlocal lock_was_held_during_save
-        lock_was_held_during_save = app_state.market.user_stocks_lock.locked()
-
-    with (
-        patch("utils.env_helpers._is_remote_api_enabled", return_value=False),
-        patch("utils.networking._is_local_request", return_value=True),
-        patch("utils.networking._is_loopback_ip", return_value=True),
-        patch("utils.networking.is_allowed_trusted_origin", return_value=True),
-        patch(
-            "routes.api_stocks.get_or_create_extension_api_token",
-            return_value="test-token-ext-12345",
-        ),
-        patch("routes.api_stocks.save_user_stocks", side_effect=mock_save),
-        patch("routes.stocks.views.save_user_stocks", side_effect=mock_save),
-        patch("routes.stocks.views.invalidate_stock_caches"),
-        patch("routes.stocks.views.ensure_stock_placeholder_in_caches"),
-        patch("routes.stocks.views._announce_watchlist_state"),
-        patch("routes.stocks.views._sync_realtime_symbol"),
-        patch("routes.api_stocks.schedule_sync_all_stocks_now"),
-    ):
-        client = test_app.test_client()
-        res = client.post(
-            "/api/stocks/add_ext",
-            headers={
-                "X-MNS-Extension-Request": "true",
-                "Authorization": "Bearer test-token-ext-12345",
-                "Origin": "http://127.0.0.1:5000",
-            },
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
-            json={"symbol": "DEADLOCK_TEST", "market": "us", "name": "Deadlock Test"},
+        lock = app_state.market.user_stocks_lock
+        lock_was_held_during_save = bool(
+            getattr(lock, "_is_owned", getattr(lock, "locked", lambda: False))()
         )
-        assert res.status_code == 200
-        assert res.get_json()["ok"] is True
-        # Crucial check: user_stocks_lock must NOT be held during save_user_stocks
-        assert lock_was_held_during_save is False
 
-    with app_state.market.user_stocks_lock:
-        app_state.market.user_us.pop("DEADLOCK_TEST", None)
+    try:
+        with (
+            patch("utils.env_helpers._is_remote_api_enabled", return_value=False),
+            patch("utils.networking._is_local_request", return_value=True),
+            patch("utils.networking._is_loopback_ip", return_value=True),
+            patch("utils.networking.is_allowed_trusted_origin", return_value=True),
+            patch(
+                "routes.api_stocks.get_or_create_extension_api_token",
+                return_value="test-token-ext-12345",
+            ),
+            patch("routes.api_stocks.save_user_stocks", side_effect=mock_save),
+            patch("routes.stocks.views.save_user_stocks", side_effect=mock_save),
+            patch("routes.stocks.views.invalidate_stock_caches"),
+            patch("routes.stocks.views.ensure_stock_placeholder_in_caches"),
+            patch("routes.stocks.views._announce_watchlist_state"),
+            patch("routes.stocks.views._sync_realtime_symbol"),
+            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        ):
+            client = test_app.test_client()
+            res = client.post(
+                "/api/stocks/add_ext",
+                headers={
+                    "X-MNS-Extension-Request": "true",
+                    "Authorization": "Bearer test-token-ext-12345",
+                    "Origin": "http://127.0.0.1:5000",
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                json={"symbol": "DEADLOCK_TEST", "market": "us", "name": "Deadlock Test"},
+            )
+            assert res.status_code == 200
+            assert res.get_json()["ok"] is True
+            # Crucial check: user_stocks_lock must NOT be held during save_user_stocks
+            assert lock_was_held_during_save is False
+    finally:
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us.pop("DEADLOCK_TEST", None)
 
 
 def test_ensure_stock_placeholder_in_caches_atomic_holdings():

@@ -29,21 +29,34 @@
       </ul>
     </div>
     <!-- Provider Selection -->
-    <div class="provider-toggle-group" role="radiogroup" aria-labelledby="providerToggleTitle">
-      <div class="provider-toggle-title" id="providerToggleTitle">LLMプロバイダーの選択</div>
+    <div
+      class="provider-toggle-group"
+      role="radiogroup"
+      aria-labelledby="providerToggleTitle"
+    >
+      <div class="provider-toggle-title" id="providerToggleTitle">
+        LLMプロバイダーの選択
+      </div>
       <div class="provider-toggle-options">
         <label class="provider-toggle-option">
           <input type="radio" name="aiProvider" value="mistral" checked />
           <span class="provider-toggle-card">
-            <strong>Mistral AI <span class="recommended-badge">推奨・最適化</span></strong>
-            <small>公式ネイティブ対応。高品質な財務分析・Agents・OCRに最適化</small>
+            <strong
+              >Mistral AI
+              <span class="recommended-badge">推奨・最適化</span></strong
+            >
+            <small
+              >公式ネイティブ対応。高品質な財務分析・Agents・OCRに最適化</small
+            >
           </span>
         </label>
         <label class="provider-toggle-option">
           <input type="radio" name="aiProvider" value="openai_compatible" />
           <span class="provider-toggle-card">
             <strong>OpenAI互換 API <span class="beta-badge">BETA</span></strong>
-            <small>OpenAI / Ollama / Groq / DeepSeek 等のエンドポイントを利用</small>
+            <small
+              >OpenAI / Ollama / Groq / DeepSeek 等のエンドポイントを利用</small
+            >
           </span>
         </label>
       </div>
@@ -51,7 +64,11 @@
 
     <!-- Mistral Settings Container -->
     <div id="mistralSetupContainer">
-      <div class="api-mode-group" role="radiogroup" aria-labelledby="apiModeTitle">
+      <div
+        class="api-mode-group"
+        role="radiogroup"
+        aria-labelledby="apiModeTitle"
+      >
         <div class="api-mode-title" id="apiModeTitle">利用するMistral API</div>
         <div class="api-mode-options">
           <label class="api-mode-option">
@@ -83,7 +100,10 @@
         />
         <p class="agent-id-note">
           Agent IDとモデルは
-          <a href="https://console.mistral.ai/build/agents" target="_blank" rel="noopener"
+          <a
+            href="https://console.mistral.ai/build/agents"
+            target="_blank"
+            rel="noopener"
             >Mistral AI Console</a
           >
           で事前に設定してください。アプリ側ではモデルを変更できません。
@@ -116,22 +136,39 @@
       <div class="beta-notice-banner">
         <div class="beta-notice-header">
           <span class="beta-badge">BETA 機能</span>
-          <strong style="color: #f59e0b; font-size: 0.88rem;">OpenAI互換プロバイダー利用に関するご案内</strong>
+          <strong style="color: #f59e0b; font-size: 0.88rem"
+            >OpenAI互換プロバイダー利用に関するご案内</strong
+          >
         </div>
         <p class="beta-notice-desc">
           ⚠️ OpenAI互換APIの接続は<strong>ベータ機能</strong>です。<br />
-          当プラットフォームは<strong>Mistral API向けに最適化</strong>されて開発されています。モデルの特性によりツールの呼び出し精度や応答形式が異なる場合があります。
+          当プラットフォームは<strong>Mistral API向けに最適化</strong
+          >されて開発されています。モデルの特性によりツールの呼び出し精度や応答形式が異なる場合があります。
         </p>
       </div>
 
       <div class="input-group">
         <label>プリセット設定（ワンクリック適用）</label>
         <div class="preset-buttons-container">
-          <button type="button" class="preset-pill-btn" data-preset="openai">OpenAI</button>
-          <button type="button" class="preset-pill-btn" data-preset="ollama">Ollama (Local)</button>
-          <button type="button" class="preset-pill-btn" data-preset="groq">Groq</button>
-          <button type="button" class="preset-pill-btn" data-preset="deepseek">DeepSeek</button>
-          <button type="button" class="preset-pill-btn" data-preset="openrouter">OpenRouter</button>
+          <button type="button" class="preset-pill-btn" data-preset="openai">
+            OpenAI
+          </button>
+          <button type="button" class="preset-pill-btn" data-preset="ollama">
+            Ollama (Local)
+          </button>
+          <button type="button" class="preset-pill-btn" data-preset="groq">
+            Groq
+          </button>
+          <button type="button" class="preset-pill-btn" data-preset="deepseek">
+            DeepSeek
+          </button>
+          <button
+            type="button"
+            class="preset-pill-btn"
+            data-preset="openrouter"
+          >
+            OpenRouter
+          </button>
         </div>
       </div>
 
@@ -147,7 +184,9 @@
       </div>
 
       <div class="input-group">
-        <label for="openaiApiKey">APIキー（ローカルLLM等で不要な場合は空欄可）</label>
+        <label for="openaiApiKey"
+          >APIキー（ローカルLLM等で不要な場合は空欄可）</label
+        >
         <div class="password-wrapper">
           <input
             id="openaiApiKey"
@@ -179,7 +218,9 @@
       </div>
 
       <div class="input-group">
-        <label for="openaiEmbeddingsModel">Embeddingsモデル名（任意・空欄でスキップ）</label>
+        <label for="openaiEmbeddingsModel"
+          >Embeddingsモデル名（任意・空欄でスキップ）</label
+        >
         <input
           id="openaiEmbeddingsModel"
           type="text"
@@ -190,7 +231,9 @@
       </div>
 
       <div class="verify-action-group">
-        <button type="button" id="verifyOpenaiSetupBtn" class="verify-btn">接続テスト</button>
+        <button type="button" id="verifyOpenaiSetupBtn" class="verify-btn">
+          接続テスト
+        </button>
         <span id="openaiSetupVerifyStatus" class="verify-status"></span>
       </div>
     </div>

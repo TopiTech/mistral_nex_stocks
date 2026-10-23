@@ -90,7 +90,9 @@ styles %}
 
       <!-- Change % Presets -->
       <div class="filter-group">
-        <span class="filter-label" id="screenerChangePresetLabel">騰落率プリセット</span>
+        <span class="filter-label" id="screenerChangePresetLabel"
+          >騰落率プリセット</span
+        >
         <div
           class="preset-toggle-group"
           id="screenerChangePreset"
@@ -196,7 +198,9 @@ styles %}
               title="ティッカー順で並び替え"
               aria-sort="none"
             >
-              <button type="button" class="th-sort-btn" data-sort="symbol">ティッカー / 企業名 <span class="sort-indicator"></span></button>
+              <button type="button" class="th-sort-btn" data-sort="symbol">
+                ティッカー / 企業名 <span class="sort-indicator"></span>
+              </button>
             </th>
             <th>市場</th>
             <th>セクター</th>
@@ -206,7 +210,9 @@ styles %}
               title="現在値で並び替え"
               aria-sort="none"
             >
-              <button type="button" class="th-sort-btn" data-sort="price">現在値 <span class="sort-indicator"></span></button>
+              <button type="button" class="th-sort-btn" data-sort="price">
+                現在値 <span class="sort-indicator"></span>
+              </button>
             </th>
             <th
               class="text-right sortable-th"
@@ -214,7 +220,13 @@ styles %}
               title="前日比で並び替え"
               aria-sort="none"
             >
-              <button type="button" class="th-sort-btn" data-sort="change_percent">前日比 <span class="sort-indicator"></span></button>
+              <button
+                type="button"
+                class="th-sort-btn"
+                data-sort="change_percent"
+              >
+                前日比 <span class="sort-indicator"></span>
+              </button>
             </th>
             <th class="text-right">高値 / 安値</th>
             <th
@@ -223,14 +235,20 @@ styles %}
               title="時価総額で並び替え"
               aria-sort="none"
             >
-              <button type="button" class="th-sort-btn" data-sort="market_cap">時価総額 <span class="sort-indicator"></span></button>
+              <button type="button" class="th-sort-btn" data-sort="market_cap">
+                時価総額 <span class="sort-indicator"></span>
+              </button>
             </th>
             <th class="text-center">操作</th>
           </tr>
         </thead>
         <tbody id="screenerTableBody">
           <tr>
-            <td colspan="8" data-colspan-full="8" class="text-center loading-cell">
+            <td
+              colspan="8"
+              data-colspan-full="8"
+              class="text-center loading-cell"
+            >
               データを読み込み中...
             </td>
           </tr>

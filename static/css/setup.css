@@ -408,7 +408,11 @@ button:hover {
 
 /* Beta notice banner in setup */
 .beta-notice-banner {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.14), rgba(217, 119, 6, 0.08));
+  background: linear-gradient(
+    135deg,
+    rgba(245, 158, 11, 0.14),
+    rgba(217, 119, 6, 0.08)
+  );
   border: 1px solid rgba(245, 158, 11, 0.4);
   border-radius: 10px;
   padding: 12px 14px;
@@ -482,4 +486,3 @@ button:hover {
 .verify-status.error {
   color: #f43f5e;
 }
-

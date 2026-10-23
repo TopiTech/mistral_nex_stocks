@@ -95,8 +95,20 @@ endblock %} {% block meta %}
     </div>
   </div>
   <div class="indices-bar-wrapper" aria-label="主要市場指数のティッカー">
-    <div id="indices-bar" class="indices-bar" role="region" aria-label="主要市場指数ティッカー" aria-live="off"></div>
-    <div id="indices-bar-sr" class="sr-only" role="status" aria-live="polite" aria-atomic="false"></div>
+    <div
+      id="indices-bar"
+      class="indices-bar"
+      role="region"
+      aria-label="主要市場指数ティッカー"
+      aria-live="off"
+    ></div>
+    <div
+      id="indices-bar-sr"
+      class="sr-only"
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+    ></div>
     <button
       id="indices-pause-btn"
       class="indices-pause-btn"
@@ -124,8 +136,10 @@ endblock %} {% block meta %}
     <div class="preview-banner-content">
       <span class="preview-banner-icon">⚡</span>
       <div>
-        <strong>プレビューモードで実行中:</strong> APIキー未設定のため、AI機能（銘柄分析・チャット・ニュース等）はサンプル出力を表示しています。
-        <a href="/settings" class="preview-banner-link">設定画面</a>からAPIキー（MistralまたはOpenAI互換）を登録すると、本番AI機能をご利用いただけます。
+        <strong>プレビューモードで実行中:</strong>
+        APIキー未設定のため、AI機能（銘柄分析・チャット・ニュース等）はサンプル出力を表示しています。
+        <a href="/settings" class="preview-banner-link">設定画面</a
+        >からAPIキー（MistralまたはOpenAI互換）を登録すると、本番AI機能をご利用いただけます。
       </div>
     </div>
   </aside>
@@ -746,7 +760,8 @@ endblock %} {% block meta %}
       />
     </div>
     <div class="pf-calc-result">
-      概算取得コスト: <strong id="pf-modal-total-cost" aria-live="polite">--</strong>
+      概算取得コスト:
+      <strong id="pf-modal-total-cost" aria-live="polite">--</strong>
     </div>
     <button
       type="button"
@@ -884,11 +899,22 @@ endblock %} {% block meta %}
     </div>
     <div id="stock-detail-drawer-body" class="stock-detail-drawer-body">
       <!-- Tab 1: Chart & Financial Metrics -->
-      <div id="drawerTabChartContent" class="drawer-tab-panel" role="tabpanel" aria-labelledby="drawerTabChartBtn">
+      <div
+        id="drawerTabChartContent"
+        class="drawer-tab-panel"
+        role="tabpanel"
+        aria-labelledby="drawerTabChartBtn"
+      >
         <!-- Interactive Chart & Controls rendered dynamically -->
       </div>
       <!-- Tab 2: AI Analysis & Interactive Chat -->
-      <div id="drawerTabAiContent" class="drawer-tab-panel hidden" role="tabpanel" aria-labelledby="drawerTabAiBtn" hidden>
+      <div
+        id="drawerTabAiContent"
+        class="drawer-tab-panel hidden"
+        role="tabpanel"
+        aria-labelledby="drawerTabAiBtn"
+        hidden
+      >
         <!-- AI Summary Cards & Chat Input rendered dynamically -->
       </div>
     </div>
@@ -896,7 +922,12 @@ endblock %} {% block meta %}
 </div>
 
 <!-- Slide-in AI Assistant Drawer -->
-<div id="ai-drawer-overlay" class="ai-drawer-overlay hidden" aria-hidden="true" inert>
+<div
+  id="ai-drawer-overlay"
+  class="ai-drawer-overlay hidden"
+  aria-hidden="true"
+  inert
+>
   <div
     id="ai-drawer"
     class="ai-drawer"

@@ -449,7 +449,7 @@
 ### [R30][Medium / API Contract] スクリーナー上限値・ヒートマップ市場制約・AIポートフォリオ操作スキーマの契約不整合解消
 
 - **該当箇所**: [`schemas/stocks.py`](schemas/stocks.py), [`utils/validators.py:91,127`](utils/validators.py#L91), [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py), [`schemas/__init__.py`](schemas/__init__.py)
-- **影響経路**: 
+- **影響経路**:
   1. `routes/stocks/views.py:240-247` のスクリーナーAPIは `limit` の上限を `500`（デフォルト `150`）として受け付けていたが、`schemas/stocks.py:129` の `ScreenerQueryRequest` および `utils/validators.py:91` の `ScreenerFilterSchema` は `default=50, le=200` で定義されており、正常なクエリ（例: `limit=300`）がスキーマ直接利用時に `ValidationError` を引き起こす契約不整合が生じていた。
   2. `routes/stocks/views.py:704-708` のヒートマップAPIは市場を `"us"` または `"jp"` のみに限定し（デフォルト `"us"`）、`"all"` を含む他の値を明示的に HTTP 400（`INVALID_INPUT`）で拒絶するが、`utils/validators.py:127` の `HeatmapFilterSchema` は `market: Literal["all", "us", "jp"] = "all"` と定義されており、エンドポイント実体と検証スキーマでデフォルト値および許容値が不一致であった。さらに `schemas/stocks.py` に `HeatmapQueryRequest` が未定義であった。
   3. `schemas/ai_portfolio.py` にポートフォリオ削除用の `AIPortfolioDeleteRequest` および複製用の `AIPortfolioCopyToMyItem` / `AIPortfolioCopyToMyRequest` が未定義であり、エンドポイント入力検証スキーマの体系に欠落が存在していた。
@@ -498,7 +498,7 @@
 ### [R33][Medium / Contract & Schema Alignment] 銘柄名上限定数（MAX_STOCK_NAME_LENGTH）のスキーマ間同期不一致および copy-to-my 入力検証の欠落
 
 - **該当箇所**: [`schemas/stocks.py:31,56`](schemas/stocks.py#L31), [`schemas/ai_portfolio.py:17,95`](schemas/ai_portfolio.py#L17), [`constants.py:406`](constants.py#L406)
-- **影響経路**: 
+- **影響経路**:
   1. `constants.py:406` にて `MAX_STOCK_NAME_LENGTH: int = 200` が定義され、ルート層（`route_helpers.py:739`, `routes/api_analysis.py:1230`）では200文字以下が許容されているが、`schemas/stocks.py`（`StockAddRequest.name`, `StockAddExtRequest.name`）および `schemas/ai_portfolio.py`（`AIPortfolioItemSchema.name`, `AIPortfolioCopyToMyItem.name`）ではハードコードされた `max_length=100` が設定されていた。これにより101〜200文字の正式企業名がルート層では正常と判定される一方、Pydantic スキーマ直接検証で不正に拒絶される契約不整合が存在した。
   2. `schemas/ai_portfolio.py` の `AIPortfolioItemSchema.target_price` および `AIPortfolioCopyToMyItem.target_price` に `constants.py` の上限 `PORTFOLIO_AVG_PRICE_MAX`（1,000,000,000.0）が設定されていなかった。
   3. `schemas/ai_portfolio.py` の `AIPortfolioCopyToMyRequest` にて、ルート側（`routes/stocks/ai_portfolio.py:567-573, 621-626`）で厳格に拒絶される「同一リクエスト内の銘柄重複 `(symbol, market)`」および「合計比率上限 `total_weight_pct <= 100.5%`」のモデルバリデーションが欠落していた。
@@ -652,93 +652,93 @@
 
 ## 4. 変更ファイル一覧
 
-| ファイル                                                                       | 変更概要                                                            | 対応ID    |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------- |
-| [`schemas/stocks.py`](schemas/stocks.py)                                       | ScreenerQueryRequest 範囲逆転検証 + Symbol 正規化検証                | R26,R27   |
-| [`utils/validators.py`](utils/validators.py)                                   | ScreenerFilterSchema 範囲逆転モデル検証                             | R27       |
-| [`routes/stocks/ai_portfolio.py`](routes/stocks/ai_portfolio.py)               | copy-to-my 時の非US銘柄 avg_fx_rate キャッシュパージ                | R28       |
-| [`static/js/screener.js`](static/js/screener.js)                               | 市場選択・騰落率プリセットのロービングキーボード操作実装            | R12,R29   |
-| [`static/js/index_main.js`](static/js/index_main.js)                           | SSE モードセレクターのロービングキーボード操作実装                  | R13,R29   |
-| [`tests/test_schemas.py`](tests/test_schemas.py)                               | スクリーナー範囲境界およびシンボル正規化の回帰テスト                | R26,R27   |
-| [`tests/test_code_review_goal_audit_2026_09_v5.py`](tests/test_code_review_goal_audit_2026_09_v5.py) | 新規回帰テスト（R27:3件, R28:1件, R29:1件）                       | R27,R28,R29 |
-| [`app.py`](app.py)                                                             | SECRET_KEY永続化失敗時フォールバック（+`secrets` import）           | R2        |
-| [`routes/api_analysis.py`](routes/api_analysis.py)                             | AI技術的線エラーメッセージ正規化                                    | R3        |
-| [`routes/api_system.py`](routes/api_system.py)                                 | /api/credentials GET Originチェック + 運用系エンドポイントOrigin多層防御 | R4,R23,R24 |
-| [`routes/api_stocks.py`](routes/api_stocks.py)                                 | /api/screener total 整合 + `is_allowed_trusted_origin` 再エクスポート | R10,R23   |
-| [`routes/stocks/common.py`](routes/stocks/common.py)                           | `schedule_sync_all_stocks_now` 戻り値型アノテーション `-> bool:`     | R22       |
-| [`routes/stocks/quotes.py`](routes/stocks/quotes.py)                           | `api_indices` の `force=True` 同期引数伝播                          | R22       |
-| [`routes/stocks/views.py`](routes/stocks/views.py)                             | `_parse_strict_float` 型厳格化 + `is_allowed_trusted_origin` 呼び出し | R19,R20   |
-| [`services/ai_service.py`](services/ai_service.py)                             | `generate_ai_technical_lines()` エラー正規化                        | R3        |
-| [`services/stock_service.py`](services/stock_service.py)                       | `dict(result)` → `copy.deepcopy(result)`                            | R11       |
-| [`services/news_service.py`](services/news_service.py)                         | `shutdown_news_fanout_pool()` 追加                                  | R18       |
-| [`session_manager.py`](session_manager.py)                                     | `YFINANCE_BACKOFF_MAX` クランプ適用                                 | R16       |
-| [`app_state.py`](app_state.py)                                                 | `shutdown_executors()` にニュースプール終了フック登録               | R18       |
-| [`utils/http_utils.py`](utils/http_utils.py)                                   | `parse_retry_after()` クランプ処理（+`math`）＆ naive 日付 UTC 解釈 | R5,R15    |
-| [`utils/formatting.py`](utils/formatting.py)                                   | `_parse_datetime_to_utc()` naive 日付 UTC ガード                    | R15       |
-| [`utils/caching.py`](utils/caching.py)                                         | `sanitize_cache_key()` パーセントエンコード方式（未使用 `re` 除去） | R6        |
-| [`utils/disk_cache.py`](utils/disk_cache.py)                                   | `StockDiskCache.get()` 形状ガード                                   | R7        |
-| [`utils/networking.py`](utils/networking.py)                                   | 公開 `is_allowed_trusted_origin()` 定義 + 互換委譲                   | R19       |
-| [`native_host/native_host.py`](native_host/native_host.py)                     | ログマスキング完全化 + トークンゲート + APP_DATA_DIR 既定化         | R8,R9,R17 |
-| [`static/js/heatmap.js`](static/js/heatmap.js)                                 | トグルボタングループの矢印キー/Home/End キーボードナビゲーション     | R25       |
-| [`templates/heatmap.html`](templates/heatmap.html)                             | トグルコンテナへの `role="group"` および `aria-label` 付与          | R25       |
-| [`templates/index.html`](templates/index.html)                                 | 設定ボタンの `aria-label` 日本語統一（「設定画面を開く」）          | R25       |
-| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | プリセットピルのキーボード操作 + `aria-pressed` 属性完全同期         | R21       |
-| [`static/js/api.js`](static/js/api.js)                                         | LocalStorage 例外ハンドリング保護                                   | R13       |
-| [`static/js/state.js`](static/js/state.js)                                     | お気に入り保存時の LocalStorage 保護                                | R13       |
-| [`static/js/settings.js`](static/js/settings.js)                               | ソート設定保存時の LocalStorage 保護                                | R13       |
-| [`chrome_extension/popup.js`](chrome_extension/popup.js)                       | Orbit ランチャー連携 + キーボードアクセシビリティ                   | R14       |
-| [`chrome_extension/popup.html`](chrome_extension/popup.html)                   | Orbit ボタン追加 + ARIA タブ属性                                    | R14       |
-| [`chrome_extension/popup.css`](chrome_extension/popup.css)                     | ランチャーボタングリッドのレスポンシブスタイル                      | R14       |
-| [`tests/test_formatting.py`](tests/test_formatting.py)                         | asctime 形式 naive 日時 UTC 解釈テスト追加                          | R15       |
-| [`tests/test_review_r1_r10_fixes.py`](tests/test_review_r1_r10_fixes.py)       | 既存テスト期待値更新（R3対応）                                      | R3        |
-| [`tests/test_review_r1_r2_fix_app.py`](tests/test_review_r1_r2_fix_app.py)     | 新規回帰テスト 9件（R2:4 + R1防御固定:5）                           | R1,R2     |
-| [`tests/test_review_r3_r4_r10_fixes.py`](tests/test_review_r3_r4_r10_fixes.py) | 新規回帰テスト 11件（R3:4 + R4:5 + R10:2）                          | R3,R4,R10 |
-| [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py)   | 新規回帰テスト 22件（R5:10 + R6:6 + R7:5 + R15:1）                  | R5,R6,R7,R15 |
-| [`tests/test_review_r8_r9_fixes.py`](tests/test_review_r8_r9_fixes.py)         | 新規回帰テスト 15件（R8:11 + R9:4）                                 | R8,R9     |
-| [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py)                 | 新規回帰テスト 3件                                                  | R11       |
-| [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py) | 新規回帰テスト 12件（R12, R13, R14）         | R12,R13,R14 |
-| [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py) | 新規回帰テスト 14件（R16, R17, R18, R19, R20, R21） | R16-R21   |
-| [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py) | 新規回帰テスト 13件（R22, R23, R24, R25）           | R22-R25   |
-| [`routes/stocks/portfolio.py`](routes/stocks/portfolio.py)                     | JP市場での `avg_fx_rate` 指定時のワーニングログ追加                 | R26       |
-| [`schemas/stocks.py`](schemas/stocks.py)                                       | `PortfolioUpdateRequest` の非US市場 `avg_fx_rate` 拒絶バリデーション | R26       |
-| [`utils/stock_payload.py`](utils/stock_payload.py)                             | `_extract_portfolio_fields` / `_resolve_stocks_for_response` で非US `avg_fx_rate` 除去 | R26       |
-| [`utils/storage.py`](utils/storage.py)                                         | `_normalize_jp_holding_keys` における `avg_fx_rate` サニタイズ      | R26       |
-| [`tests/test_portfolio_avg_fx_rate_idx.py`](tests/test_portfolio_avg_fx_rate_idx.py) | テストモック修正 + JP市場 `avg_fx_rate` 回帰テスト追加         | R26       |
-| [`tests/test_schemas.py`](tests/test_schemas.py)                               | `PortfolioUpdateRequest` 非US市場拒絶回帰テスト追加                 | R26       |
-| [`schemas/stocks.py`](schemas/stocks.py)                                       | ScreenerQueryRequest limit 上限拡張(500) + HeatmapQueryRequest 新設 | R30       |
-| [`utils/validators.py`](utils/validators.py)                                   | ScreenerFilterSchema limit(500) + HeatmapFilterSchema market("us"/"jp") | R30   |
-| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                           | AIPortfolioDeleteRequest + AIPortfolioCopyToMyItem/Request 新設     | R30       |
-| [`schemas/__init__.py`](schemas/__init__.py)                                   | 新規スキーマのエクスポート公開                                      | R30       |
-| [`routes/api_analysis.py`](routes/api_analysis.py)                             | api_analyze_chart_image のシンボル市場正規化 + バリデーション堅牢化 | R31       |
-| [`static/js/screener.js`](static/js/screener.js)                               | テーブル行のロービングキーボード操作（Home/End）完全化               | R32       |
-| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | ポートフォリオモードタブのロービングキーボード操作（Home/End）完全化 | R32       |
-| [`static/js/ui.js`](static/js/ui.js)                                           | 銘柄詳細ドロワータブバーのロービングキーボード操作（Home/End）完全化 | R32       |
-| [`tests/test_schemas.py`](tests/test_schemas.py)                               | limit境界・HeatmapQueryRequest・AIポートフォリオ削除/複製テスト追加 | R30       |
-| [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py) | 新規回帰テスト（R30:3件, R31:3件, R32:3件）                       | R30,R31,R32 |
-| [`schemas/stocks.py`](schemas/stocks.py)                                       | `MAX_STOCK_NAME_LENGTH`（200文字）を constants からインポート適用    | R33       |
-| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                           | 銘柄名(200)・目標株価(10億)上限同期 + 重複/比率モデルバリデーション   | R33       |
-| [`schemas/analysis.py`](schemas/analysis.py)                                   | AI分析エンドポイント群（チャット/分析/ニュース/線描画/画像）リクエストスキーマ新設 | R34       |
-| [`schemas/__init__.py`](schemas/__init__.py)                                   | 新規分析系スキーマのエクスポート公開                                | R34       |
-| [`static/js/screener.js`](static/js/screener.js)                               | 市場/プリセットボタングループのロービング `tabindex` + 上下矢印キーナビ | R35       |
-| [`static/js/heatmap.js`](static/js/heatmap.js)                                 | 市場/表示/サイズ/カメラボタングループのロービング `tabindex` + 上下矢印キーナビ | R35       |
-| [`static/js/api.js`](static/js/api.js)                                         | SSEモードセレクターボタンの `tabindex` 属性動的更新                 | R35       |
-| [`static/js/index_main.js`](static/js/index_main.js)                           | SSEモードボタングループの上下矢印キー操作 + `tabindex` 管理          | R35       |
-| [`tests/test_schemas.py`](tests/test_schemas.py)                               | R33（200文字上限・10億円上限・重複/比率超過）および R34 スキーマテスト追加 | R33,R34   |
-| [`tests/test_code_review_goal_audit_2026_09_v7.py`](tests/test_code_review_goal_audit_2026_09_v7.py) | 新規回帰テスト 11件（R33:3件, R34:5件, R35:3件）                  | R33,R34,R35 |
-| [`schemas/stocks.py`](schemas/stocks.py)                                       | ScreenerQueryRequest 0.0 境界値受容（`ge=0.0` への緩和・同期）       | R36       |
-| [`routes/stocks/quotes.py`](routes/stocks/quotes.py)                           | `api_indices` / `api_stocks` の `force` クエリ真偽値判定正規化       | R37       |
-| [`static/js/index_main.js`](static/js/index_main.js)                           | 市場タブ（US/JP/IDX/PF）の 4方向矢印キー循環ナビゲーション追加       | R38       |
-| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                       | AIモード切替タブの上下矢印キー + プリセットピルのロービング `tabindex` | R38       |
-| [`static/js/ui.js`](static/js/ui.js)                                           | 銘柄詳細ドロワータブバーの上下矢印キーナビゲーション追加             | R38       |
-| [`static/js/experimental/orbit-entry.js`](static/js/experimental/orbit-entry.js) | マーケット天文台 市場選択ボタンのロービング `tabindex` + 4方向矢印キー | R39       |
-| [`static/js/experimental/temporal-controller.js`](static/js/experimental/temporal-controller.js) | マーケット天文台 タイムライン粒度ボタンのロービング `tabindex` + 4方向キー | R39       |
-| [`tests/test_schemas.py`](tests/test_schemas.py)                               | ScreenerQueryRequest 0.0 境界受容のユニットテスト追加                | R36       |
-| [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py) | 新規包括回帰テスト 13件（R36, R37, R38, R39）                      | R36-R39   |
-| [`services/ai_portfolio_service.py`](services/ai_portfolio_service.py)         | sanitize_ai_portfolio における銘柄重複除外（Deduplication）実装    | R40       |
-| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                           | AIPortfolioCopyToMyItem/Request 境界値契約同期 + JPシンボル正規化一意性 | R41       |
-| [`utils/normalization.py`](utils/normalization.py)                             | is_valid_symbol の小文字・大文字一貫正規化（.upper()適用）          | R42       |
-| [`templates/settings.html`](templates/settings.html)                           | 設定カテゴリタブ（role="tablist"）の初期 tabindex="0"/tabindex="-1"付与 | R43       |
-| [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py) | 新規包括回帰テスト 8件（R40, R41, R42, R43）                       | R40-R43   |
+| ファイル                                                                                               | 変更概要                                                                               | 対応ID       |
+| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------ |
+| [`schemas/stocks.py`](schemas/stocks.py)                                                               | ScreenerQueryRequest 範囲逆転検証 + Symbol 正規化検証                                  | R26,R27      |
+| [`utils/validators.py`](utils/validators.py)                                                           | ScreenerFilterSchema 範囲逆転モデル検証                                                | R27          |
+| [`routes/stocks/ai_portfolio.py`](routes/stocks/ai_portfolio.py)                                       | copy-to-my 時の非US銘柄 avg_fx_rate キャッシュパージ                                   | R28          |
+| [`static/js/screener.js`](static/js/screener.js)                                                       | 市場選択・騰落率プリセットのロービングキーボード操作実装                               | R12,R29      |
+| [`static/js/index_main.js`](static/js/index_main.js)                                                   | SSE モードセレクターのロービングキーボード操作実装                                     | R13,R29      |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                                                       | スクリーナー範囲境界およびシンボル正規化の回帰テスト                                   | R26,R27      |
+| [`tests/test_code_review_goal_audit_2026_09_v5.py`](tests/test_code_review_goal_audit_2026_09_v5.py)   | 新規回帰テスト（R27:3件, R28:1件, R29:1件）                                            | R27,R28,R29  |
+| [`app.py`](app.py)                                                                                     | SECRET_KEY永続化失敗時フォールバック（+`secrets` import）                              | R2           |
+| [`routes/api_analysis.py`](routes/api_analysis.py)                                                     | AI技術的線エラーメッセージ正規化                                                       | R3           |
+| [`routes/api_system.py`](routes/api_system.py)                                                         | /api/credentials GET Originチェック + 運用系エンドポイントOrigin多層防御               | R4,R23,R24   |
+| [`routes/api_stocks.py`](routes/api_stocks.py)                                                         | /api/screener total 整合 + `is_allowed_trusted_origin` 再エクスポート                  | R10,R23      |
+| [`routes/stocks/common.py`](routes/stocks/common.py)                                                   | `schedule_sync_all_stocks_now` 戻り値型アノテーション `-> bool:`                       | R22          |
+| [`routes/stocks/quotes.py`](routes/stocks/quotes.py)                                                   | `api_indices` の `force=True` 同期引数伝播                                             | R22          |
+| [`routes/stocks/views.py`](routes/stocks/views.py)                                                     | `_parse_strict_float` 型厳格化 + `is_allowed_trusted_origin` 呼び出し                  | R19,R20      |
+| [`services/ai_service.py`](services/ai_service.py)                                                     | `generate_ai_technical_lines()` エラー正規化                                           | R3           |
+| [`services/stock_service.py`](services/stock_service.py)                                               | `dict(result)` → `copy.deepcopy(result)`                                               | R11          |
+| [`services/news_service.py`](services/news_service.py)                                                 | `shutdown_news_fanout_pool()` 追加                                                     | R18          |
+| [`session_manager.py`](session_manager.py)                                                             | `YFINANCE_BACKOFF_MAX` クランプ適用                                                    | R16          |
+| [`app_state.py`](app_state.py)                                                                         | `shutdown_executors()` にニュースプール終了フック登録                                  | R18          |
+| [`utils/http_utils.py`](utils/http_utils.py)                                                           | `parse_retry_after()` クランプ処理（+`math`）＆ naive 日付 UTC 解釈                    | R5,R15       |
+| [`utils/formatting.py`](utils/formatting.py)                                                           | `_parse_datetime_to_utc()` naive 日付 UTC ガード                                       | R15          |
+| [`utils/caching.py`](utils/caching.py)                                                                 | `sanitize_cache_key()` パーセントエンコード方式（未使用 `re` 除去）                    | R6           |
+| [`utils/disk_cache.py`](utils/disk_cache.py)                                                           | `StockDiskCache.get()` 形状ガード                                                      | R7           |
+| [`utils/networking.py`](utils/networking.py)                                                           | 公開 `is_allowed_trusted_origin()` 定義 + 互換委譲                                     | R19          |
+| [`native_host/native_host.py`](native_host/native_host.py)                                             | ログマスキング完全化 + トークンゲート + APP_DATA_DIR 既定化                            | R8,R9,R17    |
+| [`static/js/heatmap.js`](static/js/heatmap.js)                                                         | トグルボタングループの矢印キー/Home/End キーボードナビゲーション                       | R25          |
+| [`templates/heatmap.html`](templates/heatmap.html)                                                     | トグルコンテナへの `role="group"` および `aria-label` 付与                             | R25          |
+| [`templates/index.html`](templates/index.html)                                                         | 設定ボタンの `aria-label` 日本語統一（「設定画面を開く」）                             | R25          |
+| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                                               | プリセットピルのキーボード操作 + `aria-pressed` 属性完全同期                           | R21          |
+| [`static/js/api.js`](static/js/api.js)                                                                 | LocalStorage 例外ハンドリング保護                                                      | R13          |
+| [`static/js/state.js`](static/js/state.js)                                                             | お気に入り保存時の LocalStorage 保護                                                   | R13          |
+| [`static/js/settings.js`](static/js/settings.js)                                                       | ソート設定保存時の LocalStorage 保護                                                   | R13          |
+| [`chrome_extension/popup.js`](chrome_extension/popup.js)                                               | Orbit ランチャー連携 + キーボードアクセシビリティ                                      | R14          |
+| [`chrome_extension/popup.html`](chrome_extension/popup.html)                                           | Orbit ボタン追加 + ARIA タブ属性                                                       | R14          |
+| [`chrome_extension/popup.css`](chrome_extension/popup.css)                                             | ランチャーボタングリッドのレスポンシブスタイル                                         | R14          |
+| [`tests/test_formatting.py`](tests/test_formatting.py)                                                 | asctime 形式 naive 日時 UTC 解釈テスト追加                                             | R15          |
+| [`tests/test_review_r1_r10_fixes.py`](tests/test_review_r1_r10_fixes.py)                               | 既存テスト期待値更新（R3対応）                                                         | R3           |
+| [`tests/test_review_r1_r2_fix_app.py`](tests/test_review_r1_r2_fix_app.py)                             | 新規回帰テスト 9件（R2:4 + R1防御固定:5）                                              | R1,R2        |
+| [`tests/test_review_r3_r4_r10_fixes.py`](tests/test_review_r3_r4_r10_fixes.py)                         | 新規回帰テスト 11件（R3:4 + R4:5 + R10:2）                                             | R3,R4,R10    |
+| [`tests/test_review_r5_r6_r7_fixes.py`](tests/test_review_r5_r6_r7_fixes.py)                           | 新規回帰テスト 22件（R5:10 + R6:6 + R7:5 + R15:1）                                     | R5,R6,R7,R15 |
+| [`tests/test_review_r8_r9_fixes.py`](tests/test_review_r8_r9_fixes.py)                                 | 新規回帰テスト 15件（R8:11 + R9:4）                                                    | R8,R9        |
+| [`tests/test_review_r11_fix.py`](tests/test_review_r11_fix.py)                                         | 新規回帰テスト 3件                                                                     | R11          |
+| [`tests/test_code_review_goal_audit_2026_09_v2.py`](tests/test_code_review_goal_audit_2026_09_v2.py)   | 新規回帰テスト 12件（R12, R13, R14）                                                   | R12,R13,R14  |
+| [`tests/test_code_review_goal_audit_2026_09_v3.py`](tests/test_code_review_goal_audit_2026_09_v3.py)   | 新規回帰テスト 14件（R16, R17, R18, R19, R20, R21）                                    | R16-R21      |
+| [`tests/test_code_review_goal_audit_2026_09_v4.py`](tests/test_code_review_goal_audit_2026_09_v4.py)   | 新規回帰テスト 13件（R22, R23, R24, R25）                                              | R22-R25      |
+| [`routes/stocks/portfolio.py`](routes/stocks/portfolio.py)                                             | JP市場での `avg_fx_rate` 指定時のワーニングログ追加                                    | R26          |
+| [`schemas/stocks.py`](schemas/stocks.py)                                                               | `PortfolioUpdateRequest` の非US市場 `avg_fx_rate` 拒絶バリデーション                   | R26          |
+| [`utils/stock_payload.py`](utils/stock_payload.py)                                                     | `_extract_portfolio_fields` / `_resolve_stocks_for_response` で非US `avg_fx_rate` 除去 | R26          |
+| [`utils/storage.py`](utils/storage.py)                                                                 | `_normalize_jp_holding_keys` における `avg_fx_rate` サニタイズ                         | R26          |
+| [`tests/test_portfolio_avg_fx_rate_idx.py`](tests/test_portfolio_avg_fx_rate_idx.py)                   | テストモック修正 + JP市場 `avg_fx_rate` 回帰テスト追加                                 | R26          |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                                                       | `PortfolioUpdateRequest` 非US市場拒絶回帰テスト追加                                    | R26          |
+| [`schemas/stocks.py`](schemas/stocks.py)                                                               | ScreenerQueryRequest limit 上限拡張(500) + HeatmapQueryRequest 新設                    | R30          |
+| [`utils/validators.py`](utils/validators.py)                                                           | ScreenerFilterSchema limit(500) + HeatmapFilterSchema market("us"/"jp")                | R30          |
+| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                                                   | AIPortfolioDeleteRequest + AIPortfolioCopyToMyItem/Request 新設                        | R30          |
+| [`schemas/__init__.py`](schemas/__init__.py)                                                           | 新規スキーマのエクスポート公開                                                         | R30          |
+| [`routes/api_analysis.py`](routes/api_analysis.py)                                                     | api_analyze_chart_image のシンボル市場正規化 + バリデーション堅牢化                    | R31          |
+| [`static/js/screener.js`](static/js/screener.js)                                                       | テーブル行のロービングキーボード操作（Home/End）完全化                                 | R32          |
+| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                                               | ポートフォリオモードタブのロービングキーボード操作（Home/End）完全化                   | R32          |
+| [`static/js/ui.js`](static/js/ui.js)                                                                   | 銘柄詳細ドロワータブバーのロービングキーボード操作（Home/End）完全化                   | R32          |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                                                       | limit境界・HeatmapQueryRequest・AIポートフォリオ削除/複製テスト追加                    | R30          |
+| [`tests/test_code_review_goal_audit_2026_09_v6.py`](tests/test_code_review_goal_audit_2026_09_v6.py)   | 新規回帰テスト（R30:3件, R31:3件, R32:3件）                                            | R30,R31,R32  |
+| [`schemas/stocks.py`](schemas/stocks.py)                                                               | `MAX_STOCK_NAME_LENGTH`（200文字）を constants からインポート適用                      | R33          |
+| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                                                   | 銘柄名(200)・目標株価(10億)上限同期 + 重複/比率モデルバリデーション                    | R33          |
+| [`schemas/analysis.py`](schemas/analysis.py)                                                           | AI分析エンドポイント群（チャット/分析/ニュース/線描画/画像）リクエストスキーマ新設     | R34          |
+| [`schemas/__init__.py`](schemas/__init__.py)                                                           | 新規分析系スキーマのエクスポート公開                                                   | R34          |
+| [`static/js/screener.js`](static/js/screener.js)                                                       | 市場/プリセットボタングループのロービング `tabindex` + 上下矢印キーナビ                | R35          |
+| [`static/js/heatmap.js`](static/js/heatmap.js)                                                         | 市場/表示/サイズ/カメラボタングループのロービング `tabindex` + 上下矢印キーナビ        | R35          |
+| [`static/js/api.js`](static/js/api.js)                                                                 | SSEモードセレクターボタンの `tabindex` 属性動的更新                                    | R35          |
+| [`static/js/index_main.js`](static/js/index_main.js)                                                   | SSEモードボタングループの上下矢印キー操作 + `tabindex` 管理                            | R35          |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                                                       | R33（200文字上限・10億円上限・重複/比率超過）および R34 スキーマテスト追加             | R33,R34      |
+| [`tests/test_code_review_goal_audit_2026_09_v7.py`](tests/test_code_review_goal_audit_2026_09_v7.py)   | 新規回帰テスト 11件（R33:3件, R34:5件, R35:3件）                                       | R33,R34,R35  |
+| [`schemas/stocks.py`](schemas/stocks.py)                                                               | ScreenerQueryRequest 0.0 境界値受容（`ge=0.0` への緩和・同期）                         | R36          |
+| [`routes/stocks/quotes.py`](routes/stocks/quotes.py)                                                   | `api_indices` / `api_stocks` の `force` クエリ真偽値判定正規化                         | R37          |
+| [`static/js/index_main.js`](static/js/index_main.js)                                                   | 市場タブ（US/JP/IDX/PF）の 4方向矢印キー循環ナビゲーション追加                         | R38          |
+| [`static/js/ai_portfolio.js`](static/js/ai_portfolio.js)                                               | AIモード切替タブの上下矢印キー + プリセットピルのロービング `tabindex`                 | R38          |
+| [`static/js/ui.js`](static/js/ui.js)                                                                   | 銘柄詳細ドロワータブバーの上下矢印キーナビゲーション追加                               | R38          |
+| [`static/js/experimental/orbit-entry.js`](static/js/experimental/orbit-entry.js)                       | マーケット天文台 市場選択ボタンのロービング `tabindex` + 4方向矢印キー                 | R39          |
+| [`static/js/experimental/temporal-controller.js`](static/js/experimental/temporal-controller.js)       | マーケット天文台 タイムライン粒度ボタンのロービング `tabindex` + 4方向キー             | R39          |
+| [`tests/test_schemas.py`](tests/test_schemas.py)                                                       | ScreenerQueryRequest 0.0 境界受容のユニットテスト追加                                  | R36          |
+| [`tests/test_code_review_goal_audit_2026_09_v9.py`](tests/test_code_review_goal_audit_2026_09_v9.py)   | 新規包括回帰テスト 13件（R36, R37, R38, R39）                                          | R36-R39      |
+| [`services/ai_portfolio_service.py`](services/ai_portfolio_service.py)                                 | sanitize_ai_portfolio における銘柄重複除外（Deduplication）実装                        | R40          |
+| [`schemas/ai_portfolio.py`](schemas/ai_portfolio.py)                                                   | AIPortfolioCopyToMyItem/Request 境界値契約同期 + JPシンボル正規化一意性                | R41          |
+| [`utils/normalization.py`](utils/normalization.py)                                                     | is_valid_symbol の小文字・大文字一貫正規化（.upper()適用）                             | R42          |
+| [`templates/settings.html`](templates/settings.html)                                                   | 設定カテゴリタブ（role="tablist"）の初期 tabindex="0"/tabindex="-1"付与                | R43          |
+| [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py) | 新規包括回帰テスト 8件（R40, R41, R42, R43）                                           | R40-R43      |
 
 ---
 
@@ -786,34 +786,34 @@
 
 ## 6. 互換性・移行
 
-| 対応ID                   | 影響                             | 対応                                                                            |
-| ------------------------ | -------------------------------- | ------------------------------------------------------------------------------- |
-| R6（sanitize_cache_key） | インメモリキャッシュキー形式変更 | アプリ再起動後に既存キャッシュエントリは参照されなくなる（TTL短いため実害限定） |
-| R10（screener）          | `total` が小さくなる可能性       | フロントエンドは表示用途のみ。`totalFiltered` 追加で後方互換維持                |
-| R16（backoff max）       | レート制限除外時間が最大600秒に  | 過剰な除外によるサービス停止を防止。正常な回復を促進                            |
-| R19/R23（origin helper） | 関数名変更・再エクスポート       | `_is_allowed_shutdown_origin` を完全互換エイリアスとして維持                   |
-| R22（api_indices force） | `?force=true` が即時同期反映     | 既存パラメータ仕様との整合性回復。破壊的変更なし                                |
-| R24（Origin多層防御）    | 悪意ある外部Webからのプロービング遮断 | 同一オリジン（Originヘッダなし）および正規loopback Originは平常通過             |
-| R25（アクセシビリティ）  | スクリーンリーダー・キーボード対応 | 既存UIデザイン・操作に悪影響なくアクセシビリティ向上                            |
-| R26（非US avg_fx_rate 境界） | 非US市場（jp/idx）で avg_fx_rate を厳格排除 | スキーマ・永続化・APIレスポンスの境界で仕様（US市場限定）に統一。既存正常系に破壊的影響なし |
-| R27（スクリーナー境界・シンボル正規化） | min > max 逆転入力の拒絶 + 大文字正規化 | 仕様準拠（views.py と整合）。正常な入力には影響なし                            |
-| R28（AIポートフォリオ FXキャッシュ分離） | copy-to-my 反映時の非US銘柄 avg_fx_rate パージ | インメモリキャッシュの市場境界分離を厳格化。正常系に破壊的影響なし              |
-| R29（スクリーナー・SSEキーボードナビ） | ボタングループの矢印キー操作追加 | 既存のマウスクリック動作を維持しつつキーボード操作性を拡張                      |
-| R30（スキーマ・契約整合） | スクリーナー上限拡張(500)・ヒートマップ市場限定・AIポートフォリオスキーマ追加 | 既存ルートの許容範囲とスキーマ制約を完全同期。正常クエリの拒絶を解消 |
-| R31（チャート画像分析入力検証） | 日本株シンボルの自動正規化(.T) + 不正文字列拒絶 | 正常リクエスト（コードのみ/省略）は後方互換。不正入力のLLM到達を防御 |
-| R32（WAI-ARIAロービングキーボード完全化） | スクリーナー行・ポートフォリオタブ・ドロワータブのHome/Endキー対応 | 既存のクリック・矢印キー動作を完全維持しつつ操作性を拡張 |
-| R33（銘柄名・株価上限同期＆複製検証） | 101〜200文字銘柄名のスキーマ受容 + 重複/比率超過の厳格排除 | 定数（200文字/10億円）と同期。正常リクエストへの悪影響なし |
-| R34（AI分析リクエストスキーマ群新設） | /api/chat, /api/analyze-v2 等の Pydantic 型定義提供 | 既存API互換性を維持した追加定義。クライアント側変更不要 |
-| R35（WAI-ARIAロービングtabindex完全化） | ボタングループのTab移動が1回で通過、4方向矢印キーで全操作 | 既存のマウスクリック・Tab遷移に完全後方互換、アクセシビリティ大幅向上 |
-| R36（スクリーナー0.0境界受容） | min/max_price, market_cap, pe で 0.0 フィルタの受容 | ルート層実装と整合。既存正常クエリに完全後方互換                                |
-| R37（quotes force パラメータ正規化） | `?force=True`, `?force=1` 等でも同期トリガー | 大文字小文字や数値フラグに対応。破壊的影響なし                                  |
-| R38（市場タブ・AIモード・ドロワーWAI-ARIA） | 4方向矢印キーでのタブ循環とプリセットロービング `tabindex` | マウスクリック・Tab遷移に完全後方互換、アクセシビリティ向上                     |
-| R39（天文台ボタングループ WAI-ARIA） | 市場切替・粒度ボタングループのロービング `tabindex` + 4方向キー | マウスクリック動作に完全互換、キーボード操作性を新規提供                        |
-| R40（AIポートフォリオ重複除外） | 重複銘柄の自動フィルタリングと保有比率再調整 | ユーザー操作不能（400エラー）を解消。既存データ読み込み時にも安全に適用        |
-| R41（AIポートフォリオ複製スキーマ契約整合） | 0.0/負数拒絶および日本株正規化シンボルの一意性判定 | ルート層の契約と同期。正常入力への影響なし                                      |
-| R42（is_valid_symbol 大文字小文字一貫性） | 小文字シンボル（aapl, 7203.t等）の正当判定受容 | 大文字シンボル・危険文字拒絶は完全維持。フォールバックやクエリの不要拒絶を解消 |
-| R43（設定タブ初期 tabindex ARIA適合） | ページロード直後からの正しいTab順序保証 | 既存JS動作と完全整合。キーボード操作アクセシビリティ向上                        |
-| その他                   | 戻り値型・契約不変               | 後方互換性維持                                                                  |
+| 対応ID                                      | 影響                                                                          | 対応                                                                                        |
+| ------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| R6（sanitize_cache_key）                    | インメモリキャッシュキー形式変更                                              | アプリ再起動後に既存キャッシュエントリは参照されなくなる（TTL短いため実害限定）             |
+| R10（screener）                             | `total` が小さくなる可能性                                                    | フロントエンドは表示用途のみ。`totalFiltered` 追加で後方互換維持                            |
+| R16（backoff max）                          | レート制限除外時間が最大600秒に                                               | 過剰な除外によるサービス停止を防止。正常な回復を促進                                        |
+| R19/R23（origin helper）                    | 関数名変更・再エクスポート                                                    | `_is_allowed_shutdown_origin` を完全互換エイリアスとして維持                                |
+| R22（api_indices force）                    | `?force=true` が即時同期反映                                                  | 既存パラメータ仕様との整合性回復。破壊的変更なし                                            |
+| R24（Origin多層防御）                       | 悪意ある外部Webからのプロービング遮断                                         | 同一オリジン（Originヘッダなし）および正規loopback Originは平常通過                         |
+| R25（アクセシビリティ）                     | スクリーンリーダー・キーボード対応                                            | 既存UIデザイン・操作に悪影響なくアクセシビリティ向上                                        |
+| R26（非US avg_fx_rate 境界）                | 非US市場（jp/idx）で avg_fx_rate を厳格排除                                   | スキーマ・永続化・APIレスポンスの境界で仕様（US市場限定）に統一。既存正常系に破壊的影響なし |
+| R27（スクリーナー境界・シンボル正規化）     | min > max 逆転入力の拒絶 + 大文字正規化                                       | 仕様準拠（views.py と整合）。正常な入力には影響なし                                         |
+| R28（AIポートフォリオ FXキャッシュ分離）    | copy-to-my 反映時の非US銘柄 avg_fx_rate パージ                                | インメモリキャッシュの市場境界分離を厳格化。正常系に破壊的影響なし                          |
+| R29（スクリーナー・SSEキーボードナビ）      | ボタングループの矢印キー操作追加                                              | 既存のマウスクリック動作を維持しつつキーボード操作性を拡張                                  |
+| R30（スキーマ・契約整合）                   | スクリーナー上限拡張(500)・ヒートマップ市場限定・AIポートフォリオスキーマ追加 | 既存ルートの許容範囲とスキーマ制約を完全同期。正常クエリの拒絶を解消                        |
+| R31（チャート画像分析入力検証）             | 日本株シンボルの自動正規化(.T) + 不正文字列拒絶                               | 正常リクエスト（コードのみ/省略）は後方互換。不正入力のLLM到達を防御                        |
+| R32（WAI-ARIAロービングキーボード完全化）   | スクリーナー行・ポートフォリオタブ・ドロワータブのHome/Endキー対応            | 既存のクリック・矢印キー動作を完全維持しつつ操作性を拡張                                    |
+| R33（銘柄名・株価上限同期＆複製検証）       | 101〜200文字銘柄名のスキーマ受容 + 重複/比率超過の厳格排除                    | 定数（200文字/10億円）と同期。正常リクエストへの悪影響なし                                  |
+| R34（AI分析リクエストスキーマ群新設）       | /api/chat, /api/analyze-v2 等の Pydantic 型定義提供                           | 既存API互換性を維持した追加定義。クライアント側変更不要                                     |
+| R35（WAI-ARIAロービングtabindex完全化）     | ボタングループのTab移動が1回で通過、4方向矢印キーで全操作                     | 既存のマウスクリック・Tab遷移に完全後方互換、アクセシビリティ大幅向上                       |
+| R36（スクリーナー0.0境界受容）              | min/max_price, market_cap, pe で 0.0 フィルタの受容                           | ルート層実装と整合。既存正常クエリに完全後方互換                                            |
+| R37（quotes force パラメータ正規化）        | `?force=True`, `?force=1` 等でも同期トリガー                                  | 大文字小文字や数値フラグに対応。破壊的影響なし                                              |
+| R38（市場タブ・AIモード・ドロワーWAI-ARIA） | 4方向矢印キーでのタブ循環とプリセットロービング `tabindex`                    | マウスクリック・Tab遷移に完全後方互換、アクセシビリティ向上                                 |
+| R39（天文台ボタングループ WAI-ARIA）        | 市場切替・粒度ボタングループのロービング `tabindex` + 4方向キー               | マウスクリック動作に完全互換、キーボード操作性を新規提供                                    |
+| R40（AIポートフォリオ重複除外）             | 重複銘柄の自動フィルタリングと保有比率再調整                                  | ユーザー操作不能（400エラー）を解消。既存データ読み込み時にも安全に適用                     |
+| R41（AIポートフォリオ複製スキーマ契約整合） | 0.0/負数拒絶および日本株正規化シンボルの一意性判定                            | ルート層の契約と同期。正常入力への影響なし                                                  |
+| R42（is_valid_symbol 大文字小文字一貫性）   | 小文字シンボル（aapl, 7203.t等）の正当判定受容                                | 大文字シンボル・危険文字拒絶は完全維持。フォールバックやクエリの不要拒絶を解消              |
+| R43（設定タブ初期 tabindex ARIA適合）       | ページロード直後からの正しいTab順序保証                                       | 既存JS動作と完全整合。キーボード操作アクセシビリティ向上                                    |
+| その他                                      | 戻り値型・契約不変                                                            | 後方互換性維持                                                                              |
 
 ---
 
@@ -849,5 +849,3 @@
 - `git reset --hard`, `git clean -fd`, `git checkout -- .` 等の破壊的操作は未実行
 - commit / push / タグ / PR 作成は未実行
 - 余計な一時ファイルやキャッシュファイルは生成・残留なし
-
-

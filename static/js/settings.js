@@ -740,6 +740,16 @@ document.addEventListener("DOMContentLoaded", () => {
         container.querySelector('input[name="mistralModel"]');
       if (defaultRadio) defaultRadio.checked = true;
     }
+
+    // If the section is currently blacked out (OpenAI compatible mode), disable newly generated radios
+    const mistralSection = document.getElementById("mistral-model-section");
+    if (mistralSection && mistralSection.classList.contains("is-blacked-out")) {
+      container
+        .querySelectorAll('input[name="mistralModel"]')
+        .forEach((radio) => {
+          radio.disabled = true;
+        });
+    }
   }
 
   const modelGrid = document.getElementById("model-selection-grid");
@@ -748,6 +758,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (modelGrid && saveModelBtn) {
     saveModelBtn.addEventListener("click", async () => {
+      if (
+        saveModelBtn.disabled ||
+        document
+          .getElementById("mistral-model-section")
+          ?.classList.contains("is-blacked-out")
+      ) {
+        return;
+      }
       const selectedRadio = modelGrid.querySelector(
         'input[name="mistralModel"]:checked',
       );
@@ -880,8 +898,33 @@ document.addEventListener("DOMContentLoaded", () => {
   const openaiGroup = document.getElementById("openai-settings-group");
   const openaiBetaNotice = document.getElementById("openai-beta-notice");
 
+  function setMistralModelSectionBlackout(isBlackout) {
+    const section = document.getElementById("mistral-model-section");
+    const overlay = document.getElementById("mistral-model-blackout-overlay");
+    const saveBtn = document.getElementById("save-model-btn");
+    const grid = document.getElementById("model-selection-grid");
+
+    if (section) {
+      section.classList.toggle("is-blacked-out", isBlackout);
+      section.setAttribute("aria-disabled", String(isBlackout));
+    }
+    if (overlay) {
+      overlay.style.display = isBlackout ? "flex" : "none";
+      overlay.setAttribute("aria-hidden", String(!isBlackout));
+    }
+    if (saveBtn) {
+      saveBtn.disabled = isBlackout;
+    }
+    if (grid) {
+      grid.querySelectorAll('input[name="mistralModel"]').forEach((radio) => {
+        radio.disabled = isBlackout;
+      });
+    }
+  }
+
   function syncProviderUI(provider) {
-    if (provider === "openai_compatible") {
+    const isOpenAI = provider === "openai_compatible";
+    if (isOpenAI) {
       if (mistralGroup) mistralGroup.style.display = "none";
       if (openaiGroup) openaiGroup.style.display = "block";
       if (openaiBetaNotice) openaiBetaNotice.style.display = "block";
@@ -890,6 +933,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (openaiGroup) openaiGroup.style.display = "none";
       if (openaiBetaNotice) openaiBetaNotice.style.display = "none";
     }
+    setMistralModelSectionBlackout(isOpenAI);
   }
 
   function updateConnectionModeDisplay(data) {
@@ -962,6 +1006,16 @@ document.addEventListener("DOMContentLoaded", () => {
       syncProviderUI(e.target.value);
     });
   });
+
+  const goToSystemBtn = document.getElementById("go-to-system-settings-btn");
+  if (goToSystemBtn) {
+    goToSystemBtn.addEventListener("click", () => {
+      const systemTabBtn = document.getElementById("tab-btn-system");
+      if (systemTabBtn) {
+        systemTabBtn.click();
+      }
+    });
+  }
 
   // Presets handling
   const PRESET_MAP = {

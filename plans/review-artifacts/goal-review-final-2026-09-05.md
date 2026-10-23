@@ -19,16 +19,16 @@
 
 ## 回帰・全体検証
 
-| 種別 | コマンドまたは確認 | 結果 |
-| --- | --- | --- |
-| 全体テスト・coverage | `uv run --locked --group test python -m pytest tests/ -v -s -n auto --durations=10 --timeout=60 --timeout-method=thread --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=75` | **2,616 passed / 3 skipped、coverage 78.81%、成功** |
-| Python静的検証 | ruff、flake8、pylint、mypy、pyrefly、pyrefly（win32） | **すべて成功** |
-| フロントエンド静的検証 | `npm run typecheck`、`npm run lint`、`node scripts/verify_generated_frontend.mjs` | **すべて成功**。生成JavaScriptはTypeScript出力と一致 |
-| 監査 | `npm audit --audit-level=high`、bandit、pip-audit | **すべて成功** |
-| ビルド | `npm run build` | **成功** |
-| 起動smoke | `uv run --locked --group test python tests/startup_smoke_runner.py` | **成功** |
-| 今回の局所回帰 | `python -m pytest tests/test_experimental_orbit.py` | **10 passed、成功** |
-| 成果物・差分整合性 | `python -m json.tool .agent/goal.json`、`git diff --check`、`git status --short` | **すべて成功**。状態JSONは整形式で`completed`。既存のOrbit実装・CSS・テスト差分3件と今回の報告書以外に、意図しないコード変更はない |
+| 種別                   | コマンドまたは確認                                                                                                                                                                              | 結果                                                                                                                               |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 全体テスト・coverage   | `uv run --locked --group test python -m pytest tests/ -v -s -n auto --durations=10 --timeout=60 --timeout-method=thread --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=75` | **2,616 passed / 3 skipped、coverage 78.81%、成功**                                                                                |
+| Python静的検証         | ruff、flake8、pylint、mypy、pyrefly、pyrefly（win32）                                                                                                                                           | **すべて成功**                                                                                                                     |
+| フロントエンド静的検証 | `npm run typecheck`、`npm run lint`、`node scripts/verify_generated_frontend.mjs`                                                                                                               | **すべて成功**。生成JavaScriptはTypeScript出力と一致                                                                               |
+| 監査                   | `npm audit --audit-level=high`、bandit、pip-audit                                                                                                                                               | **すべて成功**                                                                                                                     |
+| ビルド                 | `npm run build`                                                                                                                                                                                 | **成功**                                                                                                                           |
+| 起動smoke              | `uv run --locked --group test python tests/startup_smoke_runner.py`                                                                                                                             | **成功**                                                                                                                           |
+| 今回の局所回帰         | `python -m pytest tests/test_experimental_orbit.py`                                                                                                                                             | **10 passed、成功**                                                                                                                |
+| 成果物・差分整合性     | `python -m json.tool .agent/goal.json`、`git diff --check`、`git status --short`                                                                                                                | **すべて成功**。状態JSONは整形式で`completed`。既存のOrbit実装・CSS・テスト差分3件と今回の報告書以外に、意図しないコード変更はない |
 
 ## 未検証・制約
 

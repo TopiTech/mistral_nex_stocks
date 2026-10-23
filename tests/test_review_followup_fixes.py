@@ -209,11 +209,11 @@ def test_ai_portfolio_copy_dynamically_resolves_usdjpy_rate(client, monkeypatch)
         "items": [{"symbol": "AAPL", "market": "us", "target_price": 200.0, "weight_pct": 100.0}]
     }
     with (
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-        patch("routes.api_stocks.save_user_stocks"),
-        patch("routes.api_stocks._sync_realtime_symbol"),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+        patch("utils.storage.save_user_stocks"),
+        patch("routes.stocks.common._sync_realtime_symbol"),
         patch("app_bg.announce_current_market_state"),
-        patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        patch("app_bg.schedule_sync_all_stocks_now"),
     ):
         res = client.post("/api/ai-portfolio/copy-to-my", json=payload)
     assert res.status_code == 200

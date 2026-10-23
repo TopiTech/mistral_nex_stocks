@@ -160,11 +160,11 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_idx = {}
 
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks") as save_user_stocks_mock,
-            patch("routes.api_stocks.invalidate_stock_caches"),
-            patch("routes.api_stocks.ensure_stock_placeholder_in_caches"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks") as save_user_stocks_mock,
+            patch("routes.stocks.ai_portfolio.invalidate_stock_caches"),
+            patch("routes.stocks.ai_portfolio.ensure_stock_placeholder_in_caches"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
             patch("app_bg._invalidate_sse_payload_cache"),
             patch("app_bg.announce_current_market_state"),
         ):
@@ -201,13 +201,13 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_idx = {}
 
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks.invalidate_stock_caches"),
-            patch("routes.api_stocks.ensure_stock_placeholder_in_caches"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
-            patch("routes.api_stocks._announce_watchlist_state"),
-            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.ai_portfolio.invalidate_stock_caches"),
+            patch("routes.stocks.ai_portfolio.ensure_stock_placeholder_in_caches"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
+            patch("routes.stocks.common._announce_watchlist_state"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
             patch("app_bg._invalidate_sse_payload_cache"),
             patch("app_bg.announce_current_market_state"),
         ):
@@ -233,9 +233,9 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_idx = {}
 
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch(
-                "routes.api_stocks.save_user_stocks",
+                "utils.storage.save_user_stocks",
                 side_effect=UserStocksPersistError("simulated write failure"),
             ),
         ):
@@ -254,7 +254,7 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_jp = {}
             app_state.market.user_idx = {}
 
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             response = self.client.post(
                 "/api/stocks/portfolio",
                 json={"symbol": "NVDA", "market": "jp", "shares": 1, "avg_price": 100.0},
@@ -271,7 +271,7 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_jp = {"INVALID": "Invalid Stock"}
             app_state.market.user_idx = {}
 
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             response = self.client.post(
                 "/api/stocks/portfolio",
                 json={"symbol": "INVALID", "market": "jp", "shares": 1, "avg_price": 100.0},

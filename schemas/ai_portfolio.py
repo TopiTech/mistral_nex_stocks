@@ -3,12 +3,22 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from constants import MAX_STOCK_NAME_LENGTH, PORTFOLIO_AVG_PRICE_MAX
-from utils.normalization import normalize_symbol_for_market
+from constants import (
+    AI_PORTFOLIO_MARKETS,
+    MAX_AI_PORTFOLIO_ITEMS,
+    MAX_STOCK_NAME_LENGTH,
+    PORTFOLIO_AVG_PRICE_MAX,
+)
+from utils.normalization import (
+    is_valid_symbol,
+    market_symbol_mismatch,
+    normalize_symbol_for_market,
+)
 
 
 class AIPortfolioItemSchema(BaseModel):
@@ -44,28 +54,70 @@ class AIPortfolioItemSchema(BaseModel):
         return v
 
 
+def _is_bool_like(value: Any) -> bool:
+    """Return True for bool and numpy-style bool scalars (route-exact check)."""
+    return isinstance(value, bool) or type(value).__name__ in ("bool_", "bool")
+
+
 class AIPortfolioGenerateRequest(BaseModel):
-    """Schema for /api/ai-portfolio/generate request."""
+    """Canonical contract for ``POST /api/ai-portfolio/generate``.
+
+    The single rule owner for the generate body; the route validates only
+    through this model (via ``route_helpers._parse_ai_generate_request``).
+    """
 
     theme: str = Field(..., min_length=1, max_length=120, description="Investment theme or focus")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identity(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("theme")
+        if raw is None:
+            return data
+        theme: str | None = raw.strip() if isinstance(raw, str) else None
+        if theme is None:
+            raise ValueError("theme_must_be_string")
+        return {**data, "theme": theme}
 
     @field_validator("theme")
     @classmethod
     def validate_theme_not_blank(cls, v: str) -> str:
-        s = v.strip()
-        if not s:
-            raise ValueError("Theme cannot be empty")
-        return s
+        if not v:
+            raise ValueError("field_required")
+        return v
 
 
 class AIPortfolioRebalanceRequest(BaseModel):
-    """Schema for /api/ai-portfolio/rebalance request."""
+    """Canonical contract for ``POST /api/ai-portfolio/rebalance``.
+
+    An absent theme falls back to ``"tech"``; a blank or over-long theme is
+    a malformed request, matching the running endpoint.
+    """
 
     theme: str = Field(default="tech", max_length=120, description="Investment theme to rebalance")
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identity(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("theme")
+        if raw is None:
+            return data
+        theme: str | None = raw.strip() if isinstance(raw, str) else None
+        if theme is None:
+            raise ValueError("theme_must_be_string")
+        return {**data, "theme": theme}
+
 
 class AIPortfolioSaveRequest(BaseModel):
-    """Schema for /api/ai-portfolio/save request."""
+    """Canonical contract for ``POST /api/ai-portfolio/save``.
+
+    Every body failure maps to the endpoint's single malformed envelope, so
+    the pre-check duplicate in the route is gone; this model is the owner.
+    """
 
     theme: str | None = Field(
         default=None, max_length=120, description="Portfolio theme key (optional at top-level)"
@@ -74,6 +126,17 @@ class AIPortfolioSaveRequest(BaseModel):
         default=None, max_length=120, description="Human-readable title (optional)"
     )
     portfolio: dict[str, Any] = Field(..., description="Portfolio data object")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identity(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("portfolio")
+        portfolio: dict[str, Any] | None = raw if isinstance(raw, dict) else None
+        if portfolio is None:
+            raise ValueError("invalid_portfolio")
+        return data
 
     @field_validator("theme")
     @classmethod
@@ -87,17 +150,29 @@ class AIPortfolioSaveRequest(BaseModel):
 
 
 class AIPortfolioDeleteRequest(BaseModel):
-    """Schema for DELETE /api/ai-portfolio/custom request."""
+    """Canonical contract for ``DELETE /api/ai-portfolio/custom``."""
 
     id: str = Field(..., min_length=1, max_length=256, description="Portfolio ID to delete")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identity(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw = data.get("id")
+        if raw is None:
+            return data
+        candidate: str | None = raw.strip() if isinstance(raw, str) else None
+        if candidate is None:
+            raise ValueError("id_must_be_string")
+        return {**data, "id": candidate}
 
     @field_validator("id")
     @classmethod
     def validate_id_not_blank(cls, v: str) -> str:
-        s = v.strip()
-        if not s:
-            raise ValueError("Portfolio ID cannot be empty")
-        return s
+        if not v:
+            raise ValueError("field_required")
+        return v
 
 
 class AIPortfolioCopyToMyItem(BaseModel):
@@ -136,14 +211,111 @@ class AIPortfolioCopyToMyItem(BaseModel):
 
 
 class AIPortfolioCopyToMyRequest(BaseModel):
-    """Schema for POST /api/ai-portfolio/copy-to-my request body."""
+    """Canonical contract for ``POST /api/ai-portfolio/copy-to-my``.
+
+    The single rule owner for the copy body. The ``mode="before"`` validator
+    below replays the endpoint's historic sequential checks verbatim for raw
+    JSON dicts (market coercion, JP ``.T`` qualification, per-item index
+    errors, duplicate and total-weight gates) and normalizes items to
+    ``{symbol, market, target_price, weight_pct}``; route-ignored free
+    fields (``name``, ``shares``) never cause rejection, exactly as the
+    running endpoint. Markers (``copy_*``) let ``route_helpers`` render the
+    byte-identical envelopes.
+
+    Programmatic construction from ``AIPortfolioCopyToMyItem`` objects keeps
+    the legacy field/after validation untouched (it never reaches the HTTP
+    route, which only receives JSON dicts), so directly-constructed
+    consumers see the exact historical messages.
+    """
 
     items: list[AIPortfolioCopyToMyItem] = Field(
-        ..., min_length=1, max_length=20, description="List of portfolio items to copy"
+        ...,
+        min_length=1,
+        max_length=MAX_AI_PORTFOLIO_ITEMS,
+        description="List of portfolio items to copy",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_and_validate_items(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        raw_items = data.get("items")
+        if isinstance(raw_items, list) and raw_items and all(
+            isinstance(entry, AIPortfolioCopyToMyItem) for entry in raw_items
+        ):
+            # Programmatic path: leave legacy field/after validation in charge.
+            return data
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValueError("copy_items_required")
+        if len(raw_items) > MAX_AI_PORTFOLIO_ITEMS:
+            raise ValueError("copy_too_many")
+        normalized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        total_weight = 0.0
+        for idx, raw in enumerate(raw_items):
+            if isinstance(raw, AIPortfolioCopyToMyItem):
+                raw = raw.model_dump()
+            item_dict: dict[str, Any] | None = raw if isinstance(raw, dict) else None
+            if item_dict is None:
+                raise ValueError(f"copy_item_not_object|{idx}")
+            raw = item_dict
+            market = str(raw.get("market") or "us").strip().lower()
+            symbol = normalize_symbol_for_market(raw.get("symbol"), market)
+            if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
+                raise ValueError(f"copy_bad_symbol_market|{idx}")
+            mismatch = market_symbol_mismatch(symbol, market)
+            if mismatch:
+                raise ValueError(f"copy_mismatch|{idx}|{mismatch}")
+            if (symbol, market) in seen:
+                # Keep the historical direct-construction wording (pinned by
+                # tests) and append the index for the route envelope mapper.
+                raise ValueError(
+                    f"Duplicate stock in items: {symbol} ({market}) (item {idx})"
+                )
+            seen.add((symbol, market))
+            target_raw = raw.get("target_price")
+            weight_raw = raw.get("weight_pct")
+            if _is_bool_like(target_raw) or _is_bool_like(weight_raw):
+                raise ValueError(f"copy_bool_numeric|{idx}")
+            try:
+                if target_raw is None or (
+                    isinstance(target_raw, str) and not target_raw.strip()
+                ):
+                    target_price = 100.0
+                else:
+                    target_price = float(target_raw)
+                weight_pct = float(weight_raw or 0.0)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError(f"copy_bad_numeric|{idx}") from None
+            if (
+                not math.isfinite(target_price)
+                or target_price <= 0
+                or target_price > PORTFOLIO_AVG_PRICE_MAX
+            ):
+                raise ValueError(f"copy_bad_target_range|{idx}")
+            if not 0.0 < weight_pct <= 100.0 or not math.isfinite(weight_pct):
+                raise ValueError(f"copy_bad_weight_range|{idx}")
+            total_weight += weight_pct
+            normalized.append(
+                {
+                    "symbol": symbol,
+                    "market": market,
+                    "target_price": target_price,
+                    "weight_pct": weight_pct,
+                }
+            )
+        if total_weight > 100.5:
+            raise ValueError(
+                f"Total weight_pct exceeds 100% (got {total_weight:.2f}%)"
+            )
+        return {**data, "items": normalized}
 
     @model_validator(mode="after")
     def validate_unique_symbols_and_total_weight(self) -> AIPortfolioCopyToMyRequest:
+        # Defense-in-depth: reachable only for data that passed the sequential
+        # gate above, so this is a no-op for route traffic and a guard for
+        # future edits. Messages stay compatible with direct construction.
         seen: set[tuple[str, str]] = set()
         total_weight: float = 0.0
         for item in self.items:

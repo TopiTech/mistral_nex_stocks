@@ -351,11 +351,11 @@ def test_add_ext_does_not_duplicate_legacy_numeric_jp_symbol():
         with (
             app.test_client() as client,
             patch(
-                "routes.api_stocks.get_or_create_extension_api_token",
+                "credential_manager.get_or_create_extension_api_token",
                 return_value="extension-test-token",
             ),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("utils.storage.save_user_stocks"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
             patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
         ):
             response = client.post(

@@ -346,7 +346,7 @@ class ReviewR1R2RegressionTestCase(unittest.TestCase):
                 app_state.market.user_jp = {"1234": "Legacy Tokyo"}
 
             with (
-                patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, "")),
+                patch("utils.networking.require_trusted_or_admin", return_value=(True, "")),
                 patch.object(
                     storage,
                     "_write_user_stocks_with_lock",

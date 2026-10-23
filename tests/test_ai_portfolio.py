@@ -513,11 +513,11 @@ def test_api_copy_to_my_rejects_too_many_items():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks", return_value=None),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=None),
-            patch("routes.api_stocks._announce_watchlist_state", return_value=None),
-            patch("routes.api_stocks._sync_realtime_symbol", return_value=None),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks", return_value=None),
+            patch("app_bg.schedule_sync_all_stocks_now", return_value=None),
+            patch("routes.stocks.common._announce_watchlist_state", return_value=None),
+            patch("routes.stocks.common._sync_realtime_symbol", return_value=None),
         ):
             client = app.test_client()
             with app_state.market.user_stocks_lock:
@@ -564,7 +564,7 @@ def test_api_copy_to_my_rejects_invalid_items_without_mutation():
     orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["WTF_CSRF_ENABLED"] = False
     try:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             client = app.test_client()
             with app_state.market.user_stocks_lock:
                 app_state.market.user_us = {"AAPL": "Apple"}
@@ -635,7 +635,7 @@ def test_api_copy_to_my_skips_existing_holdings():
     orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["WTF_CSRF_ENABLED"] = False
     try:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             client = app.test_client()
             with app_state.market.user_stocks_lock:
                 app_state.market.user_us = {
@@ -682,7 +682,7 @@ def test_api_copy_to_my_defaults_missing_target_price():
     orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["WTF_CSRF_ENABLED"] = False
     try:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             client = app.test_client()
             res = client.post(
                 "/api/ai-portfolio/copy-to-my",
@@ -708,7 +708,7 @@ def test_api_ai_portfolio_endpoints():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch("services.ai_portfolio_service.get_mistral_api_key", return_value=""),
         ):
             client = app.test_client()
@@ -761,8 +761,8 @@ def test_rebalance_rejects_malformed_json_without_calling_ai():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.generate_ai_portfolio_by_theme") as generate,
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme") as generate,
         ):
             response = app.test_client().post(
                 "/api/ai-portfolio/rebalance",
@@ -781,7 +781,7 @@ def test_copy_to_my_rejects_non_finite_prices_and_overallocated_weights():
     original_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["WTF_CSRF_ENABLED"] = False
     try:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             client = app.test_client()
             nan_response = client.post(
                 "/api/ai-portfolio/copy-to-my",
@@ -824,8 +824,8 @@ def test_api_ai_portfolio_get_requires_trusted_caller():
 
     client = app.test_client()
     with (
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(False, "missing token")),
-        patch("routes.api_stocks.load_saved_ai_portfolios") as load_saved,
+        patch("utils.networking.require_trusted_or_admin", return_value=(False, "missing token")),
+        patch("routes.stocks.ai_portfolio.load_saved_ai_portfolios") as load_saved,
     ):
         response = client.get("/api/ai-portfolio")
         assert response.status_code == 403
@@ -842,7 +842,7 @@ def test_api_ai_portfolio_get_remote_mode_requires_admin_token():
             os.environ,
             {"MNS_ALLOW_REMOTE_API": "1", "MNS_ADMIN_TOKEN": token},
         ),
-        patch("routes.api_stocks.load_saved_ai_portfolios", return_value=[]),
+        patch("routes.stocks.ai_portfolio.load_saved_ai_portfolios", return_value=[]),
     ):
         assert client.get("/api/ai-portfolio").status_code == 403
         authorized = client.get(
@@ -860,9 +860,9 @@ def test_api_save_returns_the_canonical_persisted_portfolio():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch(
-                "routes.api_stocks.save_custom_ai_portfolio", return_value=True
+                "routes.stocks.ai_portfolio.save_custom_ai_portfolio", return_value=True
             ) as save_portfolio,
         ):
             response = app.test_client().post(
@@ -900,10 +900,10 @@ def test_api_copy_to_my_triggers_realtime_and_market_sync():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks._sync_realtime_symbol") as mock_realtime_sync,
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.stocks.common._sync_realtime_symbol") as mock_realtime_sync,
             patch("app_bg.announce_current_market_state") as mock_announce,
-            patch("routes.api_stocks.schedule_sync_all_stocks_now") as mock_schedule_sync,
+            patch("app_bg.schedule_sync_all_stocks_now") as mock_schedule_sync,
         ):
             client = app.test_client()
             res = client.post(
@@ -946,11 +946,11 @@ def test_copy_ai_portfolio_us_shares_fx_conversion():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
             patch("app_bg.announce_current_market_state"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             client = app.test_client()
             app_state.market.last_usdjpy_rate = 150.0
@@ -997,11 +997,11 @@ def test_copy_ai_portfolio_us_stock_records_avg_fx_rate():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
             patch("app_bg.announce_current_market_state"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             client = app.test_client()
             app_state.market.last_usdjpy_rate = 152.5
@@ -1056,8 +1056,8 @@ def test_copy_ai_portfolio_rejects_position_below_supported_share_precision():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
         ):
             with app_state.market.user_stocks_lock:
                 app_state.market.user_jp.pop("EXPENSIVE.T", None)
@@ -1091,11 +1091,11 @@ def test_copy_ai_portfolio_floors_shares_without_exceeding_allocation():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
             patch("app_bg.announce_current_market_state"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             with app_state.market.user_stocks_lock:
                 app_state.market.user_jp.pop("ALLOC.T", None)
@@ -1133,11 +1133,11 @@ def test_copy_ai_portfolio_decimal_floor_never_rounds_up_at_float_boundary():
         raw_shares = 1.229999999995
         target_price = allocated / raw_shares
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
             patch("app_bg.announce_current_market_state"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             with app_state.market.user_stocks_lock:
                 app_state.market.user_jp.pop("FLOAT.T", None)
@@ -1186,11 +1186,11 @@ def test_copy_ai_portfolio_preserves_stale_fx_warning_across_jp_items(case):
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
             patch("app_bg.announce_current_market_state"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             app_state.market.last_usdjpy_rate = rate
             app_state.market.last_usdjpy_rate_ts = rate_timestamp
@@ -1235,11 +1235,11 @@ def test_copy_ai_portfolio_updates_sse_cache_immediately():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks._sync_realtime_symbol"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
             patch("app_bg.announce_current_market_state"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             client = app.test_client()
 
@@ -1297,7 +1297,7 @@ def test_copy_ai_portfolio_validates_max_price_and_shares_limits():
     orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["WTF_CSRF_ENABLED"] = False
     try:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             client = app.test_client()
 
             # 1. Target price exceeds PORTFOLIO_AVG_PRICE_MAX
@@ -1543,8 +1543,8 @@ def test_api_ai_portfolio_slow_fetch_returns_fetching_flag():
 
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.generate_ai_portfolio_by_theme", return_value={"id": "slow"}),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme", return_value={"id": "slow"}),
             patch("threading.Event.wait", return_value=False),
         ):
             with ai_portfolio_fetch_lock:
@@ -1721,11 +1721,11 @@ def test_copy_ai_portfolio_to_my_6_items_rounding_tolerance():
             {"symbol": "8035.T", "market": "jp", "weight_pct": 16.7, "target_price": 25000.0},
         ]
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks", return_value=None),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=None),
-            patch("routes.api_stocks._announce_watchlist_state", return_value=None),
-            patch("routes.api_stocks._sync_realtime_symbol", return_value=None),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks", return_value=None),
+            patch("app_bg.schedule_sync_all_stocks_now", return_value=None),
+            patch("routes.stocks.common._announce_watchlist_state", return_value=None),
+            patch("routes.stocks.common._sync_realtime_symbol", return_value=None),
         ):
             client = app.test_client()
             res = client.post("/api/ai-portfolio/copy-to-my", json={"items": items})
@@ -1749,12 +1749,12 @@ def test_copy_ai_portfolio_to_my_usd_jpy_rate_stale_warning():
             {"symbol": "NVDA", "market": "us", "weight_pct": 100.0, "target_price": 160.0},
         ]
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks", return_value=None),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=None),
-            patch("routes.api_stocks._announce_watchlist_state", return_value=None),
-            patch("routes.api_stocks._sync_realtime_symbol", return_value=None),
-            patch("routes.api_stocks.get_current_usdjpy_rate", return_value=(150.0, True)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks", return_value=None),
+            patch("app_bg.schedule_sync_all_stocks_now", return_value=None),
+            patch("routes.stocks.common._announce_watchlist_state", return_value=None),
+            patch("routes.stocks.common._sync_realtime_symbol", return_value=None),
+            patch("routes.stocks.ai_portfolio.get_current_usdjpy_rate", return_value=(150.0, True)),
         ):
             # Force stale rate condition
             app_state.market.last_usdjpy_rate = 150.0
@@ -1781,9 +1781,9 @@ def test_ai_portfolio_generate_queue_full_returns_503():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch(
-                "routes.api_stocks._submit_in_app_context",
+                "route_helpers._submit_in_app_context",
                 side_effect=queue.Full("Queue saturated"),
             ),
         ):
@@ -1812,9 +1812,9 @@ def test_ai_portfolio_rebalance_queue_full_returns_503():
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch(
-                "routes.api_stocks._submit_in_app_context",
+                "route_helpers._submit_in_app_context",
                 side_effect=queue.Full("Queue saturated"),
             ),
         ):

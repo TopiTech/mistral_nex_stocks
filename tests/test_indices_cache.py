@@ -116,7 +116,7 @@ class TestIndicesCachePersistence(unittest.TestCase):
             # Setup indices cache in disk
             app_state.payload_disk_cache.set("indices_cache", {"SP500": {"price": "5000.00"}})
 
-            with patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=True):
+            with patch("app_bg.schedule_sync_all_stocks_now", return_value=True):
                 response = self.client.post(
                     "/api/stocks/reset",
                     headers={"Origin": "http://localhost:5000"},

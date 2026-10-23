@@ -38,6 +38,10 @@ from utils.threading import DaemonThreadPoolExecutor
 logger = logging.getLogger(__name__)
 
 PTS_JOIN_TIMEOUT_SEC: float = 10.0
+# Worst case for one PTS symbol pass: primary (6s) + 3 fallbacks (5s each),
+# each a (connect, read) pair. stop() drains an in-flight fetch up to this
+# bound, then reports False explicitly instead of wedging restart().
+PTS_FETCH_DRAIN_TIMEOUT_SEC: float = 30.0
 
 
 class RealtimeMarketEngine:
@@ -77,6 +81,11 @@ class RealtimeMarketEngine:
         self._lifecycle_lock = threading.RLock()
         self.pts_thread: threading.Thread | None = None
         self._pts_epoch = 0
+        # Set when no PTS fetch is in flight. stop() drains on this so a
+        # worker blocked in a fallback HTTP chain is waited out (bounded)
+        # instead of surviving join() and wedging start()/restart().
+        self._pts_fetch_idle = threading.Event()
+        self._pts_fetch_idle.set()
         self._registration_tokens: dict[tuple[str, str], object] = {}
         self._engine_epoch = 0
 
@@ -550,9 +559,16 @@ class RealtimeMarketEngine:
                         > PTS_CACHE_STALE_SECONDS
                     )
                     if active or cached_payload is None or is_stale:
-                        payload = self._fetch_pts_with_fallback(
-                            sym, use_primary=sym in primary_active
-                        )
+                        fetch_tracker = self._pts_fetch_tracker()
+                        if fetch_tracker is not None:
+                            fetch_tracker.clear()
+                        try:
+                            payload = self._fetch_pts_with_fallback(
+                                sym, use_primary=sym in primary_active
+                            )
+                        finally:
+                            if fetch_tracker is not None:
+                                fetch_tracker.set()
                         if (
                             payload
                             and self.running
@@ -589,20 +605,28 @@ class RealtimeMarketEngine:
         """Stop and restart the engine producers (crash recovery)."""
         with self._lifecycle_lock:
             try:
-                self.stop()
+                stopped_cleanly = self.stop()
             except Exception as exc:
                 logger.warning("Realtime engine stop during restart failed: %s", exc)
+                stopped_cleanly = False
+            thread = self.pts_thread
             if (
-                self.pts_thread is not None
-                and self.pts_thread is not threading.current_thread()
-                and self.pts_thread.is_alive()
+                thread is not None
+                and thread is not threading.current_thread()
+                and thread.is_alive()
             ):
-                self.pts_thread.join(timeout=PTS_JOIN_TIMEOUT_SEC)
-            if self.pts_thread is not None and self.pts_thread.is_alive():
-                logger.warning(
-                    "Realtime engine restart deferred: previous PTS worker is still running"
-                )
-                return
+                if stopped_cleanly is False:
+                    logger.warning(
+                        "Realtime engine restart deferred: previous PTS worker"
+                        " is still running (stop reported an incomplete shutdown)"
+                    )
+                    return
+                thread.join(timeout=PTS_JOIN_TIMEOUT_SEC)
+                if thread.is_alive():
+                    logger.warning(
+                        "Realtime engine restart deferred: previous PTS worker is still running"
+                    )
+                    return
             time.sleep(1.0)
             try:
                 self.start()
@@ -628,18 +652,53 @@ class RealtimeMarketEngine:
                 )
                 self.pts_thread.start()
 
-    def stop(self) -> None:
+    def _pts_fetch_tracker(self) -> threading.Event | None:
+        """Fetch-idle event, or None for engines built without __init__.
+
+        Some tests construct the engine via ``object.__new__`` with only the
+        attributes the loop needs; tracking there is best-effort and the
+        drain is skipped (pre-existing behavior).
+        """
+        return getattr(self, "_pts_fetch_idle", None)
+
+    def _drain_pts_fetch(self) -> bool:
+        """Wait out an in-flight PTS fetch (bounded); True when idle.
+
+        Instant when no fetch is running, so stop() never burns join time
+        inside a hung fallback HTTP chain.
+        """
+        tracker = self._pts_fetch_tracker()
+        if tracker is None or tracker.is_set():
+            return True
+        tracker.wait(timeout=PTS_FETCH_DRAIN_TIMEOUT_SEC)
+        return tracker.is_set()
+
+    def stop(self) -> bool:
+        """Stop the engine producers.
+
+        Returns True when the PTS worker is fully stopped, False when it is
+        still alive after the bounded in-flight fetch drain (callers must
+        treat False as "restart deferred", never as stopped).
+        """
         with self._lifecycle_lock:
             with self.store_lock:
                 self._engine_epoch += 1
             self.running = False
             self._pts_epoch += 1
+            thread = self.pts_thread
             if (
-                self.pts_thread is not None
-                and self.pts_thread is not threading.current_thread()
-                and self.pts_thread.is_alive()
+                thread is not None
+                and thread is not threading.current_thread()
+                and thread.is_alive()
             ):
-                self.pts_thread.join(timeout=5.0)
+                tracker = self._pts_fetch_tracker()
+                if tracker is None or tracker.is_set():
+                    # Idle worker: sleeps abort promptly on running=False.
+                    thread.join(timeout=5.0)
+                if thread.is_alive() and not self._drain_pts_fetch():
+                    # Still fetching after the bounded drain: final grace
+                    # for a just-finished fetch, then report explicitly.
+                    thread.join(timeout=2.0)
             if self.pts_thread is not None and not self.pts_thread.is_alive():
                 self.pts_thread = None
             self.tv_client.stop()
@@ -652,3 +711,4 @@ class RealtimeMarketEngine:
                 self._bg_executor.shutdown(wait=False, cancel_futures=True)
             except Exception as exc:
                 logger.debug("Failed shutting down realtime bg executor: %s", exc)
+            return self.pts_thread is None

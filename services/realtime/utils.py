@@ -29,22 +29,28 @@ from utils.normalization import is_jp_stock_code
 logger = logging.getLogger(__name__)
 
 
-def _rt_sleep(seconds: float) -> None:
-    import sys
+def _get_facade_attr(name: str, fallback: Any) -> Any:
+    """Read a shared seam attribute from the ``services.realtime_engine`` facade.
 
-    rt_mod = sys.modules.get("services.realtime_engine")
-    if rt_mod is not None and hasattr(rt_mod, "time") and hasattr(rt_mod.time, "sleep"):
-        rt_mod.time.sleep(seconds)
-    else:
-        time.sleep(seconds)
+    The facade re-exports this package, so the import must stay lazy to avoid
+    a circular import. This replaces the previous ``sys.modules`` lookup with
+    identical lookup semantics via a regular import.
+    """
+    try:
+        from services import realtime_engine as facade
+    except ImportError:
+        return fallback
+    return facade.__dict__.get(name, fallback)
+
+
+def _rt_sleep(seconds: float) -> None:
+    # The facade's ``time`` attribute is the stdlib ``time`` module itself, so
+    # a direct call is identical (test patches on either namespace patch the
+    # same module object).
+    time.sleep(seconds)
 
 
 def _rt_time() -> float:
-    import sys
-
-    rt_mod = sys.modules.get("services.realtime_engine")
-    if rt_mod is not None and hasattr(rt_mod, "time") and hasattr(rt_mod.time, "time"):
-        return float(rt_mod.time.time())
     return time.time()
 
 
@@ -143,13 +149,9 @@ def _dedupe_pts_symbols(*symbol_collections: Iterable[str]) -> list[str]:
 
 def is_pts_session(now: datetime | None = None) -> bool:
     """Check whether the JP PTS (daytime or night after-hours) session is active."""
-    import sys
-
-    rt_mod = sys.modules.get("services.realtime_engine")
-    if rt_mod is not None and "is_pts_session" in rt_mod.__dict__:
-        target = rt_mod.__dict__["is_pts_session"]
-        if target is not is_pts_session:
-            return bool(target(now) if now is not None else target())
+    target = _get_facade_attr("is_pts_session", is_pts_session)
+    if target is not is_pts_session:
+        return bool(target(now) if now is not None else target())
 
     if now is None:
         now = datetime.now(JST)
@@ -203,13 +205,9 @@ def _scraper_market_state() -> Any | None:
 
 def _is_scraper_blocked() -> bool:
     """True while the web-scraper global block cooldown is active."""
-    import sys
-
-    rt_mod = sys.modules.get("services.realtime_engine")
-    if rt_mod is not None and "_is_scraper_blocked" in rt_mod.__dict__:
-        target = rt_mod.__dict__["_is_scraper_blocked"]
-        if target is not _is_scraper_blocked:
-            return bool(target())
+    target = _get_facade_attr("_is_scraper_blocked", _is_scraper_blocked)
+    if target is not _is_scraper_blocked:
+        return bool(target())
 
     market = _scraper_market_state()
     if market is None or not hasattr(market, "is_scraper_blocked"):
@@ -234,13 +232,9 @@ def _mark_scraper_blocked_from_status(
 
 def _is_yf_rate_limited() -> bool:
     """True while yfinance is inside a rate-limit cooldown."""
-    import sys
-
-    rt_mod = sys.modules.get("services.realtime_engine")
-    if rt_mod is not None and "_is_yf_rate_limited" in rt_mod.__dict__:
-        target = rt_mod.__dict__["_is_yf_rate_limited"]
-        if target is not _is_yf_rate_limited:
-            return bool(target())
+    target = _get_facade_attr("_is_yf_rate_limited", _is_yf_rate_limited)
+    if target is not _is_yf_rate_limited:
+        return bool(target())
 
     try:
         from app_state import app_state

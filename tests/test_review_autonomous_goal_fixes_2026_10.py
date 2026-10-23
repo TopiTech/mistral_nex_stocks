@@ -139,7 +139,7 @@ def test_ai_portfolio_request_id_correlation(client, caplog):
     }
 
     with (
-        patch("routes.api_stocks.generate_ai_portfolio_by_theme", return_value=mock_res),
+        patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme", return_value=mock_res),
         caplog.at_level(logging.INFO),
     ):
         resp = client.post(

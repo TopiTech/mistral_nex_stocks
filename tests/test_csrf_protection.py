@@ -66,7 +66,7 @@ class CSRFProtectionTestCase(unittest.TestCase):
 
     def test_cross_site_costly_get_is_rejected_before_scheduling_work(self):
         """A hostile page cannot force loopback market refreshes through GET."""
-        with patch("routes.api_stocks.schedule_sync_all_stocks_now") as schedule:
+        with patch("app_bg.schedule_sync_all_stocks_now") as schedule:
             response = self.client.get(
                 "/api/stocks?force=true",
                 headers={

@@ -115,7 +115,7 @@ class TestCodeReviewAuditV4Regression(unittest.TestCase):
             "jp": [],
         }
 
-        with patch("routes.api_stocks._resolve_stocks_for_response", return_value=stocks_mock):
+        with patch("utils.stock_payload._resolve_stocks_for_response", return_value=stocks_mock):
             # min_pe=10, max_pe=20 should match FWD-ONLY (15.0)
             res = client.get("/api/screener?market=us&min_pe=10&max_pe=20")
             self.assertEqual(res.status_code, 200)
@@ -167,7 +167,7 @@ class TestCodeReviewAuditV4Regression(unittest.TestCase):
             "jp": [],
         }
 
-        with patch("routes.api_stocks._resolve_stocks_for_response", return_value=stocks_mock):
+        with patch("utils.stock_payload._resolve_stocks_for_response", return_value=stocks_mock):
             # Sort ascending: A-FWD (15.0) -> B-TRL (25.0) -> C-STD (35.0)
             res_asc = client.get("/api/screener?market=us&sort_by=pe&sort_order=asc")
             self.assertEqual(res_asc.status_code, 200)

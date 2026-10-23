@@ -14,7 +14,12 @@ import uuid
 from typing import Any
 
 from config_store import APP_DATA_DIR, config_update_lock
-from constants import AI_PORTFOLIO_MARKETS, MAX_STOCK_NAME_LENGTH, PORTFOLIO_AVG_PRICE_MAX
+from constants import (
+    AI_PORTFOLIO_MARKETS,
+    MAX_AI_PORTFOLIO_ITEMS,
+    MAX_STOCK_NAME_LENGTH,
+    PORTFOLIO_AVG_PRICE_MAX,
+)
 from credential_manager import (
     get_langsearch_api_key,
     get_mistral_api_key,
@@ -41,15 +46,17 @@ VIRTUAL_INITIAL_CAPITAL_JPY = 10_000_000.0
 # Maximum number of saved custom portfolios kept in the JSON database.
 MAX_SAVED_AI_PORTFOLIOS = 20
 
+# Re-exported from constants (single source); _MAX_ITEMS keeps the private
+# alias used for generation-time truncation below.
+_MAX_ITEMS = MAX_AI_PORTFOLIO_ITEMS
+
 # Length caps for persisted free-text fields.
 _MAX_TEXT_LEN = 500
 _MAX_RATIONALE_LEN = 500
 _MAX_ID_LEN = 64
-_MAX_ITEMS = 20
-
 # Public alias so consumers (e.g. routes/api_stocks.py) can enforce the same
 # item cap without importing a private (underscore-prefixed) symbol.
-MAX_AI_PORTFOLIO_ITEMS = _MAX_ITEMS
+# (Value lives in constants; see _MAX_ITEMS above.)
 
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
 

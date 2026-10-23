@@ -357,27 +357,27 @@ def test_ai_portfolio_rebalance_and_cache_invalidation():
         }
 
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, None)),
             patch(
                 "services.ai_portfolio_service.generate_ai_portfolio_by_theme",
                 return_value=sample_portfolio,
             ),
             patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme", return_value=sample_portfolio
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme", return_value=sample_portfolio
             ),
             patch(
                 "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 return_value=sample_portfolio,
             ),
             patch("services.ai_portfolio_service.save_custom_ai_portfolio", return_value=True),
-            patch("routes.api_stocks.save_custom_ai_portfolio", return_value=True),
+            patch("routes.stocks.ai_portfolio.save_custom_ai_portfolio", return_value=True),
             patch("routes.stocks.ai_portfolio.save_custom_ai_portfolio", return_value=True),
             patch("services.ai_portfolio_service.delete_custom_ai_portfolio", return_value=True),
-            patch("routes.api_stocks.delete_custom_ai_portfolio", return_value=True),
+            patch("routes.stocks.ai_portfolio.delete_custom_ai_portfolio", return_value=True),
             patch("routes.stocks.ai_portfolio.delete_custom_ai_portfolio", return_value=True),
             patch("route_helpers._submit_in_app_context", lambda executor, fn, app=None: fn()),
-            patch("routes.api_stocks._submit_in_app_context", lambda executor, fn, app=None: fn()),
+            patch("route_helpers._submit_in_app_context", lambda executor, fn, app=None: fn()),
         ):
             client = app.test_client()
 

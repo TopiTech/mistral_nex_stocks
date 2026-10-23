@@ -283,7 +283,7 @@ class TestR3PortfolioMarketValidation:
                     "avg_fx_rate": 150.0,
                 }
             ]
-        with patch("routes.api_stocks.save_user_stocks", return_value=None):
+        with patch("utils.storage.save_user_stocks", return_value=None):
             resp = client.post(
                 "/api/stocks/portfolio",
                 headers={"Origin": "http://localhost:5000"},
@@ -322,7 +322,7 @@ class TestR3PortfolioMarketValidation:
             }
             app_state.market.user_us = {}
             app_state.market.user_idx = {}
-        with patch("routes.api_stocks.save_user_stocks", return_value=None):
+        with patch("utils.storage.save_user_stocks", return_value=None):
             resp = client.post(
                 "/api/stocks/portfolio",
                 headers={"Origin": "http://localhost:5000"},
@@ -350,7 +350,7 @@ class TestR3PortfolioMarketValidation:
             app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 5, "avg_price": 100}}
             app_state.market.user_jp = {}
             app_state.market.user_idx = {}
-        with patch("routes.api_stocks.save_user_stocks", return_value=None):
+        with patch("utils.storage.save_user_stocks", return_value=None):
             resp = client.post(
                 "/api/stocks/portfolio",
                 headers={"Origin": "http://localhost:5000"},
@@ -365,7 +365,7 @@ class TestR3PortfolioMarketValidation:
             app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 5, "avg_price": 100}}
             app_state.market.user_jp = {}
             app_state.market.user_idx = {}
-        with patch("routes.api_stocks.save_user_stocks", return_value=None):
+        with patch("utils.storage.save_user_stocks", return_value=None):
             resp = client.post(
                 "/api/stocks/portfolio",
                 headers={"Origin": "http://localhost:5000"},
@@ -390,7 +390,7 @@ class TestR3PortfolioMarketValidation:
             app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 1, "avg_price": 10}}
             app_state.market.user_jp = {}
             app_state.market.user_idx = {}
-        with patch("routes.api_stocks.save_user_stocks", return_value=None):
+        with patch("utils.storage.save_user_stocks", return_value=None):
             resp = client.post(
                 "/api/stocks/portfolio",
                 headers={"Origin": "http://localhost:5000"},
@@ -858,7 +858,8 @@ class TestCodeReviewGoalFixes:
 
     def test_be02_cleanup_on_exit_no_redundant_call(self):
         """Verify app.py _cleanup_on_exit does not call yf_session_manager.close_all directly."""
-        app_src = Path("app.py").read_text(encoding="utf-8")
+        # Implementation lives in app_factory/early.py since the U9-b split.
+        app_src = Path("app_factory/early.py").read_text(encoding="utf-8")
         # Ensure yf_session_manager.close_all() is only in shutdown_executors, not directly in _cleanup_on_exit
         cleanup_def = app_src.split("def _cleanup_on_exit():")[1].split("atexit.register")[0]
         assert "yf_session_manager.close_all()" not in cleanup_def

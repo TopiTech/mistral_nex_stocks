@@ -72,7 +72,7 @@ def test_api_analyze_v2_rejects_negative_price(client):
 
         # Non-negative price 0.0 (valid in schema, should pass price validation)
         with (
-            patch("routes.api_analysis.is_valid_symbol", return_value=True),
+            patch("schemas.analysis.is_valid_symbol", return_value=True),
             patch("routes.api_analysis.fetch_stock", return_value={"price": 0.0, "chart_data": []}),
             patch("routes.api_analysis.collect_symbol_research_context", return_value=""),
             patch("routes.api_analysis.get_stock_info_cached", return_value={}),
@@ -118,16 +118,16 @@ def test_api_add_stock_ext_releases_user_stocks_lock_before_save(test_app):
             patch("utils.networking._is_loopback_ip", return_value=True),
             patch("utils.networking.is_allowed_trusted_origin", return_value=True),
             patch(
-                "routes.api_stocks.get_or_create_extension_api_token",
+                "credential_manager.get_or_create_extension_api_token",
                 return_value="test-token-ext-12345",
             ),
-            patch("routes.api_stocks.save_user_stocks", side_effect=mock_save),
+            patch("utils.storage.save_user_stocks", side_effect=mock_save),
             patch("routes.stocks.views.save_user_stocks", side_effect=mock_save),
             patch("routes.stocks.views.invalidate_stock_caches"),
             patch("routes.stocks.views.ensure_stock_placeholder_in_caches"),
-            patch("routes.stocks.views._announce_watchlist_state"),
-            patch("routes.stocks.views._sync_realtime_symbol"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("routes.stocks.common._announce_watchlist_state"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             client = test_app.test_client()
             res = client.post(

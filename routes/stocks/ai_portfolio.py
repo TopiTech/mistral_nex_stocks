@@ -17,24 +17,23 @@ from cachetools import TTLCache
 from flask import Blueprint, current_app, g, jsonify, request, session
 
 from app_state import app_state
-from constants import (
-    AI_PORTFOLIO_MARKETS,
-    PORTFOLIO_AVG_PRICE_MAX,
-    PORTFOLIO_SHARES_MAX,
-)
+from constants import PORTFOLIO_SHARES_MAX
 from error_codes import ErrorCode
 from route_helpers import (
+    _parse_ai_copy_to_my_request,
+    _parse_ai_delete_request,
+    _parse_ai_generate_request,
+    _parse_ai_rebalance_request,
+    _parse_ai_save_request,
     _stock_display_name,
     ensure_stock_placeholder_in_caches,
     extract_api_key,
     invalidate_stock_caches,
     rate_limit,
 )
+from routes.stocks import common as _common
 from routes.stocks.common import (
-    _announce_watchlist_state,
-    _get_api_stocks_attr,
     _stored_symbol_aliases,
-    _sync_realtime_symbol,
     _watchlist_capacity_error,
     _watchlist_has_capacity,
     require_trusted_or_admin,
@@ -43,7 +42,6 @@ from routes.stocks.common import (
 )
 from services.ai_portfolio_service import (
     DEFAULT_PRESET_CONFIGS,
-    MAX_AI_PORTFOLIO_ITEMS,
     VIRTUAL_INITIAL_CAPITAL_JPY,
     PortfolioStorageError,
     delete_custom_ai_portfolio,
@@ -51,11 +49,6 @@ from services.ai_portfolio_service import (
     load_saved_ai_portfolios,
     sanitize_ai_portfolio,
     save_custom_ai_portfolio,
-)
-from utils.normalization import (
-    is_valid_symbol,
-    market_symbol_mismatch,
-    normalize_symbol_for_market,
 )
 from utils.stock_payload import (
     _get_stock_container,
@@ -71,113 +64,8 @@ ai_portfolio_bp = Blueprint("ai_portfolio", __name__)
 
 import httpx
 import requests
-from pydantic import ValidationError
 
-from schemas.ai_portfolio import (
-    AIPortfolioDeleteRequest,
-    AIPortfolioGenerateRequest,
-    AIPortfolioRebalanceRequest,
-    AIPortfolioSaveRequest,
-)
 from services.ai_service import ProviderAPIError
-
-
-def _parse_ai_generate_request(data: dict) -> tuple[str | None, tuple[Any, int] | None]:
-    raw_theme = data.get("theme")
-    if raw_theme is None:
-        return None, error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
-        )
-    if not isinstance(raw_theme, str):
-        return None, error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
-            status_code=400,
-        )
-    try:
-        req_obj = AIPortfolioGenerateRequest.model_validate(data)
-        return req_obj.theme, None
-    except ValidationError as exc:
-        err = exc.errors()[0]
-        err_type = str(err.get("type", ""))
-        if err_type == "string_too_long":
-            return None, error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "themeは120文字以内で指定してください"},
-                status_code=400,
-            )
-        return None, error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
-        )
-
-
-def _parse_ai_rebalance_request(data: dict) -> tuple[str | None, tuple[Any, int] | None]:
-    raw_theme = data.get("theme")
-    if raw_theme is not None and not isinstance(raw_theme, str):
-        return None, error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
-            status_code=400,
-        )
-    try:
-        req_obj = AIPortfolioRebalanceRequest.model_validate(data)
-        theme = req_obj.theme.strip() if req_obj.theme else ""
-        return (theme if theme else "tech"), None
-    except ValidationError:
-        return None, error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "テーマは120文字以内で入力してください"},
-            status_code=400,
-        )
-
-
-def _parse_ai_delete_request(data: dict) -> tuple[str | None, tuple[Any, int] | None]:
-    raw_id = data.get("id")
-    if raw_id is None:
-        return None, error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
-        )
-    if not isinstance(raw_id, str):
-        return None, error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "idは文字列で指定してください", "fields": ["id"]},
-            status_code=400,
-        )
-    try:
-        req_obj = AIPortfolioDeleteRequest.model_validate(data)
-        return req_obj.id.strip(), None
-    except ValidationError as exc:
-        err = exc.errors()[0]
-        err_type = str(err.get("type", ""))
-        if err_type == "string_too_long":
-            return None, error_response(
-                ErrorCode.MALFORMED_INPUT,
-                details={"reason": "IDは256文字以内で指定してください"},
-                status_code=400,
-            )
-        return None, error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
-        )
-
-
-def _parse_ai_save_request(
-    data: dict,
-) -> tuple[AIPortfolioSaveRequest | None, tuple[Any, int] | None]:
-    portfolio = data.get("portfolio")
-    if not isinstance(portfolio, dict):
-        return None, error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "無効なポートフォリオデータです"},
-            status_code=400,
-        )
-    try:
-        return AIPortfolioSaveRequest.model_validate(data), None
-    except ValidationError:
-        return None, error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "無効なポートフォリオデータです"},
-            status_code=400,
-        )
 
 
 class FetchJob(TypedDict, total=False):
@@ -364,10 +252,7 @@ def api_generate_ai_portfolio() -> Any:
         def _run_ai_portfolio_job() -> None:
             current_app.logger.info("Starting background AI portfolio generation job id=%s theme=%s", req_id, theme)
             try:
-                gen_fn = _get_api_stocks_attr(
-                    "generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme
-                )
-                res = gen_fn(theme, api_key=api_key)
+                res = generate_ai_portfolio_by_theme(theme, api_key=api_key)
                 result_holder["result"] = res
                 result_holder["step"] = "done"
                 result_holder["message"] = "AIポートフォリオの生成が完了しました"
@@ -392,10 +277,7 @@ def api_generate_ai_portfolio() -> Any:
         try:
             import route_helpers
 
-            submit_fn = _get_api_stocks_attr(
-                "_submit_in_app_context", route_helpers._submit_in_app_context
-            )
-            submit_fn(app_state.execution.executor, _run_ai_portfolio_job)
+            route_helpers._submit_in_app_context(app_state.execution.executor, _run_ai_portfolio_job)
         except queue.Full as exc:
             current_app.logger.warning(
                 "AI portfolio job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
@@ -498,10 +380,7 @@ def api_rebalance_ai_portfolio() -> Any:
         def _run_ai_rebalance_job() -> None:
             current_app.logger.info("Starting background AI portfolio rebalance job id=%s theme=%s", req_id, theme)
             try:
-                gen_fn = _get_api_stocks_attr(
-                    "generate_ai_portfolio_by_theme", generate_ai_portfolio_by_theme
-                )
-                res = gen_fn(theme, force_rebalance=True, api_key=api_key)
+                res = generate_ai_portfolio_by_theme(theme, force_rebalance=True, api_key=api_key)
                 result_holder["result"] = res
                 result_holder["step"] = "done"
                 result_holder["message"] = "リバランスが完了しました"
@@ -532,10 +411,7 @@ def api_rebalance_ai_portfolio() -> Any:
         try:
             import route_helpers
 
-            submit_fn = _get_api_stocks_attr(
-                "_submit_in_app_context", route_helpers._submit_in_app_context
-            )
-            submit_fn(app_state.execution.executor, _run_ai_rebalance_job)
+            route_helpers._submit_in_app_context(app_state.execution.executor, _run_ai_rebalance_job)
         except queue.Full as exc:
             current_app.logger.warning(
                 "AI rebalance job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
@@ -622,8 +498,7 @@ def api_save_ai_portfolio() -> Any:
             status_code=400,
         )
 
-    save_fn = _get_api_stocks_attr("save_custom_ai_portfolio", save_custom_ai_portfolio)
-    success = save_fn(canonical_portfolio)
+    success = save_custom_ai_portfolio(canonical_portfolio)
     if not success:
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
@@ -668,7 +543,7 @@ def api_delete_ai_portfolio() -> Any:
             ErrorCode.MALFORMED_INPUT, details={"reason": "idが無効です"}, status_code=400
         )
 
-    delete_fn = _get_api_stocks_attr("delete_custom_ai_portfolio", delete_custom_ai_portfolio)
+
     # Resolve the theme BEFORE deletion so the generate-result cache can be
     # invalidated for both the id-keyed and theme-keyed entries; after deletion
     # the theme would no longer be recoverable and a stale generate cache
@@ -683,7 +558,7 @@ def api_delete_ai_portfolio() -> Any:
                 break
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Failed to resolve theme before AI portfolio delete: %s", exc)
-    success = delete_fn(portfolio_id)
+    success = delete_custom_ai_portfolio(portfolio_id)
     if not success:
         return error_response(
             ErrorCode.NOT_FOUND,
@@ -718,105 +593,20 @@ def api_copy_ai_portfolio_to_my() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    items = data.get("items")
-    if not isinstance(items, list) or not items:
+    parsed_copy, copy_error = _parse_ai_copy_to_my_request(data)
+    if copy_error is not None:
+        return copy_error
+    if parsed_copy is None:
         return error_response(
-            ErrorCode.MALFORMED_INPUT, details={"reason": "itemsリストが必要です"}, status_code=400
-        )
-    if len(items) > MAX_AI_PORTFOLIO_ITEMS:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": f"items は最大 {MAX_AI_PORTFOLIO_ITEMS} 件まで指定できます"},
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "無効なポートフォリオデータです"},
             status_code=400,
         )
 
     parsed_items: list[tuple[str, str, float, float]] = []
-    raw_validated_items: list[tuple[str, str, float, float]] = []
-    seen_symbols: set[tuple[str, str]] = set()
-    total_weight_pct = 0.0
+    raw_validated_items: list[tuple[str, str, float, float]] = parsed_copy
+    total_weight_pct = sum(weight for _, _, _, weight in raw_validated_items)
     stale_warning: str | None = None
-    for idx, item in enumerate(items):
-        if not isinstance(item, dict):
-            return error_response(
-                ErrorCode.MALFORMED_INPUT,
-                details={"reason": f"items[{idx}] が無効です"},
-                status_code=400,
-            )
-        market = str(item.get("market") or "us").strip().lower()
-        symbol = normalize_symbol_for_market(item.get("symbol"), market)
-        if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"items[{idx}] のシンボルまたは市場が無効です"},
-                status_code=400,
-            )
-        mismatch = market_symbol_mismatch(symbol, market)
-        if mismatch:
-            return error_response(
-                ErrorCode.INVALID_MARKET,
-                details={"reason": f"items[{idx}]: {mismatch}"},
-                status_code=400,
-            )
-        if (symbol, market) in seen_symbols:
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"items[{idx}] の銘柄が重複しています: {symbol} ({market})"},
-                status_code=400,
-            )
-        seen_symbols.add((symbol, market))
-        target_raw = item.get("target_price")
-        weight_raw = item.get("weight_pct")
-        if (
-            isinstance(target_raw, bool)
-            or type(target_raw).__name__ in ("bool_", "bool")
-            or isinstance(weight_raw, bool)
-            or type(weight_raw).__name__ in ("bool_", "bool")
-        ):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"items[{idx}] の数値が無効です（真偽値は不可）"},
-                status_code=400,
-            )
-        try:
-            if target_raw is None or str(target_raw).strip() == "":
-                target_price = 100.0
-            else:
-                target_price = float(target_raw)
-            weight_pct = float(weight_raw or 0.0)
-        except (TypeError, ValueError):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"items[{idx}] の数値が無効です"},
-                status_code=400,
-            )
-        if (
-            not math.isfinite(target_price)
-            or not math.isfinite(weight_pct)
-            or target_price <= 0
-            or target_price > PORTFOLIO_AVG_PRICE_MAX
-        ):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": f"items[{idx}] の target_price は 0 より大きく {PORTFOLIO_AVG_PRICE_MAX:,.0f} 以下の値が必要です"
-                },
-                status_code=400,
-            )
-        if not (0.0 < weight_pct <= 100.0):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"items[{idx}] の weight_pct は 0〜100 の範囲が必要です"},
-                status_code=400,
-            )
-        total_weight_pct += weight_pct
-        raw_validated_items.append((symbol, market, target_price, weight_pct))
-
-    if total_weight_pct > 100.5:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "items の weight_pct 合計は100以下である必要があります"},
-            status_code=400,
-        )
 
     has_us_items = any(m == "us" for _, m, _, _ in raw_validated_items)
     resolved_usdjpy_rate = 150.0
@@ -974,9 +764,9 @@ def api_copy_ai_portfolio_to_my() -> Any:
             )
 
         for sym, mkt, _, _, _ in added_symbols:
-            _sync_realtime_symbol(sym, mkt, register=True)
+            _common._sync_realtime_symbol(sym, mkt, register=True)
 
-        _announce_watchlist_state()
+        _common._announce_watchlist_state()
         schedule_sync_all_stocks_now()
 
     message = f"{added_count} 銘柄をマイポートフォリオに反映しました"

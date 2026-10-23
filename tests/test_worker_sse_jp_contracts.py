@@ -173,11 +173,11 @@ def test_screener_normalizes_bare_jp_query_before_enrichment(client):
         return factory()
 
     with (
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, "")),
-        patch("routes.api_stocks._resolve_stocks_for_response", return_value={"us": [], "jp": []}),
-        patch("routes.api_stocks.build_popular_symbol_items", return_value=[]),
-        patch("routes.api_stocks.get_cached", side_effect=_immediate_cache),
-        patch("routes.api_stocks.build_screener_enrichment", side_effect=_enrich),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, "")),
+        patch("utils.stock_payload._resolve_stocks_for_response", return_value={"us": [], "jp": []}),
+        patch("services.market_data_service.build_popular_symbol_items", return_value=[]),
+        patch("utils.caching.get_cached", side_effect=_immediate_cache),
+        patch("services.market_data_service.build_screener_enrichment", side_effect=_enrich),
     ):
         response = client.get("/api/screener?market=all&q=7203")
 
@@ -189,11 +189,11 @@ def test_screener_normalizes_bare_jp_query_before_enrichment(client):
 
 def test_ai_copy_normalizes_bare_jp_symbol_and_avoids_legacy_duplicate(client):
     with (
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, "")),
-        patch("routes.api_stocks.save_user_stocks"),
-        patch("routes.api_stocks._sync_realtime_symbol"),
-        patch("routes.api_stocks._announce_watchlist_state"),
-        patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, "")),
+        patch("utils.storage.save_user_stocks"),
+        patch("routes.stocks.common._sync_realtime_symbol"),
+        patch("routes.stocks.common._announce_watchlist_state"),
+        patch("app_bg.schedule_sync_all_stocks_now"),
     ):
         response = client.post(
             "/api/ai-portfolio/copy-to-my",
@@ -209,7 +209,7 @@ def test_ai_copy_normalizes_bare_jp_symbol_and_avoids_legacy_duplicate(client):
     assert "7203.T" in app_state.market.user_jp
     assert "7203" not in app_state.market.user_jp
 
-    with patch("routes.api_stocks.save_user_stocks"):
+    with patch("utils.storage.save_user_stocks"):
         # Simulate an un-restarted legacy process: canonical add must not create
         # a second entry beside the old bare numeric spelling.
         app_state.market.user_jp = {"7203": "Toyota"}
@@ -246,9 +246,9 @@ def test_jp_delete_removes_both_legacy_aliases_from_persisted_state(
         "7203.T": {"name": "canonical", "shares": 2, "avg_price": 2000},
     }
     with (
-        patch("routes.api_stocks._sync_realtime_symbol"),
-        patch("routes.api_stocks._announce_watchlist_state"),
-        patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+        patch("routes.stocks.common._sync_realtime_symbol"),
+        patch("routes.stocks.common._announce_watchlist_state"),
+        patch("app_bg.schedule_sync_all_stocks_now"),
     ):
         response = client.post(
             "/api/stocks/delete",
@@ -266,7 +266,7 @@ def test_jp_alias_delete_restores_every_key_when_persistence_fails(client):
     app_state.market.user_jp = {"7203": "legacy", "7203.T": "canonical"}
 
     with patch(
-        "routes.api_stocks.save_user_stocks",
+        "utils.storage.save_user_stocks",
         side_effect=storage.UserStocksPersistError("disk full"),
     ):
         response = client.post(

@@ -7,7 +7,6 @@ import hashlib
 import logging
 import math
 import queue
-import secrets
 import time
 from typing import Any
 
@@ -20,22 +19,22 @@ from constants import (
     POPULAR_JP,
     POPULAR_US,
 )
-from credential_manager import get_or_create_extension_api_token
+from credential_manager import require_extension_token
 from error_codes import ErrorCode
 from route_helpers import (
-    _parse_stock_request,
+    _parse_stock_add_ext_request,
+    _parse_stock_add_request,
+    _parse_stock_delete_request,
     _stock_display_name,
     ensure_stock_placeholder_in_caches,
     invalidate_stock_caches,
     rate_limit,
     remove_stock_from_caches,
 )
+from routes.stocks import common as _common
 from routes.stocks.common import (
-    _announce_watchlist_state,
     _fetch_heatmap_cached,
-    _get_api_stocks_attr,
     _stored_symbol_aliases,
-    _sync_realtime_symbol,
     _watchlist_capacity_error,
     _watchlist_has_capacity,
     build_popular_symbol_items_dispatch,
@@ -65,6 +64,7 @@ from utils.stock_payload import (
     _get_stock_container,
     _stock_is_default_or_user,
     error_response,
+    ok_response,
 )
 from utils.storage import UserStocksPersistError
 from utils.text_utils import _parse_json_request
@@ -257,8 +257,8 @@ def api_screener() -> Any:
     all_stocks = build_screener_base_rows_dispatch(stocks_data, market_filter)
     seen_symbols = {item["symbol"] for item in all_stocks}
 
-    pop_us = _get_api_stocks_attr("POPULAR_US", POPULAR_US)
-    pop_jp = _get_api_stocks_attr("POPULAR_JP", POPULAR_JP)
+    pop_us = POPULAR_US
+    pop_jp = POPULAR_JP
     pop_sources = []
     if market_filter in ("all", "us"):
         pop_sources.append(("us", pop_us))
@@ -281,6 +281,10 @@ def api_screener() -> Any:
         else:
             q_symbol = None
 
+    # D-04: symbols the enrichment attempted but produced no row for
+    # (per-symbol failure inside build_screener_enrichment). Reported
+    # additively; a cache-fetch in progress is not a failure.
+    enrichment_missing: list[str] = []
     if pop_unseen_items:
         _enrich_symbols = ",".join(sorted({sym for sym, _n, _m in pop_unseen_items}))
         enrich_key = (
@@ -298,6 +302,10 @@ def api_screener() -> Any:
         )
         if enriched is CACHE_FETCHING or not isinstance(enriched, dict):
             enriched = {}
+        else:
+            enrichment_missing = [
+                sym for sym, _fallback_name, _mkt in pop_unseen_items if sym not in enriched
+            ]
         for sym, _fallback_name, _mkt in pop_unseen_items:
             row = enriched.get(sym)
             if row is not None:
@@ -388,6 +396,7 @@ def api_screener() -> Any:
             "total": min(len(filtered), limit_val),
             "totalFiltered": len(filtered),
             "stocks": filtered[:limit_val],
+            "missing": enrichment_missing,
         }
     )
 
@@ -411,7 +420,7 @@ def api_add_stock() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    parsed, error = _parse_stock_request(data, require_name=True, default_market="")
+    parsed, error = _parse_stock_add_request(data)
     if error:
         return error
     if parsed is None:
@@ -456,10 +465,10 @@ def api_add_stock() -> Any:
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 
-    _announce_watchlist_state()
-    _sync_realtime_symbol(symbol, market, register=True)
+    _common._announce_watchlist_state()
+    _common._sync_realtime_symbol(symbol, market, register=True)
     schedule_sync_all_stocks_now()
-    return jsonify({"success": True, "ok": True})
+    return ok_response()
 
 
 @views_bp.route("/api/stocks/delete", methods=["POST", "DELETE"])
@@ -481,7 +490,7 @@ def api_delete_stock() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    parsed, error = _parse_stock_request(data, default_market="")
+    parsed, error = _parse_stock_delete_request(data)
     if error:
         return error
     if parsed is None:
@@ -520,11 +529,11 @@ def api_delete_stock() -> Any:
         remove_stock_from_caches(stored_symbol, market)
 
     for stored_symbol in storage_aliases:
-        _sync_realtime_symbol(stored_symbol, market, register=False)
+        _common._sync_realtime_symbol(stored_symbol, market, register=False)
 
-    _announce_watchlist_state()
+    _common._announce_watchlist_state()
     schedule_sync_all_stocks_now()
-    return jsonify({"success": True, "ok": True})
+    return ok_response()
 
 
 @views_bp.route("/api/stocks/add_ext", methods=["POST", "OPTIONS"])
@@ -532,7 +541,7 @@ def api_delete_stock() -> Any:
 def api_add_stock_ext() -> Any:
     """拡張機能用銘柄追加APIエンドポイント"""
     if request.method == "OPTIONS":
-        return jsonify({"ok": True})
+        return ok_response()
 
     from utils.env_helpers import _is_remote_api_enabled
 
@@ -588,18 +597,8 @@ def api_add_stock_ext() -> Any:
     # may create and persist a master key/token on first use; an untrusted
     # local caller must not be able to trigger that state change merely by
     # probing this CSRF-exempt endpoint.
-    auth_header = request.headers.get("Authorization")
-    get_token_fn = _get_api_stocks_attr(
-        "get_or_create_extension_api_token", get_or_create_extension_api_token
-    )
-    expected_token = get_token_fn()
-
-    is_valid_token = False
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.removeprefix("Bearer ").strip()
-        is_valid_token = secrets.compare_digest(token, expected_token)
-
-    if not is_valid_token:
+    token_ok, token_reason = require_extension_token(request)
+    if not token_ok:
         current_app.logger.warning(
             "api_add_stock_ext: security rejection id=%s remote=%s",
             getattr(g, "request_id", "-"),
@@ -607,7 +606,7 @@ def api_add_stock_ext() -> Any:
         )
         return error_response(
             ErrorCode.UNSAFE_INPUT,
-            details={"reason": "invalid or missing extension token"},
+            details={"reason": token_reason},
             status_code=403,
         )
 
@@ -618,7 +617,7 @@ def api_add_stock_ext() -> Any:
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    parsed, error = _parse_stock_request(data, require_name=False)
+    parsed, error = _parse_stock_add_ext_request(data)
     if error:
         return error
     if parsed is None:
@@ -642,14 +641,13 @@ def api_add_stock_ext() -> Any:
         if _stock_is_default_or_user(symbol, market) or any(
             alias in container for alias in _stored_symbol_aliases(symbol, market)
         ):
-            return jsonify({"ok": True, "message": f"{symbol} already exists in {market}"})
+            return ok_response({"message": f"{symbol} already exists in {market}"})
         if not _watchlist_has_capacity(market):
             return _watchlist_capacity_error(market)
         container[symbol] = name
 
     try:
-        save_fn = _get_api_stocks_attr("save_user_stocks", save_user_stocks)
-        save_fn()
+        save_user_stocks()
     except UserStocksPersistError as exc:
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
@@ -664,11 +662,10 @@ def api_add_stock_ext() -> Any:
     invalidate_stock_caches(symbol)
     ensure_stock_placeholder_in_caches(symbol, name, market)
 
-    _announce_watchlist_state()
-    _sync_realtime_symbol(symbol, market, register=True)
-    sync_fn = _get_api_stocks_attr("schedule_sync_all_stocks_now", schedule_sync_all_stocks_now)
-    sync_fn()
-    return jsonify({"ok": True, "message": f"Added {symbol} to {market}"})
+    _common._announce_watchlist_state()
+    _common._sync_realtime_symbol(symbol, market, register=True)
+    schedule_sync_all_stocks_now()
+    return ok_response({"message": f"Added {symbol} to {market}"})
 
 
 @views_bp.route("/api/stocks/reset", methods=["POST"])
@@ -716,17 +713,17 @@ def api_reset_stocks() -> Any:
         ("idx", previous_idx),
     ):
         for symbol in previous:
-            _sync_realtime_symbol(symbol, market, register=False)
+            _common._sync_realtime_symbol(symbol, market, register=False)
     try:
         app_state.payload_disk_cache.delete("indices_cache")
     except Exception as exc:
         current_app.logger.debug("Failed to delete indices_cache from disk cache: %s", exc)
     clear_cache_prefix("stocks")
-    _announce_watchlist_state()
+    _common._announce_watchlist_state()
     schedule_sync_all_stocks_now()
     # "ok" keeps the unified success envelope; "success" is retained for the
     # existing frontend/settings.js and test consumers.
-    return jsonify({"ok": True, "success": True})
+    return ok_response()
 
 
 @views_bp.route("/api/heatmap")

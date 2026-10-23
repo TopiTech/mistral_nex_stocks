@@ -31,7 +31,7 @@ class ResetStocksTests(unittest.TestCase):
                 app_state.market.target_indices_cache = {"SP500": {"price": 1}}
 
             with patch(
-                "routes.api_stocks.schedule_sync_all_stocks_now", return_value=True
+                "app_bg.schedule_sync_all_stocks_now", return_value=True
             ) as mocked_schedule:
                 response = self.client.post(
                     "/api/stocks/reset",

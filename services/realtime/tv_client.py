@@ -15,6 +15,7 @@ from typing import Any
 
 from services.realtime.utils import (
     TickerPayload,
+    _get_facade_attr,
     _interruptible_sleep,
     websocket,
 )
@@ -23,12 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get_rt_attr(name: str, fallback: Any) -> Any:
-    import sys
-
-    rt_mod = sys.modules.get("services.realtime_engine")
-    if rt_mod is not None and name in rt_mod.__dict__:
-        return rt_mod.__dict__[name]
-    return fallback
+    return _get_facade_attr(name, fallback)
 
 
 def _get_logger() -> Any:
@@ -299,17 +295,13 @@ class TradingViewWSClient:
         logger.info("TradingView WS closed (status=%s msg=%s)", close_status_code, close_msg)
 
     def _run_ws(self, epoch: int) -> None:
-        import sys
-
         backoff = 1.0
         worker_thread = threading.current_thread()
         try:
             while self._is_worker_current(epoch):
                 from app_state import app_state
 
-                ws_mod = getattr(
-                    sys.modules.get("services.realtime_engine"), "websocket", websocket
-                )
+                ws_mod = _get_facade_attr("websocket", websocket)
                 if ws_mod is None:
                     logger.info("websocket-client not available. TV WS worker sleeping...")
                     sleep_fn = _get_rt_attr("_interruptible_sleep", _interruptible_sleep)

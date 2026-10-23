@@ -129,7 +129,7 @@ class TestCodeReviewAuditV5(unittest.TestCase):
 
         with (
             patch("routes.stocks.ai_portfolio.save_user_stocks", return_value=None),
-            patch("routes.stocks.ai_portfolio._announce_watchlist_state"),
+            patch("routes.stocks.common._announce_watchlist_state"),
             patch("routes.stocks.ai_portfolio.schedule_sync_all_stocks_now"),
         ):
             resp = client.post(

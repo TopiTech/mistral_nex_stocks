@@ -110,12 +110,12 @@ def test_r3_generate_result_not_shared_across_browser_sessions():
     portfolio_a = {"id": theme, "version": "A", "items": []}
 
     with app.test_client() as client:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             # Session A generates and caches.
             with client.session_transaction() as sess:
                 sess["mns_analysis_conversation"] = "scope_r3_session_a_123"
             with patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 return_value=portfolio_a,
             ):
                 res_a = client.post("/api/ai-portfolio/generate", json={"theme": theme})
@@ -126,7 +126,7 @@ def test_r3_generate_result_not_shared_across_browser_sessions():
             with client.session_transaction() as sess:
                 sess["mns_analysis_conversation"] = "scope_r3_session_b_456"
             with patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 return_value={"id": theme, "version": "B", "items": []},
             ) as mock_gen_b:
                 res_b = client.post("/api/ai-portfolio/generate", json={"theme": theme})
@@ -143,11 +143,11 @@ def test_r3_same_session_still_hits_cache_within_ttl():
     theme = "r3_same_theme"
 
     with app.test_client() as client:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             with client.session_transaction() as sess:
                 sess["mns_analysis_conversation"] = "scope_r3_same_session_01"
             with patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 return_value={"id": theme, "version": 1, "items": []},
             ) as mock_gen:
                 res1 = client.post("/api/ai-portfolio/generate", json={"theme": theme})
@@ -173,12 +173,12 @@ def test_r3_rebalance_cache_scoped_per_session():
         )
 
     with app.test_client() as client:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             # Session B polls: must run its own rebalance instead of consuming A's entry.
             with client.session_transaction() as sess:
                 sess["mns_analysis_conversation"] = "scope_r3_rebal_b_65432109"
             with patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 return_value={"id": theme, "status": "rebalanced-B", "items": []},
             ) as mock_gen_b:
                 res_b = client.post("/api/ai-portfolio/rebalance", json={"theme": theme})

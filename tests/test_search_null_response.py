@@ -28,7 +28,7 @@ class SearchNullResponseTests(unittest.TestCase):
 
     def test_search_returns_dict_when_cache_misses_with_none(self):
         # Simulate get_cached returning None (genuine absence).
-        with patch("routes.api_stocks.get_cached", return_value=None):
+        with patch("routes.stocks.quotes.get_cached", return_value=None):
             response = self.client.get(
                 "/api/search?q=NVDA",
                 headers={"Origin": "http://localhost:5000"},
@@ -44,7 +44,7 @@ class SearchNullResponseTests(unittest.TestCase):
         # empty result dict instead of serializing the sentinel object.
         from utils.caching import CACHE_FETCHING
 
-        with patch("routes.api_stocks.get_cached", return_value=CACHE_FETCHING):
+        with patch("routes.stocks.quotes.get_cached", return_value=CACHE_FETCHING):
             response = self.client.get(
                 "/api/search?q=NVDA",
                 headers={"Origin": "http://localhost:5000"},
@@ -57,7 +57,7 @@ class SearchNullResponseTests(unittest.TestCase):
 
     def test_search_returns_results_on_success(self):
         fake = {"results": [{"symbol": "NVDA", "name": "NVIDIA"}]}
-        with patch("routes.api_stocks.get_cached", return_value=fake):
+        with patch("routes.stocks.quotes.get_cached", return_value=fake):
             response = self.client.get(
                 "/api/search?q=NVDA",
                 headers={"Origin": "http://localhost:5000"},

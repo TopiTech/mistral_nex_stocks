@@ -208,9 +208,18 @@ class TestBackupUmaskTypoFixed:
 
         import config_store
 
-        src = pathlib.Path(config_store.__file__).read_text(encoding="utf-8")
-        assert "os.umask(0o177)" not in src
-        assert "os.umask(0o077)" in src
+        # Implementation lives in config_store.py (shim) + config/*.py;
+        # the umask property must hold everywhere config files are written.
+        sources = [pathlib.Path(config_store.__file__).read_text(encoding="utf-8")]
+        for mod in ("io", "atomic_write", "corruption"):
+            sources.append(
+                (
+                    pathlib.Path(config_store.__file__).parent / "config" / f"{mod}.py"
+                ).read_text(encoding="utf-8")
+            )
+        for src in sources:
+            assert "os.umask(0o177)" not in src
+        assert any("os.umask(0o077)" in src for src in sources)
 
 
 class TestDirectoryFsyncWindowsCompatibility:
@@ -224,13 +233,25 @@ class TestDirectoryFsyncWindowsCompatibility:
             root / "utils" / "disk_cache.py",
             root / "utils" / "storage.py",
             root / "config_store.py",
+            root / "config" / "io.py",
+            root / "config" / "atomic_write.py",
         ]
+        # Files holding directory-fsync logic must use the safe getattr form.
+        # config_store.py (state + re-export shim since the U9 split) and
+        # config/io.py hold no O_DIRECTORY logic; they must only be free of
+        # bare references.
+        getattr_required = {
+            root / "utils" / "disk_cache.py",
+            root / "utils" / "storage.py",
+            root / "config" / "atomic_write.py",
+        }
         for f in checked_files:
             content = f.read_text(encoding="utf-8")
             # Should not reference bare `os.O_DIRECTORY` without getattr
             direct_refs = re.findall(r"os\.open\([^)]*os\.O_DIRECTORY[^)]*\)", content)
             assert not direct_refs, f"Direct os.O_DIRECTORY reference found in {f}: {direct_refs}"
-            assert 'getattr(os, "O_DIRECTORY", None)' in content
+            if f in getattr_required:
+                assert 'getattr(os, "O_DIRECTORY", None)' in content
 
 
 class TestBanditConfigExcludesNodeModules:

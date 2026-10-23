@@ -799,3 +799,23 @@ def get_or_create_extension_api_token() -> str:
             config_store.save_config(cfg)
 
         return secret
+
+
+def require_extension_token(request_obj: Any) -> tuple[bool, str]:
+    """Validate the browser-extension Bearer token (constant-time compare).
+
+    The extension credential is separate from ``MNS_ADMIN_TOKEN``: it is
+    provisioned per-installation via :func:`get_or_create_extension_api_token`
+    and presented as ``Authorization: Bearer <token>``. Separated from the
+    admin-token predicates so the two credentials cannot be confused.
+
+    Returns:
+        (True, "") on success, else (False, reason).
+    """
+    auth_header = request_obj.headers.get("Authorization")
+    expected_token = get_or_create_extension_api_token()
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.removeprefix("Bearer ").strip()
+        if secrets.compare_digest(token, expected_token):
+            return True, ""
+    return False, "invalid or missing extension token"

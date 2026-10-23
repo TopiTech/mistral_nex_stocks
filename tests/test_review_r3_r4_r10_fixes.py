@@ -306,11 +306,11 @@ class TestR10ScreenerTotalConsistency:
             many = [self._make_payload(f"STK{i:03d}", float(i)) for i in range(200)]
             with (
                 patch(
-                    "routes.api_stocks._resolve_stocks_for_response",
+                    "utils.stock_payload._resolve_stocks_for_response",
                     return_value={"us": many, "jp": []},
                 ),
                 # Isolate from POPULAR_US / query enrichment rows.
-                patch("routes.api_stocks.build_popular_symbol_items", return_value=[]),
+                patch("services.market_data_service.build_popular_symbol_items", return_value=[]),
             ):
                 resp = client.get("/api/screener?market=us")
                 assert resp.status_code == 200
@@ -328,10 +328,10 @@ class TestR10ScreenerTotalConsistency:
             few = [self._make_payload(f"STK{i:03d}", float(i)) for i in range(5)]
             with (
                 patch(
-                    "routes.api_stocks._resolve_stocks_for_response",
+                    "utils.stock_payload._resolve_stocks_for_response",
                     return_value={"us": few, "jp": []},
                 ),
-                patch("routes.api_stocks.build_popular_symbol_items", return_value=[]),
+                patch("services.market_data_service.build_popular_symbol_items", return_value=[]),
             ):
                 resp = client.get("/api/screener?market=us")
                 assert resp.status_code == 200

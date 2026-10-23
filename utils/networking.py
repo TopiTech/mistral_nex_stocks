@@ -204,6 +204,28 @@ def mask_sensitive_url(url: str) -> str:
     return f"{path}?{'&'.join(pairs)}"
 
 
+def get_configured_admin_token() -> str:
+    """Return the configured ``MNS_ADMIN_TOKEN`` (stripped), or ``""`` when unset."""
+    return os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+
+
+def check_admin_token(presented: str | None) -> bool:
+    """Constant-time check of a presented admin-token value.
+
+    Single primitive for every ``MNS_ADMIN_TOKEN`` comparison (request gates,
+    the cross-site carve-out, rate-limit fingerprinting). Returns False when
+    no token is configured or nothing usable was presented; never raises on
+    non-matching input.
+    """
+    configured = get_configured_admin_token()
+    if not presented or not configured:
+        return False
+    try:
+        return secrets.compare_digest(presented, configured)
+    except Exception:
+        return False
+
+
 def require_trusted_or_admin(req, require_origin=True):
     """Gate for state-changing / costly endpoints in ALL deployment modes.
 
@@ -256,7 +278,7 @@ def require_trusted_or_admin(req, require_origin=True):
         return True, ""
 
     provided = req.headers.get("X-MNS-Admin-Token", "").strip()
-    if not provided or not secrets.compare_digest(provided, admin_token):
+    if not check_admin_token(provided):
         return False, "invalid admin token"
     return True, ""
 
@@ -420,7 +442,7 @@ def require_sse_auth(req, require_origin: bool = False):
 
     provided_header = (req.headers.get("X-MNS-Admin-Token") or "").strip()
     if provided_header:
-        if not secrets.compare_digest(provided_header, admin_token):
+        if not check_admin_token(provided_header):
             return False, "invalid admin token"
         return True, ""
 

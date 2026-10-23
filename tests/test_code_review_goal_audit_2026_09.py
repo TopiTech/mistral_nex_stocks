@@ -113,7 +113,9 @@ class TestSyncWorkerImports(unittest.TestCase):
 
     def test_sync_worker_imports_heatmap_from_common(self):
         """bg.sync_worker must import _fetch_heatmap_cached from routes.stocks.common."""
-        sync_worker_path = pathlib.Path("bg/sync_worker.py")
+        # E-01: sync_all_stocks_now lives in bg/sync/control.py; the facade
+        # bg/sync_worker.py only re-exports it.
+        sync_worker_path = pathlib.Path("bg/sync/control.py")
         content = sync_worker_path.read_text(encoding="utf-8")
         self.assertIn("from routes.stocks.common import _fetch_heatmap_cached", content)
         self.assertNotIn("from routes.api_stocks import _fetch_heatmap_cached", content)

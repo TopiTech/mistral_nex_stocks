@@ -49,9 +49,9 @@ class InputValidationTests(unittest.TestCase):
         from app import app
 
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch("routes.api_stocks.app_state.market.is_circuit_open") as circuit_open,
-            patch("routes.api_stocks._submit_async_history_fetch") as submit_fetch,
+            patch("routes.stocks.quotes._submit_async_history_fetch") as submit_fetch,
         ):
             response = app.test_client().get(
                 "/api/stock-history?symbol=../../etc/passwd&market=us&period=3mo"

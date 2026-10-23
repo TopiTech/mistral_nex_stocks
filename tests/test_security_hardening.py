@@ -144,7 +144,7 @@ class PortfolioStripTestCase(unittest.TestCase):
             return {"us": [], "jp": [], "idx": []}
 
         with patch(
-            "routes.api_stocks._resolve_stocks_for_response",
+            "utils.stock_payload._resolve_stocks_for_response",
             side_effect=resolve_without_outer_cache_lock,
         ):
             response = client.post(
@@ -335,7 +335,7 @@ class UserStocksRouteRollbackTestCase(unittest.TestCase):
             app_state.market.user_idx = self._saved_idx
 
     @patch(
-        "routes.api_stocks.save_user_stocks",
+        "utils.storage.save_user_stocks",
         side_effect=storage.UserStocksPersistError("disk full"),
     )
     def test_delete_restores_memory_when_persist_fails(self, _mock_save):
@@ -348,7 +348,7 @@ class UserStocksRouteRollbackTestCase(unittest.TestCase):
         self.assertEqual(app_state.market.user_us, {"AAPL": "Apple"})
 
     @patch(
-        "routes.api_stocks.save_user_stocks",
+        "utils.storage.save_user_stocks",
         side_effect=storage.UserStocksPersistError("disk full"),
     )
     def test_add_does_not_mutate_memory_when_persist_fails(self, _mock_save):
@@ -522,7 +522,7 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
 
-    @patch("routes.api_stocks.save_user_stocks", return_value=None)
+    @patch("utils.storage.save_user_stocks", return_value=None)
     def test_mutations_require_admin_token_in_remote_mode(self, _mock_save):
         env = {
             "MNS_ALLOW_REMOTE_API": "1",
@@ -585,7 +585,7 @@ class StockMutationAdminTokenRemoteGuardTestCase(unittest.TestCase):
                     f"{path} did not accept correct admin token: {allowed.get_data(as_text=True)}",
                 )
 
-    @patch("routes.api_stocks.save_user_stocks", return_value=None)
+    @patch("utils.storage.save_user_stocks", return_value=None)
     def test_remote_origin_with_valid_admin_token_is_accepted(self, _mock_save):
         """Remote proxy deployments authenticate mutations with the admin token."""
         env = {

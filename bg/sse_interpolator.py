@@ -89,9 +89,10 @@ def _interpolate_and_fluctuate_market(
         target_price = normalize_optional_number(t_item.get("price"))
         if target_price is not None and target_price > 0:
             try:
-                target_change = (
-                    normalize_optional_number(t_item.get("change"), allow_negative=True) or 0.0
+                _target_change_val = normalize_optional_number(
+                    t_item.get("change"), allow_negative=True
                 )
+                target_change = _target_change_val if _target_change_val is not None else 0.0
                 previous_close = target_price - target_change
 
                 if not math.isfinite(target_price) or not math.isfinite(previous_close):
@@ -124,10 +125,10 @@ def _interpolate_and_fluctuate_market(
                     c_item["change_percent"] = round(new_change_percent, 2)
                 else:
                     c_item["change"] = round(target_change, decimals)
-                    raw_pct = (
-                        normalize_optional_number(t_item.get("change_percent"), allow_negative=True)
-                        or 0.0
+                    _raw_pct_val = normalize_optional_number(
+                        t_item.get("change_percent"), allow_negative=True
                     )
+                    raw_pct = _raw_pct_val if _raw_pct_val is not None else 0.0
                     c_item["change_percent"] = round(raw_pct, 2)
             except (ValueError, TypeError):
                 pass
@@ -148,7 +149,8 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
         price_val = info.get("price")
         try:
             price = normalize_optional_number(price_val)
-            change = normalize_optional_number(info.get("change"), allow_negative=True) or 0.0
+            _change_val = normalize_optional_number(info.get("change"), allow_negative=True)
+            change = _change_val if _change_val is not None else 0.0
         except (ValueError, TypeError):
             continue
         if price is None:

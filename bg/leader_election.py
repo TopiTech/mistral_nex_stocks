@@ -6,7 +6,6 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -33,34 +32,40 @@ _is_sync_leader: bool = True
 
 
 def _get_leader_lock_file() -> Any:
-    mod = sys.modules.get("app_bg")
-    if mod is not None and "_LEADER_LOCK_FILE" in mod.__dict__:
-        return mod.__dict__["_LEADER_LOCK_FILE"]
-    return _LEADER_LOCK_FILE
+    # Lazy import: app_bg imports bg.*, so an eager import would be circular.
+    try:
+        import app_bg as app_bg_mod
+    except ImportError:
+        return _LEADER_LOCK_FILE
+    return app_bg_mod.__dict__.get("_LEADER_LOCK_FILE", _LEADER_LOCK_FILE)
 
 
 def _set_leader_lock_file(f: Any) -> None:
     global _LEADER_LOCK_FILE
     _LEADER_LOCK_FILE = f
-    mod = sys.modules.get("app_bg")
-    if mod is not None:
-        mod.__dict__["_LEADER_LOCK_FILE"] = f
+    try:
+        import app_bg as app_bg_mod
+    except ImportError:
+        return
+    app_bg_mod.__dict__["_LEADER_LOCK_FILE"] = f
 
 
 def _set_is_sync_leader(val: bool) -> None:
     global _is_sync_leader
     _is_sync_leader = val
-    mod = sys.modules.get("app_bg")
-    if mod is not None:
-        mod.__dict__["_is_sync_leader"] = val
+    try:
+        import app_bg as app_bg_mod
+    except ImportError:
+        return
+    app_bg_mod.__dict__["_is_sync_leader"] = val
 
 
 def _get_app_bg_attr(name: str, fallback: Any) -> Any:
-    mod = sys.modules.get("app_bg")
-    if mod is not None and name in mod.__dict__:
-        target = mod.__dict__[name]
-        return target
-    return fallback
+    try:
+        import app_bg as app_bg_mod
+    except ImportError:
+        return fallback
+    return app_bg_mod.__dict__.get(name, fallback)
 
 
 def _pid_is_alive(pid: int) -> bool:

@@ -43,7 +43,7 @@ class StockPersistRollbackTestCase(unittest.TestCase):
                 "utils.storage.config_store.get_or_create_master_key",
                 side_effect=RuntimeError("master key unavailable"),
             ),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
             patch("app_bg.announce_current_market_state"),
         ):
             response = self.client.post(

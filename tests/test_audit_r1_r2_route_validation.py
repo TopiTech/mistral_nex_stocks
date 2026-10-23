@@ -53,7 +53,7 @@ def test_ai_portfolio_generate_null_and_type_validation(client):
         "description": "Tech description",
         "items": [],
     }
-    with patch("routes.api_stocks.generate_ai_portfolio_by_theme", return_value=mock_res):
+    with patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme", return_value=mock_res):
         resp = client.post("/api/ai-portfolio/generate", json={"theme": "tech"}, headers=headers)
         assert resp.status_code == 200
         data = resp.get_json()
@@ -77,7 +77,7 @@ def test_ai_portfolio_rebalance_type_validation(client):
         "description": "Tech description",
         "items": [],
     }
-    with patch("routes.api_stocks.generate_ai_portfolio_by_theme", return_value=mock_res):
+    with patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme", return_value=mock_res):
         resp = client.post("/api/ai-portfolio/rebalance", json={"theme": "tech"}, headers=headers)
         assert resp.status_code == 200
         data = resp.get_json()
@@ -112,7 +112,7 @@ def test_ai_portfolio_delete_null_and_type_validation(client):
     assert data["ok"] is False
 
     # 5. valid deletion
-    with patch("routes.api_stocks.delete_custom_ai_portfolio", return_value=True):
+    with patch("routes.stocks.ai_portfolio.delete_custom_ai_portfolio", return_value=True):
         resp = client.delete("/api/ai-portfolio/custom", json={"id": "custom-123"}, headers=headers)
         assert resp.status_code == 200
         data = resp.get_json()
@@ -120,7 +120,7 @@ def test_ai_portfolio_delete_null_and_type_validation(client):
         assert data["id"] == "custom-123"
 
     # 6. not found deletion
-    with patch("routes.api_stocks.delete_custom_ai_portfolio", return_value=False):
+    with patch("routes.stocks.ai_portfolio.delete_custom_ai_portfolio", return_value=False):
         resp = client.delete(
             "/api/ai-portfolio/custom", json={"id": "missing-123"}, headers=headers
         )

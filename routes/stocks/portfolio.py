@@ -34,6 +34,7 @@ from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
     error_response,
+    ok_response,
 )
 from utils.storage import UserStocksPersistError
 from utils.text_utils import _parse_json_request
@@ -229,7 +230,7 @@ def api_update_portfolio() -> Any:
     announce_current_market_state()
     announce_real_market_state()
     schedule_sync_all_stocks_now()
-    return jsonify({"ok": True, "success": True})
+    return ok_response()
 
 
 @portfolio_bp.route("/api/stocks/portfolio/snapshot", methods=["POST"])

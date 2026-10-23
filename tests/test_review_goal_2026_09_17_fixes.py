@@ -189,7 +189,12 @@ def test_remote_api_and_prod_use_env_bool():
     assert "_networking_env_bool" in networking
     app_src = _read("app.py")
     assert "_env_bool(" in app_src
-    system_src = _read("routes/api_system.py")
+    # routes/api_system.py is a re-export shim since the U9-c split;
+    # the implementation lives in routes/system/*.py.
+    system_src = _read("routes/api_system.py") + "".join(
+        _read(f"routes/system/{mod}.py")
+        for mod in ("guards", "credentials", "observe", "security", "shutdown", "ai_usage")
+    )
     assert "_env_bool(" in system_src
 
 

@@ -99,10 +99,10 @@ def test_r3_ai_portfolio_generate_error_not_cached():
     app = create_app(skip_bootstrap=True)
     app.config["WTF_CSRF_ENABLED"] = False
     with app.test_client() as client:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             # Attempt 1: generate fails
             with patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 side_effect=RuntimeError("Transient LLM 503"),
             ):
                 resp1 = client.post(
@@ -125,7 +125,7 @@ def test_r3_ai_portfolio_generate_error_not_cached():
                 ],
             }
             with patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 return_value=mock_success_portfolio,
             ):
                 resp2 = client.post(
@@ -149,10 +149,10 @@ def test_r3_ai_portfolio_rebalance_error_not_cached():
     app = create_app(skip_bootstrap=True)
     app.config["WTF_CSRF_ENABLED"] = False
     with app.test_client() as client:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             # Attempt 1: rebalance fails
             with patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 side_effect=RuntimeError("Rebalance Timeout"),
             ):
                 resp1 = client.post(
@@ -175,7 +175,7 @@ def test_r6_copy_to_my_us_stocks_calculation():
     app = create_app(skip_bootstrap=True)
     app.config["WTF_CSRF_ENABLED"] = False
     with app.test_client() as client:
-        with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+        with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
             items = [
                 {"symbol": "AAPL", "market": "us", "target_price": 200.0, "weight_pct": 50.0},
                 {"symbol": "MSFT", "market": "us", "target_price": 400.0, "weight_pct": 50.0},
@@ -183,9 +183,9 @@ def test_r6_copy_to_my_us_stocks_calculation():
 
             with (
                 patch(
-                    "routes.api_stocks.get_current_usdjpy_rate", return_value=(150.0, False)
+                    "routes.stocks.ai_portfolio.get_current_usdjpy_rate", return_value=(150.0, False)
                 ) as mock_fx,
-                patch("routes.api_stocks.save_user_stocks", return_value=None),
+                patch("utils.storage.save_user_stocks", return_value=None),
             ):
                 resp = client.post(
                     "/api/ai-portfolio/copy-to-my",

@@ -177,8 +177,8 @@ def test_api_stocks_delete_accepts_delete_and_post_methods():
         patch("routes.stocks.views.save_user_stocks"),
         patch("routes.stocks.views.invalidate_stock_caches"),
         patch("routes.stocks.views.remove_stock_from_caches"),
-        patch("routes.stocks.views._sync_realtime_symbol"),
-        patch("routes.stocks.views._announce_watchlist_state"),
+        patch("routes.stocks.common._sync_realtime_symbol"),
+        patch("routes.stocks.common._announce_watchlist_state"),
         patch("routes.stocks.views.schedule_sync_all_stocks_now"),
     ):
         with app_state.market.user_stocks_lock:

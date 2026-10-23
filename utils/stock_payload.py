@@ -498,8 +498,10 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
 
     chart = []
     ohlc_data = []
-    chart_records = recent_df.to_dict("records")
-    target_records = chart_records[-ohlc_data_limit:]
+    # U12: slice rows before the record conversion so only the retained
+    # tail is materialised as dicts. iloc positional slicing is identical
+    # to the previous list-slice on the converted records.
+    target_records = recent_df.iloc[-ohlc_data_limit:].to_dict("records")
     num_records = len(target_records)
 
     for i, rd in enumerate(target_records):
@@ -1120,6 +1122,21 @@ def _wait_for_initial_market_snapshot(
 # ---------------------------------------------------------------------------
 # Error response
 # ---------------------------------------------------------------------------
+
+
+def ok_response(payload: dict | None = None, **kwargs: Any) -> Response:
+    """Return the unified success envelope (A-06).
+
+    Both ``ok`` and ``success`` are emitted for backward compatibility: the
+    frontend reads ``data?.ok || data?.success`` and existing tests assert
+    either key, so neither key may be dropped in this unit.
+    """
+    body: dict[str, Any] = {"ok": True, "success": True}
+    if payload:
+        body.update(payload)
+    if kwargs:
+        body.update(kwargs)
+    return jsonify(body)
 
 
 def error_response(

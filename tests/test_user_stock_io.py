@@ -53,7 +53,7 @@ class UserStockLoadTests(unittest.TestCase):
 
 
 class StockHistoryTimeoutTests(unittest.TestCase):
-    @patch("routes.api_stocks.is_market_open", return_value=True)
+    @patch("utils.market_utils.is_market_open", return_value=True)
     def test_stock_history_passes_timeout_to_yfinance(self, mock_market_open):
         mock_ticker = MagicMock()
         mock_ticker.history.return_value = pd.DataFrame(

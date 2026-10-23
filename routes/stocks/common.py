@@ -7,7 +7,6 @@ import json
 import logging
 import math
 import numbers
-import sys
 from typing import Any
 
 from flask import current_app, request
@@ -19,7 +18,6 @@ import utils.market_utils as _market_utils_mod
 import utils.networking as _net_mod
 import utils.stock_payload as _payload_mod
 import utils.storage as _storage_mod
-from app_bg import fetch_stocks_batch
 from app_state import app_state
 from constants import (
     CACHE_DURATION_HEATMAP,
@@ -27,7 +25,6 @@ from constants import (
 )
 from error_codes import ErrorCode
 from services.market_data_service import build_heatmap_payload
-from utils.caching import get_cached
 from utils.normalization import is_jp_stock_code, normalize_symbol_for_market
 from utils.stock_payload import (
     _default_stock_names,
@@ -40,84 +37,59 @@ logger = logging.getLogger(__name__)
 _WATCHLIST_MARKET_LABELS = {"us": "米国", "jp": "日本", "idx": "インデックス/ETF"}
 
 
-def _get_api_stocks_attr(name: str, fallback: Any) -> Any:
-    mod = sys.modules.get("routes.api_stocks")
-    if mod is not None and name in mod.__dict__:
-        target = mod.__dict__[name]
-        return target
-    return fallback
-
-
 def require_trusted_or_admin(req: Any, require_origin: bool = True) -> tuple[bool, str]:
-    target = _get_api_stocks_attr("require_trusted_or_admin", _net_mod.require_trusted_or_admin)
-    return target(req, require_origin=require_origin)
+    return _net_mod.require_trusted_or_admin(req, require_origin=require_origin)
 
 
 def require_sse_auth(req: Any) -> tuple[bool, str]:
-    target = _get_api_stocks_attr("require_sse_auth", _net_mod.require_sse_auth)
-    return target(req)
+    return _net_mod.require_sse_auth(req)
 
 
 def save_user_stocks() -> None:
-    target = _get_api_stocks_attr("save_user_stocks", _storage_mod.save_user_stocks)
-    return target()
+    return _storage_mod.save_user_stocks()
 
 
 def is_market_open(market: str) -> bool:
-    target = _get_api_stocks_attr("is_market_open", _market_utils_mod.is_market_open)
-    return target(market)
+    return _market_utils_mod.is_market_open(market)
 
 
 def resolve_stocks_for_response(
     include_portfolio: bool = False, real_data_only: bool = False
 ) -> dict[str, list[Any]]:
-    target = _get_api_stocks_attr(
-        "_resolve_stocks_for_response", _payload_mod._resolve_stocks_for_response
-    )
     try:
-        return target(include_portfolio=include_portfolio, real_data_only=real_data_only)
+        return _payload_mod._resolve_stocks_for_response(
+            include_portfolio=include_portfolio, real_data_only=real_data_only
+        )
     except TypeError:
-        return target(include_portfolio=include_portfolio)
+        return _payload_mod._resolve_stocks_for_response(include_portfolio=include_portfolio)
 
 
 def resolve_indices_for_response() -> dict[str, Any]:
-    target = _get_api_stocks_attr(
-        "_resolve_indices_for_response", _payload_mod._resolve_indices_for_response
-    )
-    return target()
+    return _payload_mod._resolve_indices_for_response()
 
 
 def get_stock_info_cached(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    target = _get_api_stocks_attr("get_stock_info_cached", _payload_mod.get_stock_info_cached)
-    return target(*args, **kwargs)
+    return _payload_mod.get_stock_info_cached(*args, **kwargs)
 
 
 def fetch_stocks_batch_dispatch(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-    target = _get_api_stocks_attr("fetch_stocks_batch", _bg_mod.fetch_stocks_batch)
-    return target(*args, **kwargs)
+    return _bg_mod.fetch_stocks_batch(*args, **kwargs)
 
 
 def schedule_sync_all_stocks_now(force: bool = False) -> bool:
-    target = _get_api_stocks_attr(
-        "schedule_sync_all_stocks_now", _bg_mod.schedule_sync_all_stocks_now
-    )
-    return target(force=force)
+    return _bg_mod.schedule_sync_all_stocks_now(force=force)
 
 
 def get_cached_dispatch(
     key: str, fetch_func: Any, duration: float = 300, valid_func: Any = None
 ) -> Any:
-    target = _get_api_stocks_attr("get_cached", _caching_mod.get_cached)
-    return target(key, fetch_func, duration=duration, valid_func=valid_func)
+    return _caching_mod.get_cached(key, fetch_func, duration=duration, valid_func=valid_func)
 
 
 def build_screener_base_rows_dispatch(
     stocks_data: dict[str, Any], market_filter: str
 ) -> list[dict[str, Any]]:
-    target = _get_api_stocks_attr(
-        "build_screener_base_rows", _mkt_service_mod.build_screener_base_rows
-    )
-    return target(stocks_data, market_filter)
+    return _mkt_service_mod.build_screener_base_rows(stocks_data, market_filter)
 
 
 def build_screener_enrichment_dispatch(
@@ -126,10 +98,7 @@ def build_screener_enrichment_dispatch(
     fetch_batch_fn: Any = None,
     get_info_fn: Any = None,
 ) -> dict[str, dict[str, Any]]:
-    target = _get_api_stocks_attr(
-        "build_screener_enrichment", _mkt_service_mod.build_screener_enrichment
-    )
-    return target(
+    return _mkt_service_mod.build_screener_enrichment(
         pop_unseen_items,
         q_symbol,
         fetch_batch_fn=fetch_batch_fn or fetch_stocks_batch_dispatch,
@@ -143,10 +112,7 @@ def build_popular_symbol_items_dispatch(
     seen_symbols: set[str],
     pop_sources: list[tuple[str, Any]],
 ) -> list[tuple[str, str, str]]:
-    target = _get_api_stocks_attr(
-        "build_popular_symbol_items", _mkt_service_mod.build_popular_symbol_items
-    )
-    return target(market_filter, q, seen_symbols, pop_sources)
+    return _mkt_service_mod.build_popular_symbol_items(market_filter, q, seen_symbols, pop_sources)
 
 
 def _json_safe(value: Any) -> Any:
@@ -194,10 +160,6 @@ def _parse_last_event_id() -> int:
 
 def _replay_frame_for_entry(seq: int, kind: str, payload: Any, sse_mode: int) -> str | None:
     """Rebuild an SSE frame for a buffered event during Last-Event-ID replay."""
-    target = _get_api_stocks_attr("_replay_frame_for_entry", None)
-    if target is not None and target is not _replay_frame_for_entry:
-        return target(seq, kind, payload, sse_mode)
-
     try:
         if kind == "frame":
             return f"id: {seq}\n{payload}"
@@ -237,10 +199,6 @@ def _replay_frame_for_entry(seq: int, kind: str, payload: Any, sse_mode: int) ->
 
 def _sync_realtime_symbol(symbol: str, market: str, register: bool) -> None:
     """Keep the realtime market engine's subscription list in sync with the watchlist."""
-    target = _get_api_stocks_attr("_sync_realtime_symbol", None)
-    if target is not None and target is not _sync_realtime_symbol:
-        return target(symbol, market, register=register)
-
     try:
         from services.realtime_engine import realtime_market_engine
 
@@ -293,10 +251,6 @@ def _watchlist_capacity_error(market: str) -> Any:
 
 def _announce_watchlist_state() -> None:
     """Notify both SSE modes after a watchlist membership mutation."""
-    target = _get_api_stocks_attr("_announce_watchlist_state", None)
-    if target is not None and target is not _announce_watchlist_state:
-        return target()
-
     from app_bg import (
         _invalidate_sse_payload_cache,
         announce_current_market_state,
@@ -311,9 +265,11 @@ def _announce_watchlist_state() -> None:
 def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]) -> None:
     """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
     try:
-        res = get_cached(
+        res = _caching_mod.get_cached(
             cache_key,
-            lambda: build_heatmap_payload(market, symbols, fetch_batch_fn=fetch_stocks_batch),
+            lambda: build_heatmap_payload(
+                market, symbols, fetch_batch_fn=_bg_mod.fetch_stocks_batch
+            ),
             duration=CACHE_DURATION_HEATMAP,
         )
         if res and isinstance(res, dict) and res.get("stocks"):

@@ -6,7 +6,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import sys
 import threading
 from typing import Any
 
@@ -48,17 +47,22 @@ _sse_full_snapshot_counter: int = 0
 
 
 def _get_app_bg_attr(name: str, fallback: Any) -> Any:
-    mod = sys.modules.get("app_bg")
-    if mod is not None and name in mod.__dict__:
-        target = mod.__dict__[name]
-        return target
-    return fallback
+    # Lazy import: app_bg imports bg.*, so an eager import would be circular.
+    # Regular import replaces the previous sys.modules lookup with identical
+    # lookup semantics (partial-module state included).
+    try:
+        import app_bg as app_bg_mod
+    except ImportError:
+        return fallback
+    return app_bg_mod.__dict__.get(name, fallback)
 
 
 def _set_app_bg_attr(name: str, val: Any) -> None:
-    mod = sys.modules.get("app_bg")
-    if mod is not None:
-        mod.__dict__[name] = val
+    try:
+        import app_bg as app_bg_mod
+    except ImportError:
+        return
+    app_bg_mod.__dict__[name] = val
 
 
 def _build_sse_light_stocks_payload(

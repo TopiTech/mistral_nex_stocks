@@ -13,7 +13,6 @@ from typing import Any
 
 from app_state import app_state
 from sectors import PREDEFINED_NAMES, PREDEFINED_SECTORS
-from utils.market_utils import is_market_open
 from utils.normalization import normalize_optional_number
 from utils.stock_payload import get_stock_info_cached
 
@@ -347,5 +346,3 @@ def should_include_market(market_filter: str, market: str) -> bool:
     return market_filter == "all" or market_filter == market
 
 
-def market_is_open_cached(market: str) -> bool:
-    return is_market_open(market)

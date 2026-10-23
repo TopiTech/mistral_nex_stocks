@@ -6,6 +6,7 @@ Other modules should import from this file instead of re-defining.
 """
 
 import os
+import re
 from pathlib import Path
 
 from requests.exceptions import Timeout as RequestsTimeout
@@ -31,6 +32,10 @@ BACKEND_PORT = _env_int("MNS_BACKEND_PORT", 5000, 1, 65535)
 MISTRAL_API_TIMEOUT_SEC = _env_float("MNS_MISTRAL_API_TIMEOUT", 60.0, 5.0, 180.0)
 MISTRAL_MIN_INTERVAL_SEC = _env_float("MNS_MISTRAL_MIN_INTERVAL", 1.35, 0.0, 60.0)
 MISTRAL_API_KEY_MIN_LENGTH = _env_int("MNS_MISTRAL_API_KEY_MIN_LENGTH", 32, 8, 256)
+
+# Mistral Agents API ids (e.g. ``ag_0123abcd...`` / ``ag:...``): conservative allow-list.
+# Single source of truth for the credential-save boundary (route + schema share it).
+AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:\-]{2,127}")
 
 
 def _normalize_mistral_base_url(value: str) -> str:
@@ -505,3 +510,6 @@ _BASE_ALLOWED_CORS_ORIGINS = {
 # AI portfolios intentionally model equities only; index watchlist entries
 # remain supported by the general stock APIs but are not portfolio holdings.
 AI_PORTFOLIO_MARKETS = frozenset(("us", "jp"))
+# Single source for the copy-to-my / generation item cap. The service module
+# re-exports this name so existing imports keep working.
+MAX_AI_PORTFOLIO_ITEMS = 20

@@ -27,7 +27,6 @@ from constants import (
 from error_codes import ErrorCode, get_error_message
 from route_helpers import rate_limit
 from routes.stocks.common import (
-    _get_api_stocks_attr,
     is_market_open,
     require_trusted_or_admin,
     resolve_indices_for_response,
@@ -488,8 +487,7 @@ def api_search() -> Any:
                 "error_code": int(ErrorCode.API_SERVICE_ERROR),
             }
 
-    get_cached_fn = _get_api_stocks_attr("get_cached", get_cached)
-    result = get_cached_fn(
+    result = get_cached(
         f"search_{q.lower()}",
         _search,
         duration=CACHE_DURATION_SEARCH,

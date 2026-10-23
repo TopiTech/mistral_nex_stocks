@@ -30,15 +30,15 @@ def test_copy_ai_portfolio_lock_ordering_and_scoping() -> None:
             )
 
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
             patch(
                 "routes.stocks.ai_portfolio.invalidate_stock_caches",
                 side_effect=mock_invalidate_stock_caches,
             ),
-            patch("routes.api_stocks._sync_realtime_symbol"),
-            patch("routes.stocks.ai_portfolio._announce_watchlist_state"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
+            patch("routes.stocks.common._announce_watchlist_state"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             client = app.test_client()
 
@@ -106,10 +106,10 @@ def test_ai_portfolio_generate_worker_error_not_cached_and_details_provided() ->
 
         client = app.test_client()
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch("routes.stocks.ai_portfolio.extract_api_key", return_value="dummy_key"),
             patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 side_effect=RuntimeError("Simulated LLM service failure"),
             ),
         ):
@@ -140,10 +140,10 @@ def test_ai_portfolio_rebalance_worker_error_not_cached_and_details_provided() -
 
         client = app.test_client()
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch("routes.stocks.ai_portfolio.extract_api_key", return_value="dummy_key"),
             patch(
-                "routes.api_stocks.generate_ai_portfolio_by_theme",
+                "routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme",
                 side_effect=RuntimeError("Simulated rebalance timeout"),
             ),
         ):
@@ -180,18 +180,18 @@ def test_add_stock_ext_lock_scoping() -> None:
             patch("utils.networking._is_loopback_ip", return_value=True),
             patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
             patch(
-                "routes.api_stocks.get_or_create_extension_api_token",
+                "credential_manager.get_or_create_extension_api_token",
                 return_value="test-token-1234567890",
             ),
-            patch("routes.api_stocks.save_user_stocks"),
+            patch("utils.storage.save_user_stocks"),
             patch(
                 "routes.stocks.views.invalidate_stock_caches",
                 side_effect=mock_invalidate_stock_caches,
             ),
             patch("routes.stocks.views.ensure_stock_placeholder_in_caches"),
-            patch("routes.stocks.views._announce_watchlist_state"),
-            patch("routes.stocks.views._sync_realtime_symbol"),
-            patch("routes.api_stocks.schedule_sync_all_stocks_now"),
+            patch("routes.stocks.common._announce_watchlist_state"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
         ):
             client = app.test_client()
             res = client.post(
@@ -224,7 +224,7 @@ def test_add_stock_ext_rejects_origin_before_initializing_token() -> None:
             patch("utils.env_helpers._is_remote_api_enabled", return_value=False),
             patch("utils.networking._is_allowed_shutdown_origin", return_value=False),
             patch(
-                "routes.api_stocks.get_or_create_extension_api_token",
+                "credential_manager.get_or_create_extension_api_token",
                 return_value="unused-token",
             ) as get_token,
         ):

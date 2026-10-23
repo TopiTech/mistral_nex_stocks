@@ -30,8 +30,8 @@ class TestReviewAutonomousGoalFixes20260822:
         with app.test_client() as client:
             with client.session_transaction() as sess:
                 sess["mns_analysis_conversation"] = conversation_scope
-            with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
-                with patch("routes.api_stocks.generate_ai_portfolio_by_theme") as mock_gen:
+            with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
+                with patch("routes.stocks.ai_portfolio.generate_ai_portfolio_by_theme") as mock_gen:
                     mock_gen.side_effect = [
                         {"id": theme, "version": 1, "items": []},
                         {"id": theme, "version": 2, "items": []},
@@ -80,7 +80,7 @@ class TestReviewAutonomousGoalFixes20260822:
         with app.test_client() as client:
             with client.session_transaction() as sess:
                 sess["mns_analysis_conversation"] = conversation_scope
-            with patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)):
+            with patch("utils.networking.require_trusted_or_admin", return_value=(True, None)):
                 # Client polls for the result
                 res = client.post("/api/ai-portfolio/rebalance", json={"theme": theme})
                 assert res.status_code == 200

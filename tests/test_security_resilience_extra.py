@@ -46,7 +46,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         decrypted = unprotect_data(data, "shutdown_token")
         self.assertEqual(token, decrypted)
 
-    @patch("routes.api_stocks.is_market_open", return_value=True)
+    @patch("utils.market_utils.is_market_open", return_value=True)
     def test_circuit_breaker_half_open_transitions(self, mock_market_open):
         """Test yfinance circuit breaker transitions: CLOSED -> OPEN -> HALF_OPEN -> CLOSED/OPEN."""
         symbol = "TEST_CB_SYM"
@@ -274,7 +274,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
         self.assertGreater(yf_session_manager._session_epoch, epoch_after_401)
         self.assertNotEqual(yf_session_manager.get_user_agent(), ua_after_401)
 
-    @patch("routes.api_stocks.is_market_open", return_value=True)
+    @patch("utils.market_utils.is_market_open", return_value=True)
     def test_yfinance_session_manager_requests_spacing_and_serialization(self, mock_market_open):
         """Verify that YFinanceSessionManager enforces request spacing."""
         from unittest.mock import MagicMock, patch

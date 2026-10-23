@@ -141,7 +141,7 @@ class TestR1SseTicketEndpoint(unittest.TestCase):
         client = app.test_client()
 
         with patch(
-            "routes.api_stocks.create_sse_ticket",
+            "routes.stocks.stream.create_sse_ticket",
             side_effect=SseTicketSessionUnavailable("no session"),
         ):
             resp = client.post(

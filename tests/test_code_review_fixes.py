@@ -104,9 +104,9 @@ class TestCodeReviewFixes(unittest.TestCase):
         ]
 
         with (
-            patch("routes.api_stocks.build_screener_base_rows", return_value=mock_stocks),
-            patch("routes.api_stocks.POPULAR_US", []),
-            patch("routes.api_stocks.POPULAR_JP", []),
+            patch("services.market_data_service.build_screener_base_rows", return_value=mock_stocks),
+            patch("routes.stocks.views.POPULAR_US", []),
+            patch("routes.stocks.views.POPULAR_JP", []),
         ):
             for sort_field in ("price", "change_percent", "volume", "market_cap", "symbol"):
                 for sort_order in ("asc", "desc"):

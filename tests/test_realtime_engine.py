@@ -575,13 +575,14 @@ def test_yahoo_jp_scraper_startup_ready_gate():
     mock_app_state = MagicMock()
     mock_app_state.market = mock_market
 
-    with patch.dict("sys.modules", {"pytest": None}):
-        with patch("app_state.app_state", mock_app_state):
-            assert scraper._is_startup_ready(force_check=True) is False
+    # U3: startup readiness no longer sniffs sys.modules; force_check=True
+    # exercises the market-state gate directly without any test-env stub.
+    with patch("app_state.app_state", mock_app_state):
+        assert scraper._is_startup_ready(force_check=True) is False
 
-            mock_market.first_sync_attempted = True
-            mock_market.first_sync_completed_at = time.time() - 5.0
-            assert scraper._is_startup_ready(force_check=True) is True
+        mock_market.first_sync_attempted = True
+        mock_market.first_sync_completed_at = time.time() - 5.0
+        assert scraper._is_startup_ready(force_check=True) is True
 
 
 def test_yahoo_jp_scraper_poll_interval_uses_market_state():

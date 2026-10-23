@@ -229,7 +229,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
         response = self.client.get("/api/stocks?country=us")
         self.assertEqual(response.status_code, 200)
 
-    @patch("routes.api_stocks.save_user_stocks")
+    @patch("utils.storage.save_user_stocks")
     def test_add_stock_rejects_remote_request(self, _mock_save):
         """Local-only stock mutation endpoints must reject non-local requests."""
         response = self.client.post(
@@ -241,7 +241,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
         data = json.loads(response.data)
         self.assertFalse(data["ok"])
 
-    @patch("routes.api_stocks.save_user_stocks")
+    @patch("utils.storage.save_user_stocks")
     def test_add_stock_rejects_long_name(self, _mock_save):
         """Stock names must be bounded to prevent oversized payloads."""
         response = self.client.post(
@@ -258,7 +258,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
         data = json.loads(response.data)
         self.assertEqual(data.get("error_code"), int(ErrorCode.UNSAFE_INPUT))
 
-    @patch("routes.api_stocks.save_user_stocks")
+    @patch("utils.storage.save_user_stocks")
     def test_add_stock_accepts_valid_local_request(self, _mock_save):
         """Valid local stock add should parse input and return success."""
         import uuid
@@ -275,7 +275,7 @@ class StocksAPITestCase(APIIntegrationTestCase):
         self.assertTrue(data["success"])
         _mock_save.assert_called_once()
 
-    @patch("routes.api_stocks.save_user_stocks")
+    @patch("utils.storage.save_user_stocks")
     def test_update_portfolio_rejects_boolean_numeric_input(self, _mock_save):
         """Boolean values must not be accepted as numeric portfolio input."""
         response = self.client.post(

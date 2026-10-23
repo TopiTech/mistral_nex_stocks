@@ -32,16 +32,12 @@ from constants import (
     ANALYZE_RESEARCH_CONTEXT_MAX_CHARS,
     CACHE_DURATION_TRENDING,
     CHART_IMAGE_MAX_CONTENT_LENGTH,
-    CHART_IMAGE_MAX_IMAGE_DATA_CHARS,
     CHAT_CONTEXT_MAX_CHARS,
     CHAT_HISTORY_MAX_MSGS,
-    CHAT_MAX_MSG_LENGTH,
     CHAT_MAX_TOKENS,
     CHAT_PREPARE_WAIT_SEC,
-    MAX_STOCK_NAME_LENGTH,
     NEWS_PREPARE_WAIT_SEC,
     STREAM_CHAT_MAX_CONCURRENT,
-    VALID_HISTORY_PERIODS,
 )
 from credential_manager import (
     get_custom_ai_prompt,
@@ -50,6 +46,10 @@ from credential_manager import (
 )
 from error_codes import ErrorCode
 from route_helpers import (
+    _parse_analyze_v2_request,
+    _parse_chart_image_request,
+    _parse_chat_request,
+    _parse_technical_lines_request,
     _submit_in_app_context,
     extract_api_key,
     extract_langsearch_api_key,
@@ -75,14 +75,8 @@ from services.search_service import (
 from utils.caching import CACHE_FETCHING, get_cached, get_cached_context_with_negative_cache
 from utils.formatting import build_fallback_analysis_result
 from utils.networking import require_trusted_or_admin
-from utils.normalization import (
-    is_valid_symbol,
-    normalize_market,
-    normalize_symbol,
-    normalize_symbol_for_market,
-    normalize_text,
-)
-from utils.stock_payload import error_response, get_stock_info_cached
+from utils.normalization import normalize_market
+from utils.stock_payload import error_response, get_stock_info_cached, ok_response
 from utils.text_utils import (
     _parse_json_request,
     _parse_optional_json_request,
@@ -350,38 +344,19 @@ def api_chat():
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    raw_market = data.get("market")
-    if raw_market is not None and not isinstance(raw_market, str):
-        return error_response(ErrorCode.INVALID_MARKET)
-    raw_symbol = data.get("symbol")
-    if raw_symbol is not None and not isinstance(raw_symbol, str):
-        return error_response(ErrorCode.INVALID_SYMBOL)
-    market = normalize_market(raw_market, default="us")
-    symbol = normalize_symbol_for_market(raw_symbol, market)
-    raw_message = data.get("message")
-    if raw_message is None:
-        raw_message = ""
-    if not isinstance(raw_message, str):
+    parsed_chat, chat_error = _parse_chat_request(data)
+    if chat_error:
+        return chat_error
+    if parsed_chat is None:
         return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "message must be a string", "fields": ["message"]},
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    user_msg = raw_message.strip()
-    if len(user_msg) > CHAT_MAX_MSG_LENGTH:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": f"メッセージは{CHAT_MAX_MSG_LENGTH}文字以内で入力してください。"},
-            status_code=400,
-        )
-    if not market:
-        return error_response(ErrorCode.INVALID_MARKET)
-    if not symbol or not user_msg:
-        return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol", "message"]}
-        )
-    if not is_valid_symbol(symbol):
-        return error_response(ErrorCode.INVALID_SYMBOL)
+    market = parsed_chat.market
+    symbol = parsed_chat.symbol
+    user_msg = parsed_chat.message
+    operation_token = parsed_chat.request_token
 
     current_app.logger.info(
         "api_chat input id=%s market=%s symbol=%s msg_len=%d",
@@ -390,14 +365,6 @@ def api_chat():
         symbol,
         len(user_msg),
     )
-
-    operation_token = _get_operation_token(data)
-    if operation_token is None:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "request_token must be a 16-128 character URL-safe token"},
-            status_code=400,
-        )
     conversation_scope = _get_conversation_scope()
     inflight_key = f"chat:{conversation_scope}:{operation_token}"
     chat_key = f"{conversation_scope}:{market}:{symbol}"
@@ -1295,86 +1262,23 @@ def api_analyze_v2():
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    raw_symbol = data.get("symbol")
-    if raw_symbol is not None and not isinstance(raw_symbol, str):
-        return error_response(ErrorCode.INVALID_SYMBOL)
-    raw_market = data.get("market")
-    if raw_market is not None and not isinstance(raw_market, str):
-        return error_response(ErrorCode.INVALID_MARKET)
-    raw_name = data.get("name")
-    if raw_name is not None and not isinstance(raw_name, str):
-        return error_response(ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"})
-    fallback_name = normalize_symbol(raw_symbol)
-    market = normalize_market(raw_market, default="us")
-    symbol = normalize_symbol_for_market(raw_symbol, market)
-    name = normalize_text(raw_name, default=(symbol or fallback_name))
-    # The name is forwarded verbatim into external search queries
-    # (LangSearch/Tavily/DDG); bound it the same way as stock mutations so a
-    # multi-hundred-KB name cannot inflate search-API requests.
-    if len(name) > MAX_STOCK_NAME_LENGTH:
+    # Boundary validation lives in ``schemas.AIAnalyzeV2Request`` (via
+    # ``route_helpers._parse_analyze_v2_request``); the parsed values below
+    # are the normalized ones the old inline checks produced.
+    parsed_v2, v2_error = _parse_analyze_v2_request(data)
+    if v2_error:
+        return v2_error
+    if parsed_v2 is None:
         return error_response(
-            ErrorCode.UNSAFE_INPUT,
-            details={"reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"},
-        )
-    price = data.get("price")
-    raw_chart_data = data.get("chart_data", [])
-    if raw_chart_data is None:
-        raw_chart_data = []
-    if not isinstance(raw_chart_data, list):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "chart_data must be a list", "fields": ["chart_data"]},
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    if len(raw_chart_data) > 5000:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={
-                "reason": "chart_data has too many points (max 5000)",
-                "fields": ["chart_data"],
-            },
-            status_code=400,
-        )
-    chart_data: list[Any] = []
-    for point in raw_chart_data:
-        if not isinstance(point, dict):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": "chart_data entries must be objects",
-                    "fields": ["chart_data"],
-                },
-                status_code=400,
-            )
-        chart_data.append(point)
-
-    if price is not None:
-        if (
-            isinstance(price, bool)
-            or type(price).__name__ in ("bool_", "bool")
-            or not isinstance(price, (int, float))
-        ):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "price must be a finite number", "fields": ["price"]},
-                status_code=400,
-            )
-        if not math.isfinite(float(price)) or float(price) < 0.0:
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": "price must be a finite non-negative number",
-                    "fields": ["price"],
-                },
-                status_code=400,
-            )
-
-    if not market:
-        return error_response(ErrorCode.INVALID_MARKET)
-    if not symbol:
-        return error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]})
-    if not is_valid_symbol(symbol):
-        return error_response(ErrorCode.INVALID_SYMBOL)
+    market = parsed_v2.market
+    symbol = parsed_v2.symbol
+    name = parsed_v2.name if parsed_v2.name is not None else symbol
+    price = parsed_v2.price
+    chart_data = parsed_v2.chart_data
 
     current_app.logger.info(
         "api_analyze_v2 input id=%s market=%s symbol=%s has_price=%s chart_points=%d langsearch=%s tavily=%s",
@@ -1387,13 +1291,7 @@ def api_analyze_v2():
         bool(tavily_api_key),
     )
 
-    operation_token = _get_operation_token(data)
-    if operation_token is None:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "request_token must be a 16-128 character URL-safe token"},
-            status_code=400,
-        )
+    operation_token = parsed_v2.request_token
     conversation_scope = _get_conversation_scope()
     inflight_key = f"analyze:{conversation_scope}:{operation_token}"
 
@@ -1928,7 +1826,7 @@ def api_ai_technical_lines():
     NOTE: 本機能は Mistral Medium および Large モデルでのみ利用可能。
     """
     if request.method == "OPTIONS":
-        return jsonify({"ok": True})
+        return ok_response()
 
     ok, reason = require_trusted_or_admin(request)
     if not ok:
@@ -1979,79 +1877,27 @@ def api_ai_technical_lines():
             status_code=400,
         )
 
-    raw_symbol = data.get("symbol")
-    if raw_symbol is None:
+    # Boundary validation lives in ``schemas.AITechnicalLinesRequest`` (via
+    # ``route_helpers._parse_technical_lines_request``); the parsed values
+    # below are the normalized ones the old inline checks produced. The
+    # empty/non-object body gate above stays: ``{}`` never reached the field
+    # checks in the old route either.
+    parsed_tl, tl_error = _parse_technical_lines_request(data)
+    if tl_error:
+        return tl_error
+    if parsed_tl is None:
         return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD,
-            details={"fields": ["symbol"]},
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSONデータが正しく送信されませんでした"},
             status_code=400,
         )
-    if not isinstance(raw_symbol, str):
-        return error_response(
-            ErrorCode.INVALID_SYMBOL,
-            details={"fields": ["symbol"]},
-            status_code=400,
-        )
-
-    raw_market = data.get("market", "us")
-    if raw_market is not None and not isinstance(raw_market, str):
-        return error_response(ErrorCode.INVALID_MARKET)
-
-    raw_period = data.get("period", "3mo")
-    history_data = data.get("history_data", [])
-
-    market = normalize_market(raw_market)
-    symbol = normalize_symbol_for_market(raw_symbol, market)
-
-    if not market:
-        return error_response(ErrorCode.INVALID_MARKET)
-    if not symbol:
-        return error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD,
-            details={"fields": ["symbol"]},
-            status_code=400,
-        )
-    if not is_valid_symbol(symbol):
-        return error_response(ErrorCode.INVALID_SYMBOL)
-
-    # MNS-002: validate client-influenced inputs before they reach the LLM
-    # prompt (period) or are sampled into it (history_data), mirroring the
-    # guards applied in /api/analyze-v2.
-    if not isinstance(raw_period, str) or raw_period.strip().lower() not in VALID_HISTORY_PERIODS:
-        return error_response(
-            ErrorCode.INVALID_PERIOD,
-            details={"reason": "periodは指定された期間のいずれかである必要があります"},
-            status_code=400,
-        )
-    period = raw_period.strip().lower()
-
-    if history_data is None:
-        history_data = []
-    if not isinstance(history_data, list):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "history_data must be a list", "fields": ["history_data"]},
-            status_code=400,
-        )
-    if len(history_data) > 5000:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={
-                "reason": "history_data has too many points (max 5000)",
-                "fields": ["history_data"],
-            },
-            status_code=400,
-        )
-    for point in history_data:
-        if not isinstance(point, dict):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": "history_data entries must be objects",
-                    "fields": ["history_data"],
-                },
-                status_code=400,
-            )
+    market = parsed_tl.market
+    symbol = parsed_tl.symbol
+    # MNS-002: client-influenced inputs stay validated before they reach the
+    # LLM prompt (period) or are sampled into it (history_data), mirroring
+    # the guards applied in /api/analyze-v2.
+    period = parsed_tl.period
+    history_data = parsed_tl.history_data
 
     if not history_data:
         try:
@@ -2116,107 +1962,22 @@ def api_analyze_chart_image():
         )
 
 
-    image_data = data.get("image_data") or data.get("image")
-    if not image_data or not isinstance(image_data, str):
+    # Boundary validation lives in ``schemas.AIAnalyzeChartImageRequest``
+    # (via ``route_helpers._parse_chart_image_request``); the parsed values
+    # below are the normalized ones the old inline checks produced.
+    parsed_ci, ci_error = _parse_chart_image_request(data)
+    if ci_error:
+        return ci_error
+    if parsed_ci is None or not parsed_ci.image_data:
         return error_response(
             ErrorCode.INVALID_INPUT,
             details={"reason": "image_data (Base64またはData URI) が必要です"},
             status_code=400,
         )
-    image_data = image_data.strip()
-    if not image_data:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "image_data (Base64またはData URI) が必要です"},
-            status_code=400,
-        )
-    if len(image_data) > CHART_IMAGE_MAX_IMAGE_DATA_CHARS:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "image_dataが大きすぎます（上限約5MB）"},
-            status_code=400,
-        )
-    if image_data.startswith("data:"):
-        if "," not in image_data:
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "image_dataはimage/*のData URI形式である必要があります"},
-                status_code=400,
-            )
-        header, b64part = image_data.split(",", 1)
-        header_lower = header.lower()
-        if not header_lower.startswith("data:image/"):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "image_dataはimage/*のData URI形式である必要があります"},
-                status_code=400,
-            )
-        if "svg" in header_lower:
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "SVG画像はサポートされていません"},
-                status_code=400,
-            )
-        if not re.match(r"^data:image/(png|jpe?g|gif|webp);base64$", header_lower):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "対応形式は png/jpeg/gif/webp のbase64 Data URIのみです"},
-                status_code=400,
-            )
-        if not b64part.strip():
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "image_dataのData URIはbase64形式である必要があります"},
-                status_code=400,
-            )
-    else:
-        if image_data.startswith(("http://", "https://")):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": "URL形式のimage_dataは許可されていません。Data URIまたはBase64で送信してください"
-                },
-                status_code=400,
-            )
-        if image_data.lower().startswith("data:"):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "image_dataのData URI形式が不正です"},
-                status_code=400,
-            )
-        if not re.fullmatch(r"[A-Za-z0-9+/=\s]+", image_data):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "image_dataはBase64形式である必要があります"},
-                status_code=400,
-            )
-
-    raw_symbol = data.get("symbol")
-    if raw_symbol is not None and not isinstance(raw_symbol, str):
-        return error_response(ErrorCode.INVALID_SYMBOL)
-    raw_market = data.get("market", "us")
-    if raw_market is not None and not isinstance(raw_market, str):
-        return error_response(ErrorCode.INVALID_MARKET)
-    market = normalize_market(raw_market, default="us")
-    if not market:
-        return error_response(ErrorCode.INVALID_MARKET)
-    symbol = normalize_symbol_for_market(raw_symbol, market) if raw_symbol else ""
-    if symbol and not is_valid_symbol(symbol):
-        return error_response(ErrorCode.INVALID_SYMBOL)
-    raw_prompt = data.get("prompt", "")
-    if raw_prompt is not None and not isinstance(raw_prompt, str):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "prompt must be a string", "fields": ["prompt"]},
-            status_code=400,
-        )
-    custom_prompt = (raw_prompt or "").strip()
-    if len(custom_prompt) > 2000:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "promptは2000文字以内で入力してください", "fields": ["prompt"]},
-            status_code=400,
-        )
+    image_data = parsed_ci.image_data
+    market = parsed_ci.market
+    symbol = parsed_ci.symbol or ""
+    custom_prompt = parsed_ci.prompt
 
     res = analyze_chart_image_with_mistral(
         api_key,

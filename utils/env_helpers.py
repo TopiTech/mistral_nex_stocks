@@ -76,24 +76,30 @@ def _is_testing() -> bool:
     """Check if the application is running in a test environment.
 
     Single source of truth for test environment detection, used across
-    multiple modules (stock_provider, session_manager, etc.) to avoid
-    hard-to-discover duplicate patterns like:
+    multiple modules (stock_provider, session_manager, etc.). Detection is
+    explicit-only: the ``MNS_SKIP_BOOTSTRAP`` test opt-out (set to ``1`` by
+    the pytest baseline in tests/test_support/environment.py), the
+    ``MNS_TESTING``/``TESTING`` environment flags, or the Flask ``TESTING``
+    config. Implicit runner sniffing via sys.modules was removed in U3 so
+    tests exercise the production code path unless they explicitly opt out.
 
-        import sys
-        is_testing = "pytest" in sys.modules or "unittest" in sys.modules
-
-    All modules should call ``_is_testing()`` instead of checking
-    ``sys.modules`` directly. This function is intentionally kept in
-    ``utils.env_helpers`` (not in a test helper) so that production code
-    paths can use it without circular imports.
+    This function is intentionally kept in ``utils.env_helpers`` (not in a
+    test helper) so that production code paths can use it without circular
+    imports.
 
     Returns:
-        True if pytest or unittest is currently loaded (i.e., we are inside
-        a test runner).
+        True when an explicit test flag is set.
     """
-    import sys
-
-    return "pytest" in sys.modules or "unittest" in sys.modules
+    if _env_bool("MNS_SKIP_BOOTSTRAP") or _env_bool("MNS_TESTING") or _env_bool("TESTING"):
+        return True
+    try:
+        from flask import current_app, has_app_context
+    except ImportError:
+        return False
+    try:
+        return bool(has_app_context() and current_app.config.get("TESTING", False))
+    except Exception:
+        return False
 
 
 def _is_production_env() -> bool:

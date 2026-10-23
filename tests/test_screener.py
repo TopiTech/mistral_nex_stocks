@@ -53,7 +53,7 @@ def test_api_screener_filters(client):
         "sector": "Technology",
         "shortName": "Sample Stock",
     }
-    with patch("routes.api_stocks.get_stock_info_cached", return_value=dummy_info):
+    with patch("utils.stock_payload.get_stock_info_cached", return_value=dummy_info):
         # US market filter
         res_us = client.get("/api/screener?market=us")
         assert res_us.status_code == 200
@@ -99,7 +99,7 @@ def test_api_screener_unregistered_stock_enrichment(client):
         "sector": "Technology",
         "shortName": "Sample Corp",
     }
-    with patch("routes.api_stocks.get_stock_info_cached", return_value=sample_info) as mock_info:
+    with patch("utils.stock_payload.get_stock_info_cached", return_value=sample_info) as mock_info:
         response = client.get("/api/screener?market=us")
         assert response.status_code == 200
         data = response.get_json()
@@ -147,7 +147,7 @@ def test_api_screener_batch_enrichment_path(client):
         "low": 452.3,
         "sector": "Financial Services",
     }
-    with patch("routes.api_stocks.fetch_stocks_batch", return_value=[payload]):
+    with patch("app_bg.fetch_stocks_batch", return_value=[payload]):
         res = client.get("/api/screener?market=us&q=BRK-B")
     assert res.status_code == 200
     data = res.get_json()
@@ -177,7 +177,7 @@ def test_api_screener_negative_change_percent(client):
         "low": 99.0,
         "sector": "Technology",
     }
-    with patch("routes.api_stocks.fetch_stocks_batch", return_value=[payload]):
+    with patch("app_bg.fetch_stocks_batch", return_value=[payload]):
         res = client.get("/api/screener?market=us&q=NEG-STOCK")
     assert res.status_code == 200
     data = res.get_json()
@@ -204,8 +204,8 @@ def test_api_screener_query_by_sector(client):
         "sector": "Financial Services",
     }
     with (
-        patch("routes.api_stocks.fetch_stocks_batch", return_value=[payload]),
-        patch("routes.api_stocks.get_stock_info_cached", return_value={}),
+        patch("app_bg.fetch_stocks_batch", return_value=[payload]),
+        patch("utils.stock_payload.get_stock_info_cached", return_value={}),
     ):
         res = client.get("/api/screener?market=us&q=Financial")
     assert res.status_code == 200
@@ -254,11 +254,11 @@ def test_api_screener_enrichment_cache_follows_watchlist_state(client):
 
     with (
         patch(
-            "routes.api_stocks._resolve_stocks_for_response",
+            "utils.stock_payload._resolve_stocks_for_response",
             side_effect=[snapshot_with_aapl, snapshot_without_aapl],
         ),
         patch(
-            "routes.api_stocks.build_screener_enrichment",
+            "services.market_data_service.build_screener_enrichment",
             side_effect=fake_enrichment,
         ) as mock_enrich,
     ):
@@ -304,7 +304,7 @@ def test_api_screener_price_filtering_and_float_parsing(client):
         "sector": "Technology",
     }
     stocks_mock = {"us": [unpriced_payload, priced_payload], "jp": []}
-    with patch("routes.api_stocks._resolve_stocks_for_response", return_value=stocks_mock):
+    with patch("utils.stock_payload._resolve_stocks_for_response", return_value=stocks_mock):
         # min_price=50 should exclude ZERO-STOCK (price=0.0 < 50.0)
         res_min = client.get("/api/screener?market=us&min_price=50.0")
         assert res_min.status_code == 200
@@ -370,7 +370,7 @@ def test_api_screener_high_low_and_null_metrics(client):
         "sector": "Technology",
     }
     stocks_mock = {"us": [mock_item], "jp": []}
-    with patch("routes.api_stocks._resolve_stocks_for_response", return_value=stocks_mock):
+    with patch("utils.stock_payload._resolve_stocks_for_response", return_value=stocks_mock):
         res = client.get("/api/screener?market=us&q=MOCK-TEST")
         assert res.status_code == 200
         data = res.get_json()

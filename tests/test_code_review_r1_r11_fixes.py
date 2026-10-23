@@ -182,10 +182,10 @@ def test_r7_api_update_portfolio_legacy_jp_alias(review_app):
     """R7: api_update_portfolio resolves legacy JP bare-numeric symbols."""
     with review_app.test_request_context():
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
-            patch("routes.api_stocks.save_user_stocks"),
-            patch("routes.api_stocks.invalidate_stock_caches"),
-            patch("routes.api_stocks.ensure_stock_placeholder_in_caches"),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.ai_portfolio.invalidate_stock_caches"),
+            patch("routes.stocks.ai_portfolio.ensure_stock_placeholder_in_caches"),
         ):
             with app_state.market.user_stocks_lock:
                 # Store legacy symbol '7203' without .T in user_jp
@@ -221,7 +221,7 @@ def test_r8_uninstall_script_has_supports_should_process():
 
 def test_r10_api_stocks_stream_403_schema(review_app):
     """R10: api_stocks_stream returns ok: False in 403 error response."""
-    with patch("routes.api_stocks.require_sse_auth", return_value=(False, "unauthorized")):
+    with patch("utils.networking.require_sse_auth", return_value=(False, "unauthorized")):
         client = review_app.test_client()
         res = client.get("/api/stocks/stream")
         assert res.status_code == 403
@@ -234,9 +234,9 @@ def test_r11_history_circuit_state_none_value(review_app):
     """R11: api_stock_history handles None value in history_circuit_state without AttributeError."""
     with review_app.test_request_context():
         with (
-            patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
             patch("routes.api_stocks._has_cached_key", return_value=False),
-            patch("routes.api_stocks._submit_async_history_fetch", return_value=True),
+            patch("routes.stocks.quotes._submit_async_history_fetch", return_value=True),
         ):
             with app_state.market.history_circuit_lock:
                 app_state.market.history_circuit_state["AAPL"] = None

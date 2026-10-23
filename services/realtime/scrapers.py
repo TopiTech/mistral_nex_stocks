@@ -21,6 +21,7 @@ from services.realtime.utils import (
     _extract_next_data_quotes,
     _extract_pts_fields,
     _extract_pts_price_data,
+    _get_facade_attr,
     _interruptible_sleep,
     _is_scraper_blocked,
     _is_yf_rate_limited,
@@ -40,12 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 def _get_logger() -> Any:
-    import sys
-
-    rt_mod = sys.modules.get("services.realtime_engine")
-    if rt_mod is not None and "logger" in rt_mod.__dict__:
-        return rt_mod.__dict__["logger"]
-    return logger
+    return _get_facade_attr("logger", logger)
 
 
 class _BaseFallbackScraper:
@@ -792,9 +788,9 @@ class YahooJPRealtimeScraper:
 
     def _is_startup_ready(self, force_check: bool = False) -> bool:
         try:
-            import sys
+            from utils.env_helpers import _is_testing
 
-            if not force_check and ("pytest" in sys.modules or "unittest" in sys.modules):
+            if not force_check and _is_testing():
                 return True
 
             from app_state import app_state

@@ -124,6 +124,17 @@ def _reset_caches_and_sessions(app_state: object) -> None:
     except (ImportError, AttributeError):
         pass
 
+    # Shared SSE initial-snapshot cache (routes/stocks/stream.py). Entries
+    # are keyed by data generation, so a payload built by one test must not
+    # leak into another test running in the same worker process.
+    try:
+        from routes.stocks import stream as _stream_mod
+
+        with _stream_mod._initial_snapshot_lock:
+            _stream_mod._initial_snapshot_cache.clear()
+    except (ImportError, AttributeError):
+        pass
+
     # YFinance short cache
     if hasattr(app_state, "yfinance_short_cache"):
         with app_state.yfinance_short_cache_lock:

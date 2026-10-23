@@ -43,12 +43,12 @@ def _make_app():
 def _patch_watchlist_mutations():
     """Patch the side effects of a successful watchlist mutation."""
     return [
-        patch("routes.api_stocks.save_user_stocks", return_value=None),
-        patch("routes.api_stocks.schedule_sync_all_stocks_now", return_value=None),
-        patch("routes.api_stocks._announce_watchlist_state", return_value=None),
-        patch("routes.api_stocks._sync_realtime_symbol", return_value=None),
-        patch("routes.api_stocks.invalidate_stock_caches", return_value=None),
-        patch("routes.api_stocks.ensure_stock_placeholder_in_caches", return_value=None),
+        patch("utils.storage.save_user_stocks", return_value=None),
+        patch("app_bg.schedule_sync_all_stocks_now", return_value=None),
+        patch("routes.stocks.common._announce_watchlist_state", return_value=None),
+        patch("routes.stocks.common._sync_realtime_symbol", return_value=None),
+        patch("routes.stocks.ai_portfolio.invalidate_stock_caches", return_value=None),
+        patch("routes.stocks.ai_portfolio.ensure_stock_placeholder_in_caches", return_value=None),
     ]
 
 
@@ -117,7 +117,7 @@ def test_add_stock_rejects_us_symbol_in_jp_market():
     app = _make_app()
     with (
         app.test_client() as client,
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
@@ -144,7 +144,7 @@ def test_add_stock_rejects_jp_symbol_in_us_market():
     app = _make_app()
     with (
         app.test_client() as client,
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
@@ -171,7 +171,7 @@ def test_add_stock_accepts_and_normalizes_jp_codes(symbol, stored):
     app = _make_app()
     with (
         app.test_client() as client,
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
@@ -193,7 +193,7 @@ def test_add_stock_accepts_us_symbol_in_us_market():
     app = _make_app()
     with (
         app.test_client() as client,
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():
@@ -221,7 +221,7 @@ def test_extension_add_rejects_us_symbol_in_jp_market():
     with (
         app.test_client() as client,
         patch(
-            "routes.api_stocks.get_or_create_extension_api_token",
+            "credential_manager.get_or_create_extension_api_token",
             return_value="extension-test-token",
         ),
         patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
@@ -257,7 +257,7 @@ def test_ai_copy_to_my_rejects_market_symbol_mismatch_without_mutation():
     app = _make_app()
     with (
         app.test_client() as client,
-        patch("routes.api_stocks.require_trusted_or_admin", return_value=(True, None)),
+        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
     ):
         with ExitStack() as stack:
             for p in _patch_watchlist_mutations():

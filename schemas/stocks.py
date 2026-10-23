@@ -19,6 +19,7 @@ from utils.normalization import (
     normalize_market,
     normalize_symbol,
     normalize_symbol_for_market,
+    normalize_text,
 )
 
 ScreenerSortBy = Literal[
@@ -38,65 +39,153 @@ DEFAULT_STOCK_HISTORY_PERIOD: StockHistoryPeriod = "3mo"
 StockMarket = Literal["us", "jp", "idx"]
 
 
+def _normalize_stock_mutation_identity(data: Any, default_market: str) -> Any:
+    """Apply the historic ingress normalization for watchlist mutations.
+
+    Mirrors ``route_helpers._parse_stock_request``: non-string ``market`` /
+    ``symbol`` / ``name`` are surfaced as typed markers so the HTTP adapter
+    can render the exact historic error envelope; normalization itself
+    (NFKC, upper-casing, JP ``.T`` qualification) is identical.
+    """
+    if not isinstance(data, dict):
+        return data
+    raw_market_val = data.get("market")
+    if raw_market_val is not None and not isinstance(raw_market_val, str):
+        raise ValueError("invalid_market")
+    raw_symbol_val = data.get("symbol")
+    if raw_symbol_val is not None and not isinstance(raw_symbol_val, str):
+        raise ValueError("invalid_symbol")
+    raw_name_val = data.get("name")
+    if raw_name_val is not None and not isinstance(raw_name_val, str):
+        raise ValueError("name_must_be_string")
+    raw_symbol = normalize_symbol(raw_symbol_val)
+    market = normalize_market(raw_market_val, default=default_market)
+    if not market:
+        market = ""
+    symbol = normalize_symbol_for_market(raw_symbol, market) if market else ""
+    name = normalize_text(raw_name_val)
+    return {**data, "market": market, "symbol": symbol, "name": name}
+
+
 class StockAddRequest(BaseModel):
-    """Schema for /api/stocks/add request body."""
+    """Canonical contract for ``POST /api/stocks/add``.
+
+    The single rule owner for the add body; the route validates only through
+    this model (via ``route_helpers._parse_stock_add_request``) so the
+    historic error envelope stays byte-identical.
+    """
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
-    name: str = Field(
-        ..., min_length=1, max_length=MAX_STOCK_NAME_LENGTH, description="Stock display name"
-    )
+    name: str = Field(..., description="Stock display name")
     market: StockMarket = Field(..., description="Target market")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identity(cls, data: Any) -> Any:
+        return _normalize_stock_mutation_identity(data, default_market="")
 
     @field_validator("symbol")
     @classmethod
     def validate_symbol_format(cls, v: str) -> str:
-        s = v.strip().upper()
-        if not s:
-            raise ValueError("Symbol cannot be empty")
-        return s
+        if not v:
+            raise ValueError("field_required")
+        if not is_valid_symbol(v):
+            raise ValueError("invalid_symbol")
+        return v
+
+    @field_validator("market")
+    @classmethod
+    def validate_market_present(cls, v: str) -> str:
+        if not v:
+            raise ValueError("invalid_market")
+        return v
 
     @field_validator("name")
     @classmethod
     def validate_name_format(cls, v: str) -> str:
-        s = v.strip()
-        if not s:
-            raise ValueError("Name cannot be empty")
-        return s
+        if not v:
+            raise ValueError("field_required_name")
+        if len(v) > MAX_STOCK_NAME_LENGTH:
+            raise ValueError("name_too_long")
+        return v
 
 
 class StockAddExtRequest(BaseModel):
-    """Schema for /api/stocks/add_ext request body."""
+    """Canonical contract for ``POST /api/stocks/add_ext``.
+
+    ``market`` defaults to ``us`` and ``name`` is optional, matching the
+    running extension endpoint; validation is otherwise identical to add.
+    """
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     name: str | None = Field(
         default=None,
-        max_length=MAX_STOCK_NAME_LENGTH,
         description="Stock display name (optional)",
     )
     market: StockMarket = Field(default="us", description="Target market")
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identity(cls, data: Any) -> Any:
+        normalized = _normalize_stock_mutation_identity(data, default_market="us")
+        if isinstance(normalized, dict) and normalized.get("name") == "":
+            raw_name = data.get("name") if isinstance(data, dict) else None
+            if raw_name is None:
+                normalized = {**normalized, "name": None}
+        return normalized
+
     @field_validator("symbol")
     @classmethod
     def validate_symbol_format(cls, v: str) -> str:
-        s = v.strip().upper()
-        if not s:
-            raise ValueError("Symbol cannot be empty")
-        return s
+        if not v:
+            raise ValueError("field_required")
+        if not is_valid_symbol(v):
+            raise ValueError("invalid_symbol")
+        return v
+
+    @field_validator("market")
+    @classmethod
+    def validate_market_present(cls, v: str) -> str:
+        if not v:
+            raise ValueError("invalid_market")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_format(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return v
+        if len(v) > MAX_STOCK_NAME_LENGTH:
+            raise ValueError("name_too_long")
+        return v
 
 
 class StockDeleteRequest(BaseModel):
-    """Schema for /api/stocks/delete request body."""
+    """Canonical contract for ``POST|DELETE /api/stocks/delete``."""
 
     symbol: str = Field(..., min_length=1, max_length=20, description="Stock ticker symbol")
     market: StockMarket = Field(..., description="Target market")
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_identity(cls, data: Any) -> Any:
+        return _normalize_stock_mutation_identity(data, default_market="")
+
     @field_validator("symbol")
     @classmethod
     def validate_symbol_format(cls, v: str) -> str:
-        s = v.strip().upper()
-        if not s:
-            raise ValueError("Symbol cannot be empty")
-        return s
+        if not v:
+            raise ValueError("field_required")
+        if not is_valid_symbol(v):
+            raise ValueError("invalid_symbol")
+        return v
+
+    @field_validator("market")
+    @classmethod
+    def validate_market_present(cls, v: str) -> str:
+        if not v:
+            raise ValueError("invalid_market")
+        return v
 
 
 class PortfolioUpdateRequest(BaseModel):

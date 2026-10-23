@@ -19,23 +19,44 @@ from pydantic import ValidationError
 
 from app_state import app_state
 from constants import (
+    CHAT_MAX_MSG_LENGTH,
+    LANGSEARCH_API_KEY_MIN_LENGTH,
+    MAX_AI_PORTFOLIO_ITEMS,
     MAX_STOCK_NAME_LENGTH,
+    MISTRAL_API_KEY_MIN_LENGTH,
     PORTFOLIO_AVG_PRICE_MAX,
     PORTFOLIO_SHARES_MAX,
     PORTFOLIO_TOTAL_VALUE_MAX,
+    TAVILY_API_KEY_MIN_LENGTH,
 )
 from credential_manager import get_langsearch_api_key, get_mistral_api_key, get_tavily_api_key
 from error_codes import ErrorCode
-from schemas.stocks import PortfolioUpdateRequest
+from schemas.ai_portfolio import (
+    AIPortfolioCopyToMyRequest,
+    AIPortfolioDeleteRequest,
+    AIPortfolioGenerateRequest,
+    AIPortfolioRebalanceRequest,
+    AIPortfolioSaveRequest,
+)
+from schemas.analysis import (
+    AIAnalyzeChartImageRequest,
+    AIAnalyzeV2Request,
+    AIChatRequest,
+    AITechnicalLinesRequest,
+)
+from schemas.config import CredentialsSaveRequest
+from schemas.stocks import (
+    PortfolioUpdateRequest,
+    StockAddExtRequest,
+    StockAddRequest,
+    StockDeleteRequest,
+)
 from utils.caching import clear_cache_key, clear_cache_prefix
 from utils.env_helpers import _env_bool as _route_env_bool
 from utils.env_helpers import _env_int, _is_production_env
-from utils.networking import _is_loopback_ip
+from utils.networking import _is_loopback_ip, check_admin_token
 from utils.normalization import (
-    is_valid_symbol,
-    normalize_market,
     normalize_symbol,
-    normalize_symbol_for_market,
     normalize_text,
 )
 from utils.stock_payload import (
@@ -349,12 +370,7 @@ def rate_limit(
             )
             # Full constant-time compare only when candidate lengths plausible
             if _authed:
-                import secrets as _secrets
-
-                try:
-                    _authed = _secrets.compare_digest(_presented, _configured)
-                except Exception:
-                    _authed = False
+                _authed = check_admin_token(_presented)
             if _authed:
                 digest = hashlib.sha256(_configured.encode("utf-8")).hexdigest()[:16]
                 rate_remote = f"adm:{digest}"
@@ -770,48 +786,162 @@ def _stock_display_name(symbol: str, market: str) -> str:
     return _default_stock_names(market).get(symbol, symbol)
 
 
+def _stock_mutation_error_from_validation(
+    exc: ValidationError, *, require_name: bool
+) -> tuple[Any, int]:
+    """Map canonical stock-mutation schema failures to historic errors.
+
+    The historic ``_parse_stock_request`` checked identity fields first, then
+    required-field presence, and only then name length / symbol shape.
+    Pydantic reports every failure at once in field order, so re-order before
+    picking the single error the client sees.
+    """
+    errors = exc.errors()
+    identity_errors = [
+        candidate
+        for candidate in errors
+        if (
+            candidate.get("loc")
+            and str(candidate["loc"][0]) in ("symbol", "market")
+        )
+        or (
+            candidate.get("type") == "value_error"
+            and any(
+                marker in str(candidate.get("msg", ""))
+                for marker in ("invalid_market", "invalid_symbol", "field_required")
+            )
+        )
+    ]
+    name_required_errors = [
+        candidate
+        for candidate in errors
+        if candidate.get("loc")
+        and str(candidate["loc"][0]) == "name"
+        and (
+            candidate.get("type") == "missing"
+            or "field_required_name" in str(candidate.get("msg", ""))
+        )
+    ]
+    name_type_errors = [
+        candidate
+        for candidate in errors
+        if candidate.get("loc")
+        and str(candidate["loc"][0]) == "name"
+        and "name_must_be_string" in str(candidate.get("msg", ""))
+    ]
+    err: Mapping[str, Any]
+    if identity_errors:
+        err = identity_errors[0]
+    elif name_type_errors:
+        err = name_type_errors[0]
+    elif require_name and name_required_errors:
+        err = name_required_errors[0]
+    else:
+        err = errors[0] if errors else {"type": "value_error", "msg": str(exc), "loc": ()}
+    loc = err.get("loc") or ()
+    field = str(loc[0]) if loc else ""
+    message = str(err.get("msg", ""))
+    err_type = str(err.get("type", ""))
+
+    if "name_must_be_string" in message:
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"}
+        )
+    if "invalid_market" in message:
+        return error_response(ErrorCode.INVALID_MARKET)
+    if "invalid_symbol" in message:
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if field == "market":
+        return error_response(ErrorCode.INVALID_MARKET)
+    if field == "symbol":
+        if err_type in ("missing", "string_too_short") or "field_required" in message:
+            return error_response(
+                ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]}
+            )
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if field == "name":
+        if err_type == "missing" or "field_required_name" in message:
+            return error_response(
+                ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["name"]}
+            )
+        if "name_too_long" in message:
+            return error_response(
+                ErrorCode.UNSAFE_INPUT,
+                details={"reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"},
+            )
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"}
+        )
+    return error_response(ErrorCode.MALFORMED_INPUT)
+
+
+def _validated_stock_mutation_to_dict(validated: Any, raw_data: dict) -> dict:
+    """Render the canonical model back to the historic parsed-dict shape."""
+    raw_symbol_val = raw_data.get("symbol")
+    raw_symbol = normalize_symbol(raw_symbol_val)
+    name = getattr(validated, "name", None)
+    if name is None and raw_data.get("name") is None:
+        name = ""
+    return {
+        "raw_symbol": raw_symbol,
+        "name": name if isinstance(name, str) else normalize_text(name),
+        "market": getattr(validated, "market", ""),
+        "symbol": getattr(validated, "symbol", ""),
+    }
+
+
+def _parse_stock_add_request(
+    data: dict,
+) -> tuple[dict | None, tuple[Any, int] | None]:
+    """Validate an add body with the canonical ``StockAddRequest`` schema."""
+    try:
+        validated = StockAddRequest.model_validate(data)
+    except ValidationError as exc:
+        return None, _stock_mutation_error_from_validation(exc, require_name=True)
+    return _validated_stock_mutation_to_dict(validated, data), None
+
+
+def _parse_stock_delete_request(
+    data: dict,
+) -> tuple[dict | None, tuple[Any, int] | None]:
+    """Validate a delete body with the canonical ``StockDeleteRequest`` schema."""
+    try:
+        validated = StockDeleteRequest.model_validate(data)
+    except ValidationError as exc:
+        return None, _stock_mutation_error_from_validation(exc, require_name=False)
+    parsed = _validated_stock_mutation_to_dict(validated, data)
+    parsed["name"] = ""
+    return parsed, None
+
+
+def _parse_stock_add_ext_request(
+    data: dict,
+) -> tuple[dict | None, tuple[Any, int] | None]:
+    """Validate an extension add body with ``StockAddExtRequest``."""
+    try:
+        validated = StockAddExtRequest.model_validate(data)
+    except ValidationError as exc:
+        return None, _stock_mutation_error_from_validation(exc, require_name=False)
+    parsed = _validated_stock_mutation_to_dict(validated, data)
+    if parsed.get("name") is None:
+        parsed["name"] = ""
+    return parsed, None
+
+
 def _parse_stock_request(
     data: dict, require_name: bool = False, default_market: str = "us"
 ) -> tuple[dict | None, tuple[Any, int] | None]:
-    """Parse and validate common stock mutation request fields."""
-    raw_market_val = data.get("market")
-    if raw_market_val is not None and not isinstance(raw_market_val, str):
-        return None, error_response(ErrorCode.INVALID_MARKET)
-    raw_symbol_val = data.get("symbol")
-    if raw_symbol_val is not None and not isinstance(raw_symbol_val, str):
-        return None, error_response(ErrorCode.INVALID_SYMBOL)
-    raw_name_val = data.get("name")
-    if raw_name_val is not None and not isinstance(raw_name_val, str):
-        return None, error_response(
-            ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"}
-        )
-    raw_symbol = normalize_symbol(raw_symbol_val)
-    market = normalize_market(raw_market_val, default=default_market)
-    symbol = normalize_symbol_for_market(raw_symbol, market) if market else ""
-    name = normalize_text(raw_name_val)
+    """Legacy entry point kept for backward compatibility.
 
-    if not symbol:
-        return None, error_response(
-            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]}
-        )
-    if not market:
-        return None, error_response(ErrorCode.INVALID_MARKET)
-    if require_name and not name:
-        return None, error_response(ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["name"]})
-    if len(name) > MAX_STOCK_NAME_LENGTH:
-        return None, error_response(
-            ErrorCode.UNSAFE_INPUT,
-            details={"reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"},
-        )
-    if not is_valid_symbol(symbol):
-        return None, error_response(ErrorCode.INVALID_SYMBOL)
-
-    return {
-        "raw_symbol": raw_symbol,
-        "name": name,
-        "market": market,
-        "symbol": symbol,
-    }, None
+    Dispatches to the canonical schema-backed parsers so ``schemas/stocks.py``
+    stays the single rule owner; behavior is unchanged for the three historic
+    call shapes (add / delete / add_ext).
+    """
+    if require_name and default_market == "":
+        return _parse_stock_add_request(data)
+    if not require_name and default_market == "":
+        return _parse_stock_delete_request(data)
+    return _parse_stock_add_ext_request(data)
 
 
 def _portfolio_numeric_error(field: str, err: Mapping[str, Any]) -> str:
@@ -929,6 +1059,702 @@ def _parse_portfolio_request(
         return PortfolioUpdateRequest.model_validate(data), None
     except ValidationError as exc:
         return None, _portfolio_error_from_validation(exc)
+
+
+def _chat_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map canonical chat-schema failures back to the endpoint's errors.
+
+    The old ``api_chat`` route checked fields sequentially: non-string
+    identity/message types, then message length, then market presence, then
+    the combined symbol/message presence, then symbol shape, and finally
+    the operation token. Pydantic reports every failure at once in field
+    order, so re-order before picking the single error the client sees.
+    """
+    errors = exc.errors()
+    messages = [str(candidate.get("msg", "")) for candidate in errors]
+    joined = " ".join(messages)
+    if "message_must_be_string" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "message must be a string", "fields": ["message"]},
+            status_code=400,
+        )
+    if "message_too_long" in joined or any(
+        candidate.get("loc") == ("message",) and candidate.get("type") == "string_too_long"
+        for candidate in errors
+    ):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": f"メッセージは{CHAT_MAX_MSG_LENGTH}文字以内で入力してください。"},
+            status_code=400,
+        )
+    if "invalid_market" in joined or any(
+        (candidate.get("loc") or (None,))[0] == "market" for candidate in errors
+    ):
+        return error_response(ErrorCode.INVALID_MARKET)
+    symbol_blank = any(
+        (candidate.get("loc") or (None,))[0] == "symbol"
+        and (
+            candidate.get("type") in ("missing", "string_too_short")
+            or "field_required" in str(candidate.get("msg", ""))
+        )
+        for candidate in errors
+    )
+    message_blank = any(
+        (candidate.get("loc") or (None,))[0] == "message"
+        and (
+            candidate.get("type") in ("missing", "string_too_short")
+            or "field_required" in str(candidate.get("msg", ""))
+        )
+        for candidate in errors
+    )
+    if symbol_blank or message_blank:
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol", "message"]}
+        )
+    if "invalid_symbol" in joined or any(
+        (candidate.get("loc") or (None,))[0] == "symbol" for candidate in errors
+    ):
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if any((candidate.get("loc") or (None,))[0] == "request_token" for candidate in errors):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "request_token must be a 16-128 character URL-safe token"},
+            status_code=400,
+        )
+    return error_response(ErrorCode.MALFORMED_INPUT)
+
+
+def _parse_chat_request(
+    data: dict,
+) -> tuple[AIChatRequest | None, tuple[Any, int] | None]:
+    """Validate a chat body with the canonical ``AIChatRequest`` schema."""
+    try:
+        return AIChatRequest.model_validate(data), None
+    except ValidationError as exc:
+        return None, _chat_error_from_validation(exc)
+
+
+def _analyze_v2_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map canonical analyze-v2 failures back to the endpoint's errors.
+
+    The old ``api_analyze_v2`` route checked fields sequentially: symbol and
+    market types, name type/length, chart_data shape, price shape/range, then
+    market presence, symbol presence/shape, and finally the operation token.
+    The schema raises the first failure in that same order, so the adapter
+    replays the single error the client used to see. Unreachable field-level
+    fallbacks (``market``/``symbol`` locations) stay so a future schema edit
+    cannot leak a raw validation message.
+    """
+    errors = exc.errors()
+    joined = " ".join(str(candidate.get("msg", "")) for candidate in errors)
+    locs = [(candidate.get("loc") or (None,))[0] for candidate in errors]
+    if "symbol_not_string" in joined:
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if "market_not_string" in joined:
+        return error_response(ErrorCode.INVALID_MARKET)
+    if "name_must_be_string" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": "name must be a string"}
+        )
+    if "name_too_long" in joined:
+        return error_response(
+            ErrorCode.UNSAFE_INPUT,
+            details={"reason": f"nameは{MAX_STOCK_NAME_LENGTH}文字以下である必要があります"},
+        )
+    if "chart_data_must_be_list" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "chart_data must be a list", "fields": ["chart_data"]},
+            status_code=400,
+        )
+    if "chart_data_too_many" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "chart_data has too many points (max 5000)",
+                "fields": ["chart_data"],
+            },
+            status_code=400,
+        )
+    if "chart_data_entry_not_object" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "chart_data entries must be objects",
+                "fields": ["chart_data"],
+            },
+            status_code=400,
+        )
+    if "price_must_be_number" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "price must be a finite number", "fields": ["price"]},
+            status_code=400,
+        )
+    if "price_not_finite" in joined or "price_negative" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "price must be a finite non-negative number",
+                "fields": ["price"],
+            },
+            status_code=400,
+        )
+    if "market_empty" in joined or "market" in locs:
+        return error_response(ErrorCode.INVALID_MARKET)
+    if "symbol_required" in joined:
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["symbol"]}
+        )
+    if "symbol_bad_shape" in joined or "symbol" in locs:
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if "request_token" in locs:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "request_token must be a 16-128 character URL-safe token"},
+            status_code=400,
+        )
+    return error_response(ErrorCode.MALFORMED_INPUT)
+
+
+def _parse_analyze_v2_request(
+    data: dict,
+) -> tuple[AIAnalyzeV2Request | None, tuple[Any, int] | None]:
+    """Validate an analyze-v2 body with ``AIAnalyzeV2Request``."""
+    try:
+        return AIAnalyzeV2Request.model_validate(data), None
+    except ValidationError as exc:
+        return None, _analyze_v2_error_from_validation(exc)
+
+
+def _technical_lines_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map canonical technical-lines failures back to the endpoint's errors.
+
+    The old ``api_ai_technical_lines`` route checked fields sequentially:
+    symbol presence/type, market type/presence, symbol presence/shape, then
+    period and history_data shape. The schema raises the first failure in
+    that same order, so the adapter replays the single error the client used
+    to see. Unlike its neighbors, this endpoint renders a non-string symbol
+    with a ``fields`` list and a bare ``INVALID_MARKET`` for a non-string
+    market; both quirks are preserved here.
+    """
+    errors = exc.errors()
+    joined = " ".join(str(candidate.get("msg", "")) for candidate in errors)
+    locs = [(candidate.get("loc") or (None,))[0] for candidate in errors]
+    if "symbol_required" in joined:
+        return error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            details={"fields": ["symbol"]},
+            status_code=400,
+        )
+    if "symbol_not_string" in joined:
+        return error_response(
+            ErrorCode.INVALID_SYMBOL,
+            details={"fields": ["symbol"]},
+            status_code=400,
+        )
+    if "market_not_string" in joined or "market_empty" in joined or "market" in locs:
+        return error_response(ErrorCode.INVALID_MARKET)
+    if "symbol_bad_shape" in joined or "symbol" in locs:
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if "period_invalid" in joined or "period" in locs:
+        return error_response(
+            ErrorCode.INVALID_PERIOD,
+            details={"reason": "periodは指定された期間のいずれかである必要があります"},
+            status_code=400,
+        )
+    if "history_data_must_be_list" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "history_data must be a list", "fields": ["history_data"]},
+            status_code=400,
+        )
+    if "history_data_too_many" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "history_data has too many points (max 5000)",
+                "fields": ["history_data"],
+            },
+            status_code=400,
+        )
+    if "history_data_entry_not_object" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "history_data entries must be objects",
+                "fields": ["history_data"],
+            },
+            status_code=400,
+        )
+    return error_response(ErrorCode.MALFORMED_INPUT)
+
+
+def _parse_technical_lines_request(
+    data: dict,
+) -> tuple[AITechnicalLinesRequest | None, tuple[Any, int] | None]:
+    """Validate a technical-lines body with ``AITechnicalLinesRequest``."""
+    try:
+        return AITechnicalLinesRequest.model_validate(data), None
+    except ValidationError as exc:
+        return None, _technical_lines_error_from_validation(exc)
+
+
+def _chart_image_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map canonical chart-image failures back to the endpoint's errors.
+
+    The old ``api_analyze_chart_image`` route checked fields sequentially:
+    image presence/shape/size, the Data-URI vs Base64 branch checks, symbol
+    type/shape, market type/presence, then prompt type/length. The schema
+    raises the first failure in that same order, so the adapter replays the
+    single error the client used to see.
+    """
+    errors = exc.errors()
+    joined = " ".join(str(candidate.get("msg", "")) for candidate in errors)
+    locs = [(candidate.get("loc") or (None,))[0] for candidate in errors]
+    if "image_required" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_data (Base64またはData URI) が必要です"},
+            status_code=400,
+        )
+    if "image_too_large" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_dataが大きすぎます（上限約5MB）"},
+            status_code=400,
+        )
+    if "image_bad_data_uri" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_dataはimage/*のData URI形式である必要があります"},
+            status_code=400,
+        )
+    if "image_svg" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "SVG画像はサポートされていません"},
+            status_code=400,
+        )
+    if "image_bad_mime" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "対応形式は png/jpeg/gif/webp のbase64 Data URIのみです"},
+            status_code=400,
+        )
+    if "image_bad_b64" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_dataのData URIはbase64形式である必要があります"},
+            status_code=400,
+        )
+    if "image_url" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "URL形式のimage_dataは許可されていません。"
+                "Data URIまたはBase64で送信してください"
+            },
+            status_code=400,
+        )
+    if "image_bad_scheme" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_dataのData URI形式が不正です"},
+            status_code=400,
+        )
+    if "image_bad_base64" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "image_dataはBase64形式である必要があります"},
+            status_code=400,
+        )
+    if "symbol_not_string" in joined:
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if "market_not_string" in joined or "market_empty" in joined or "market" in locs:
+        return error_response(ErrorCode.INVALID_MARKET)
+    if "symbol_bad_shape" in joined or "symbol" in locs:
+        return error_response(ErrorCode.INVALID_SYMBOL)
+    if "prompt_must_be_string" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "prompt must be a string", "fields": ["prompt"]},
+            status_code=400,
+        )
+    if "prompt_too_long" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "promptは2000文字以内で入力してください", "fields": ["prompt"]},
+            status_code=400,
+        )
+    return error_response(ErrorCode.MALFORMED_INPUT)
+
+
+def _parse_chart_image_request(
+    data: dict,
+) -> tuple[AIAnalyzeChartImageRequest | None, tuple[Any, int] | None]:
+    """Validate a chart-image body with ``AIAnalyzeChartImageRequest``."""
+    try:
+        return AIAnalyzeChartImageRequest.model_validate(data), None
+    except ValidationError as exc:
+        return None, _chart_image_error_from_validation(exc)
+
+
+_CREDENTIALS_KEY_SPECS: dict[str, tuple[Any, int]] = {
+    "mistral_api_key": (ErrorCode.INVALID_API_KEY, MISTRAL_API_KEY_MIN_LENGTH),
+    "openai_api_key": (ErrorCode.UNSAFE_INPUT, 8),
+    "langsearch_api_key": (ErrorCode.UNSAFE_INPUT, LANGSEARCH_API_KEY_MIN_LENGTH),
+    "tavily_api_key": (ErrorCode.UNSAFE_INPUT, TAVILY_API_KEY_MIN_LENGTH),
+    "alphavantage_api_key": (ErrorCode.UNSAFE_INPUT, 10),
+}
+
+
+def _credentials_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map canonical credentials-save failures back to the endpoint's errors.
+
+    The old ``api_credentials`` POST route checked fields sequentially:
+    key types, key formats, prompt, API mode, agent id, preview flag, then
+    (after the server-state-dependent Agents rules, which stay in the route)
+    model shape, provider, base URL, and model names. The schema raises the
+    first failure in that same order, so the adapter replays the single
+    error the client used to see. Note the historic quirk: a malformed
+    Mistral key reports ``INVALID_API_KEY`` while every other malformed key
+    reports ``UNSAFE_INPUT``.
+    """
+    errors = exc.errors()
+    markers = [
+        str(candidate.get("msg", "")).split(",")[-1].strip() for candidate in errors
+    ]
+    # The schema raises the first failure only, so at most one marker is
+    # present. Match markers exactly: several names share a suffix
+    # (``openai_model_not_string`` contains ``model_not_string``).
+    first = markers[0] if markers else ""
+    kind, _, field = first.partition("|")
+    if kind == "cred_not_string":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"fields": [field], "reason": "APIキーは文字列で指定してください"},
+            status_code=400,
+        )
+    if kind == "cred_bad_key":
+        code, min_length = _CREDENTIALS_KEY_SPECS.get(field, (ErrorCode.UNSAFE_INPUT, 0))
+        return error_response(
+            code,
+            details={"fields": [field], "min_length": min_length},
+        )
+    if first == "prompt_not_string":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "custom_ai_promptは文字列で指定してください"},
+            status_code=400,
+        )
+    if first == "prompt_too_long":
+        return error_response(
+            ErrorCode.UNSAFE_INPUT,
+            details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
+        )
+    if first == "mode_invalid":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "mistral_api_modeは chat または agents を指定してください"},
+            status_code=400,
+        )
+    if first == "agent_not_string":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "mistral_agent_idは文字列で指定してください"},
+            status_code=400,
+        )
+    if first == "agent_bad_format":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"fields": ["mistral_agent_id"], "reason": "Agent IDの形式が不正です"},
+            status_code=400,
+        )
+    if first == "preview_not_bool":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "preview_modeは真偽値で指定してください"},
+            status_code=400,
+        )
+    if first == "model_not_string":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "mistral_modelは有効な文字列で指定してください"},
+            status_code=400,
+        )
+    if first == "provider_invalid":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "ai_providerは mistral または openai_compatible を指定してください"},
+            status_code=400,
+        )
+    if first == "url_not_string":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "openai_base_urlは文字列で指定してください"},
+            status_code=400,
+        )
+    if first == "url_bad_scheme":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "fields": ["openai_base_url"],
+                "reason": "URLは http:// または https:// で始まっている必要があります",
+            },
+            status_code=400,
+        )
+    if first == "openai_model_not_string":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "openai_modelは文字列で指定してください"},
+            status_code=400,
+        )
+    if first == "openai_emb_model_not_string":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "openai_embeddings_modelは文字列で指定してください"},
+            status_code=400,
+        )
+    return error_response(ErrorCode.MALFORMED_INPUT)
+
+
+def _parse_credentials_save_request(
+    data: dict,
+) -> tuple[CredentialsSaveRequest | None, tuple[Any, int] | None]:
+    """Validate a credentials-save body with ``CredentialsSaveRequest``."""
+    try:
+        return CredentialsSaveRequest.model_validate(data), None
+    except ValidationError as exc:
+        return None, _credentials_error_from_validation(exc)
+
+
+def _ai_generate_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
+    """Map canonical generate-schema failures to the historic errors."""
+    joined = " ".join(str(candidate.get("msg", "")) for candidate in exc.errors())
+    if "theme_must_be_string" in joined:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
+            status_code=400,
+        )
+    if any(
+        candidate.get("type") == "string_too_long" for candidate in exc.errors()
+    ):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "themeは120文字以内で指定してください"},
+            status_code=400,
+        )
+    return error_response(
+        ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
+    )
+
+
+def _parse_ai_generate_request(
+    data: dict,
+) -> tuple[str | None, tuple[Any, int] | None]:
+    """Validate a generate body with ``AIPortfolioGenerateRequest``."""
+    try:
+        return AIPortfolioGenerateRequest.model_validate(data).theme, None
+    except ValidationError as exc:
+        return None, _ai_generate_error_from_validation(exc)
+
+
+def _parse_ai_rebalance_request(
+    data: dict,
+) -> tuple[str | None, tuple[Any, int] | None]:
+    """Validate a rebalance body with ``AIPortfolioRebalanceRequest``."""
+    try:
+        req_obj = AIPortfolioRebalanceRequest.model_validate(data)
+    except ValidationError as exc:
+        joined = " ".join(str(candidate.get("msg", "")) for candidate in exc.errors())
+        if "theme_must_be_string" in joined:
+            return None, error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
+                status_code=400,
+            )
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "テーマは120文字以内で入力してください"},
+            status_code=400,
+        )
+    theme = req_obj.theme.strip() if req_obj.theme else ""
+    return (theme if theme else "tech"), None
+
+
+def _parse_ai_delete_request(
+    data: dict,
+) -> tuple[str | None, tuple[Any, int] | None]:
+    """Validate a delete body with ``AIPortfolioDeleteRequest``."""
+    try:
+        return AIPortfolioDeleteRequest.model_validate(data).id.strip(), None
+    except ValidationError as exc:
+        joined = " ".join(str(candidate.get("msg", "")) for candidate in exc.errors())
+        if "id_must_be_string" in joined:
+            return None, error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "idは文字列で指定してください", "fields": ["id"]},
+                status_code=400,
+            )
+        if any(
+            candidate.get("type") == "string_too_long" for candidate in exc.errors()
+        ):
+            return None, error_response(
+                ErrorCode.MALFORMED_INPUT,
+                details={"reason": "IDは256文字以内で指定してください"},
+                status_code=400,
+            )
+        return None, error_response(
+            ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["id"]}, status_code=400
+        )
+
+
+def _parse_ai_save_request(
+    data: dict,
+) -> tuple[AIPortfolioSaveRequest | None, tuple[Any, int] | None]:
+    """Validate a save body with ``AIPortfolioSaveRequest``."""
+    try:
+        return AIPortfolioSaveRequest.model_validate(data), None
+    except ValidationError:
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "無効なポートフォリオデータです"},
+            status_code=400,
+        )
+
+
+def _copy_error_from_marker(marker: str) -> tuple[Any, int]:
+    """Render one copy-to-my marker as the historic per-item envelope."""
+    kind, _, rest = marker.partition("|")
+    if kind == "copy_items_required":
+        return error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "itemsリストが必要です"},
+            status_code=400,
+        )
+    if kind == "copy_too_many":
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": f"items は最大 {MAX_AI_PORTFOLIO_ITEMS} 件まで指定できます"},
+            status_code=400,
+        )
+    idx_text, _, extra = rest.partition("|")
+    try:
+        idx = int(idx_text)
+    except (TypeError, ValueError):
+        idx = 0
+    if kind == "copy_item_not_object":
+        reason = f"items[{idx}] が無効です"
+        return error_response(
+            ErrorCode.MALFORMED_INPUT, details={"reason": reason}, status_code=400
+        )
+    if kind == "copy_bad_symbol_market":
+        reason = f"items[{idx}] のシンボルまたは市場が無効です"
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": reason}, status_code=400
+        )
+    if kind == "copy_mismatch":
+        reason = f"items[{idx}]: {extra}"
+        return error_response(
+            ErrorCode.INVALID_MARKET, details={"reason": reason}, status_code=400
+        )
+    if kind == "copy_duplicate":
+        dup_symbol, _, dup_market = extra.partition("|")
+        reason = f"items[{idx}] の銘柄が重複しています: {dup_symbol} ({dup_market})"
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": reason}, status_code=400
+        )
+    if kind == "Duplicate stock in items":
+        # Sequential-gate marker:
+        # "Duplicate stock in items: SYM (mkt) (item IDX)".
+        # Here ``rest`` holds the whole marker text (no second "|").
+        detail, _, idx_part = rest.rpartition(" (item ")
+        try:
+            dup_idx = int(idx_part.rstrip(")"))
+        except (TypeError, ValueError):
+            dup_idx = 0
+        detail = detail.removeprefix("Duplicate stock in items: ")
+        reason = f"items[{dup_idx}] の銘柄が重複しています: {detail}"
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": reason}, status_code=400
+        )
+    if kind == "copy_bool_numeric":
+        reason = f"items[{idx}] の数値が無効です（真偽値は不可）"
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": reason}, status_code=400
+        )
+    if kind == "copy_bad_numeric":
+        reason = f"items[{idx}] の数値が無効です"
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": reason}, status_code=400
+        )
+    if kind == "copy_bad_target_range":
+        reason = (
+            f"items[{idx}] の target_price は 0 より大きく "
+            f"{PORTFOLIO_AVG_PRICE_MAX:,.0f} 以下の値が必要です"
+        )
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": reason}, status_code=400
+        )
+    if kind == "copy_bad_weight_range":
+        reason = f"items[{idx}] の weight_pct は 0〜100 の範囲が必要です"
+        return error_response(
+            ErrorCode.INVALID_INPUT, details={"reason": reason}, status_code=400
+        )
+    return error_response(
+        ErrorCode.MALFORMED_INPUT,
+        details={"reason": "無効なポートフォリオデータです"},
+        status_code=400,
+    )
+
+
+def _parse_ai_copy_to_my_request(
+    data: dict,
+) -> tuple[list[tuple[str, str, float, float]] | None, tuple[Any, int] | None]:
+    """Validate a copy-to-my body with ``AIPortfolioCopyToMyRequest``.
+
+    Returns normalized ``(symbol, market, target_price, weight_pct)`` tuples
+    in input order, exactly as the historic inline loop produced.
+    """
+    try:
+        validated = AIPortfolioCopyToMyRequest.model_validate(data)
+    except ValidationError as exc:
+        errors = exc.errors()
+        first_msg = str(errors[0].get("msg", "")) if errors else ""
+        first_loc = errors[0].get("loc", ()) if errors else ()
+        marker = first_msg
+        # Pydantic v2 prefixes ``Value error, `` to before-validator messages.
+        marker = marker.removeprefix("Value error, ")
+        if marker.startswith(("copy_", "Total weight", "Duplicate stock in items")):
+            if marker.startswith("Total weight"):
+                return None, error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "items の weight_pct 合計は100以下である必要があります"},
+                    status_code=400,
+                )
+            if marker.startswith("Duplicate stock in items"):
+                return None, _copy_error_from_marker(f"Duplicate stock in items|{marker}")
+            return None, _copy_error_from_marker(marker)
+        # Item-level or structural failures that the sequential gate already
+        # excludes for route traffic; map conservatively without new text.
+        loc = first_loc or ()
+        if len(loc) >= 3 and loc[0] == "items" and isinstance(loc[1], int):
+            field = str(loc[2])
+            if field in ("symbol", "market"):
+                return None, _copy_error_from_marker(f"copy_bad_symbol_market|{loc[1]}")
+            return None, _copy_error_from_marker(f"copy_bad_numeric|{loc[1]}")
+        return None, error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "itemsリストが必要です"},
+            status_code=400,
+        )
+    return [
+        (item.symbol, item.market, float(item.target_price or 0.0), float(item.weight_pct or 0.0))
+        for item in validated.items
+    ], None
 
 
 def _invalidate_symbol_caches_internal(symbol: str) -> None:

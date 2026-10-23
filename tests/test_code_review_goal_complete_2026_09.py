@@ -85,7 +85,7 @@ def test_ai_portfolio_generate_queue_full_signals_done(test_client):
         patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, "")),
         patch("routes.stocks.ai_portfolio.extract_api_key", return_value="dummy_key"),
         patch(
-            "routes.api_stocks._submit_in_app_context",
+            "route_helpers._submit_in_app_context",
             side_effect=queue.Full("Queue is full"),
         ),
         patch(
@@ -110,7 +110,7 @@ def test_ai_portfolio_rebalance_queue_full_signals_done(test_client):
         patch("routes.stocks.ai_portfolio.require_trusted_or_admin", return_value=(True, "")),
         patch("routes.stocks.ai_portfolio.extract_api_key", return_value="dummy_key"),
         patch(
-            "routes.api_stocks._submit_in_app_context",
+            "route_helpers._submit_in_app_context",
             side_effect=queue.Full("Queue is full"),
         ),
         patch(

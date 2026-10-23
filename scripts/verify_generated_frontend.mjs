@@ -1,33 +1,45 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const compilerPath = join(
+  process.cwd(),
+  "node_modules",
+  "typescript",
+  "bin",
+  "tsc",
+);
+const prettierPath = join(
+  process.cwd(),
+  "node_modules",
+  "prettier",
+  "bin",
+  "prettier.cjs",
+);
+
+if (!existsSync(compilerPath)) {
+  console.error(
+    `TypeScript compiler not found at ${compilerPath}. Run 'npm ci' first.`,
+  );
+  process.exit(1);
+}
+if (!existsSync(prettierPath)) {
+  console.error(`Prettier not found at ${prettierPath}. Run 'npm ci' first.`);
+  process.exit(1);
+}
 
 const tempDirectory = mkdtempSync(join(tmpdir(), "mns-frontend-"));
 const generatedPath = join(tempDirectory, "api_client.js");
 const trackedPath = "static/js/api_client.js";
 
 try {
-  const compilerPath = join(
-    process.cwd(),
-    "node_modules",
-    "typescript",
-    "bin",
-    "tsc",
-  );
   execFileSync(
     process.execPath,
     [compilerPath, "-p", "tsconfig.json", "--outFile", generatedPath],
     {
       stdio: "inherit",
     },
-  );
-  const prettierPath = join(
-    process.cwd(),
-    "node_modules",
-    "prettier",
-    "bin",
-    "prettier.cjs",
   );
   execFileSync(process.execPath, [prettierPath, "--write", generatedPath], {
     stdio: "inherit",

@@ -14,16 +14,31 @@ Verifies:
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 def test_api_client_build_matches_generated() -> None:
     """Ensure compiled static/js/api_client.js exactly matches TypeScript output."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to verify generated frontend build")
+
+    tsc_path = ROOT_DIR / "node_modules" / "typescript" / "bin" / "tsc"
+    prettier_path = ROOT_DIR / "node_modules" / "prettier" / "bin" / "prettier.cjs"
+    if not tsc_path.exists() or not prettier_path.exists():
+        pytest.skip(
+            "Frontend build dependencies (node_modules/typescript, prettier) are not installed. "
+            "Run 'npm ci' to enable frontend build verification."
+        )
+
     res = subprocess.run(
-        ["node", "scripts/verify_generated_frontend.mjs"],
+        [node, "scripts/verify_generated_frontend.mjs"],
         cwd=ROOT_DIR,
         capture_output=True,
         text=True,

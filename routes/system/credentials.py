@@ -203,14 +203,15 @@ def api_credentials():
             # Partial deletion is a real failure: config may be cleared while
             # OS keyring still holds secrets. Use a non-2xx status so clients
             # do not treat logout as success.
-            return jsonify(
-                {
-                    "ok": False,
-                    "error": "設定ファイルから資格情報を削除しましたが、OSのセキュアストア（Keyring）からの削除に一部失敗しました。",
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                details={
+                    "reason": "設定ファイルから資格情報を削除しましたが、OSのセキュアストア（Keyring）からの削除に一部失敗しました。",
                     "failed_keys": failed_keys,
                     **safe_state,
-                }
-            ), 500
+                },
+                status_code=500,
+            )
         current_app.logger.info("Credentials cleared id=%s", getattr(g, "request_id", "-"))
         return ok_response(safe_state)
 

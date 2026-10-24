@@ -21,6 +21,24 @@ const CONSTANTS = {
     TEXT_MUTE: getCssVar("--text-mute", "#9ca3af"),
     CHIP_BG: getCssVar("--card-bg", "rgba(255, 255, 255, 0.06)"),
   },
+  refreshColors() {
+    const updated = {
+      PRIMARY: getCssVar("--primary", "#6bb6ff"),
+      SUCCESS: getCssVar("--success", "#7dffb0"),
+      DANGER: getCssVar("--danger", "#ff7d7d"),
+      WARNING: getCssVar("--warning", "#ffcc66"),
+      PURPLE: getCssVar("--purple", "#c28bff"),
+      GOLD: getCssVar("--gold", "#ffd86b"),
+      TEXT_MUTE: getCssVar("--text-mute", "#9ca3af"),
+      CHIP_BG: getCssVar("--card-bg", "rgba(255, 255, 255, 0.06)"),
+    };
+    if (this.COLORS) {
+      Object.assign(this.COLORS, updated);
+    } else {
+      this.COLORS = updated;
+    }
+    return this.COLORS;
+  },
   POLLING: {
     INITIAL_STOCKS: 60000,
     INDICES: 30000,
@@ -742,4 +760,8 @@ function applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData) {
     liveStock.chart_data = formattedData;
     liveStock.ohlc_data = ohlcData;
   }
+}
+
+if (typeof window !== "undefined") {
+  window.CONSTANTS = CONSTANTS;
 }

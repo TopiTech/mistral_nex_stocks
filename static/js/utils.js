@@ -502,6 +502,9 @@ function initThemeColorScheme() {
   } else {
     document.body.classList.remove("theme-color-jp");
   }
+  if (typeof window !== "undefined") {
+    window.CONSTANTS?.refreshColors?.();
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -713,6 +716,21 @@ function startCsrfAutoRefresh() {
     refreshCsrfToken,
     REFRESH_INTERVAL_MS,
   );
+}
+
+/**
+ * Stop periodic CSRF token refreshes and clean up the active timer.
+ */
+function stopCsrfAutoRefresh() {
+  if (typeof window !== "undefined" && window.__mnsCsrfRefreshTimer) {
+    clearInterval(window.__mnsCsrfRefreshTimer);
+    window.__mnsCsrfRefreshTimer = null;
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.startCsrfAutoRefresh = startCsrfAutoRefresh;
+  window.stopCsrfAutoRefresh = stopCsrfAutoRefresh;
 }
 
 /**

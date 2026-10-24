@@ -40,6 +40,8 @@ from utils.caching import (
     _get_cached_value,
     _has_cached_key,
     get_cached,
+    global_cache,
+    sanitize_cache_key,
 )
 from utils.env_helpers import _env_bool as _stocks_env_bool
 from utils.env_helpers import _is_testing as _stocks_is_testing
@@ -472,13 +474,21 @@ def api_search() -> Any:
         _search,
         duration=CACHE_DURATION_SEARCH,
         valid_func=lambda payload: (
-            isinstance(payload, dict) and isinstance(payload.get("results"), list)
+            isinstance(payload, dict)
+            and (
+                isinstance(payload.get("results"), list)
+                or ("error" in payload and "error_code" in payload)
+            )
         ),
     )
     if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"results": []}
     if "error" in result:
         err_msg = result.get("error")
+        with global_cache.cache_lock:
+            cache = global_cache.caches.get(CACHE_DURATION_SEARCH)
+            if cache is not None:
+                cache.pop(sanitize_cache_key(f"search_{q.lower()}"), None)
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
             details={"reason": str(err_msg)} if err_msg else None,

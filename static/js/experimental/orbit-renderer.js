@@ -29,6 +29,7 @@
 
       // Animation loop control
       this.animId = null;
+      this._isRunning = false;
       this.lastTime = performance.now();
       this.globalAngle = 0;
 
@@ -101,26 +102,44 @@
 
     bindEvents() {
       this._resizeHandler = () => this.resize();
-      window.addEventListener("resize", this._resizeHandler);
+      if (typeof window !== "undefined") {
+        window.addEventListener("resize", this._resizeHandler);
+      }
 
       this._visibilityHandler = () => {
-        if (document.hidden) {
-          this.stop();
-        } else {
+        if (typeof document !== "undefined" && document.hidden) {
+          if (this.animId) {
+            cancelAnimationFrame(this.animId);
+            this.animId = null;
+          }
+        } else if (this._isRunning) {
           this.start();
         }
       };
-      document.addEventListener("visibilitychange", this._visibilityHandler);
+      if (typeof document !== "undefined" && document.addEventListener) {
+        document.addEventListener("visibilitychange", this._visibilityHandler);
+      }
     }
 
     destroy() {
       this.stop();
-      window.removeEventListener("resize", this._resizeHandler);
-      document.removeEventListener("visibilitychange", this._visibilityHandler);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("resize", this._resizeHandler);
+      }
+      if (typeof document !== "undefined" && document.removeEventListener) {
+        document.removeEventListener(
+          "visibilitychange",
+          this._visibilityHandler,
+        );
+      }
       this.nodeRenderData.clear();
     }
 
     start() {
+      this._isRunning = true;
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
       if (this.animId) return;
       this.lastTime = performance.now();
       const loop = (now) => {
@@ -131,6 +150,7 @@
     }
 
     stop() {
+      this._isRunning = false;
       if (this.animId) {
         cancelAnimationFrame(this.animId);
         this.animId = null;

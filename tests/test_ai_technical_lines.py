@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
 from credential_manager import is_medium_or_large_model
+from error_codes import ErrorCode
 
 
 class AITechnicalLinesEligibilityTestCase(unittest.TestCase):
@@ -57,8 +58,12 @@ class AITechnicalLinesEndpointTestCase(unittest.TestCase):
         self.assertEqual(res.status_code, 403)
         data = res.get_json()
         self.assertFalse(data.get("ok"))
-        self.assertTrue(data.get("model_restricted"))
-        self.assertIn("Mistral Medium または Large", data.get("error", ""))
+        self.assertEqual(data.get("error_code"), int(ErrorCode.FORBIDDEN))
+        details = data.get("details", {})
+        self.assertTrue(details.get("model_restricted") or data.get("model_restricted"))
+        self.assertEqual(details.get("current_model"), "mistral-small-2603")
+        reason = details.get("reason", "") or data.get("error", "")
+        self.assertIn("Mistral Medium または Large", reason)
 
     @patch("routes.api_analysis.get_model_name", return_value="mistral-medium-2604")
     @patch("routes.api_analysis.extract_api_key", return_value="test-api-key-12345678901234567890")

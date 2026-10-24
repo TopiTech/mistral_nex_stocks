@@ -99,6 +99,23 @@ def _release_leader_lock() -> None:
             pass
 
 
+def release_leader_lock() -> None:
+    """Close the leader lock file handle and reset leader status.
+
+    Safe to call during shutdown or in test teardown to release any open
+    leader lock file handle cleanly.
+    """
+    _release_leader_lock()
+
+
+def close_leader_lock_file() -> None:
+    """Close the leader lock file handle and reset the reference to None.
+
+    Safe to call during shutdown or in test teardown.
+    """
+    _release_leader_lock()
+
+
 atexit.register(_release_leader_lock)
 
 

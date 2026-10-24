@@ -395,16 +395,22 @@ async function openRoute(route) {
 
 const DEFAULT_BADGE_COLOR = "#4d8fff";
 const DEFAULT_BADGE_DURATION = 2500;
+let badgeClearTimer = null;
 
 function setBadgeMessage(
   text,
   color = DEFAULT_BADGE_COLOR,
   durationMs = DEFAULT_BADGE_DURATION,
 ) {
+  if (badgeClearTimer) {
+    clearTimeout(badgeClearTimer);
+    badgeClearTimer = null;
+  }
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color });
-  setTimeout(() => {
+  badgeClearTimer = setTimeout(() => {
     chrome.action.setBadgeText({ text: "" });
+    badgeClearTimer = null;
   }, durationMs);
 }
 
@@ -829,6 +835,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       if (message.action === "openHeatmap") {
         return safeSendResponse(await openRoute("/heatmap"));
+      }
+      if (message.action === "openOrbit") {
+        return safeSendResponse(await openRoute("/experimental/orbit"));
       }
 
       return safeSendResponse({ ok: false, error: "Unknown action" });

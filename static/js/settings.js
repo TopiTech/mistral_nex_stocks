@@ -517,6 +517,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (typeof initThemeColorScheme === "function") {
         initThemeColorScheme();
       }
+      if (typeof window !== "undefined") {
+        window.CONSTANTS?.refreshColors?.();
+      }
       showSettingsMessage(
         `カラーテーマを更新しました: ${selected === "jp_standard" ? "日本市場標準" : "米国標準"}`,
         false,
@@ -1043,7 +1046,7 @@ document.addEventListener("DOMContentLoaded", () => {
     },
     openrouter: {
       url: "https://openrouter.ai/api/v1",
-      model: "openai/gpt-4o-mini",
+      model: "meta-llama/llama-3.3-70b-instruct",
       emb: "",
     },
   };

@@ -474,17 +474,25 @@ async function fetchInitialStocks(force = false) {
     if (!hasAnyCards && !hasSkeleton && noStateData) {
       renderSkeletons();
       // Set timeout to show timeout state if skeleton persists beyond max wait
-      setTimeout(() => {
-        const stillSkeleton = document.querySelector(".skeleton-card") !== null;
-        const stillNoData =
-          (state.stocks.us?.length || 0) +
-            (state.stocks.jp?.length || 0) +
-            (state.stocks.idx?.length || 0) ===
-          0;
-        if (stillSkeleton && stillNoData) {
-          renderInitialLoadingTimeoutState();
-        }
-      }, INITIAL_SKELETON_MAX_WAIT_MS || 8000);
+      setTimeout(
+        () => {
+          const stillSkeleton =
+            document.querySelector(".skeleton-card") !== null;
+          const stillNoData =
+            (state.stocks.us?.length || 0) +
+              (state.stocks.jp?.length || 0) +
+              (state.stocks.idx?.length || 0) ===
+            0;
+          if (stillSkeleton && stillNoData) {
+            renderInitialLoadingTimeoutState();
+          }
+        },
+        typeof INITIAL_SKELETON_MAX_WAIT_MS !== "undefined"
+          ? INITIAL_SKELETON_MAX_WAIT_MS
+          : (typeof window !== "undefined" &&
+              window.INITIAL_SKELETON_MAX_WAIT_MS) ||
+              8000,
+      );
     }
 
     const url = force ? "/api/stocks?force=true" : "/api/stocks";

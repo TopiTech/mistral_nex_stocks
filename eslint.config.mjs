@@ -96,6 +96,8 @@ export default [
         apiFetch: "readonly",
         csrfFetch: "readonly",
         readCsrfToken: "readonly",
+        startCsrfAutoRefresh: "readonly",
+        stopCsrfAutoRefresh: "readonly",
         loadNews: "readonly",
         forceRefreshNews: "readonly",
         searchStocks: "readonly",

@@ -48,6 +48,9 @@ class AIChatRequest(BaseModel):
     request_token: str = Field(
         ..., pattern=r"^[A-Za-z0-9_-]{16,128}$", description="Client operation idempotency token"
     )
+    conversation_scope: str | None = Field(
+        default=None, description="Client conversation scope token"
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -140,6 +143,9 @@ class AIAnalyzeV2Request(BaseModel):
     )
     request_token: str = Field(
         ..., pattern=r"^[A-Za-z0-9_-]{16,128}$", description="Client operation idempotency token"
+    )
+    conversation_scope: str | None = Field(
+        default=None, description="Client conversation scope token"
     )
 
     @model_validator(mode="before")

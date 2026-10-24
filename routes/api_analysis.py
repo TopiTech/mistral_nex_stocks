@@ -103,12 +103,61 @@ _PROMPT_FIELD_DANGEROUS = re.compile(r"[<>&\x00-\x08\x0b\x0c\x0e-\x1f]")
 _OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
-def _get_conversation_scope() -> str:
-    """Return a validated session-scoped conversation token for AI analysis."""
-    scope = session.get("mns_analysis_conversation")
-    if not isinstance(scope, str) or not _OPERATION_TOKEN_RE.fullmatch(scope):
-        scope = secrets.token_urlsafe(24)
+def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
+    """Return a validated conversation scope token for AI analysis.
+
+    Fallback chain:
+    1. Header: ``X-Conversation-Scope``
+    2. Request data / body / query parameter: ``conversation_scope``
+    3. Cookie session: ``session['mns_analysis_conversation']``
+    4. Auto-generated token via ``secrets.token_urlsafe(24)``
+    """
+    # 1. Header fallback
+    header_scope = request.headers.get("X-Conversation-Scope") if request else None
+    if isinstance(header_scope, str) and _OPERATION_TOKEN_RE.fullmatch(header_scope.strip()):
+        valid_scope = header_scope.strip()
+        try:
+            session["mns_analysis_conversation"] = valid_scope
+        except Exception:
+            pass
+        return valid_scope
+
+    # 2. Request data fallback (passed dict, parsed json, or query args)
+    req_scope: Any = None
+    if isinstance(data, dict):
+        req_scope = data.get("conversation_scope")
+    if not req_scope and request:
+        try:
+            json_data = request.get_json(silent=True)
+            if isinstance(json_data, dict):
+                req_scope = json_data.get("conversation_scope")
+        except Exception:
+            pass
+    if not req_scope and request:
+        req_scope = request.args.get("conversation_scope")
+
+    if isinstance(req_scope, str) and _OPERATION_TOKEN_RE.fullmatch(req_scope.strip()):
+        valid_scope = req_scope.strip()
+        try:
+            session["mns_analysis_conversation"] = valid_scope
+        except Exception:
+            pass
+        return valid_scope
+
+    # 3. Session fallback
+    try:
+        scope = session.get("mns_analysis_conversation")
+        if isinstance(scope, str) and _OPERATION_TOKEN_RE.fullmatch(scope):
+            return scope
+    except Exception:
+        pass
+
+    # 4. Generate new scope
+    scope = secrets.token_urlsafe(24)
+    try:
         session["mns_analysis_conversation"] = scope
+    except Exception:
+        pass
     return scope
 
 
@@ -365,7 +414,7 @@ def api_chat():
         symbol,
         len(user_msg),
     )
-    conversation_scope = _get_conversation_scope()
+    conversation_scope = _get_conversation_scope(data)
     inflight_key = f"chat:{conversation_scope}:{operation_token}"
     chat_key = f"{conversation_scope}:{market}:{symbol}"
 
@@ -1287,7 +1336,7 @@ def api_analyze_v2():
     )
 
     operation_token = parsed_v2.request_token
-    conversation_scope = _get_conversation_scope()
+    conversation_scope = _get_conversation_scope(data)
     inflight_key = f"analyze:{conversation_scope}:{operation_token}"
 
     # Fast path: a previous analysis for this symbol finished and its result is
@@ -1835,19 +1884,17 @@ def api_ai_technical_lines():
             current_app.logger.warning(
                 "AI technical lines call rejected due to model restriction: %s", current_model
             )
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "model_restricted": True,
-                        "current_model": current_model,
-                        "error": (
-                            "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。"
-                            "設定画面（⚙）よりモデルを変更してください。"
-                        ),
-                    }
-                ),
-                403,
+            return error_response(
+                ErrorCode.FORBIDDEN,
+                details={
+                    "reason": (
+                        "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。"
+                        "設定画面（⚙）よりモデルを変更してください。"
+                    ),
+                    "model_restricted": True,
+                    "current_model": current_model,
+                },
+                status_code=403,
             )
 
     api_key = extract_api_key(request)
@@ -1931,7 +1978,11 @@ def api_ai_technical_lines():
 @api_analysis_bp.route("/api/analyze-chart-image", methods=["POST"])
 @rate_limit(max_requests=10, window_seconds=60)
 def api_analyze_chart_image():
-    """Analyze stock candlestick / technical chart image using Mistral Pixtral Vision API."""
+    """Analyze stock candlestick / technical chart image using Mistral Pixtral Vision API.
+
+    NOTE: 本エンドポイントはUI未接続の拡張エンドポイント（実験的・将来拡張用）です。
+    フロントエンドの通常チャート分析フローからは直接呼び出されていません。
+    """
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)

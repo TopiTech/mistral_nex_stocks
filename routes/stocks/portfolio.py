@@ -75,6 +75,7 @@ def api_update_portfolio() -> Any:
     shares = parsed.shares
     avg_price = parsed.avg_price
     avg_fx_rate = parsed.avg_fx_rate
+    warnings: list[str] = []
 
     with app_state.market.user_stocks_lock:
         container = _get_stock_container(market)
@@ -169,6 +170,7 @@ def api_update_portfolio() -> Any:
                     "Portfolio update: rejecting avg_fx_rate for jp market symbol=%s",
                     symbol,
                 )
+                warnings.append("日本株ポートフォリオでは為替レート(avg_fx_rate)は無視されます")
             val.pop("avg_fx_rate", None)
         elif market == "us":
             if symbol.endswith(".T"):
@@ -193,6 +195,7 @@ def api_update_portfolio() -> Any:
                     "Portfolio update: rejecting avg_fx_rate for idx market symbol=%s",
                     symbol,
                 )
+                warnings.append("指数・ETFポートフォリオでは為替レート(avg_fx_rate)は無視されます")
             val.pop("avg_fx_rate", None)
         elif avg_fx_rate is not None:
             val["avg_fx_rate"] = avg_fx_rate
@@ -230,7 +233,10 @@ def api_update_portfolio() -> Any:
     announce_current_market_state()
     announce_real_market_state()
     schedule_sync_all_stocks_now()
-    return ok_response()
+    response_payload: dict[str, Any] = {}
+    if warnings:
+        response_payload["warnings"] = warnings
+    return ok_response(response_payload)
 
 
 @portfolio_bp.route("/api/stocks/portfolio/snapshot", methods=["POST"])

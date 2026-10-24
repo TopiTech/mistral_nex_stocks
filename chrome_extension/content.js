@@ -281,44 +281,46 @@
     "GM",
   ]);
 
+  // Maximum text nodes to scan to prevent freezing the main thread on large DOMs
+  const MAX_EXTRACT_TEXT_NODES = 2500;
+
   /**
    * Traverse text nodes in document body while ignoring non-content elements
    */
   function extractPageTextSnippets() {
     const textBlocks = [];
-    const walker = document.createTreeWalker(
-      document.body || document.documentElement,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode(node) {
-          if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
-          const tag = node.parentElement.tagName.toUpperCase();
-          if (
-            [
-              "SCRIPT",
-              "STYLE",
-              "NOSCRIPT",
-              "TEXTAREA",
-              "INPUT",
-              "SELECT",
-              "OPTION",
-              "CODE",
-              "PRE",
-              "SVG",
-            ].includes(tag)
-          ) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          if (node.parentElement.isContentEditable) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          const val = node.nodeValue ? node.nodeValue.trim() : "";
-          return val.length >= 2
-            ? NodeFilter.FILTER_ACCEPT
-            : NodeFilter.FILTER_SKIP;
-        },
+    const root = document.body || document.documentElement;
+    if (!root) return textBlocks;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
+        const tag = node.parentElement.tagName.toUpperCase();
+        if (
+          [
+            "SCRIPT",
+            "STYLE",
+            "NOSCRIPT",
+            "TEXTAREA",
+            "INPUT",
+            "SELECT",
+            "OPTION",
+            "CODE",
+            "PRE",
+            "SVG",
+          ].includes(tag)
+        ) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (node.parentElement.isContentEditable) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const val = node.nodeValue ? node.nodeValue.trim() : "";
+        return val.length >= 2
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_SKIP;
       },
-    );
+    });
 
     let currentNode;
     while ((currentNode = walker.nextNode())) {
@@ -326,6 +328,9 @@
         text: currentNode.nodeValue,
         element: currentNode.parentElement,
       });
+      if (textBlocks.length >= MAX_EXTRACT_TEXT_NODES) {
+        break;
+      }
     }
 
     return textBlocks;

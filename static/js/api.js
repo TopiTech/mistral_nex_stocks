@@ -240,6 +240,9 @@ const sseApiClient = new APIClient("/api");
  * const (not a property of sseState).
  */
 const INITIAL_SKELETON_MAX_WAIT_MS = 8000;
+if (typeof window !== "undefined") {
+  window.INITIAL_SKELETON_MAX_WAIT_MS = INITIAL_SKELETON_MAX_WAIT_MS;
+}
 
 /**
  * Namespace for all SSE connection lifecycle state.
@@ -2033,6 +2036,13 @@ async function sendChat(wrapper) {
 
   if (input) input.disabled = true;
   if (sendBtn) sendBtn.disabled = true;
+
+  if (!log) {
+    $logger.warn("Chat log container not found for sendChat");
+    if (input) input.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+    return;
+  }
 
   const stock = getStockByKey(stockKey);
   const userDiv = document.createElement("div");

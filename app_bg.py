@@ -42,7 +42,9 @@ from bg.leader_election import (
     _try_acquire_atomic_lock,
     _try_acquire_leader_lock,
     bg_leader_election_loop,
+    close_leader_lock_file,
     is_leader,
+    release_leader_lock,
 )
 from bg.sse_interpolator import (
     _fluctuate_indices,
@@ -199,6 +201,7 @@ __all__ = [
     "bg_leader_election_loop",
     "bg_yahoo_fetch_loop",
     "build_stock_payload",
+    "close_leader_lock_file",
     "ensure_stock_placeholder_in_caches",
     "extract_batch_history",
     "fetch_index_data",
@@ -208,6 +211,7 @@ __all__ = [
     "is_leader",
     "is_market_open",
     "load_user_stocks",
+    "release_leader_lock",
     "remove_stock_from_caches",
     "save_user_stocks",
     "schedule_sync_all_stocks_now",

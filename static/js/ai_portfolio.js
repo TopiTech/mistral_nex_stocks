@@ -472,13 +472,22 @@
     deletingSavedAiPortfolioIds.add(portfolioId);
     renderSavedAiPortfolios();
     try {
-      const resp = await csrfFetch("/api/ai-portfolio/custom", {
+      let resp = await csrfFetch("/api/ai-portfolio/custom", {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ id: portfolioId }),
       });
+      if (resp.status === 405) {
+        resp = await csrfFetch("/api/ai-portfolio/custom", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ id: portfolioId }),
+        });
+      }
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data?.ok) {
         throw new Error(

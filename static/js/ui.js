@@ -3274,11 +3274,16 @@ async function triggerAiTechnicalLines(wrapper) {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.ok) {
-      if (data?.model_restricted) {
-        showToast(`🔒 ${data.error}`, "warning", 8000);
+      if (data?.model_restricted || data?.details?.model_restricted) {
+        const errorMsg =
+          data?.details?.reason ||
+          data?.error ||
+          "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。設定画面（⚙）よりモデルを変更してください。";
+        showToast(`🔒 ${errorMsg}`, "warning", 8000);
       } else {
         showToast(
-          data?.error ||
+          data?.details?.reason ||
+            data?.error ||
             `AIテクニカル線の生成に失敗しました (HTTP ${res.status})`,
           "error",
         );

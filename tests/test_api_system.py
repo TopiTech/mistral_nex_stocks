@@ -226,8 +226,9 @@ class ApiCredentialsTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         data = json.loads(response.data)
         self.assertFalse(data["ok"])
-        self.assertIn("failed_keys", data)
-        self.assertEqual(data["failed_keys"], ["mistral_api_key"])
+        self.assertEqual(data.get("error_code"), int(ErrorCode.SYSTEM_ERROR))
+        failed_keys = data.get("details", {}).get("failed_keys") or data.get("failed_keys")
+        self.assertEqual(failed_keys, ["mistral_api_key"])
 
 
 class CredentialPersistenceTestCase(unittest.TestCase):

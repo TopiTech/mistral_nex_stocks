@@ -4,6 +4,17 @@ function setSafeText(element, text) {
   element.textContent = String(text || "");
 }
 
+function debounce(fn, delay = 150) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, delay);
+  };
+}
+
 const $ = (id) => document.getElementById(id);
 const healthPill = $("healthPill");
 const healthMeta = $("healthMeta");
@@ -496,7 +507,10 @@ async function waitForBackendReady(maxWaitMs = 30000) {
 document.addEventListener("DOMContentLoaded", () => {
   initTabSwitching();
 
-  $("extStockFilter")?.addEventListener("input", filterAndRenderStocks);
+  $("extStockFilter")?.addEventListener(
+    "input",
+    debounce(filterAndRenderStocks, 150),
+  );
 
   bindAsyncButton("refreshBtn", () => withBusy($("refreshBtn"), refresh));
 

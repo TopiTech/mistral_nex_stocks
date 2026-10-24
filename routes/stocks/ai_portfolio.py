@@ -168,11 +168,61 @@ ai_portfolio_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]
 _OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
-def _get_conversation_scope() -> str:
-    scope = session.get("mns_analysis_conversation")
-    if not isinstance(scope, str) or not _OPERATION_TOKEN_RE.fullmatch(scope):
-        scope = secrets.token_urlsafe(24)
+def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
+    """Return a validated conversation scope token for AI portfolio operations.
+
+    Fallback chain:
+    1. Header: ``X-Conversation-Scope``
+    2. Request data / body / query parameter: ``conversation_scope``
+    3. Cookie session: ``session['mns_analysis_conversation']``
+    4. Auto-generated token via ``secrets.token_urlsafe(24)``
+    """
+    # 1. Header fallback
+    header_scope = request.headers.get("X-Conversation-Scope") if request else None
+    if isinstance(header_scope, str) and _OPERATION_TOKEN_RE.fullmatch(header_scope.strip()):
+        valid_scope = header_scope.strip()
+        try:
+            session["mns_analysis_conversation"] = valid_scope
+        except Exception:
+            pass
+        return valid_scope
+
+    # 2. Request data fallback (passed dict, parsed json, or query args)
+    req_scope: Any = None
+    if isinstance(data, dict):
+        req_scope = data.get("conversation_scope")
+    if not req_scope and request:
+        try:
+            json_data = request.get_json(silent=True)
+            if isinstance(json_data, dict):
+                req_scope = json_data.get("conversation_scope")
+        except Exception:
+            pass
+    if not req_scope and request:
+        req_scope = request.args.get("conversation_scope")
+
+    if isinstance(req_scope, str) and _OPERATION_TOKEN_RE.fullmatch(req_scope.strip()):
+        valid_scope = req_scope.strip()
+        try:
+            session["mns_analysis_conversation"] = valid_scope
+        except Exception:
+            pass
+        return valid_scope
+
+    # 3. Session fallback
+    try:
+        scope = session.get("mns_analysis_conversation")
+        if isinstance(scope, str) and _OPERATION_TOKEN_RE.fullmatch(scope):
+            return scope
+    except Exception:
+        pass
+
+    # 4. Generate new scope
+    scope = secrets.token_urlsafe(24)
+    try:
         session["mns_analysis_conversation"] = scope
+    except Exception:
+        pass
     return scope
 
 
@@ -218,7 +268,7 @@ def api_generate_ai_portfolio() -> Any:
 
     api_key = extract_api_key(request)
 
-    conversation_scope = _get_conversation_scope()
+    conversation_scope = _get_conversation_scope(data)
     inflight_key = f"generate:{conversation_scope}:{theme}"
     with ai_portfolio_fetch_lock:
         cached = ai_portfolio_result_cache.get(inflight_key)
@@ -342,7 +392,7 @@ def api_rebalance_ai_portfolio() -> Any:
 
     api_key = extract_api_key(request)
 
-    conversation_scope = _get_conversation_scope()
+    conversation_scope = _get_conversation_scope(data)
     inflight_key = f"rebalance:{conversation_scope}:{theme}"
     with ai_portfolio_fetch_lock:
         cached = ai_portfolio_result_cache.pop(inflight_key, None)
@@ -520,7 +570,7 @@ def api_save_ai_portfolio() -> Any:
     return ok_response({"portfolio": canonical_portfolio})
 
 
-@ai_portfolio_bp.route("/api/ai-portfolio/custom", methods=["DELETE"])
+@ai_portfolio_bp.route("/api/ai-portfolio/custom", methods=["DELETE", "POST"])
 @rate_limit(max_requests=20, window_seconds=60)
 def api_delete_ai_portfolio() -> Any:
     """保存済みカスタムAIポートフォリオを削除"""
@@ -530,11 +580,21 @@ def api_delete_ai_portfolio() -> Any:
 
     data = _parse_json_request()
     if data is None or not isinstance(data, dict):
-        return error_response(
-            ErrorCode.MALFORMED_INPUT,
-            details={"reason": "JSON形式が不正です"},
-            status_code=400,
-        )
+        id_from_args = request.args.get("id")
+        if id_from_args is not None:
+            data = {"id": id_from_args}
+        else:
+            return error_response(
+                ErrorCode.MALFORMED_INPUT,
+                details={"reason": "JSON形式が不正です"},
+                status_code=400,
+            )
+    elif "id" not in data or data.get("id") is None:
+        id_from_args = request.args.get("id")
+        if id_from_args is not None:
+            data = dict(data)
+            data["id"] = id_from_args
+
     portfolio_id, err = _parse_ai_delete_request(data)
     if err is not None:
         return err

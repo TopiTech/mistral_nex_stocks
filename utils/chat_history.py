@@ -308,7 +308,7 @@ class SQLiteChatHistoryStore:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
             return conn
-        conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
+        conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA wal_autocheckpoint=100;")
         conn.execute("PRAGMA foreign_keys=ON;")
@@ -317,6 +317,9 @@ class SQLiteChatHistoryStore:
         with self._conns_lock:
             self._active_conns.add(conn)
         return conn
+
+    # Alias for backward compatibility and internal consistency
+    _get_conn = _get_connection
 
     @classmethod
     def _reset_for_testing(cls) -> None:

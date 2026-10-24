@@ -240,11 +240,17 @@
                   priceEl.textContent = formatted;
                 }
                 if (prevPrice !== undefined && prevPrice !== newPrice) {
+                  if (priceEl.__flashTimer) {
+                    clearTimeout(priceEl.__flashTimer);
+                    priceEl.__flashTimer = null;
+                  }
+                  priceEl.classList.remove("flash-up", "flash-down");
                   const flashClass =
                     newPrice > prevPrice ? "flash-up" : "flash-down";
                   priceEl.classList.add(flashClass);
-                  setTimeout(() => {
+                  priceEl.__flashTimer = setTimeout(() => {
                     priceEl.classList.remove(flashClass);
+                    priceEl.__flashTimer = null;
                   }, 1200);
                 }
               }

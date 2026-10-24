@@ -257,7 +257,7 @@ def _get_trend_session() -> requests.Session:
         with _TREND_SESSION_LOCK:
             if _TREND_SESSION is None:
                 s = requests.Session()
-                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
+                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
                 s.mount("https://", adapter)
                 s.mount("http://", adapter)
                 _TREND_SESSION = s
@@ -832,6 +832,23 @@ def collect_gdelt_items(
                         },
                     )
                 )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            logger.debug(
+                "GDELT fetch timed out or connection error (%s): %s; skipping remaining queries",
+                query,
+                exc,
+            )
+            break
+        except requests.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (429, 503, 504):
+                logger.debug(
+                    "GDELT fetch throttled/unavailable (%s, status=%s); skipping remaining queries",
+                    query,
+                    status,
+                )
+                break
+            logger.debug("GDELT fetch failed (%s): %s", query, exc)
         except (requests.RequestException, ValueError, KeyError, AttributeError) as exc:
             logger.debug("GDELT fetch failed (%s): %s", query, exc)
     return dedupe_items(items)

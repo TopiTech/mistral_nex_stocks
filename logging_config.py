@@ -328,6 +328,9 @@ def init_logging(app) -> None:
     logging.getLogger("werkzeug").addFilter(URLMaskingFilter())
     app.logger.addFilter(URLMaskingFilter())
 
+    # Suppress noisy urllib3 retry WARNING logs (transient retries handled by application logic)
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
     # Suppress noisy yfinance ERROR logs for index tickers
     # yfinance calls the quoteSummary endpoint for index tickers (^N225, ^DJI, etc.)
     # which returns 404 "No fundamentals data found". This is expected behaviour

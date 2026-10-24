@@ -306,6 +306,7 @@ class YFinanceSessionManager:
                     self._ua_index = 0
                     self._session_epoch = 0
                     self._warned_curl_cffi_fallback = False
+                    self._closed = False
                     # Set of id(session) currently inside a request. The reaper
                     # and epoch sweep skip these so we never close a socket
                     # mid-flight (which would corrupt an in-progress fetch).
@@ -353,6 +354,23 @@ class YFinanceSessionManager:
     def _get_impersonate_target(self, ua_index: int) -> str:
         """Return the curl_cffi impersonate target for the given UA index."""
         return _CURL_IMPERSONATE_TARGETS[ua_index % len(_CURL_IMPERSONATE_TARGETS)]
+
+    def _is_shutting_down(self) -> bool:
+        """Check whether session manager has been closed or app is shutting down."""
+        if getattr(self, "_closed", False):
+            return True
+        try:
+            from app_state import app_state
+
+            if (
+                hasattr(app_state, "execution")
+                and hasattr(app_state.execution, "shutdown_event")
+                and app_state.execution.shutdown_event.is_set()
+            ):
+                return True
+        except Exception:
+            pass
+        return False
 
     @contextmanager
     def _acquire_concurrency(self):
@@ -418,6 +436,8 @@ class YFinanceSessionManager:
         original_request = session.request
 
         def custom_request(*args, **kwargs):
+            if self._is_shutting_down():
+                raise RuntimeError("Application is shutting down; session request aborted")
             sid = id(session)
             with self._active_sessions_lock:
                 self._active_sessions.add(sid)
@@ -460,6 +480,13 @@ class YFinanceSessionManager:
                     try:
                         resp = original_request(*args, **kwargs)
                     except Exception as req_exc:
+                        if self._is_shutting_down():
+                            logger.debug(
+                                "Request failed during shutdown (%s); not retrying: %s",
+                                type(req_exc).__name__,
+                                req_exc,
+                            )
+                            raise
                         if "closed" in str(req_exc).lower():
                             logger.warning(
                                 "Detected request on closed session; refreshing session and retrying: %s",
@@ -720,6 +747,7 @@ class YFinanceSessionManager:
         """
         sess_to_return = None
         with self._lock:
+            self._closed = False
             idx = self._ua_index
             current_epoch = self._session_epoch
             if not hasattr(self._local, "sessions"):
@@ -876,6 +904,7 @@ class YFinanceSessionManager:
     def close_all(self):
         """Clean up all sessions."""
         with self._lock:
+            self._closed = True
             for entry in self._all_sessions:
                 try:
                     entry[0].close()

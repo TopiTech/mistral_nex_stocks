@@ -189,7 +189,7 @@ def api_credentials():
 
     if request.method == "GET":
         current_app.logger.info("Credentials state requested id=%s", getattr(g, "request_id", "-"))
-        return jsonify({"ok": True, **_build_safe_credentials_response()})
+        return ok_response(_build_safe_credentials_response())
 
     if request.method == "DELETE":
         failed_keys = routes.api_system.clear_api_credentials()
@@ -212,7 +212,7 @@ def api_credentials():
                 }
             ), 500
         current_app.logger.info("Credentials cleared id=%s", getattr(g, "request_id", "-"))
-        return jsonify({"ok": True, **safe_state})
+        return ok_response(safe_state)
 
     data = _parse_json_request()
     if data is None:
@@ -380,7 +380,7 @@ def api_credentials():
         len(str(data.get("custom_ai_prompt") or "")),
         data.get("mistral_model", "-"),
     )
-    return jsonify({"ok": True, **_build_safe_credentials_response()})
+    return ok_response(_build_safe_credentials_response())
 
 
 @api_system_bp.route("/api/credentials/verify", methods=["POST", "OPTIONS"])

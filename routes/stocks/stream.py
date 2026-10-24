@@ -50,6 +50,7 @@ from utils.networking import (
 )
 from utils.stock_payload import (
     error_response,
+    ok_response,
 )
 from utils.tradingview_mapper import (
     get_tradingview_symbol,
@@ -101,7 +102,7 @@ def api_create_sse_ticket() -> Any:
             status_code=403,
         )
 
-    resp = jsonify({"ok": True, "ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
+    resp = ok_response({"ticket": ticket, "expires_in": SSE_TICKET_TTL_SEC})
     from utils.env_helpers import _is_production_env
 
     _cookie_secure = _is_production_env() or os.environ.get(
@@ -130,7 +131,20 @@ def api_stocks_stream() -> Any:
     """SSEストリームエンドポイント（接続数・モード切替対応）"""
     ok, reason = require_sse_auth(request)
     if not ok:
-        return jsonify({"ok": False, "error": reason or "unauthorized"}), 403
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": reason or "unauthorized",
+                    "error_flag": True,
+                    "code": str(ErrorCode.FORBIDDEN),
+                    "error_code": int(ErrorCode.FORBIDDEN),
+                    "message": reason or "unauthorized",
+                    "details": {"reason": reason or "unauthorized"},
+                }
+            ),
+            403,
+        )
 
     request_id = getattr(g, "request_id", "-")
 

@@ -3,9 +3,17 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from constants import (
     MAX_STOCK_NAME_LENGTH,
@@ -298,6 +306,67 @@ class ScreenerQueryRequest(BaseModel):
     max_pe: float | None = Field(default=None, ge=0.0, description="Maximum P/E ratio filter")
     limit: int = Field(default=150, ge=1, le=500, description="Maximum items to return")
 
+    @field_validator("market", mode="before")
+    @classmethod
+    def _normalize_screener_market(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return "all"
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("sector", mode="before")
+    @classmethod
+    def _normalize_screener_sector(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return "all"
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("q", mode="before")
+    @classmethod
+    def _normalize_screener_q(cls, v: Any) -> Any:
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("sort_by", mode="before")
+    @classmethod
+    def _normalize_screener_sort_by(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return DEFAULT_SCREENER_SORT_BY
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("sort_order", mode="before")
+    @classmethod
+    def _normalize_screener_sort_order(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return "desc"
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def _normalize_screener_limit(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return 150
+        if isinstance(v, bool):
+            raise TypeError("limit_must_be_integer")
+        if isinstance(v, str):
+            try:
+                return int(v.strip())
+            except (ValueError, TypeError) as exc:
+                raise ValueError("limit_must_be_integer") from exc
+        if isinstance(v, int):
+            return v
+        raise ValueError("limit_must_be_integer")
+
     @field_validator(
         "min_price",
         "max_price",
@@ -310,11 +379,34 @@ class ScreenerQueryRequest(BaseModel):
         mode="before",
     )
     @classmethod
-    def reject_boolean_numeric(cls, v: Any) -> Any:
-        """Reject boolean values for numeric screener filter fields."""
+    def reject_boolean_numeric(cls, v: Any, info: ValidationInfo) -> Any:
+        """Reject boolean values and parse numeric string inputs for filter fields."""
         if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
             raise ValueError("bool_type_not_allowed")
-        return v
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_str = v.strip()
+            if not v_str:
+                return None
+            try:
+                val = float(v_str)
+            except (ValueError, TypeError) as exc:
+                raise ValueError("must_be_number") from exc
+            if not math.isfinite(val):
+                raise ValueError("must_be_finite")
+            field_name = info.field_name or ""
+            if field_name not in ("min_change", "max_change") and val < 0:
+                raise ValueError("must_be_non_negative")
+            return val
+        if isinstance(v, (int, float)):
+            if not math.isfinite(v):
+                raise ValueError("must_be_finite")
+            field_name = info.field_name or ""
+            if field_name not in ("min_change", "max_change") and v < 0:
+                raise ValueError("must_be_non_negative")
+            return float(v)
+        raise ValueError("must_be_number")
 
     @model_validator(mode="after")
     def validate_bounds(self) -> ScreenerQueryRequest:
@@ -323,25 +415,25 @@ class ScreenerQueryRequest(BaseModel):
             and self.max_price is not None
             and self.min_price > self.max_price
         ):
-            raise ValueError("min_price cannot be greater than max_price")
+            raise ValueError("min_price_greater_than_max")
         if (
             self.min_change is not None
             and self.max_change is not None
             and self.min_change > self.max_change
         ):
-            raise ValueError("min_change cannot be greater than max_change")
+            raise ValueError("min_change_greater_than_max")
         if (
             self.min_market_cap is not None
             and self.max_market_cap is not None
             and self.min_market_cap > self.max_market_cap
         ):
-            raise ValueError("min_market_cap cannot be greater than max_market_cap")
+            raise ValueError("min_market_cap_greater_than_max")
         if (
             self.min_pe is not None
             and self.max_pe is not None
             and self.min_pe > self.max_pe
         ):
-            raise ValueError("min_pe cannot be greater than max_pe")
+            raise ValueError("min_pe_greater_than_max")
         return self
 
 
@@ -450,4 +542,20 @@ class StockDetailsQueryRequest(BaseModel):
 class HeatmapQueryRequest(BaseModel):
     """Schema for /api/heatmap query parameters."""
 
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     market: Literal["us", "jp"] = Field(default="us", description="Target market")
+
+    @field_validator("market", mode="before")
+    @classmethod
+    def _normalize_market_val(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return "us"
+        if isinstance(v, str):
+            norm = normalize_market(v, default="us")
+            if not norm:
+                raise ValueError("invalid_market")
+            if norm not in ("us", "jp"):
+                raise ValueError("unsupported_heatmap_market")
+            return norm
+        return v

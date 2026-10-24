@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from flask import jsonify, request
+from flask import request
 
 import routes.api_system
 from app_state import app_state
@@ -48,8 +48,7 @@ def get_ai_usage():
     else:
         stats = app_state.ai.mistral_usage_stats()
     providers_stats = app_state.ai.ai_usage_stats()
-    return jsonify({
-        "ok": True,
+    return ok_response({
         "usage": stats,
         "active_provider": active_provider,
         "providers": providers_stats,

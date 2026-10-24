@@ -54,6 +54,7 @@ from utils.stock_payload import (
     _get_stock_container,
     error_response,
     get_current_usdjpy_rate,
+    ok_response,
 )
 from utils.text_utils import _parse_json_request
 
@@ -184,9 +185,8 @@ def api_get_ai_portfolios() -> Any:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
     saved = load_saved_ai_portfolios()
-    return jsonify(
+    return ok_response(
         {
-            "ok": True,
             "presets": DEFAULT_PRESET_CONFIGS,
             "saved": saved,
         }
@@ -227,7 +227,7 @@ def api_generate_ai_portfolio() -> Any:
         if cached_err is not None:
             return _ai_portfolio_error_response(cached_err, g)
         if cached_result is not None:
-            return jsonify({"ok": True, "portfolio": cached_result})
+            return ok_response({"portfolio": cached_result})
 
     with ai_portfolio_fetch_lock:
         if inflight_key in ai_portfolio_fetch_inflight:
@@ -314,7 +314,7 @@ def api_generate_ai_portfolio() -> Any:
     if result_holder["error"] is not None:
         return _ai_portfolio_error_response(result_holder["error"], g)
 
-    return jsonify({"ok": True, "portfolio": result_holder["result"]})
+    return ok_response({"portfolio": result_holder["result"]})
 
 
 @ai_portfolio_bp.route("/api/ai-portfolio/rebalance", methods=["POST"])
@@ -517,7 +517,7 @@ def api_save_ai_portfolio() -> Any:
         for k in keys_to_pop:
             ai_portfolio_result_cache.pop(k, None)
 
-    return jsonify({"ok": True, "portfolio": canonical_portfolio})
+    return ok_response({"portfolio": canonical_portfolio})
 
 
 @ai_portfolio_bp.route("/api/ai-portfolio/custom", methods=["DELETE"])
@@ -575,7 +575,7 @@ def api_delete_ai_portfolio() -> Any:
         for k in keys_to_pop:
             ai_portfolio_result_cache.pop(k, None)
 
-    return jsonify({"ok": True, "id": portfolio_id})
+    return ok_response({"id": portfolio_id})
 
 
 @ai_portfolio_bp.route("/api/ai-portfolio/copy-to-my", methods=["POST"])
@@ -780,4 +780,4 @@ def api_copy_ai_portfolio_to_my() -> Any:
     }
     if stale_warning:
         payload["stale_warning"] = stale_warning
-    return jsonify(payload)
+    return ok_response(payload)

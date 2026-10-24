@@ -1925,7 +1925,7 @@ def api_ai_technical_lines():
             status_code=500,
         )
 
-    return jsonify({"ok": True, **res})
+    return ok_response(res)
 
 
 @api_analysis_bp.route("/api/analyze-chart-image", methods=["POST"])
@@ -1994,4 +1994,4 @@ def api_analyze_chart_image():
             status_code=500,
         )
 
-    return jsonify({"ok": True, **res})
+    return ok_response(res)

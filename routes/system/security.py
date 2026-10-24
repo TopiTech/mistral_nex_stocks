@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from flask import jsonify, request
+from flask import request
 
 import routes.api_system
 from error_codes import ErrorCode
@@ -52,4 +52,4 @@ def api_csrf_token():
 
     from flask_wtf.csrf import generate_csrf
 
-    return jsonify({"ok": True, "csrf_token": generate_csrf()})
+    return ok_response({"csrf_token": generate_csrf()})

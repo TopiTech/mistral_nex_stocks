@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 
-from flask import current_app, g, jsonify, request
+from flask import current_app, g, request
 
 import routes.api_system
 from app_state import app_state
@@ -233,4 +233,4 @@ def api_shutdown():
     shutdown_thread = threading.Thread(target=shutdown_server)
     shutdown_thread.daemon = True
     shutdown_thread.start()
-    return jsonify({"ok": True, "message": "Shutting down..."})
+    return ok_response({"message": "Shutting down..."})

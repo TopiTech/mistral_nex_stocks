@@ -7,7 +7,7 @@ import copy
 import logging
 from typing import Any
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, request
 
 from app_bg import (
     _invalidate_sse_payload_cache,
@@ -245,4 +245,4 @@ def api_portfolio_snapshot() -> Any:
             status_code=403,
         )
     stocks = resolve_stocks_for_response(include_portfolio=True)
-    return jsonify({"ok": True, "stocks": stocks})
+    return ok_response({"stocks": stocks})

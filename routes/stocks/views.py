@@ -22,6 +22,8 @@ from constants import (
 from credential_manager import require_extension_token
 from error_codes import ErrorCode
 from route_helpers import (
+    _parse_heatmap_request,
+    _parse_screener_request,
     _parse_stock_add_ext_request,
     _parse_stock_add_request,
     _parse_stock_delete_request,
@@ -56,7 +58,6 @@ from utils.normalization import (
     is_jp_stock_code,
     is_valid_symbol,
     market_symbol_mismatch,
-    normalize_market,
     normalize_symbol,
     normalize_symbol_for_market,
 )
@@ -82,67 +83,39 @@ def api_screener() -> Any:
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    market_filter = (request.args.get("market") or "all").strip().lower()
-    sector_filter = (request.args.get("sector") or "all").strip()
-    q = (request.args.get("q") or "").strip().lower()
-    if len(q) > 200:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "検索ワードは200文字以内で入力してください"},
-        )
-    sort_by = (request.args.get("sort_by") or "market_cap").strip().lower()
-    sort_order = (request.args.get("sort_order") or "desc").strip().lower()
+    parsed, err_resp = _parse_screener_request(request.args)
+    if err_resp or parsed is None:
+        return err_resp or error_response(ErrorCode.INVALID_INPUT)
 
-    if market_filter not in ("all", "us", "jp"):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "market は all/us/jp のいずれかを指定してください"},
-        )
-    if sort_by not in (
-        "market_cap",
-        "price",
-        "change_percent",
-        "change_pct",
-        "volume",
-        "symbol",
-        "pe_ratio",
-        "pe",
-    ):
-        return error_response(ErrorCode.INVALID_INPUT, details={"reason": "sort_by の値が不正です"})
-    if sort_order not in ("asc", "desc"):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "sort_order は asc/desc のいずれかを指定してください"},
-        )
+    market_filter = parsed.market
+    sector_filter = parsed.sector
+    q = (parsed.q or "").strip().lower()
+    sort_by = parsed.sort_by
+    sort_order = parsed.sort_order
+    min_price = parsed.min_price
+    max_price = parsed.max_price
+    min_change = parsed.min_change
+    max_change = parsed.max_change
+    min_market_cap = parsed.min_market_cap
+    max_market_cap = parsed.max_market_cap
+    min_pe = parsed.min_pe
+    max_pe = parsed.max_pe
+    limit_val = parsed.limit
 
     def _parse_strict_float(raw: Any, field_name: str) -> float | None | tuple[Response, int]:
         if raw is None or str(raw).strip() == "":
             return None
-        if isinstance(raw, bool) or type(raw).__name__ in ("bool_", "bool"):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": f"{field_name} は数値で指定してください",
-                    "fields": [field_name],
-                },
-            )
         try:
             res = float(str(raw).strip())
         except (ValueError, TypeError):
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": f"{field_name} は数値で指定してください",
-                    "fields": [field_name],
-                },
+                details={"reason": f"{field_name} は数値で指定してください", "fields": [field_name]},
             )
         if not math.isfinite(res):
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={
-                    "reason": f"{field_name} は有限数で指定してください",
-                    "fields": [field_name],
-                },
+                details={"reason": f"{field_name} は有限数で指定してください", "fields": [field_name]},
             )
         return res
 
@@ -156,102 +129,6 @@ def api_screener() -> Any:
             return candidate if math.isfinite(candidate) else None
         except (ValueError, TypeError):
             return None
-
-    min_price = _parse_strict_float(request.args.get("min_price"), "min_price")
-    if isinstance(min_price, tuple):
-        return min_price
-    max_price = _parse_strict_float(request.args.get("max_price"), "max_price")
-    if isinstance(max_price, tuple):
-        return max_price
-    min_change = _parse_strict_float(request.args.get("min_change"), "min_change")
-    if isinstance(min_change, tuple):
-        return min_change
-    max_change = _parse_strict_float(request.args.get("max_change"), "max_change")
-    if isinstance(max_change, tuple):
-        return max_change
-    min_market_cap = _parse_strict_float(request.args.get("min_market_cap"), "min_market_cap")
-    if isinstance(min_market_cap, tuple):
-        return min_market_cap
-    max_market_cap = _parse_strict_float(request.args.get("max_market_cap"), "max_market_cap")
-    if isinstance(max_market_cap, tuple):
-        return max_market_cap
-    min_pe = _parse_strict_float(request.args.get("min_pe"), "min_pe")
-    if isinstance(min_pe, tuple):
-        return min_pe
-    max_pe = _parse_strict_float(request.args.get("max_pe"), "max_pe")
-    if isinstance(max_pe, tuple):
-        return max_pe
-
-    for name, val in [
-        ("min_price", min_price),
-        ("max_price", max_price),
-        ("min_market_cap", min_market_cap),
-        ("max_market_cap", max_market_cap),
-        ("min_pe", min_pe),
-        ("max_pe", max_pe),
-    ]:
-        if val is not None and val < 0:
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"{name} は0以上の数値である必要があります", "fields": [name]},
-                status_code=400,
-            )
-
-    if min_price is not None and max_price is not None and min_price > max_price:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={
-                "reason": "min_price は max_price 以下である必要があります",
-                "fields": ["min_price", "max_price"],
-            },
-            status_code=400,
-        )
-    if min_change is not None and max_change is not None and min_change > max_change:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={
-                "reason": "min_change は max_change 以下である必要があります",
-                "fields": ["min_change", "max_change"],
-            },
-            status_code=400,
-        )
-    if (
-        min_market_cap is not None
-        and max_market_cap is not None
-        and min_market_cap > max_market_cap
-    ):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={
-                "reason": "min_market_cap は max_market_cap 以下である必要があります",
-                "fields": ["min_market_cap", "max_market_cap"],
-            },
-            status_code=400,
-        )
-    if min_pe is not None and max_pe is not None and min_pe > max_pe:
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={
-                "reason": "min_pe は max_pe 以下である必要があります",
-                "fields": ["min_pe", "max_pe"],
-            },
-            status_code=400,
-        )
-
-    raw_limit = request.args.get("limit")
-    limit_val = 150
-    if raw_limit is not None and raw_limit.strip() != "":
-        try:
-            limit_val = int(raw_limit.strip())
-            if limit_val < 1:
-                limit_val = 1
-            elif limit_val > 500:
-                limit_val = 500
-        except (ValueError, TypeError):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": "limit は整数で指定してください", "fields": ["limit"]},
-            )
 
     stocks_data = resolve_stocks_for_response(include_portfolio=False)
     all_stocks = build_screener_base_rows_dispatch(stocks_data, market_filter)
@@ -732,14 +609,10 @@ def api_heatmap() -> Any:
     ok, reason = require_trusted_or_admin(request, require_origin=False)
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
-    market = normalize_market(request.args.get("market"), default="us")
-    if not market:
-        return error_response(ErrorCode.INVALID_MARKET)
-    if market not in ("us", "jp"):
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "heatmap market は us/jp のみ対応です"},
-        )
+    parsed, err_resp = _parse_heatmap_request(request.args)
+    if err_resp or parsed is None:
+        return err_resp or error_response(ErrorCode.INVALID_MARKET)
+    market = parsed.market
     symbols = POPULAR_US if market == "us" else POPULAR_JP
 
     cache_key = f"heatmap_{market}"

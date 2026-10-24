@@ -12,7 +12,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from flask import current_app, jsonify, request
+from flask import current_app, request
 
 import routes.api_system
 from app_state import app_state
@@ -72,7 +72,7 @@ def api_health():
         if not origin or is_allowed_trusted_origin(request):
             health_data.update(routes.api_system.get_api_credential_state())
 
-    return jsonify(health_data)
+    return ok_response(health_data)
 
 
 @api_system_bp.route("/api/cache-stats", methods=["GET", "OPTIONS"])
@@ -104,7 +104,7 @@ def api_cache_stats():
         stats.update(app_state.payload_disk_cache.stats())
     except Exception as exc:
         current_app.logger.debug("Failed to read payload disk cache stats: %s", exc)
-    return jsonify({"ok": True, "cache_stats": stats})
+    return ok_response({"cache_stats": stats})
 
 
 @api_system_bp.route("/api/metrics", methods=["GET", "OPTIONS"])
@@ -214,9 +214,8 @@ def api_metrics():
     with app_state.market.yfinance_lock:
         engine_metrics["yf_rate_limited"] = app_state.market.is_yf_rate_limited()
 
-    return jsonify(
+    return ok_response(
         {
-            "ok": True,
             "timestamp": datetime.now(UTC).isoformat(),
             "cache": {
                 "sizes": cache_sizes,

@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from functools import wraps
 from typing import Any, cast
 
-from flask import Flask, current_app, g, request
+from flask import Flask, Response, current_app, g, request
 from pydantic import ValidationError
 
 from app_state import app_state
@@ -48,7 +48,9 @@ from schemas.analysis import (
 )
 from schemas.config import CredentialsSaveRequest
 from schemas.stocks import (
+    HeatmapQueryRequest,
     PortfolioUpdateRequest,
+    ScreenerQueryRequest,
     StockAddExtRequest,
     StockAddRequest,
     StockDeleteRequest,
@@ -1015,6 +1017,154 @@ def _parse_stock_details_request(
         return validated, None
     except ValidationError as exc:
         return None, _details_query_error_from_validation(exc)
+
+
+def _screener_query_error_from_validation(exc: ValidationError) -> tuple[Response, int]:
+    """Map ScreenerQueryRequest validation errors to historical endpoint error responses."""
+    errors = exc.errors()
+    for err in errors:
+        msg = str(err.get("msg", ""))
+        loc = err.get("loc", ())
+        field_name = str(loc[-1]) if loc else ""
+        if "min_price_greater_than_max" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": "min_price は max_price 以下である必要があります",
+                    "fields": ["min_price", "max_price"],
+                },
+                status_code=400,
+            )
+        if "min_change_greater_than_max" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": "min_change は max_change 以下である必要があります",
+                    "fields": ["min_change", "max_change"],
+                },
+                status_code=400,
+            )
+        if "min_market_cap_greater_than_max" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": "min_market_cap は max_market_cap 以下である必要があります",
+                    "fields": ["min_market_cap", "max_market_cap"],
+                },
+                status_code=400,
+            )
+        if "min_pe_greater_than_max" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": "min_pe は max_pe 以下である必要があります",
+                    "fields": ["min_pe", "max_pe"],
+                },
+                status_code=400,
+            )
+        if "must_be_non_negative" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": f"{field_name} は0以上の数値である必要があります",
+                    "fields": [field_name],
+                },
+                status_code=400,
+            )
+        if "must_be_finite" in msg or "finite_number" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": f"{field_name} は有限数で指定してください",
+                    "fields": [field_name],
+                },
+                status_code=400,
+            )
+        if (
+            "bool_type_not_allowed" in msg
+            or "must_be_number" in msg
+            or "float_parsing" in err.get("type", "")
+        ):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": f"{field_name} は数値で指定してください",
+                    "fields": [field_name],
+                },
+                status_code=400,
+            )
+        if "q" in loc or "200" in msg or "string_too_long" in err.get("type", ""):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "検索ワードは200文字以内で入力してください"},
+                status_code=400,
+            )
+        if "market" in loc:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "market は all/us/jp のいずれかを指定してください"},
+                status_code=400,
+            )
+        if "sort_by" in loc:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "sort_by の値が不正です"},
+                status_code=400,
+            )
+        if "sort_order" in loc:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "sort_order は asc/desc のいずれかを指定してください"},
+                status_code=400,
+            )
+        if "limit" in loc or "limit_must_be_integer" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "limit は整数で指定してください", "fields": ["limit"]},
+                status_code=400,
+            )
+    return error_response(
+        ErrorCode.INVALID_INPUT,
+        details={"reason": "入力パラメータが不正です"},
+        status_code=400,
+    )
+
+
+def _parse_screener_request(
+    args: Any,
+) -> tuple[ScreenerQueryRequest | None, tuple[Response, int] | None]:
+    """Validate /api/screener query parameters with ScreenerQueryRequest."""
+    raw_dict = args.to_dict() if hasattr(args, "to_dict") else dict(args)
+    try:
+        validated = ScreenerQueryRequest.model_validate(raw_dict)
+        return validated, None
+    except ValidationError as exc:
+        return None, _screener_query_error_from_validation(exc)
+
+
+def _heatmap_query_error_from_validation(exc: ValidationError) -> tuple[Response, int]:
+    """Map HeatmapQueryRequest validation errors to historical endpoint error responses."""
+    for err in exc.errors():
+        msg = str(err.get("msg", ""))
+        if "unsupported_heatmap_market" in msg:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "heatmap market は us/jp のみ対応です"},
+                status_code=400,
+            )
+    return error_response(ErrorCode.INVALID_MARKET)
+
+
+def _parse_heatmap_request(
+    args: Any,
+) -> tuple[HeatmapQueryRequest | None, tuple[Response, int] | None]:
+    """Validate /api/heatmap query parameters with HeatmapQueryRequest."""
+    raw_dict = args.to_dict() if hasattr(args, "to_dict") else dict(args)
+    try:
+        validated = HeatmapQueryRequest.model_validate(raw_dict)
+        return validated, None
+    except ValidationError as exc:
+        return None, _heatmap_query_error_from_validation(exc)
 
 
 def _portfolio_numeric_error(field: str, err: Mapping[str, Any]) -> str:

@@ -229,9 +229,8 @@ def api_stock_details() -> Any:
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     parsed, err_resp = _parse_stock_details_request(request.args)
-    if err_resp:
-        return err_resp
-    assert parsed is not None
+    if err_resp or parsed is None:
+        return err_resp or error_response(ErrorCode.INVALID_SYMBOL)
     symbol = parsed.symbol
 
     short_cache_key = f"info_short_{symbol}"
@@ -290,9 +289,8 @@ def api_stock_history() -> Any:
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
     parsed, err_resp = _parse_stock_history_request(request.args)
-    if err_resp:
-        return err_resp
-    assert parsed is not None
+    if err_resp or parsed is None:
+        return err_resp or error_response(ErrorCode.INVALID_SYMBOL)
     symbol = parsed.symbol
     market = parsed.market
     period = parsed.period

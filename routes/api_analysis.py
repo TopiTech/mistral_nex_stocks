@@ -1041,9 +1041,12 @@ def api_news():
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
     force_refresh, err_resp = _parse_news_request(request)
-    if err_resp:
-        return err_resp
-    assert force_refresh is not None
+    if err_resp or force_refresh is None:
+        return err_resp or error_response(
+            ErrorCode.MALFORMED_INPUT,
+            details={"reason": "JSON形式が不正です"},
+            status_code=400,
+        )
 
     current_app.logger.info(
         "api_news start id=%s langsearch=%s tavily=%s strategy=%s force_refresh=%s",

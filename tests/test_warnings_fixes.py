@@ -58,7 +58,7 @@ def test_session_manager_no_warning_or_refresh_on_shutdown(caplog):
     fresh_sess = MagicMock()
     with patch.object(mgr, "get_session", return_value=fresh_sess):
         with caplog.at_level(logging.WARNING):
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError, match="Application is shutting down"):
                 sess.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
 
         # get_session should NOT have been called to refresh

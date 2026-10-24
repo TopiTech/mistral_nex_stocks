@@ -187,7 +187,14 @@ _scraper_market_ref: Any | None = None
 
 
 def _scraper_market_state() -> Any | None:
-    """Return the shared MarketDataState (cached) or None."""
+    """Return the shared MarketDataState (freshly resolved) or None.
+
+    The module-level ref is a last-resort fallback for interpreter teardown,
+    where the ``app_state`` import itself can fail. It is refreshed on every
+    successful import and cleared as soon as the live ``app_state.market`` is
+    gone, so a replaced (discarded) state object can never leak back in after
+    a reset.
+    """
     global _scraper_market_ref
     try:
         from app_state import app_state
@@ -196,6 +203,10 @@ def _scraper_market_state() -> Any | None:
         if market is not None:
             _scraper_market_ref = market
             return market
+        # The import succeeded but the live state is gone: the cached ref
+        # belongs to a discarded app_state and must not be reused.
+        _scraper_market_ref = None
+        return None
     except Exception as exc:
         logger.debug("Failed to obtain scraper market state: %s", exc)
     return _scraper_market_ref

@@ -653,12 +653,29 @@ def call_openai_chat(
             return copy.deepcopy(data)
 
     except Exception as exc:
-        status_code = getattr(getattr(exc, "response", None), "status_code", 500)
+        raw_status = getattr(getattr(exc, "response", None), "status_code", None)
+        resp_status = raw_status if isinstance(raw_status, int) else None
+        # Circuit accounting mirrors the Mistral client: only provider-side
+        # conditions may open the circuit — communication-class failures
+        # (timeouts, connection resets, protocol errors, raw socket/OS errors)
+        # and explicit 5xx responses. Application bugs (TypeError/KeyError/...
+        # raised while building the payload or post-processing the response)
+        # carry no HTTP response and defaulting them to 500 would count them
+        # as provider failures: three in a row would open the circuit and
+        # disable every OpenAI feature for the full window even though the
+        # provider is healthy.
         if isinstance(exc, httpx.TimeoutException):
             status_code = 504
-        elif isinstance(exc, (httpx.NetworkError, ConnectionError, OSError)):
+        elif isinstance(exc, (httpx.TransportError, ConnectionError, OSError)):
             status_code = 503
-        if status_code >= 500:
+        elif resp_status is not None:
+            status_code = resp_status
+        else:
+            status_code = 500
+        is_provider_failure = isinstance(
+            exc, (httpx.TransportError, ConnectionError, OSError)
+        ) or (resp_status is not None and resp_status >= 500)
+        if is_provider_failure:
             app_state.market.report_circuit_result("openai_compatible", success=False)
         logger.error(
             "OpenAI-compat request failed model=%s url=%s error_type=%s status=%s: %s",
@@ -896,12 +913,23 @@ def stream_openai_chat(
         yield {"type": "done", "text": "".join(full_parts)}
 
     except Exception as exc:
-        status_code = getattr(getattr(exc, "response", None), "status_code", 500)
+        raw_status = getattr(getattr(exc, "response", None), "status_code", None)
+        resp_status = raw_status if isinstance(raw_status, int) else None
+        # Same rule as call_openai_chat: only communication-class failures and
+        # explicit provider 5xx responses count against the circuit breaker.
+        # Application bugs without an HTTP response must not open it.
         if isinstance(exc, httpx.TimeoutException):
             status_code = 504
-        elif isinstance(exc, (httpx.NetworkError, ConnectionError, OSError)):
+        elif isinstance(exc, (httpx.TransportError, ConnectionError, OSError)):
             status_code = 503
-        if status_code >= 500:
+        elif resp_status is not None:
+            status_code = resp_status
+        else:
+            status_code = 500
+        is_provider_failure = isinstance(
+            exc, (httpx.TransportError, ConnectionError, OSError)
+        ) or (resp_status is not None and resp_status >= 500)
+        if is_provider_failure:
             app_state.market.report_circuit_result("openai_compatible", success=False)
         logger.error(
             "OpenAI stream exception error_type=%s status=%d: %s",

@@ -246,7 +246,15 @@ class StockDiskCache:
         return self._cache_dir / f"{safe_key}_{digest}.json"
 
     def _evict_if_needed(self) -> None:
-        """Remove oldest files when the entry count exceeds *max_entries*."""
+        """Remove oldest files when the entry count exceeds *max_entries*.
+
+        Eviction is FIFO by file mtime (write time), **not** LRU: ``get()``
+        intentionally does not touch mtime, because updating the file (or its
+        metadata) on every cache hit would add a disk write to the hot read
+        path the cache exists to protect. Recency of *reads* therefore does
+        not influence eviction; staleness is bounded separately by the
+        per-entry TTL via ``_remove_stale_entries``.
+        """
         try:
             entries: list[tuple[Path, float]] = []
             for p in self._cache_dir.glob("*.json"):

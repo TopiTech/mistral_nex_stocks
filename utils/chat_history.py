@@ -3,8 +3,10 @@ import os
 import sqlite3
 import threading
 import time
+import weakref
 from pathlib import Path
-from typing import Any
+from types import TracebackType
+from typing import Any, ClassVar, Self
 
 logger = logging.getLogger("backend")
 
@@ -230,15 +232,16 @@ class SQLiteChatHistoryStore:
     """SQLite-backed persistent chat store with dict-like compatibility.
 
     Uses a dedicated connection per thread (via threading.local) to avoid
-    the ``check_same_thread=False`` pattern, which creates a correctness
-    burden that the previous implementation's shared-lock design did not
-    fully satisfy.  Each thread gets its own connection, so operations from
-    different threads never contend on the same SQLite handle.
+    query-level connection contention. Each thread gets its own connection.
+    Connections are initialized with check_same_thread=False so that close_all()
+    can cleanly finalize connections created on terminated worker threads.
 
     Thread-local connections are automatically closed when the store instance
     is garbage-collected via ``weakref.finalize``, preventing connection leaks
     even if ``close()`` is never explicitly called.
     """
+
+    _instances: ClassVar[weakref.WeakSet[Any]] = weakref.WeakSet()
 
     def __init__(self, max_sessions: int = 50, max_msgs_per_session: int = 30) -> None:
         self.max_sessions = max_sessions
@@ -249,13 +252,12 @@ class SQLiteChatHistoryStore:
         self._conns_lock = threading.Lock()
         # Lazy initialization: ensure DB schema exists on first use.
         init_db()
+        SQLiteChatHistoryStore._instances.add(self)
         # Ensure the thread-local connection (created lazily per thread) is
         # closed when this store is garbage-collected, so SQLite handles are
         # not leaked until process exit (which would emit ResourceWarning).
         self._finalizer: Any = None
         try:
-            import weakref
-
             self._finalizer = weakref.finalize(
                 self,
                 SQLiteChatHistoryStore._close_local_conn,
@@ -265,6 +267,17 @@ class SQLiteChatHistoryStore:
             )
         except Exception:
             self._finalizer = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.close_all()
 
     def __del__(self) -> None:
         try:
@@ -301,18 +314,24 @@ class SQLiteChatHistoryStore:
         """Return a connection for the current thread (lazy-created per thread).
 
         The connection is cached on ``self._local`` so each thread creates
-        at most one connection over its lifetime.  This avoids both the
-        ``check_same_thread=False`` anti-pattern and the overhead of opening
-        a new connection per operation.
+        at most one connection over its lifetime. check_same_thread=False allows
+        close_all() to close the connection from another thread upon worker exit.
         """
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
             return conn
-        conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA wal_autocheckpoint=100;")
-        conn.execute("PRAGMA foreign_keys=ON;")
-        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA wal_autocheckpoint=100;")
+            conn.execute("PRAGMA foreign_keys=ON;")
+            conn.execute("PRAGMA busy_timeout = 5000;")
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
         self._local.conn = conn
         with self._conns_lock:
             self._active_conns.add(conn)
@@ -325,12 +344,16 @@ class SQLiteChatHistoryStore:
     def _reset_for_testing(cls) -> None:
         """Reset module-level state for test isolation.
 
-        TESTING ONLY: This clears the singleton DB initialization guard so
-        that the next SQLiteChatHistoryStore instance will re-initialize
-        the database schema. Call ``_reset_db_state()`` as well to reset
-        the module-level guard. Use in conjunction with test fixtures that
-        need a fresh database state.
+        TESTING ONLY: This clears the singleton DB initialization guard and
+        closes all living instances across the process so that subsequent tests
+        get a clean state without connection leaks.
         """
+        for inst in list(cls._instances):
+            try:
+                inst.close_all()
+            except Exception:
+                pass
+        cls._instances.clear()
         global _fernet_instance
         _fernet_instance = None
         _reset_db_state()
@@ -376,8 +399,8 @@ class SQLiteChatHistoryStore:
         backoff = 0.05
         for attempt in range(max_retries):
             conn = self._get_connection()
+            cursor = conn.cursor()
             try:
-                cursor = conn.cursor()
                 result = callback(conn, cursor)
                 conn.commit()
                 return result
@@ -392,6 +415,11 @@ class SQLiteChatHistoryStore:
             except Exception:
                 conn.rollback()
                 raise
+            finally:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Append-only helper (M-4)

@@ -19,7 +19,8 @@ def temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(chat_history_module, "DB_PATH", db_file)
     monkeypatch.setattr(chat_history_module, "_db_initialized", False)
     chat_history_module.init_db()
-    return db_file
+    yield db_file
+    SQLiteChatHistoryStore._reset_for_testing()
 
 
 def test_sqlite_chat_history_basic_operations(temp_db):
@@ -294,3 +295,30 @@ def test_sqlite_chat_history_cross_thread_closing(temp_db):
 
     # Close all connections from main thread (cross-thread close)
     store.close_all()
+
+
+def test_sqlite_chat_history_context_manager(temp_db):
+    """Test using SQLiteChatHistoryStore as a context manager automatically closes connections."""
+    with SQLiteChatHistoryStore() as store:
+        store["cm_sess"] = [{"role": "user", "content": "context managed"}]
+        assert "cm_sess" in store
+        assert len(store["cm_sess"]) == 1
+
+    # After exit, the connection in this thread should be closed
+    assert getattr(store._local, "conn", None) is None
+
+
+def test_sqlite_chat_history_reset_for_testing(temp_db):
+    """Test _reset_for_testing properly closes all live instances and clears tracking."""
+    store1 = SQLiteChatHistoryStore()
+    store2 = SQLiteChatHistoryStore()
+    store1["sess_1"] = [{"role": "user", "content": "1"}]
+    store2["sess_2"] = [{"role": "user", "content": "2"}]
+
+    assert getattr(store1._local, "conn", None) is not None
+    assert getattr(store2._local, "conn", None) is not None
+
+    SQLiteChatHistoryStore._reset_for_testing()
+
+    assert getattr(store1._local, "conn", None) is None
+    assert getattr(store2._local, "conn", None) is None

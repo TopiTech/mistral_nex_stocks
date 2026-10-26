@@ -10,6 +10,7 @@ import threading
 from typing import Any
 
 from app_state import app_state
+from bg._app_bridge import _get_app_bg_attr, _set_app_bg_attr
 from messaging import sse_event_log
 from utils.market_utils import is_market_open as _orig_is_market_open
 from utils.stock_payload import _strip_portfolio_fields
@@ -46,23 +47,10 @@ _sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
 _sse_full_snapshot_counter: int = 0
 
 
-def _get_app_bg_attr(name: str, fallback: Any) -> Any:
-    # Lazy import: app_bg imports bg.*, so an eager import would be circular.
-    # Regular import replaces the previous sys.modules lookup with identical
-    # lookup semantics (partial-module state included).
-    try:
-        import app_bg as app_bg_mod
-    except ImportError:
-        return fallback
-    return app_bg_mod.__dict__.get(name, fallback)
-
-
-def _set_app_bg_attr(name: str, val: Any) -> None:
-    try:
-        import app_bg as app_bg_mod
-    except ImportError:
-        return
-    app_bg_mod.__dict__[name] = val
+# ``_get_app_bg_attr`` / ``_set_app_bg_attr`` are owned by ``bg._app_bridge``
+# (M-3) so the app_bg mirror has a single implementation. They are imported
+# above and re-exported here for existing callers (``bg_common._get_app_bg_attr``
+# etc.) that resolve them through this module.
 
 
 def _build_sse_light_stocks_payload(
@@ -191,8 +179,14 @@ def _raw_announce_current_market_state() -> None:
         else:
             prev_stocks = _get_app_bg_attr("_sse_prev_stocks", _sse_prev_stocks)
             diff = _build_sse_diff(stocks, prev_stocks)
-            diff_size = sum(len(v) for v in diff.values())
-            if diff_size > 0:
+            # L-1: the decision unit is an explicit *changed-entry count* (the
+            # number of changed stock rows across markets), NOT bytes or chars.
+            # ``_build_sse_diff`` returns ``dict[str, list[changed rows]]`` so
+            # ``len(rows)`` counts rows; the quantity is named accordingly so
+            # the unit cannot be misread as a serialized-size measure.  The
+            # publish decision is therefore "is at least one row present?".
+            changed_entry_count = sum(len(rows) for rows in diff.values())
+            if changed_entry_count > 0:
                 payload = json.dumps(
                     {
                         "stream_event": "diff",

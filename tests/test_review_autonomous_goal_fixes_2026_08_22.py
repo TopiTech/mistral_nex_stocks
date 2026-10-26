@@ -136,8 +136,24 @@ class TestReviewAutonomousGoalFixes20260822:
                 None,
             )
 
-        # Initialize mock chat_history
-        mock_history_store = {chat_key: [{"role": "assistant", "content": structured_content}]}
+        # Initialize mock chat_history as a dict-like store implementing the
+        # atomic append contract used by the cache-hit fast path.
+        class _MockHistoryStore(dict):
+            def append_message_if_not_duplicate(self, key, message, *, normalize=None):
+                norm = normalize or (lambda c: c)
+                msgs = self.get(key, [])
+                if msgs and norm(msgs[-1].get("content")) == message.get("content"):
+                    return False
+                msgs.append(dict(message))
+                self[key] = msgs
+                return True
+
+            def close(self):
+                pass
+
+        mock_history_store = _MockHistoryStore(
+            {chat_key: [{"role": "assistant", "content": structured_content}]}
+        )
 
         with app.test_client() as client:
             with client.session_transaction() as sess:

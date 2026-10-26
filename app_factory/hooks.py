@@ -7,8 +7,9 @@ import os
 import time
 import uuid
 
-from flask import current_app, g, jsonify, request
+from flask import Response, current_app, g, request
 
+from error_codes import ErrorCode
 from logging_config import DETAILED_API_LOG_PATHS, LOG_LEVEL
 from utils.env_helpers import _env_bool
 from utils.networking import (
@@ -38,6 +39,20 @@ _CROSS_SITE_COSTLY_GET_PATHS = frozenset(
         "/api/ai-portfolio",
     }
 )
+
+
+def _forbidden_cross_site_response() -> tuple[Response, int]:
+    """Unified error envelope for blocked cross-site requests (H-3).
+
+    Built through ``error_response`` — the single owner of the error envelope —
+    instead of a hand-written ``jsonify`` payload. The import is deferred to
+    call time to avoid an import cycle while the app is being wired.
+    """
+    from utils.stock_payload import error_response
+
+    return error_response(
+        ErrorCode.FORBIDDEN, 403, message="forbidden cross-site request"
+    )
 
 
 def _enforce_sec_fetch_site_check():
@@ -86,7 +101,7 @@ def _enforce_sec_fetch_site_check():
             sec_fetch_site or "(missing)",
             request.path,
         )
-        return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
+        return _forbidden_cross_site_response()
     # Hardening for costly GETs: when strict mode is enabled, a loopback caller
     # presenting Sec-Fetch-Site:none/missing without a trusted Origin must be
     # rejected before it can burn LLM quota or trigger market refreshes via
@@ -103,7 +118,7 @@ def _enforce_sec_fetch_site_check():
             sec_fetch_site or "(missing)",
             request.path,
         )
-        return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
+        return _forbidden_cross_site_response()
     # M-7: "cross-site" is the only metadata value that reliably indicates a
     # cross-site request forgery attempt and is blocked.
     # "none" means the request was not initiated by a same-site page context
@@ -137,7 +152,7 @@ def _enforce_sec_fetch_site_check():
                 request.path,
                 sec_fetch_site,
             )
-            return jsonify({"ok": False, "error": "forbidden cross-site request"}), 403
+            return _forbidden_cross_site_response()
 
 
 def _log_request_start():

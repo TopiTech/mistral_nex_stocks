@@ -167,6 +167,11 @@ def test_r7_api_chat_cache_hit_db_close(monkeypatch):
         def move_to_end(self, key):
             pass
 
+        def append_message_if_not_duplicate(self, key, message, *, normalize=None):
+            norm = normalize or (lambda c: c)
+            msgs = self[key]
+            return not (msgs and norm(msgs[-1].get("content")) == message.get("content"))
+
         def close(self):
             nonlocal closed_called
             closed_called = True

@@ -208,7 +208,8 @@ def test_sync_path_seeds_previous_close_cache():
         },
     ]
     generation = app_bg._sync_generation
-    us_res, jp_res, _idx_res = app_bg._process_fetched_stocks(fetched, sync_generation=generation)
+    result = app_bg._process_fetched_stocks(fetched, sync_generation=generation)
+    us_res, jp_res, _idx_res = result.us, result.jp, result.idx
 
     assert us_res and jp_res
     assert app_state.market.get_previous_close_cached("AAPL") == 190.0

@@ -131,19 +131,11 @@ def api_stocks_stream() -> Any:
     """SSEストリームエンドポイント（接続数・モード切替対応）"""
     ok, reason = require_sse_auth(request)
     if not ok:
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": reason or "unauthorized",
-                    "error_flag": True,
-                    "code": str(ErrorCode.FORBIDDEN),
-                    "error_code": int(ErrorCode.FORBIDDEN),
-                    "message": reason or "unauthorized",
-                    "details": {"reason": reason or "unauthorized"},
-                }
-            ),
+        return error_response(
+            ErrorCode.FORBIDDEN,
             403,
+            message=reason or "unauthorized",
+            details={"reason": reason or "unauthorized"},
         )
 
     request_id = getattr(g, "request_id", "-")

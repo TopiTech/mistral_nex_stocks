@@ -1866,10 +1866,14 @@ function createRequestToken() {
     );
   }
 
-  // This token is an idempotency key, not an authentication credential.  Keep
-  // older WebViews functional when Web Crypto is unavailable; the server still
-  // validates its shape and scopes the key to the browser session.
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  // M-5: a request token is an idempotency key the server treats as a security
+  // boundary, so it must carry cryptographic entropy.  Never fabricate one from
+  // a predictable source (Date.now/Math.random); if Web Crypto is unavailable we
+  // stop the request instead of sending a guessable token.  The token shape
+  // above (UUID / 48-char hex) is unchanged for callers that validate it.
+  throw new Error(
+    "createRequestToken: Web Crypto unavailable; refusing to send a predictable request token",
+  );
 }
 
 if (typeof window !== "undefined") {

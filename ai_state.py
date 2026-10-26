@@ -83,7 +83,7 @@ class AIState:
 
         from utils.chat_history import SQLiteChatHistoryStore
 
-        self.chat_history: Any = SQLiteChatHistoryStore(max_sessions=50)
+        self.chat_history: SQLiteChatHistoryStore = SQLiteChatHistoryStore(max_sessions=50)
         self.chat_history_lock = threading.Lock()
         self.max_history = 50
 
@@ -209,14 +209,25 @@ class AIState:
             "openai_compatible": self.openai_usage_stats(),
         }
 
-    def add_chat_history(self, key: str, message: Any):
+    def add_chat_history(
+        self, key: str, message: list[dict[str, Any]] | dict[str, Any]
+    ) -> None:
+        """Persist a chat turn under an explicit storage contract (H-2).
+
+        A ``list`` replaces the session transcript; a single ``dict`` appends
+        one message. Any other shape is a programming error and raises
+        ``TypeError`` instead of falling through to an implicit write.
+        """
         with self.chat_history_lock:
             if isinstance(message, list):
                 self.chat_history[key] = message
-            elif isinstance(message, dict) and hasattr(self.chat_history, "add_message"):
+            elif isinstance(message, dict):
                 self.chat_history.add_message(key, message)
             else:
-                self.chat_history[key] = message
+                raise TypeError(
+                    "chat history message must be a list[dict] (replace) or "
+                    f"dict (append), got {type(message).__name__}"
+                )
 
     def mark_mistral_429(self, retry_after_sec=None) -> float:
         with self.mistral_cooldown_lock:

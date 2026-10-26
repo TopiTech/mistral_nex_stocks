@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from requests.exceptions import RequestException
@@ -25,7 +26,7 @@ from bg.common import announce_real_market_state
 from bg.sync import _shim
 from bg.sync import state as _state
 from bg.sync.fetch import _is_batch_result_invalid, fetch_index_data
-from bg.sync.state import _get_app_bg_attr
+from bg.sync.state import _get_app_bg_attr, _get_sync_generation
 from route_helpers import (
     invalidate_stock_caches,
     remove_stock_from_caches,
@@ -225,10 +226,32 @@ def _prepare_sync_items(
     return items
 
 
+@dataclass(frozen=True)
+class ProcessedStocks:
+    """Explicit result contract for ``_process_fetched_stocks`` (M-4).
+
+    ``us`` / ``jp`` / ``idx`` hold the per-market merged cache rows (freshly
+    fetched rows merged over preserved rows). ``is_empty`` makes the
+    "all-dead -> preserve" guard explicit instead of relying on the implicit
+    truthiness of a bare 3-tuple: publishing is skipped only when *every* market
+    is empty. Partial success (e.g. US freshly updated while JP is preserved) is
+    intentional -- each market is updated independently in ``merge_cache``.
+    """
+
+    us: list[dict[str, Any]] = field(default_factory=list)
+    jp: list[dict[str, Any]] = field(default_factory=list)
+    idx: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no market holds any rows (fresh or preserved)."""
+        return not (self.us or self.jp or self.idx)
+
+
 def _process_fetched_stocks(
     fetched_items: list[dict[str, Any] | None],
     sync_generation: int | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> ProcessedStocks:
     """Splits fetched items into US, JP, and IDX results and updates caches."""
     us_res, jp_res, idx_res = [], [], []
     for item in fetched_items:
@@ -245,14 +268,14 @@ def _process_fetched_stocks(
     with app_state.cache.sse_data_lock:
         if sync_generation is not None:
             with app_state.market.is_syncing_lock:
-                current_sync_gen = _get_app_bg_attr("_sync_generation", _state._sync_generation)
+                current_sync_gen = _get_sync_generation()
                 if current_sync_gen != 0 and sync_generation != current_sync_gen:
                     logger.info(
                         "Discarding stale stock sync generation %s (current: %s)",
                         sync_generation,
                         current_sync_gen,
                     )
-                    return [], [], []
+                    return ProcessedStocks()
         prev_us = (
             app_state.market.target_stocks_cache.get("us", [])
             if isinstance(app_state.market.target_stocks_cache, dict)
@@ -324,7 +347,7 @@ def _process_fetched_stocks(
             app_state.market.current_stocks_cache = copy.deepcopy(
                 app_state.market.target_stocks_cache
             )
-    return new_us, new_jp, new_idx
+    return ProcessedStocks(us=new_us, jp=new_jp, idx=new_idx)
 
 
 def _update_indices_data(
@@ -540,9 +563,9 @@ def _auto_remove_invalid_symbols(
             [(symbol, market) for symbol, market, _stock, _streak in removed],
             persist_error,
         )
-        schedule_fn = _get_app_bg_attr(
-            "schedule_sync_all_stocks_now", _shim().schedule_sync_all_stocks_now
-        )
+        schedule_fn = _get_app_bg_attr("schedule_sync_all_stocks_now", None)
+        if schedule_fn is None:
+            schedule_fn = _shim().schedule_sync_all_stocks_now
         schedule_fn()
         return
 

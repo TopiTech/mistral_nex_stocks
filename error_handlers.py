@@ -11,7 +11,7 @@ Usage:
 
 from typing import Any
 
-from flask import Flask, current_app, jsonify
+from flask import Flask, current_app
 from werkzeug.exceptions import HTTPException
 
 
@@ -42,30 +42,15 @@ def _build_error_response(
     error_code: Any | None = None,
     details: dict | None = None,
 ) -> tuple:
-    """Build a unified error response dict.
+    """Build a unified error response.
 
-    Shared by AppError handler and error_response() so both paths
-    produce identical JSON shapes.
+    Delegates to ``utils.stock_payload.error_response`` (H-3), the single owner
+    of the error envelope, so the AppError/exception path and the route path
+    produce identical JSON shapes from one implementation.
     """
-    from error_codes import ErrorCode
+    from utils.stock_payload import error_response
 
-    ec_int = int(ErrorCode.UNKNOWN)
-    if error_code is not None:
-        try:
-            ec_int = int(error_code)
-        except (ValueError, TypeError):
-            pass
-    return jsonify(
-        {
-            "ok": False,
-            "error": message,
-            "error_flag": True,
-            "code": str(error_code) if error_code is not None else None,
-            "error_code": ec_int,
-            "message": message,
-            "details": details or {},
-        }
-    ), status_code
+    return error_response(error_code, status_code, details=details, message=message)
 
 
 def register_error_handlers(app: Flask) -> None:

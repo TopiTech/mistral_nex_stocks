@@ -433,10 +433,9 @@
         market_cap: stock.marketCap,
         pe_ratio: stock.peRatio,
         market: stock.market || "us",
-        request_token:
-          typeof global.createRequestToken === "function"
-            ? global.createRequestToken()
-            : `mns_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}_${Math.random().toString(36).slice(2, 10)}`,
+        // M-5: delegate to the single createRequestToken system; it throws
+        // rather than fabricating a predictable Math.random()-based token.
+        request_token: global.createRequestToken(),
       };
 
       try {

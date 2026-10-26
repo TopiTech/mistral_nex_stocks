@@ -102,6 +102,16 @@ _PROMPT_FIELD_SAFE = re.compile(r"[^\w\s\-.,:@$/()%'\"\u3000-\u9fff]")
 _PROMPT_FIELD_DANGEROUS = re.compile(r"[<>&\x00-\x08\x0b\x0c\x0e-\x1f]")
 _OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
+# M-1: single, unambiguous allow-list for stock-symbol characters before a
+# symbol is embedded into an LLM prompt.  Allowed: word chars ``[A-Za-z0-9_]``,
+# literal dot ``.`` (``7203.T``), literal equals ``=`` (forex ``EURUSD=X``),
+# literal caret ``^`` (index ``^GSPC``) and literal hyphen ``-`` (``BRK-B``).
+# Both the caret and the hyphen are backslash-escaped so neither can ever be
+# read as a character range; the leading ``^`` is the negation.  This is the
+# single definition behind ``_safe_symbol`` so the allow-list cannot drift
+# between call sites (M-1: 許可/拒否文字クラスを単一定義に集約).
+_SYMBOL_PROMPT_STRIP_RE = re.compile(r"[^\w.=\^\-]")
+
 
 def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
     """Return a validated conversation scope token for AI analysis.
@@ -200,6 +210,19 @@ def _safe_prompt_field(value, max_len: int = 200) -> str:
     text = _PROMPT_FIELD_DANGEROUS.sub(" ", text)
     text = _PROMPT_FIELD_SAFE.sub("", text)
     return text.strip()[:max_len]
+
+
+def _safe_symbol(value, max_len: int = 15) -> str:
+    """Return a stock symbol sanitized for safe embedding into an LLM prompt.
+
+    This is the single validation point (M-1) for symbol fields.  It applies
+    the module-level ``_SYMBOL_PROMPT_STRIP_RE`` allow-list and caps length;
+    non-string inputs are coerced to ``str`` first so a malformed value can
+    never reach the prompt unfiltered.  Keeping the allow-list in one constant
+    and the logic in one helper prevents the character class from diverging
+    across call sites.
+    """
+    return _SYMBOL_PROMPT_STRIP_RE.sub("", str(value if value is not None else ""))[:max_len]
 
 
 def _wrap_research_context_cdata(raw_context: str) -> str:
@@ -317,12 +340,7 @@ def _rollback_chat_user_message(chat_key: str, user_msg: str) -> None:
     created by a concurrent request.
     """
     with app_state.ai.chat_history_lock:
-        if chat_key not in app_state.ai.chat_history:
-            return
-        history = app_state.ai.chat_history[chat_key]
-        if history and history[-1].get("role") == "user" and history[-1].get("content") == user_msg:
-            history.pop()
-            app_state.ai.chat_history[chat_key] = history
+        app_state.ai.chat_history.pop_last_user_message_if_matches(chat_key, user_msg)
 
 
 @api_analysis_bp.route("/api/trending")
@@ -430,17 +448,11 @@ def api_chat():
             normalized_cached_result = _normalize_for_history(cached_result)
             try:
                 with app_state.ai.chat_history_lock:
-                    if chat_key in app_state.ai.chat_history:
-                        _history = app_state.ai.chat_history[chat_key]
-                        if (
-                            not _history
-                            or _normalize_for_history(_history[-1].get("content"))
-                            != normalized_cached_result
-                        ):
-                            _history.append(
-                                {"role": "assistant", "content": normalized_cached_result}
-                            )
-                            app_state.ai.chat_history[chat_key] = _history
+                    app_state.ai.chat_history.append_message_if_not_duplicate(
+                        chat_key,
+                        {"role": "assistant", "content": normalized_cached_result},
+                        normalize=_normalize_for_history,
+                    )
             finally:
                 try:
                     app_state.ai.chat_history.close()
@@ -490,33 +502,30 @@ def api_chat():
 
     # チャット履歴の管理
     with app_state.ai.chat_history_lock:
-        if chat_key in app_state.ai.chat_history:
-            app_state.ai.chat_history.move_to_end(chat_key)
-            history = app_state.ai.chat_history[chat_key]
-        else:
-            # symbolはユーザー入力のため、プロンプトに直接埋めず構造化データとして渡す
-            safe_symbol = re.sub(r"[^\w\-.^=]", "", symbol)[:15]
-            history = [
-                {
-                    "role": "system",
-                    "content": "あなたは株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
-                },
-                {
-                    "role": "user",
-                    "content": f"[対象銘柄: {safe_symbol}] この銘柄について質問します。",
-                },
-                {
-                    "role": "assistant",
-                    "content": f"{safe_symbol}銘柄についてお答えします。",
-                },
-            ]
-            app_state.ai.chat_history[chat_key] = history
-
-        if not already_fetching:
-            history.append({"role": "user", "content": user_msg})
-            if len(history) > CHAT_HISTORY_MAX_MSGS:
-                history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
-            app_state.ai.chat_history[chat_key] = history
+        # symbol はユーザー入力。_safe_symbol の単一許可文字リスト（M-1）で無害化
+        # してからプロンプトのプレースホルダへ埋め込む。サニタイズは多層防御の一部で
+        # あり、可能なら「プロンプトへ埋め込まず構造化データとして渡す」方針を優先する。
+        safe_symbol = _safe_symbol(symbol)
+        init_history = [
+            {
+                "role": "system",
+                "content": "あなたは株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
+            },
+            {
+                "role": "user",
+                "content": f"[対象銘柄: {safe_symbol}] この銘柄について質問します。",
+            },
+            {
+                "role": "assistant",
+                "content": f"{safe_symbol}銘柄についてお答えします。",
+            },
+        ]
+        history = app_state.ai.chat_history.record_turn(
+            chat_key,
+            init_messages=init_history,
+            append=({"role": "user", "content": user_msg}) if not already_fetching else None,
+            max_msgs=CHAT_HISTORY_MAX_MSGS,
+        )
 
         # B-3: keep the LLM request within a character budget so long
         # conversations cannot blow the model context window or inflate cost.
@@ -689,15 +698,15 @@ def api_chat():
     if not ai_content:
         ai_content = "(応答を生成できませんでした)"
 
+    # R12 fix: compare normalized content so structured (list) and
+    # string forms of the same response are recognized as duplicates.
+    normalized_ai = _normalize_for_history(ai_content)
     with app_state.ai.chat_history_lock:
-        if chat_key in app_state.ai.chat_history:
-            _history = app_state.ai.chat_history[chat_key]
-            # R12 fix: compare normalized content so structured (list) and
-            # string forms of the same response are recognized as duplicates.
-            normalized_ai = _normalize_for_history(ai_content)
-            if not _history or _normalize_for_history(_history[-1].get("content")) != normalized_ai:
-                _history.append({"role": "assistant", "content": normalized_ai})
-                app_state.ai.chat_history[chat_key] = _history
+        app_state.ai.chat_history.append_message_if_not_duplicate(
+            chat_key,
+            {"role": "assistant", "content": normalized_ai},
+            normalize=_normalize_for_history,
+        )
 
     current_app.logger.info(
         "api_chat success id=%s content_len=%d",
@@ -845,16 +854,13 @@ def _stream_chat_response(
             # disconnect can occur after a delta, so partial output must never
             # become a reply in subsequent prompts.
             try:
+                normalized = _normalize_for_history(final_result)
                 with app_state.ai.chat_history_lock:
-                    if chat_key in app_state.ai.chat_history:
-                        history = app_state.ai.chat_history[chat_key]
-                        normalized = _normalize_for_history(final_result)
-                        if (
-                            not history
-                            or _normalize_for_history(history[-1].get("content")) != normalized
-                        ):
-                            history.append({"role": "assistant", "content": normalized})
-                            app_state.ai.chat_history[chat_key] = history
+                    app_state.ai.chat_history.append_message_if_not_duplicate(
+                        chat_key,
+                        {"role": "assistant", "content": normalized},
+                        normalize=_normalize_for_history,
+                    )
             except Exception as hist_exc:
                 app_logger.warning("Failed to persist streamed chat history: %s", hist_exc)
         elif on_abort is not None:
@@ -1642,30 +1648,20 @@ def api_analyze_v2():
                 # Store in chat history
                 chat_key = f"{conversation_scope}:{market}:{symbol}"
                 with app_state.ai.chat_history_lock:
-                    if chat_key in app_state.ai.chat_history:
-                        app_state.ai.chat_history.move_to_end(chat_key)
-                        history = app_state.ai.chat_history[chat_key]
-                    else:
-                        history = [
+                    app_state.ai.chat_history.record_turn(
+                        chat_key,
+                        init_messages=[
                             {
                                 "role": "system",
                                 "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
                             }
-                        ]
-                        app_state.ai.chat_history[chat_key] = history
-
-                    history.append(
-                        {
+                        ],
+                        append={
                             "role": "assistant",
                             "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
-                        }
+                        },
+                        max_msgs=CHAT_HISTORY_MAX_MSGS,
                     )
-
-                    if len(history) > CHAT_HISTORY_MAX_MSGS:
-                        history = [history[0]] + history[-(CHAT_HISTORY_MAX_MSGS - 1) :]
-
-                    # Explicitly save back to persist in SQLite database
-                    app_state.ai.chat_history[chat_key] = history
 
                 result_holder["step"] = "done"
                 result_holder["message"] = "分析完了"

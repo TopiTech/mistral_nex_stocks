@@ -12,6 +12,7 @@ from typing import Any
 
 import config_store
 from app_state import app_state
+from bg._app_bridge import _get_app_bg_attr, _set_app_bg_attr
 
 try:
     import fcntl
@@ -32,40 +33,22 @@ _is_sync_leader: bool = True
 
 
 def _get_leader_lock_file() -> Any:
-    # Lazy import: app_bg imports bg.*, so an eager import would be circular.
-    try:
-        import app_bg as app_bg_mod
-    except ImportError:
-        return _LEADER_LOCK_FILE
-    return app_bg_mod.__dict__.get("_LEADER_LOCK_FILE", _LEADER_LOCK_FILE)
+    return _get_app_bg_attr("_LEADER_LOCK_FILE", _LEADER_LOCK_FILE)
 
 
 def _set_leader_lock_file(f: Any) -> None:
     global _LEADER_LOCK_FILE
     _LEADER_LOCK_FILE = f
-    try:
-        import app_bg as app_bg_mod
-    except ImportError:
-        return
-    app_bg_mod.__dict__["_LEADER_LOCK_FILE"] = f
+    _set_app_bg_attr("_LEADER_LOCK_FILE", f)
 
 
 def _set_is_sync_leader(val: bool) -> None:
     global _is_sync_leader
     _is_sync_leader = val
-    try:
-        import app_bg as app_bg_mod
-    except ImportError:
-        return
-    app_bg_mod.__dict__["_is_sync_leader"] = val
+    _set_app_bg_attr("_is_sync_leader", val)
 
 
-def _get_app_bg_attr(name: str, fallback: Any) -> Any:
-    try:
-        import app_bg as app_bg_mod
-    except ImportError:
-        return fallback
-    return app_bg_mod.__dict__.get(name, fallback)
+# ``_get_app_bg_attr`` / ``_set_app_bg_attr`` are owned by ``bg._app_bridge`` (M-3).
 
 
 def _pid_is_alive(pid: int) -> bool:

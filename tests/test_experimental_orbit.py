@@ -368,6 +368,10 @@ const context = {
     status: 401,
     json: async () => ({ ok: false, error: "INVALID_API_KEY", message: "APIキーが無効です" }),
   }),
+  // The controller now centralizes request-token generation in the shared
+  // createRequestToken helper (M-5) instead of a Math.random() fallback, so the
+  // harness provides that dependency the same way it provides fetch.
+  createRequestToken: () => "test-constellation-token-0123456789",
   setTimeout: (fn) => fn(),
   clearTimeout: () => {},
 };

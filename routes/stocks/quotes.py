@@ -186,16 +186,17 @@ def api_stocks() -> Any:
         and not app_state.bootstrap_ready.is_set()
         and not _stocks_is_testing()
     ):
-        return jsonify(
-            {
-                "ok": False,
-                "error": "bootstrap skipped (MNS_SKIP_BOOTSTRAP=1)",
+        return error_response(
+            ErrorCode.SYSTEM_ERROR,
+            503,
+            message="bootstrap skipped (MNS_SKIP_BOOTSTRAP=1)",
+            extra_fields={
                 "bootstrap_skipped": True,
                 "stocks": {"us": [], "jp": [], "idx": []},
                 "indices": {},
                 "fetching": False,
-            }
-        ), 503
+            },
+        )
     with app_state.cache.sse_data_lock:
         stocks = resolve_stocks_for_response(include_portfolio=False)
         indices = resolve_indices_for_response()

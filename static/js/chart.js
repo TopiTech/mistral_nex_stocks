@@ -1790,7 +1790,14 @@ async function refreshStockChart(wrapper, period, interval) {
   const targetPeriod = period || getChartPref(stockKey, "period", "3mo");
   const targetInterval = interval || getChartPref(stockKey, "interval", "auto");
 
-  const currentFetchId = Date.now().toString() + Math.random().toString();
+  // M-5: this is a client-side fetch-correlation id (compared only to detect
+  // stale responses), so it needs guaranteed uniqueness rather than
+  // unpredictability.  Prefer a crypto UUID; otherwise fall back to a monotonic
+  // counter — never the previous Date.now()+Math.random() concatenation whose
+  // Math.random() carried weak, predictable entropy for what is an identifier.
+  const currentFetchId =
+    globalThis.crypto?.randomUUID?.() ??
+    `cf_${(globalThis.__chartFetchSeq = (globalThis.__chartFetchSeq || 0) + 1)}`;
   wrapper.dataset.chartFetchId = currentFetchId;
 
   if (typeof window.updateIntervalControlsVisibility === "function") {

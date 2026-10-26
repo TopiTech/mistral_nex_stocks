@@ -4,6 +4,7 @@ import sqlite3
 import threading
 import time
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 from typing import Any, ClassVar, Self
@@ -320,7 +321,17 @@ class SQLiteChatHistoryStore:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
             return conn
-        conn = sqlite3.connect(str(DB_PATH), timeout=30.0, check_same_thread=False)
+        # isolation_level=None gives us manual transaction control so
+        # _execute_in_transaction can span BOTH the read and the write of a
+        # read-modify-write in one transaction (C-2). Python's legacy implicit
+        # transactions do not cover the leading SELECT, which is what allowed a
+        # concurrent writer to slip between read and write-back (lost update).
+        conn = sqlite3.connect(
+            str(DB_PATH),
+            timeout=30.0,
+            check_same_thread=False,
+            isolation_level=None,
+        )
         try:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA wal_autocheckpoint=100;")
@@ -395,17 +406,27 @@ class SQLiteChatHistoryStore:
         Commits on success, rolls back on failure.  Returns whatever the
         callback returns.
         """
-        max_retries = 5
+        max_retries = 8
         backoff = 0.05
         for attempt in range(max_retries):
             conn = self._get_connection()
             cursor = conn.cursor()
             try:
+                # Open ONE transaction spanning the callback's reads AND writes
+                # so a concurrent writer cannot slip between them and get
+                # clobbered by the write-back (C-2). With WAL + a deferred BEGIN,
+                # a stale snapshot surfaces as SQLITE_BUSY_SNAPSHOT ("locked"/
+                # "busy") on the write; the retry then re-runs the whole
+                # read-modify-write against fresh data.
+                conn.execute("BEGIN")
                 result = callback(conn, cursor)
                 conn.commit()
                 return result
             except sqlite3.OperationalError as exc:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
                 err_msg = str(exc).lower()
                 if ("locked" in err_msg or "busy" in err_msg) and attempt < max_retries - 1:
                     time.sleep(backoff)
@@ -413,7 +434,10 @@ class SQLiteChatHistoryStore:
                     continue
                 raise
             except Exception:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
                 raise
             finally:
                 try:
@@ -443,8 +467,194 @@ class SQLiteChatHistoryStore:
             session_id: The chat session identifier (e.g. "us:AAPL").
             message: A dict with ``role`` and ``content`` keys.
         """
+        self._validate_message(message)
 
         def _add(conn, cursor):
+            self._append_message_row(cursor, session_id, message)
+
+        try:
+            self._execute_in_transaction(_add)
+        except (sqlite3.Error, OSError, ValueError, RuntimeError, TypeError) as e:
+            logger.error("Failed to add chat message for session %s: %s", session_id, e)
+            raise
+
+    # ------------------------------------------------------------------
+    # Boundary validation & row-level helpers
+    #
+    # These are shared by the dict-like interface and the atomic compound
+    # operations below so that message-shape validation and persistence rules
+    # (encryption, per-session cap, global session cap) live in exactly one
+    # place (H-2: explicit, single storage contract).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_message(message: object) -> None:
+        """Validate a single chat message at the storage boundary.
+
+        Enforces the explicit persistence contract: every message must be a
+        ``dict`` carrying a ``role`` and a string ``content`` (encryption
+        requires text). Raises ``TypeError``/``KeyError`` for malformed input so
+        callers cannot persist shapeless data.
+        """
+        if not isinstance(message, dict):
+            raise TypeError(f"chat message must be a dict, got {type(message).__name__}")
+        if "role" not in message:
+            raise KeyError("role")
+        if "content" not in message:
+            raise KeyError("content")
+        if not isinstance(message["content"], str):
+            raise TypeError(
+                "chat message content must be a str (encryption requires text), "
+                f"got {type(message['content']).__name__}"
+            )
+
+    def _read_messages(self, cursor: sqlite3.Cursor, key: str) -> list[dict[str, Any]]:
+        """Read all messages for *key* in chronological order.
+
+        Raises ``KeyError`` when the session does not exist (mirrors
+        ``__getitem__``). Must be called inside an open transaction.
+        """
+        cursor.execute(
+            """
+            SELECT role, content FROM chat_messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+            """,
+            (key,),
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            # Session exists but has no messages (newly created session)
+            cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
+            if cursor.fetchone() is not None:
+                return []
+            raise KeyError(key)
+        return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
+
+    def _write_messages(
+        self, cursor: sqlite3.Cursor, key: str, value: list[dict[str, Any]]
+    ) -> None:
+        """Persist *value* for *key*, replacing existing rows, in a transaction.
+
+        Validates every message first (H-2 boundary), then enforces the
+        per-session message cap and the global session cap exactly like
+        ``__setitem__``.
+        """
+        for msg in value:
+            self._validate_message(msg)
+        cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (key,))
+        cursor.execute(
+            """
+            INSERT INTO chat_sessions (session_id, last_accessed)
+            VALUES (?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
+            """,
+            (key, _get_timestamp()),
+        )
+        if value:
+            to_insert = value
+            if len(to_insert) > self.max_msgs_per_session:
+                system_msg = to_insert[0] if to_insert[0]["role"] == "system" else None
+                if system_msg:
+                    remaining_slots = self.max_msgs_per_session - 1
+                    if remaining_slots > 0:
+                        to_insert = [system_msg] + to_insert[-remaining_slots:]
+                    else:
+                        to_insert = [system_msg]
+                else:
+                    to_insert = to_insert[-self.max_msgs_per_session:]
+            cursor.executemany(
+                """
+                INSERT INTO chat_messages (session_id, role, content, timestamp)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (key, msg["role"], _encrypt_content(msg["content"]), _get_timestamp())
+                    for msg in to_insert
+                ],
+            )
+        self._enforce_session_limit(cursor)
+
+    def _append_message_row(
+        self, cursor: sqlite3.Cursor, session_id: str, message: dict[str, Any]
+    ) -> None:
+        """Insert one message (append-only) within an open transaction.
+
+        Upserts the session row, appends the encrypted message, then enforces
+        the per-session cap by deleting the oldest non-system rows. This is a
+        targeted single-row append (no read-modify-write, no full rewrite), so
+        it cannot clobber a concurrent append.
+        """
+        self._validate_message(message)
+        cursor.execute(
+            """
+            INSERT INTO chat_sessions (session_id, last_accessed)
+            VALUES (?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
+            """,
+            (session_id, _get_timestamp()),
+        )
+        # Insert the new message (content encrypted at rest, M-3)
+        cursor.execute(
+            """
+            INSERT INTO chat_messages (session_id, role, content, timestamp)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                message["role"],
+                _encrypt_content(message["content"]),
+                _get_timestamp(),
+            ),
+        )
+        # Enforce per-session message limit: remove oldest non-system messages
+        cursor.execute("SELECT COUNT(*) FROM chat_messages WHERE session_id = ?", (session_id,))
+        msg_count = cursor.fetchone()[0]
+        if msg_count > self.max_msgs_per_session:
+            # Keep the system message (role='system') + the most recent ones
+            cursor.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE id IN (
+                    SELECT id FROM chat_messages
+                    WHERE session_id = ? AND role != 'system'
+                    ORDER BY id ASC
+                    LIMIT ?
+                )
+                """,
+                (session_id, msg_count - self.max_msgs_per_session),
+            )
+        self._enforce_session_limit(cursor)
+
+    # ------------------------------------------------------------------
+    # Atomic compound operations
+    #
+    # These replace the former caller-side read-modify-write (``__getitem__``
+    # -> mutate -> ``__setitem__`` full-swap). Each runs its read, mutation and
+    # write inside ONE transaction so concurrent callers cannot lose each
+    # other's writes (C-2). SQLite serializes writers and the busy/locked retry
+    # in ``_execute_in_transaction`` re-runs the whole callback on contention.
+    # ------------------------------------------------------------------
+
+    def record_turn(
+        self,
+        session_id: str,
+        *,
+        init_messages: list[dict[str, Any]] | None = None,
+        append: dict[str, Any] | None = None,
+        max_msgs: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Atomically seed (when empty) and/or append a turn, then trim.
+
+        The whole read-modify-write runs inside one transaction so concurrent
+        callers cannot lose each other's writes (C-2). When *append* is
+        ``None`` the session is only created/touched (matching a pure
+        ``move_to_end``), no rewrite occurs. Returns the resulting transcript
+        exactly as the previous in-memory ``history`` variable held it (route
+        trim applied, before the store-level per-session cap).
+        """
+
+        def _op(conn, cursor):
             cursor.execute(
                 """
                 INSERT INTO chat_sessions (session_id, last_accessed)
@@ -453,42 +663,95 @@ class SQLiteChatHistoryStore:
                 """,
                 (session_id, _get_timestamp()),
             )
-            # Insert the new message (content encrypted at rest, M-3)
-            cursor.execute(
-                """
-                INSERT INTO chat_messages (session_id, role, content, timestamp)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    session_id,
-                    message["role"],
-                    _encrypt_content(message["content"]),
-                    _get_timestamp(),
-                ),
-            )
-            # Enforce per-session message limit: remove oldest non-system messages
-            cursor.execute("SELECT COUNT(*) FROM chat_messages WHERE session_id = ?", (session_id,))
-            msg_count = cursor.fetchone()[0]
-            if msg_count > self.max_msgs_per_session:
-                # Keep the system message (role='system') + the most recent ones
-                cursor.execute(
-                    """
-                    DELETE FROM chat_messages
-                    WHERE id IN (
-                        SELECT id FROM chat_messages
-                        WHERE session_id = ? AND role != 'system'
-                        ORDER BY id ASC
-                        LIMIT ?
-                    )
-                    """,
-                    (session_id, msg_count - self.max_msgs_per_session),
-                )
-            self._enforce_session_limit(cursor)
+            msgs = self._read_messages(cursor, session_id)
+            changed = False
+            if not msgs and init_messages:
+                msgs = [dict(m) for m in init_messages]
+                changed = True
+            if append is not None:
+                msgs.append(dict(append))
+                changed = True
+                if max_msgs is not None and len(msgs) > max_msgs:
+                    msgs = [msgs[0]] + msgs[-(max_msgs - 1) :]
+            if changed:
+                self._write_messages(cursor, session_id, msgs)
+            return msgs
 
         try:
-            self._execute_in_transaction(_add)
-        except (sqlite3.Error, OSError, ValueError, RuntimeError, TypeError) as e:
-            logger.error("Failed to add chat message for session %s: %s", session_id, e)
+            result = self._execute_in_transaction(_op)
+            return result if isinstance(result, list) else []
+        except (sqlite3.Error, OSError, ValueError, KeyError, RuntimeError, TypeError) as e:
+            logger.error("Failed to record chat turn for session %s: %s", session_id, e)
+            raise
+
+    def append_message_if_not_duplicate(
+        self,
+        session_id: str,
+        message: dict[str, Any],
+        *,
+        normalize: Callable[[Any], Any] | None = None,
+    ) -> bool:
+        """Atomically append *message* unless it duplicates the trailing turn.
+
+        Mirrors the previous read-modify-write dedup but without losing a
+        concurrent write (C-2). ``normalize`` is applied to the stored last
+        content before comparison; the incoming ``message['content']`` is
+        assumed already normalized. No-op when the session does not exist.
+        Returns True when a message was appended.
+        """
+        self._validate_message(message)
+        norm = normalize if normalize is not None else (lambda c: c)
+
+        def _op(conn, cursor):
+            cursor.execute(
+                "SELECT role, content FROM chat_messages "
+                "WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                (session_id,),
+            )
+            last = cursor.fetchone()
+            if last is None:
+                # Append-only: only touch a session that already exists.
+                cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (session_id,))
+                if cursor.fetchone() is None:
+                    return False
+            elif norm(_decrypt_content(last[1])) == message.get("content"):
+                return False
+            self._append_message_row(cursor, session_id, message)
+            return True
+
+        try:
+            return bool(self._execute_in_transaction(_op))
+        except (sqlite3.Error, OSError, ValueError, KeyError, RuntimeError, TypeError) as e:
+            logger.error("Failed to append chat message for session %s: %s", session_id, e)
+            raise
+
+    def pop_last_user_message_if_matches(self, session_id: str, content: str) -> bool:
+        """Atomically drop the trailing user turn only when it still matches.
+
+        Used to roll back an unanswered user question without replaying it, and
+        without deleting a newer turn created by a concurrent request (C-2).
+        Returns True when a message was removed.
+        """
+
+        def _op(conn, cursor):
+            cursor.execute(
+                "SELECT id, role, content FROM chat_messages "
+                "WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                (session_id,),
+            )
+            last = cursor.fetchone()
+            if last is None:
+                return False
+            last_id, last_role, last_content = last
+            if last_role == "user" and _decrypt_content(last_content) == content:
+                cursor.execute("DELETE FROM chat_messages WHERE id = ?", (last_id,))
+                return True
+            return False
+
+        try:
+            return bool(self._execute_in_transaction(_op))
+        except (sqlite3.Error, OSError, ValueError, KeyError, RuntimeError, TypeError) as e:
+            logger.error("Failed to roll back chat message for session %s: %s", session_id, e)
             raise
 
     # ------------------------------------------------------------------
@@ -507,22 +770,7 @@ class SQLiteChatHistoryStore:
 
     def __getitem__(self, key: str) -> list[dict[str, Any]]:
         def _get(conn, cursor):
-            cursor.execute(
-                """
-                SELECT role, content FROM chat_messages
-                WHERE session_id = ?
-                ORDER BY id ASC
-                """,
-                (key,),
-            )
-            rows = cursor.fetchall()
-            if not rows:
-                # Session exists but has no messages (newly created session)
-                cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (key,))
-                if cursor.fetchone() is not None:
-                    return []
-                raise KeyError(key)
-            return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
+            return self._read_messages(cursor, key)
 
         try:
             res = self._execute_in_transaction(_get)
@@ -542,38 +790,7 @@ class SQLiteChatHistoryStore:
 
     def __setitem__(self, key: str, value: list[dict[str, Any]]) -> None:
         def _set(conn, cursor):
-            cursor.execute("DELETE FROM chat_messages WHERE session_id = ?", (key,))
-            cursor.execute(
-                """
-                INSERT INTO chat_sessions (session_id, last_accessed)
-                VALUES (?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET last_accessed = excluded.last_accessed
-                """,
-                (key, _get_timestamp()),
-            )
-            if value:
-                to_insert = value
-                if len(to_insert) > self.max_msgs_per_session:
-                    system_msg = to_insert[0] if to_insert[0]["role"] == "system" else None
-                    if system_msg:
-                        remaining_slots = self.max_msgs_per_session - 1
-                        if remaining_slots > 0:
-                            to_insert = [system_msg] + to_insert[-remaining_slots:]
-                        else:
-                            to_insert = [system_msg]
-                    else:
-                        to_insert = to_insert[-self.max_msgs_per_session :]
-                cursor.executemany(
-                    """
-                    INSERT INTO chat_messages (session_id, role, content, timestamp)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    [
-                        (key, msg["role"], _encrypt_content(msg["content"]), _get_timestamp())
-                        for msg in to_insert
-                    ],
-                )
-            self._enforce_session_limit(cursor)
+            self._write_messages(cursor, key, value)
 
         try:
             self._execute_in_transaction(_set)

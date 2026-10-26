@@ -1140,28 +1140,54 @@ def ok_response(payload: dict | None = None, **kwargs: Any) -> Response:
 
 
 def error_response(
-    error_code: ErrorCode, status_code: int = 400, details: dict | None = None
+    error_code: ErrorCode | int | str | None,
+    status_code: int = 400,
+    details: dict | None = None,
+    message: str | None = None,
+    extra_fields: dict[str, Any] | None = None,
 ) -> tuple[Response, int]:
-    """Return a unified JSON error response."""
-    message = get_error_message(error_code, lang="ja")
-    sanitized_details = {}
+    """Return a unified JSON error response.
+
+    This is the **single owner** of the error envelope (H-3). The route-level
+    helper ``error_response()`` and the exception handler
+    ``error_handlers._build_error_response()`` both delegate here, so every
+    error payload is constructed in exactly one place instead of being
+    hand-written per route.
+
+    ``message`` overrides the localized default (for routes that expose a
+    caller-specific, already-safe message). ``extra_fields`` carries
+    endpoint-specific compatibility keys that existing clients and contract
+    tests depend on (e.g. ``valid``, a ``code`` name override, ``latency_ms``);
+    they are merged over the standard envelope so the generation path is
+    unified without breaking the established response contract.
+    """
+    ec_int = int(ErrorCode.UNKNOWN)
+    if error_code is not None:
+        try:
+            ec_int = int(error_code)
+        except (ValueError, TypeError):
+            # Non-numeric codes (e.g. a custom ``AppError`` code string) fall
+            # back to UNKNOWN while the raw ``code`` string is preserved below.
+            pass
+    if message is None:
+        message = get_error_message(ec_int, lang="ja")
+    sanitized_details: dict[str, Any] = {}
     if details:
         for k, v in details.items():
             sanitized_details[k] = _sanitize_error_message(v) if isinstance(v, str) else v
-    return (
-        jsonify(
-            {
-                "ok": False,
-                "error": message,
-                "error_flag": True,
-                "code": str(error_code) if error_code is not None else None,
-                "error_code": int(error_code),
-                "message": message,
-                "details": sanitized_details,
-            }
-        ),
-        status_code,
-    )
+    body: dict[str, Any] = {
+        "ok": False,
+        "error": message,
+        "error_flag": True,
+        "code": str(error_code) if error_code is not None else None,
+        "error_code": ec_int,
+        "message": message,
+        "details": sanitized_details,
+    }
+    if extra_fields:
+        for k, v in extra_fields.items():
+            body[k] = _sanitize_error_message(v) if isinstance(v, str) else v
+    return (jsonify(body), status_code)
 
 
 def get_stock_previous_close(symbol: str) -> float | None:

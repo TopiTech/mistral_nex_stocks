@@ -432,18 +432,11 @@ def api_credentials_verify():
         api_key = get_mistral_api_key()
 
     if not api_key or not isinstance(api_key, str) or not api_key.strip():
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "valid": False,
-                    "code": "INVALID_API_KEY",
-                    "error_code": ErrorCode.INVALID_API_KEY.value,
-                    "error": "Mistral APIキーが指定されていません。",
-                    "message": "Mistral APIキーが指定されていません。",
-                }
-            ),
+        return error_response(
+            ErrorCode.INVALID_API_KEY,
             400,
+            message="Mistral APIキーが指定されていません。",
+            extra_fields={"code": "INVALID_API_KEY", "valid": False},
         )
 
     api_key = api_key.strip()
@@ -476,33 +469,19 @@ def api_credentials_verify():
             if not isinstance(agent_id, str) or not agent_id.strip():
                 agent_id = get_agent_id()
             if not agent_id:
-                return (
-                    jsonify(
-                        {
-                            "ok": False,
-                            "valid": False,
-                            "code": "MISSING_REQUIRED_FIELD",
-                            "error_code": ErrorCode.MISSING_REQUIRED_FIELD.value,
-                            "error": "Agent IDが指定されていません。",
-                            "message": "Agent IDが指定されていません。",
-                        }
-                    ),
+                return error_response(
+                    ErrorCode.MISSING_REQUIRED_FIELD,
                     400,
+                    message="Agent IDが指定されていません。",
+                    extra_fields={"code": "MISSING_REQUIRED_FIELD", "valid": False},
                 )
             beta_api = getattr(client, "beta", None)
             if not beta_api or not hasattr(beta_api, "agents"):
-                return (
-                    jsonify(
-                        {
-                            "ok": False,
-                            "valid": False,
-                            "code": "INVALID_API_KEY",
-                            "error_code": ErrorCode.INVALID_API_KEY.value,
-                            "error": "Agents APIが現在のSDKでサポートされていません。",
-                            "message": "Agents APIが現在のSDKでサポートされていません。",
-                        }
-                    ),
+                return error_response(
+                    ErrorCode.INVALID_API_KEY,
                     400,
+                    message="Agents APIが現在のSDKでサポートされていません。",
+                    extra_fields={"code": "INVALID_API_KEY", "valid": False},
                 )
             agent = beta_api.agents.get(agent_id=agent_id.strip())
             latency_ms = int((time.time() - start_ts) * 1000)
@@ -561,20 +540,12 @@ def api_credentials_verify():
         current_app.logger.warning(
             "Mistral API key verification failed error_type=%s", type(exc).__name__
         )
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "valid": False,
-                    "code": "INVALID_API_KEY",
-                    "error_code": ErrorCode.INVALID_API_KEY.value,
-                    "latency_ms": latency_ms,
-                    # Provider exceptions can contain request URLs, account
-                    # metadata, or credentials. Return a stable,
-                    # user-actionable message without recording that text.
-                    "error": "APIキーの検証に失敗しました。設定と接続を確認してください。",
-                    "message": "APIキーの検証に失敗しました。設定と接続を確認してください。",
-                }
-            ),
+        return error_response(
+            ErrorCode.INVALID_API_KEY,
             400,
+            # Provider exceptions can contain request URLs, account
+            # metadata, or credentials. Return a stable,
+            # user-actionable message without recording that text.
+            message="APIキーの検証に失敗しました。設定と接続を確認してください。",
+            extra_fields={"code": "INVALID_API_KEY", "valid": False, "latency_ms": latency_ms},
         )

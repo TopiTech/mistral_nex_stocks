@@ -24,7 +24,6 @@ from bg.common import (
 )
 from bg.leader_election import bg_leader_election_loop, is_leader
 from bg.sse_interpolator import bg_interpolate_loop
-from bg.sync import state as _state
 from bg.sync.fetch import fetch_stocks_batch
 from bg.sync.process import (
     _auto_remove_invalid_symbols,
@@ -38,8 +37,9 @@ from bg.sync.state import (
     SYNC_STALE_LOCK_WAIT_SEC,
     _get_app_bg_attr,
     _get_sync_execution_lock,
+    _get_sync_generation,
+    _next_sync_generation,
     _recover_stale_sync_state_if_needed,
-    _set_sync_generation,
     _set_sync_start_time,
 )
 from constants import (
@@ -74,14 +74,21 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
             )
             return
 
+    # Bound before the try so the finally block can always reference it (H-1).
+    sync_generation = 0
+    sync_succeeded = False
     try:
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
             _set_sync_start_time(time.time())
-            _set_sync_generation(_state._sync_generation + 1)
-            sync_generation = _state._sync_generation
+            # Atomic increment returning this run's generation (C-1): a lost
+            # update here would let a stale run clear a newer run's is_syncing.
+            sync_generation = _next_sync_generation()
 
-        is_leader_flag = bool(_get_app_bg_attr("_is_sync_leader", is_leader()))
+        is_leader_flag = _get_app_bg_attr("_is_sync_leader", None)
+        if is_leader_flag is None:
+            is_leader_flag = is_leader()
+        is_leader_flag = bool(is_leader_flag)
         if not is_leader_flag:
             logger.debug("Follower process: reloading cache from disk payloads")
             warm_fn = _get_app_bg_attr(
@@ -96,6 +103,7 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
                 "announce_current_market_state", announce_current_market_state
             )
             ann_fn()
+            sync_succeeded = True
             return
         with app_state.cache.sse_data_lock:
             if getattr(app_state.market, "current_indices_cache", None) is None:
@@ -114,9 +122,10 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
                 app_state.market.target_stocks_cache.get(m) for m in ("us", "jp", "idx")
             )
         if has_targets:
+            # Only mark that a sync was attempted here (so requests do not block
+            # during the fetch). Completion is recorded exclusively on actual
+            # success below / in the finally guard (H-1).
             app_state.market.first_sync_attempted = True
-            if not getattr(app_state.market, "first_sync_completed_at", 0.0):
-                app_state.market.first_sync_completed_at = time.time()
 
         prep_fn = _get_app_bg_attr("_prepare_sync_items", _prepare_sync_items)
         items = prep_fn(force_load=not target_empty, force_fetch=force_fetch)
@@ -129,14 +138,14 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
         auto_rm_fn(items, fetched_items)
 
         proc_fn = _get_app_bg_attr("_process_fetched_stocks", _process_fetched_stocks)
-        us_res, jp_res, idx_res = proc_fn(fetched_items, sync_generation)
+        result = proc_fn(fetched_items, sync_generation)
 
-        if items and not (us_res or jp_res or idx_res):
+        if items and result.is_empty:
             logger.warning("Stock sync produced no valid items; preserving previous target cache.")
             return
 
         with app_state.market.is_syncing_lock:
-            current_sync_gen = _get_app_bg_attr("_sync_generation", _state._sync_generation)
+            current_sync_gen = _get_sync_generation()
             is_current_generation = current_sync_gen == 0 or sync_generation == current_sync_gen
         if not is_current_generation:
             logger.info(
@@ -145,7 +154,7 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
             return
 
         update_idx_fn = _get_app_bg_attr("_update_indices_data", _update_indices_data)
-        update_idx_fn(idx_res, us_res, jp_res)
+        update_idx_fn(result.idx, result.us, result.jp)
         with app_state.cache.sse_data_lock:
             app_state.market.current_stocks_cache = copy.deepcopy(
                 app_state.market.target_stocks_cache
@@ -165,6 +174,7 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
 
         _invalidate_sse_payload_cache()
         announce_current_market_state()
+        sync_succeeded = True
         logger.info("Sync completed.")
     except (
         RequestException,
@@ -179,10 +189,17 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
         raise
     finally:
         try:
+            # A sync is considered attempted regardless of outcome (H-1).
             app_state.market.first_sync_attempted = True
-            app_state.market.first_sync_completed_at = time.time()
+            # Completion is recorded ONLY when the sync actually succeeded; a
+            # failed run must not advance the completion timestamp (H-1).
+            if sync_succeeded:
+                app_state.market.first_sync_completed_at = time.time()
             with app_state.market.is_syncing_lock:
-                if sync_generation == _state._sync_generation:
+                # Clear is_syncing only when this run still owns the current
+                # generation, so a stale run cannot release a newer run's flag
+                # and enable a double sync (C-1).
+                if sync_generation == _get_sync_generation():
                     app_state.market.is_syncing = False
         finally:
             try:

@@ -13,6 +13,8 @@ import time
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, TypedDict
 
+import httpx
+import requests
 from cachetools import TTLCache
 from flask import Blueprint, current_app, g, jsonify, request, session
 
@@ -50,6 +52,7 @@ from services.ai_portfolio_service import (
     sanitize_ai_portfolio,
     save_custom_ai_portfolio,
 )
+from services.ai_service import ProviderAPIError
 from utils.stock_payload import (
     _get_stock_container,
     error_response,
@@ -63,12 +66,6 @@ logger = logging.getLogger(__name__)
 ai_portfolio_bp = Blueprint("ai_portfolio", __name__)
 
 
-import httpx
-import requests
-
-from services.ai_service import ProviderAPIError
-
-
 class FetchJob(TypedDict, total=False):
     result: Any
     error: BaseException | None
@@ -80,10 +77,11 @@ class FetchJob(TypedDict, total=False):
 
 def _ai_portfolio_error_response(
     job_err: BaseException,
-    g,
+    flask_g: Any = None,
     default_reason: str = "AI ポートフォリオの生成に失敗しました",
 ) -> tuple[Any, int]:
-    req_id = getattr(g, "request_id", "-")
+    effective_g = flask_g if flask_g is not None else g
+    req_id = getattr(effective_g, "request_id", "-")
     err_type = type(job_err).__name__
     err_msg = str(job_err)
 

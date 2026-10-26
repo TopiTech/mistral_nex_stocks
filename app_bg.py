@@ -7,6 +7,7 @@ If is_disk_cache_degraded() is True, fetch_stocks_batch will return [None] early
 
 from __future__ import annotations
 
+import logging
 import queue
 import time
 
@@ -64,6 +65,7 @@ from bg.sync_worker import (
     _process_fetched_stocks,
     _run_scheduled_sync_job,
     _set_sync_generation,
+    _set_sync_start_time,
     _sync_execution_lock,
     _sync_generation,
     _sync_start_time,
@@ -93,6 +95,8 @@ from utils.stock_payload import (
 )
 from utils.storage import load_user_stocks, save_user_stocks
 
+logger = logging.getLogger(__name__)
+
 _original_announce_current_market_state = _raw_announce_current_market_state
 _start_background_threads = start_background_worker
 
@@ -106,9 +110,19 @@ def _recover_stale_sync_state_if_needed() -> bool:
         elapsed = time.time() - start_ts if start_ts > 0 else 0.0
         if elapsed <= SYNC_STALE_TIMEOUT_SEC:
             return False
+        logger.critical(
+            "Sync is stale (running %.0fs, threshold %.0fs). Resetting sync state "
+            "so scheduling, the UI, and lock takeovers can recover.",
+            elapsed,
+            SYNC_STALE_TIMEOUT_SEC,
+        )
         app_state.market.is_syncing = False
         globals()["_sync_start_time"] = 0.0
         _sync_start_time = 0.0
+        try:
+            _set_sync_start_time(0.0)
+        except Exception:
+            pass
         return True
 
 
@@ -116,8 +130,11 @@ def schedule_sync_all_stocks_now(force: bool = False) -> bool:
     with app_state.market.sync_schedule_lock:
         if force:
             app_state.market.sync_forced = True
+    recover_fn = globals().get(
+        "_recover_stale_sync_state_if_needed", _recover_stale_sync_state_if_needed
+    )
     with app_state.market.is_syncing_lock:
-        if app_state.market.is_syncing and not _recover_stale_sync_state_if_needed():
+        if app_state.market.is_syncing and not recover_fn():
             with app_state.market.sync_schedule_lock:
                 app_state.market.sync_pending = True
             return False
@@ -132,13 +149,15 @@ def schedule_sync_all_stocks_now(force: bool = False) -> bool:
         job = globals().get("_run_scheduled_sync_job", _run_scheduled_sync_job)
         app_state.execution.sync_refresh_executor.submit(job)
         return True
-    except queue.Full:
+    except queue.Full as exc:
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False
+        logger.warning("Failed to schedule stock sync (queue full): %s", exc)
         return False
-    except (RuntimeError, AttributeError, ValueError):
+    except (RuntimeError, AttributeError, ValueError) as exc:
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False
+        logger.warning("Failed to schedule stock sync: %s", exc)
         return False
 
 

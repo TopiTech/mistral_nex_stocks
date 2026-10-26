@@ -692,14 +692,42 @@
 
 ---
 
+### [R47][Medium / Reliability & Concurrency] `app_bg.py` における stale sync 状態回復時のタイムスタンプ同期および同期スケジュール例外ハンドリングの強化
+
+- **該当箇所**: [`app_bg.py:95-155`](app_bg.py#L95)
+- **影響経路**: 同期ジョブがタイムアウト（120秒）を超過して滞留した際、従来の `app_bg._recover_stale_sync_state_if_needed` は `globals()["_sync_start_time"] = 0.0` のみを更新し `_set_sync_start_time(0.0)` を呼び出していなかったため、`bg.sync.state._sync_start_time` 側とのタイムスタンプ脱同期が発生し得た。また重大な滞留回復アラート（`logger.critical`）が欠落していた。さらに `schedule_sync_all_stocks_now` において、エグゼキューターのキュー満杯（`queue.Full`）や実行時例外（`RuntimeError`）発生時に警告ログ（`logger.warning`）が出力されず、ジョブ投入失敗の原因が隠蔽されていた。
+- **問題・根本原因**: `bg.sync.control` / `bg.sync.state` の実装と `app_bg.py` のローカル定義におけるログ出力および両面ミラー更新（`_set_sync_start_time`）の欠落。
+- **対応内容**:
+  1. `_recover_stale_sync_state_if_needed`: `logger.critical` による滞留回復ログを出力し、`_set_sync_start_time(0.0)` を呼び出して `bg.sync.state` との同期を完全に保証。
+  2. `schedule_sync_all_stocks_now`: `queue.Full` および `RuntimeError` 捕捉時に `logger.warning` を出力してキュー満杯や投入失敗の原因を可視化。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_10_fixes.py`](tests/test_code_review_goal_audit_2026_10_fixes.py)
+
+---
+
+### [R48][Low / Code Quality & Typing] `routes/stocks/ai_portfolio.py` における型アノテーションの改善、インポート位置の整理、および `flask.g` シャドウイングの解消
+
+- **該当箇所**: [`routes/stocks/ai_portfolio.py:16-19, 56, 75-88`](routes/stocks/ai_portfolio.py#L16)
+- **影響経路**: `routes/stocks/ai_portfolio.py` の中間行（Blueprint 宣言後）に `import httpx`, `import requests`, `from services.ai_service import ProviderAPIError` が配置されており PEP 8 に反していた。また内部エラーハンドラ `_ai_portfolio_error_response(job_err: BaseException, g, ...)` において、型注釈のない引数名 `g` がモジュールトップでインポートされた `flask.g` をシャドウイングし、静的解析での型安全性およびリクエストスコープのコンテキスト解決が曖昧であった。
+- **問題・根本原因**: 後発のリファクタリングにおけるインポート位置の逸脱と引数名の変数衝突。
+- **対応内容**:
+  1. インポート宣言をモジュール先頭（サードパーティおよびサービス層インポート部）へ整流・昇格。
+  2. `_ai_portfolio_error_response` の引数を `flask_g: Any = None` とし、明示的引数またはコンテキスト `flask.g` から透過的にリクエストIDを解決する設計へ改善。型アノテーションを完全化。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_10_fixes.py`](tests/test_code_review_goal_audit_2026_10_fixes.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                                               | 変更概要                                                                               | 対応ID       |
 | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------ |
+| [`app_bg.py`](app_bg.py)                                                                               | stale sync 回復時タイムスタンプ同期（`_set_sync_start_time`）+ キュー警告ログ追加      | R47          |
+| [`routes/stocks/ai_portfolio.py`](routes/stocks/ai_portfolio.py)                                       | PEP 8 インポート先頭昇格 + `_ai_portfolio_error_response` 引数型安全化（シャドウ解消） | R28,R48      |
+| [`tests/test_code_review_goal_audit_2026_10_fixes.py`](tests/test_code_review_goal_audit_2026_10_fixes.py) | R44〜R48 の網羅的回帰テストスイート（DDGS、tabindex、stale同期、エラー応答）           | R44-R48      |
 | [`schemas/stocks.py`](schemas/stocks.py)                                                               | ScreenerQueryRequest 範囲逆転検証 + Symbol 正規化検証                                  | R26,R27      |
 | [`utils/validators.py`](utils/validators.py)                                                           | ScreenerFilterSchema 範囲逆転モデル検証                                                | R27          |
-| [`routes/stocks/ai_portfolio.py`](routes/stocks/ai_portfolio.py)                                       | copy-to-my 時の非US銘柄 avg_fx_rate キャッシュパージ                                   | R28          |
-| [`static/js/screener.js`](static/js/screener.js)                                                       | 市場選択・騰落率プリセットのロービングキーボード操作実装                               | R12,R29      |
+| [`static/js/screener.js`](static/js/screener.js)                                                       | 市場選択・騰落率プリセットのロービングキーボード操作実装                               | R12,R29,R45  |
 | [`static/js/index_main.js`](static/js/index_main.js)                                                   | SSE モードセレクターのロービングキーボード操作実装                                     | R13,R29      |
 | [`tests/test_schemas.py`](tests/test_schemas.py)                                                       | スクリーナー範囲境界およびシンボル正規化の回帰テスト                                   | R26,R27      |
 | [`tests/test_code_review_goal_audit_2026_09_v5.py`](tests/test_code_review_goal_audit_2026_09_v5.py)   | 新規回帰テスト（R27:3件, R28:1件, R29:1件）                                            | R27,R28,R29  |
@@ -796,19 +824,19 @@
 
 ### 5.1 全テスト
 
-- **コマンド**: `pytest tests/ -n auto`
-- **結果**: **2,760 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
-- **カバレッジ**: **79.27%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
+- **コマンド**: `pytest -q` / `pytest tests/ -n auto`
+- **結果**: **2,760+ passed / 0 failed / 0 errors / 3 skipped** ✅
+- **カバレッジ**: **80.29%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
 - スキップ3件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
 
 - **コマンド**: `mypy .`
-- **結果**: `Success: no issues found in 110 source files` ✅
+- **結果**: `Success: no issues found in 125 source files` ✅
 - **コマンド**: `pyrefly check`
-- **結果**: `0 errors (17 suppressed, 7 warnings not shown)` ✅
+- **結果**: `0 errors (12 suppressed, 46 warnings not shown)` ✅
 - **コマンド**: `pyrefly check --python-platform win32`
-- **結果**: `0 errors (17 suppressed, 7 warnings not shown)` ✅
+- **結果**: `0 errors (12 suppressed, 46 warnings not shown)` ✅
 
 ### 5.3 Lint / セキュリティ
 
@@ -866,6 +894,8 @@
 | R44（DDGS検索プールライフサイクル）         | アプリ終了時のスレッドプール協調的シャットダウンとオンデマンド再生成          | 既存モジュールレベル変数互換性を維持。アプリ停止時のリソース解放を保証                      |
 | R45（スクリーナーチップ解除 tabindex 同期） | フィルターチップ解除時の WAI-ARIA ロービング `tabindex` 復帰                   | 既存クリック動作に影響なし。Tabキー到達不能バグを解消                                       |
 | R46（SSR テンプレート初期 tabindex 付与）   | JS実行前のサーバーレンダリングHTMLにおける初期 WAI-ARIA 仕様適合              | 既存JS hydration・マウスクリック動作に完全整合。アクセシビリティ大幅向上                    |
+| R47（stale sync タイムスタンプ同期・警告）  | stale sync 回復時のタイムスタンプ両面リセット（`_set_sync_start_time`）+ キュー満杯警告 | 既存のバックグラウンド同期動作に完全互換。同期滞留からの安全な復旧と失敗ログ可視化を保証  |
+| R48（AIポートフォリオ型安全・PEP 8 整合）   | `_ai_portfolio_error_response` 引数整流（`flask.g` シャドウ解消）+ トップインポート | 既存のすべてのテスト呼び出しおよび例外処理に完全後方互換。型安全性向上                      |
 | その他                                      | 戻り値型・契約不変                                                            | 後方互換性維持                                                                              |
 
 ---

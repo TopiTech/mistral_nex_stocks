@@ -395,6 +395,13 @@ class AppState:
             logger.debug("Error shutting down news fanout pool: %s", e)
 
         try:
+            from services.search.ddgs import shutdown_ddgs_pool
+
+            shutdown_ddgs_pool(wait=False)
+        except Exception as e:
+            logger.debug("Error shutting down ddgs search pool: %s", e)
+
+        try:
             yf_session_manager.close_all()
         except Exception as e:
             logger.debug("Error closing YFinance sessions: %s", e)

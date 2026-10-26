@@ -50,6 +50,7 @@ endblock %} {% block meta %}
           class="sse-mode-btn"
           data-mode="0"
           aria-pressed="false"
+          tabindex="-1"
           title="SSE配信を停止します（60秒ポーリング）"
         >
           🚫 OFF
@@ -59,6 +60,7 @@ endblock %} {% block meta %}
           class="sse-mode-btn"
           data-mode="1"
           aria-pressed="false"
+          tabindex="-1"
           title="バックエンド算出の補完SSEデータを配信します"
         >
           ⚡ 補完SSE
@@ -68,6 +70,7 @@ endblock %} {% block meta %}
           class="sse-mode-btn active"
           data-mode="2"
           aria-pressed="true"
+          tabindex="0"
           title="TradingView WS / Yahoo! JP スクレイピングによるリアルタイムSSE配信を行ないます"
         >
           🚀 TV連携SSE
@@ -401,6 +404,7 @@ endblock %} {% block meta %}
               class="ai-preset-pill active"
               data-preset="tech"
               aria-pressed="true"
+              tabindex="0"
             >
               🚀 テック成長株
             </button>
@@ -409,6 +413,7 @@ endblock %} {% block meta %}
               class="ai-preset-pill"
               data-preset="dividend"
               aria-pressed="false"
+              tabindex="-1"
             >
               💰 高配当ディフェンシブ
             </button>
@@ -417,6 +422,7 @@ endblock %} {% block meta %}
               class="ai-preset-pill"
               data-preset="balanced"
               aria-pressed="false"
+              tabindex="-1"
             >
               ⚖️ バランス型
             </button>
@@ -425,6 +431,7 @@ endblock %} {% block meta %}
               class="ai-preset-pill"
               data-preset="custom"
               aria-pressed="false"
+              tabindex="-1"
             >
               ✨ カスタムテーマ
             </button>

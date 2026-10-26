@@ -32,6 +32,7 @@
         class="toggle-btn active"
         type="button"
         aria-pressed="true"
+        tabindex="0"
       >
         🇺🇸 USA
       </button>
@@ -40,6 +41,7 @@
         class="toggle-btn"
         type="button"
         aria-pressed="false"
+        tabindex="-1"
       >
         🇯🇵 JAPAN
       </button>
@@ -51,10 +53,17 @@
         class="view-btn active"
         type="button"
         aria-pressed="true"
+        tabindex="0"
       >
         📊 2D Treemap
       </button>
-      <button id="view-3d" class="view-btn" type="button" aria-pressed="false">
+      <button
+        id="view-3d"
+        class="view-btn"
+        type="button"
+        aria-pressed="false"
+        tabindex="-1"
+      >
         🏙️ 3D City View
       </button>
     </div>
@@ -65,6 +74,7 @@
         class="size-btn active"
         type="button"
         aria-pressed="true"
+        tabindex="0"
       >
         時価総額
       </button>
@@ -73,6 +83,7 @@
         class="size-btn"
         type="button"
         aria-pressed="false"
+        tabindex="-1"
       >
         出来高
       </button>
@@ -112,6 +123,7 @@
           id="cam-reset"
           class="cam-btn"
           type="button"
+          tabindex="0"
           title="視点をリセット"
           aria-label="視点をリセット"
         >
@@ -121,6 +133,7 @@
           id="cam-top"
           class="cam-btn"
           type="button"
+          tabindex="-1"
           title="真上（鳥瞰）"
           aria-label="真上（鳥瞰）視点"
         >
@@ -130,6 +143,7 @@
           id="cam-iso"
           class="cam-btn"
           type="button"
+          tabindex="-1"
           title="斜め（パノラマ）"
           aria-label="斜め（パノラマ）視点"
         >

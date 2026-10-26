@@ -33,9 +33,46 @@ from utils.env_helpers import _env_int
 from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
-_DDGS_SEARCH_POOL = DaemonThreadPoolExecutor(
-    max_workers=3, max_queue_size=30, thread_name_prefix="ddgs_search"
-)
+_DDGS_SEARCH_POOL_LOCK = threading.Lock()
+_DDGS_SEARCH_MAX_WORKERS = 3
+_DDGS_SEARCH_MAX_QUEUE_SIZE = 30
+
+
+def _create_ddgs_search_pool() -> DaemonThreadPoolExecutor:
+    return DaemonThreadPoolExecutor(
+        max_workers=_DDGS_SEARCH_MAX_WORKERS,
+        max_queue_size=_DDGS_SEARCH_MAX_QUEUE_SIZE,
+        thread_name_prefix="ddgs_search",
+    )
+
+
+_DDGS_SEARCH_POOL: DaemonThreadPoolExecutor | None = _create_ddgs_search_pool()
+
+
+def _get_ddgs_search_pool() -> DaemonThreadPoolExecutor:
+    """Return the live process-wide pool, recreating it after app teardown or shutdown."""
+    global _DDGS_SEARCH_POOL
+    with _DDGS_SEARCH_POOL_LOCK:
+        if _DDGS_SEARCH_POOL is None:
+            _DDGS_SEARCH_POOL = _create_ddgs_search_pool()
+        return _DDGS_SEARCH_POOL
+
+
+def shutdown_ddgs_pool(wait: bool = False) -> None:
+    """Shut down the module-level DDGS search thread pool during application shutdown."""
+    global _DDGS_SEARCH_POOL
+    with _DDGS_SEARCH_POOL_LOCK:
+        pool = _DDGS_SEARCH_POOL
+        _DDGS_SEARCH_POOL = None
+    if pool is None:
+        return
+    try:
+        pool.shutdown(wait=wait, cancel_futures=not wait)
+    except TypeError:
+        pool.shutdown(wait=wait)
+    except Exception as exc:
+        logger.debug("Failed to shut down ddgs search pool: %s", exc)
+
 MAX_DDGS_QUERY_LEN = 500
 MAX_DDGS_QUERY_BYTES = 1000
 
@@ -438,8 +475,9 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
             )
             return out
 
+        pool = _get_ddgs_search_pool()
         futures = [
-            _DDGS_SEARCH_POOL.submit(_collect_one, idx, q) for idx, q in enumerate(target_queries)
+            pool.submit(_collect_one, idx, q) for idx, q in enumerate(target_queries)
         ]
         for fut in as_completed(futures):
             if len(items) >= limit * 2:

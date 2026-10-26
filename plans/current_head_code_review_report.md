@@ -650,6 +650,48 @@
 
 ---
 
+### [R44][Medium / Lifecycle] `services/search/ddgs.py` のスレッドプール動的再生成と `app_state` シャットダウン連携の欠落解消
+
+- **該当箇所**: [`services/search/ddgs.py:35-38, 442`](services/search/ddgs.py#L35)、[`app_state.py:390-396`](app_state.py#L390)
+- **影響経路**: `_DDGS_SEARCH_POOL` がモジュールトップレベルで一度だけ静的に生成され、シャットダウン用フック関数（`shutdown_ddgs_pool`）や再生成ヘルパーが存在せず、`app_state.shutdown_executors()` からも未呼出であったため、アプリケーション終了時のクリーンアップやテスト終了後の再起動においてスレッドプールの協調的終了・再生成が保証されていなかった。
+- **問題・根本原因**: `services/news_service.py`（R18）と同等のライフサイクル管理・終了インターフェースが DDGS 検索プールに未実装であったこと。
+- **対応内容**:
+  1. `services/search/ddgs.py` に `_DDGS_SEARCH_POOL_LOCK`, `_create_ddgs_search_pool()`, `_get_ddgs_search_pool()`, および `shutdown_ddgs_pool(wait: bool = False)` を新設。
+  2. 既存テスト互換性のためにモジュールレベル `_DDGS_SEARCH_POOL` も保持しつつ、タスク投入箇所で `_get_ddgs_search_pool().submit(...)` を使用するように更新。
+  3. `app_state.py` の `shutdown_executors()` に `shutdown_ddgs_pool(wait=False)` 呼び出しを登録。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_10_fixes.py`](tests/test_code_review_goal_audit_2026_10_fixes.py)
+
+---
+
+### [R45][Low / Accessibility] `static/js/screener.js` のフィルターチップ解除時の WAI-ARIA ロービング `tabindex` 非同期解消
+
+- **該当箇所**: [`static/js/screener.js:299-328`](static/js/screener.js#L299)
+- **影響経路**: スクリーナー画面でアクティブな市場チップや騰落率プリセットチップをクリックまたはEnter/Spaceキーで解除した際、ボタンの `active` クラスと `aria-pressed` は更新されていたが、`tabindex`（`isActive ? "0" : "-1"`）の更新が欠落していた。これにより、チップ解除後にグループ内の全ボタンが `tabindex="-1"` となり、Tabキーによる到達不能状態（ロービング tabindex 不全）が生じていた。
+- **問題・根本原因**: チップ解除ハンドラ内における WAI-ARIA `tabindex` 属性の同期更新漏れ（`initScreener()` および `resetBtn` では実装済み）。
+- **対応内容**:
+  1. `renderActiveChips()` の `c.key === "market"` および `c.key === "preset"` のループ処理に `b.setAttribute("tabindex", isActive ? "0" : "-1");` を追加。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_10_fixes.py`](tests/test_code_review_goal_audit_2026_10_fixes.py)
+
+---
+
+### [R46][Low / Accessibility] サーバーレンダリングテンプレート群における WAI-ARIA 初期 `tabindex` 属性の完全付与
+
+- **該当箇所**:
+  - [`templates/screener.html:45-69, 103-135`](templates/screener.html#L45)
+  - [`templates/heatmap.html:30-79, 110-138`](templates/heatmap.html#L30)
+  - [`templates/index.html:48-74, 399-430`](templates/index.html#L48)
+  - [`templates/experimental_orbit.html:25-48, 202-241`](templates/experimental_orbit.html#L25)
+- **影響経路**: JavaScript の読み込み・実行前（SSR初期HTML）において、各画面のボタングループ（市場切替、プリセット切替、2D/3D切替、サイズ基準切替、カメラ操作、SSEモード切替、AIポートフォリオプリセット切替、天文台タイムライン粒度切替）のアクティブ要素に `tabindex="0"`、非アクティブ要素に `tabindex="-1"` が付与されておらず、ページ読み込み直後のキーボードナビゲーションおよびスクリーンリーダー初期適合性が損なわれていた。
+- **問題・根本原因**: JS 側で導入された WAI-ARIA ロービング tabindex 実装と初期 SSR テンプレート属性の同期欠落。
+- **対応内容**:
+  1. 全対象テンプレートの該当ボタングループに対し、アクティブボタンに `tabindex="0"`、非アクティブボタンに `tabindex="-1"` を静的に付与。
+- **結果**: **✅ 修正済み**
+- **回帰テスト**: [`tests/test_code_review_goal_audit_2026_10_fixes.py`](tests/test_code_review_goal_audit_2026_10_fixes.py)
+
+---
+
 ## 4. 変更ファイル一覧
 
 | ファイル                                                                                               | 変更概要                                                                               | 対応ID       |
@@ -739,6 +781,14 @@
 | [`utils/normalization.py`](utils/normalization.py)                                                     | is_valid_symbol の小文字・大文字一貫正規化（.upper()適用）                             | R42          |
 | [`templates/settings.html`](templates/settings.html)                                                   | 設定カテゴリタブ（role="tablist"）の初期 tabindex="0"/tabindex="-1"付与                | R43          |
 | [`tests/test_code_review_goal_audit_2026_09_v10.py`](tests/test_code_review_goal_audit_2026_09_v10.py) | 新規包括回帰テスト 8件（R40, R41, R42, R43）                                           | R40-R43      |
+| [`services/search/ddgs.py`](services/search/ddgs.py)                                                   | DDGS検索スレッドプール動的生成・再生成・`shutdown_ddgs_pool` 実装                      | R44          |
+| [`app_state.py`](app_state.py)                                                                         | `shutdown_executors()` への `shutdown_ddgs_pool` 登録・クリーンアップ                  | R44          |
+| [`static/js/screener.js`](static/js/screener.js)                                                       | フィルターチップ解除時の WAI-ARIA `tabindex` 属性同期                                  | R45          |
+| [`templates/screener.html`](templates/screener.html)                                                   | 市場切替・騰落率プリセットボタングループの初期 static `tabindex` 付与                  | R46          |
+| [`templates/heatmap.html`](templates/heatmap.html)                                                     | 市場・表示・サイズ・カメラ視点切替ボタングループの初期 static `tabindex` 付与            | R46          |
+| [`templates/index.html`](templates/index.html)                                                         | SSEモード・AIポートフォリオプリセットボタングループの初期 static `tabindex` 付与       | R46          |
+| [`templates/experimental_orbit.html`](templates/experimental_orbit.html)                               | 市場選択・タイムライン粒度ボタングループの初期 static `tabindex` 付与                  | R46          |
+| [`tests/test_code_review_goal_audit_2026_10_fixes.py`](tests/test_code_review_goal_audit_2026_10_fixes.py) | 新規包括回帰テスト 7件（R44, R45, R46）                                                | R44-R46      |
 
 ---
 
@@ -747,14 +797,14 @@
 ### 5.1 全テスト
 
 - **コマンド**: `pytest tests/ -n auto`
-- **結果**: **2,753 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
+- **結果**: **2,760 passed / 0 failed / 0 errors / 3 skipped / 45 subtests passed** ✅
 - **カバレッジ**: **79.27%**（CI閾値 `--cov-fail-under=68` / 要求75%を達成）✅
 - スキップ3件は POSIX 専用テスト（環境要因、既知）
 
 ### 5.2 型チェック
 
 - **コマンド**: `mypy .`
-- **結果**: `Success: no issues found in 88 source files` ✅
+- **結果**: `Success: no issues found in 110 source files` ✅
 - **コマンド**: `pyrefly check`
 - **結果**: `0 errors (17 suppressed, 7 warnings not shown)` ✅
 - **コマンド**: `pyrefly check --python-platform win32`
@@ -813,6 +863,9 @@
 | R41（AIポートフォリオ複製スキーマ契約整合） | 0.0/負数拒絶および日本株正規化シンボルの一意性判定                            | ルート層の契約と同期。正常入力への影響なし                                                  |
 | R42（is_valid_symbol 大文字小文字一貫性）   | 小文字シンボル（aapl, 7203.t等）の正当判定受容                                | 大文字シンボル・危険文字拒絶は完全維持。フォールバックやクエリの不要拒絶を解消              |
 | R43（設定タブ初期 tabindex ARIA適合）       | ページロード直後からの正しいTab順序保証                                       | 既存JS動作と完全整合。キーボード操作アクセシビリティ向上                                    |
+| R44（DDGS検索プールライフサイクル）         | アプリ終了時のスレッドプール協調的シャットダウンとオンデマンド再生成          | 既存モジュールレベル変数互換性を維持。アプリ停止時のリソース解放を保証                      |
+| R45（スクリーナーチップ解除 tabindex 同期） | フィルターチップ解除時の WAI-ARIA ロービング `tabindex` 復帰                   | 既存クリック動作に影響なし。Tabキー到達不能バグを解消                                       |
+| R46（SSR テンプレート初期 tabindex 付与）   | JS実行前のサーバーレンダリングHTMLにおける初期 WAI-ARIA 仕様適合              | 既存JS hydration・マウスクリック動作に完全整合。アクセシビリティ大幅向上                    |
 | その他                                      | 戻り値型・契約不変                                                            | 後方互換性維持                                                                              |
 
 ---

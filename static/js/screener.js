@@ -305,6 +305,7 @@
               const isActive = b.dataset.market === "all";
               b.classList.toggle("active", isActive);
               b.setAttribute("aria-pressed", String(isActive));
+              b.setAttribute("tabindex", isActive ? "0" : "-1");
             });
         } else if (c.key === "sector") {
           currentSector = "all";
@@ -318,6 +319,7 @@
               const isActive = b.dataset.preset === "all";
               b.classList.toggle("active", isActive);
               b.setAttribute("aria-pressed", String(isActive));
+              b.setAttribute("tabindex", isActive ? "0" : "-1");
             });
         } else if (c.key === "search") {
           searchQuery = "";

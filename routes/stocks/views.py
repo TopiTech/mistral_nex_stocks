@@ -620,6 +620,8 @@ def api_heatmap() -> Any:
     if _has_cached_key(cache_key, CACHE_DURATION_HEATMAP):
         cached = _get_cached_value(cache_key, CACHE_DURATION_HEATMAP)
         if cached:
+            if isinstance(cached, dict) and "ok" not in cached:
+                cached = {"ok": True, "success": True, **cached}
             return jsonify(cached)
 
     disk_cached = None
@@ -666,10 +668,14 @@ def api_heatmap() -> Any:
             logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
 
     if disk_cached and isinstance(disk_cached, dict) and disk_cached.get("stocks"):
+        if "ok" not in disk_cached:
+            disk_cached = {"ok": True, "success": True, **disk_cached}
         return jsonify(disk_cached)
 
     return jsonify(
         {
+            "ok": True,
+            "success": True,
             "stocks": [],
             "fetching": True,
             "message": "ヒートマップデータを取得中です。しばらくしてから再読み込みしてください。",

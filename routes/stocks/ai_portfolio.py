@@ -401,8 +401,8 @@ def api_rebalance_ai_portfolio() -> Any:
                 cached_err, g, default_reason="AI ポートフォリオのリバランスに失敗しました"
             )
         if cached_result is not None:
-            return jsonify(
-                {"ok": True, "portfolio": cached_result, "message": "リバランスが完了しました"}
+            return ok_response(
+                {"portfolio": cached_result, "message": "リバランスが完了しました"}
             )
 
     with ai_portfolio_fetch_lock:
@@ -501,8 +501,8 @@ def api_rebalance_ai_portfolio() -> Any:
             result_holder["error"], g, default_reason="AI ポートフォリオのリバランスに失敗しました"
         )
 
-    return jsonify(
-        {"ok": True, "portfolio": result_holder["result"], "message": "リバランスが完了しました"}
+    return ok_response(
+        {"portfolio": result_holder["result"], "message": "リバランスが完了しました"}
     )
 
 

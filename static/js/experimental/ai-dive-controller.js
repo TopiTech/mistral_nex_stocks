@@ -459,7 +459,8 @@
         const maxAttempts = 30;
 
         for (let attempt = 0; attempt <= maxAttempts; attempt++) {
-          const res = await (global.apiFetch || fetch)("/api/analyze-v2", {
+          const fetchFn = global.apiFetch || global.csrfFetch || fetch;
+          const res = await fetchFn("/api/analyze-v2", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),

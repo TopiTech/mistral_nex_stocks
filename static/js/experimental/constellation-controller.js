@@ -349,7 +349,8 @@
         const abortController = this._abortController;
         let data = null;
         for (let attempt = 0; attempt < 20; attempt += 1) {
-          const res = await (global.apiFetch || fetch)("/api/chat", {
+          const fetchFn = global.apiFetch || global.csrfFetch || fetch;
+          const res = await fetchFn("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),

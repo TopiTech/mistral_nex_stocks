@@ -162,7 +162,7 @@ def build_heatmap_payload(
     symbols: list[str],
     *,
     fetch_batch_fn=None,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, Any]:
     """Build the normalized heatmap payload for the given market.
 
     The function intentionally keeps orchestration here so route handlers only
@@ -221,7 +221,7 @@ def build_heatmap_payload(
         )
 
     results.sort(key=lambda row: row.get("market_cap", 0), reverse=True)
-    return {"stocks": results}
+    return {"ok": True, "success": True, "stocks": results}
 
 
 def build_screener_enrichment(

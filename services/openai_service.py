@@ -266,7 +266,19 @@ def _build_openai_cache_key(
     tool_choice: Any = None,
     reasoning_effort: str | None = None,
     cache_key_override: str | None = None,
+    base_url: str | None = None,
+    credential_scope: str | None = None,
 ) -> str:
+    serializable_msgs: list[Any] = []
+    if messages:
+        for m in messages:
+            if hasattr(m, "model_dump"):
+                serializable_msgs.append(m.model_dump())
+            elif hasattr(m, "dict") and callable(m.dict):
+                serializable_msgs.append(m.dict())
+            else:
+                serializable_msgs.append(m)
+
     serializable_tools: Any = None
     if tools:
         if isinstance(tools, list):
@@ -285,17 +297,28 @@ def _build_openai_cache_key(
         else:
             serializable_tools = tools
 
+    serializable_fmt = response_format
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        try:
+            serializable_fmt = f"{response_format.__module__}.{response_format.__qualname__}"
+        except AttributeError:
+            serializable_fmt = response_format.__name__
+    elif response_format is not None:
+        serializable_fmt = str(response_format)
+
     raw_key = {
         "provider": "openai_compatible",
+        "base_url": base_url or get_openai_base_url(),
         "model": model,
-        "messages": messages,
+        "messages": serializable_msgs,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "response_format": str(response_format),
+        "response_format": serializable_fmt,
         "tools": serializable_tools,
         "tool_choice": str(tool_choice) if tool_choice else None,
         "reasoning_effort": str(reasoning_effort) if reasoning_effort else None,
         "cache_key_override": cache_key_override,
+        "credential_scope": credential_scope,
     }
     dumped = json.dumps(raw_key, sort_keys=True, ensure_ascii=False, default=str)
     return f"openai_{hashlib.sha256(dumped.encode('utf-8')).hexdigest()}"
@@ -319,16 +342,6 @@ def call_openai_chat(
     if is_preview_api_key(api_key):
         return build_preview_chat_response(messages, response_format)
 
-    if app_state.market.is_circuit_open("openai_compatible"):
-        logger.warning("OpenAI-compatible circuit is open. Skipping API call.")
-        return {
-            "error": {
-                "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
-                "status_code": 503,
-                "provider": "openai_compatible",
-            }
-        }
-
     base_url = get_openai_base_url()
     model = _model_override if _model_override else get_openai_model()
     token_limit = min(max(16, max_tokens), MISTRAL_MAX_TOKENS_CEIL)
@@ -341,6 +354,12 @@ def call_openai_chat(
         pydantic_cls = response_format
         token_limit = min(max(3000, token_limit), MISTRAL_MAX_TOKENS_CEIL)
 
+    cred_scope = (
+        hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()[:16]
+        if api_key and api_key.strip()
+        else None
+    )
+
     cache_key = _build_openai_cache_key(
         model,
         messages,
@@ -351,12 +370,40 @@ def call_openai_chat(
         tool_choice=tool_choice,
         reasoning_effort=reasoning_effort,
         cache_key_override=cache_key_override,
+        base_url=base_url,
+        credential_scope=cred_scope,
     )
     if use_cache:
         with app_state.ai.mistral_response_lock:
             cached = app_state.ai.mistral_response_cache.get(cache_key)
         if cached is not None:
             return copy.deepcopy(cached)
+
+    if app_state.market.is_circuit_open("openai_compatible"):
+        logger.warning("OpenAI-compatible circuit is open. Skipping API call.")
+        return {
+            "error": {
+                "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+                "status_code": 503,
+                "provider": "openai_compatible",
+            }
+        }
+
+    circuit_probe_claimed = False
+    circuit_state = app_state.market.get_circuit_state("openai_compatible")
+    if circuit_state.get("status") == "HALF_OPEN":
+        if not app_state.market.try_claim_circuit_probe("openai_compatible"):
+            logger.warning(
+                "OpenAI-compatible circuit recovery probe already in progress. Skipping API call."
+            )
+            return {
+                "error": {
+                    "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
+                    "status_code": 503,
+                    "provider": "openai_compatible",
+                }
+            }
+        circuit_probe_claimed = True
 
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
@@ -564,6 +611,10 @@ def call_openai_chat(
                 )
                 if resp.status_code >= 500:
                     app_state.market.report_circuit_result("openai_compatible", success=False)
+                    circuit_probe_claimed = False
+                elif circuit_probe_claimed:
+                    app_state.market.release_circuit_probe("openai_compatible")
+                    circuit_probe_claimed = False
                 return {
                     "error": {
                         "message": _public_openai_error_message(
@@ -585,6 +636,7 @@ def call_openai_chat(
 
             # Track successful circuit result & token usage
             app_state.market.report_circuit_result("openai_compatible", success=True)
+            circuit_probe_claimed = False
             usage = data.get("usage")
             if isinstance(usage, dict):
                 app_state.ai.record_mistral_usage(usage, model=model)
@@ -677,6 +729,10 @@ def call_openai_chat(
         ) or (resp_status is not None and resp_status >= 500)
         if is_provider_failure:
             app_state.market.report_circuit_result("openai_compatible", success=False)
+            circuit_probe_claimed = False
+        elif circuit_probe_claimed:
+            app_state.market.release_circuit_probe("openai_compatible")
+            circuit_probe_claimed = False
         logger.error(
             "OpenAI-compat request failed model=%s url=%s error_type=%s status=%s: %s",
             model,
@@ -692,6 +748,10 @@ def call_openai_chat(
                 "provider": "openai_compatible",
             }
         }
+    finally:
+        if circuit_probe_claimed:
+            app_state.market.release_circuit_probe("openai_compatible")
+            circuit_probe_claimed = False
 
 
 def _close_stream_context(stream_cm: Any, stream: Any = None) -> None:
@@ -743,6 +803,21 @@ def stream_openai_chat(
             "status_code": 503,
         }
         return
+
+    circuit_probe_claimed = False
+    circuit_state = app_state.market.get_circuit_state("openai_compatible")
+    if circuit_state.get("status") == "HALF_OPEN":
+        if not app_state.market.try_claim_circuit_probe("openai_compatible"):
+            logger.warning(
+                "OpenAI-compatible circuit recovery probe already in progress. Skipping stream call."
+            )
+            yield {
+                "type": "error",
+                "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
+                "status_code": 503,
+            }
+            return
+        circuit_probe_claimed = True
 
     base_url = get_openai_base_url()
     model = _model_override if _model_override else get_openai_model()
@@ -850,6 +925,10 @@ def stream_openai_chat(
                     )
                     if stream.status_code >= 500:
                         app_state.market.report_circuit_result("openai_compatible", success=False)
+                        circuit_probe_claimed = False
+                    elif circuit_probe_claimed:
+                        app_state.market.release_circuit_probe("openai_compatible")
+                        circuit_probe_claimed = False
                     err_msg = _public_openai_error_message(
                         Exception(err_detail), stream.status_code
                     )
@@ -907,6 +986,7 @@ def stream_openai_chat(
                             continue
 
                 app_state.market.report_circuit_result("openai_compatible", success=True)
+                circuit_probe_claimed = False
             finally:
                 _close_stream_context(stream_cm, stream)
 
@@ -931,6 +1011,10 @@ def stream_openai_chat(
         ) or (resp_status is not None and resp_status >= 500)
         if is_provider_failure:
             app_state.market.report_circuit_result("openai_compatible", success=False)
+            circuit_probe_claimed = False
+        elif circuit_probe_claimed:
+            app_state.market.release_circuit_probe("openai_compatible")
+            circuit_probe_claimed = False
         logger.error(
             "OpenAI stream exception error_type=%s status=%d: %s",
             type(exc).__name__,
@@ -942,6 +1026,10 @@ def stream_openai_chat(
             "message": _public_openai_error_message(exc, status_code),
             "status_code": status_code,
         }
+    finally:
+        if circuit_probe_claimed:
+            app_state.market.release_circuit_probe("openai_compatible")
+            circuit_probe_claimed = False
 
 
 def _gen_token() -> str:

@@ -422,8 +422,22 @@ def api_credentials_verify():
 
         base_url = data.get("openai_base_url") or data.get("base_url") or get_openai_base_url()
         res_dict = verify_openai_connection(base_url=base_url, api_key=openai_key)
-        status_code = 200 if res_dict.get("ok") else 400
-        return jsonify(res_dict), status_code
+        if not res_dict.get("ok"):
+            return error_response(
+                ErrorCode.INVALID_API_KEY,
+                400,
+                message=str(
+                    res_dict.get("error")
+                    or "OpenAI互換APIキーの検証に失敗しました。設定と接続を確認してください。"
+                ),
+                extra_fields={
+                    "code": "INVALID_API_KEY",
+                    "valid": False,
+                    "latency_ms": res_dict.get("latency_ms", 0),
+                    "details": res_dict,
+                },
+            )
+        return jsonify(res_dict), 200
 
     api_key = data.get("mistral_api_key")
     if not api_key:

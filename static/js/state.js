@@ -535,6 +535,7 @@ async function refreshCredentialState() {
 
   return {
     has_mistral_api_key: HAS_MISTRAL_API_KEY,
+    has_ai_access: HAS_MISTRAL_API_KEY,
     has_langsearch_api_key: HAS_LANGSEARCH_API_KEY,
     has_tavily_api_key: HAS_TAVILY_API_KEY,
     preview_mode: IS_PREVIEW_MODE,
@@ -764,4 +765,6 @@ function applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData) {
 
 if (typeof window !== "undefined") {
   window.CONSTANTS = CONSTANTS;
+  window.hasAiAccess = () => HAS_MISTRAL_API_KEY;
+  window._hasAiAccess = _hasAiAccess;
 }

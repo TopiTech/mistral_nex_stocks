@@ -695,7 +695,11 @@ window.addEventListener("beforeunload", () => {
 async function updateApiStatus() {
   const badge = domElements.apiStatus;
   if (!badge) return;
-  if (!HAS_MISTRAL_API_KEY) {
+  const hasAi =
+    typeof window !== "undefined" && typeof window.hasAiAccess === "function"
+      ? window.hasAiAccess()
+      : HAS_MISTRAL_API_KEY;
+  if (!hasAi) {
     badge.textContent = "● API Key Required";
     badge.classList.add("inactive");
     badge.classList.remove("connected");

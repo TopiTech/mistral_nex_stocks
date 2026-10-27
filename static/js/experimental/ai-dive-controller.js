@@ -386,8 +386,14 @@
         container.textContent = "";
         const placeholder = document.createElement("div");
         placeholder.className = "ai-dive-placeholder";
-        placeholder.textContent =
-          "上のボタンを押すと、Mistral AI による構造化ファンダメンタル・テクニカル深層分析を実行します。";
+        const providerLabel =
+          typeof getAiProviderLabel === "function"
+            ? getAiProviderLabel()
+            : typeof APP_CONFIG !== "undefined" &&
+                APP_CONFIG?.ai_provider === "openai_compatible"
+              ? "OpenAI互換 AI"
+              : "Mistral AI";
+        placeholder.textContent = `上のボタンを押すと、${providerLabel} による構造化ファンダメンタル・テクニカル深層分析を実行します。`;
         container.appendChild(placeholder);
       }
     }
@@ -412,8 +418,17 @@
         const spinner = document.createElement("span");
         spinner.className = "loading-spinner";
         loadingDiv.appendChild(spinner);
+        const providerLabel =
+          typeof getAiProviderLabel === "function"
+            ? getAiProviderLabel()
+            : typeof APP_CONFIG !== "undefined" &&
+                APP_CONFIG?.ai_provider === "openai_compatible"
+              ? "OpenAI互換 AI"
+              : "Mistral AI";
         loadingDiv.appendChild(
-          document.createTextNode(" Mistral AI が銘柄構造化データを分析中..."),
+          document.createTextNode(
+            ` ${providerLabel} が銘柄構造化データを分析中...`,
+          ),
         );
         container.appendChild(loadingDiv);
       }

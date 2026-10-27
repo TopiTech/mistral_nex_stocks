@@ -857,3 +857,57 @@ async function csrfFetch(url, options = {}) {
 })();
 
 // #endregion Global Error Handler
+
+// #region AI Provider Helpers
+
+/**
+ * 現在設定されているAIプロバイダーを取得 ('mistral' | 'openai_compatible')
+ * @returns {string}
+ */
+function getAppAiProvider() {
+  if (
+    typeof APP_CONFIG !== "undefined" &&
+    APP_CONFIG &&
+    APP_CONFIG.ai_provider
+  ) {
+    return APP_CONFIG.ai_provider;
+  }
+  return "mistral";
+}
+
+/**
+ * OpenAI互換プロバイダーが選択されているか判定
+ * @returns {boolean}
+ */
+function isOpenAiCompatibleProvider() {
+  return getAppAiProvider() === "openai_compatible";
+}
+
+/**
+ * UI表示用のAIプロバイダー表示名を取得
+ * @param {"full"|"short"} [variant="full"]
+ *   - "full": "Mistral AI" / "OpenAI互換 AI" / "AI (プレビュー)"
+ *   - "short": "Mistral" / "OpenAI互換" / "AI"
+ * @returns {string}
+ */
+function getAiProviderLabel(variant = "full") {
+  const isPreview = Boolean(
+    (typeof IS_PREVIEW_MODE !== "undefined" && IS_PREVIEW_MODE) ||
+    (typeof APP_CONFIG !== "undefined" &&
+      APP_CONFIG &&
+      APP_CONFIG.preview_mode),
+  );
+  if (isPreview) {
+    return variant === "short" ? "AI" : "AI (プレビュー)";
+  }
+  if (isOpenAiCompatibleProvider()) {
+    return variant === "short" ? "OpenAI互換" : "OpenAI互換 AI";
+  }
+  return variant === "short" ? "Mistral" : "Mistral AI";
+}
+
+window.getAppAiProvider = getAppAiProvider;
+window.isOpenAiCompatibleProvider = isOpenAiCompatibleProvider;
+window.getAiProviderLabel = getAiProviderLabel;
+
+// #endregion AI Provider Helpers

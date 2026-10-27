@@ -299,8 +299,15 @@
       const spinner = document.createElement("span");
       spinner.className = "loading-spinner";
       loadingDiv.appendChild(spinner);
+      const providerLabel =
+        typeof getAiProviderLabel === "function"
+          ? getAiProviderLabel()
+          : typeof APP_CONFIG !== "undefined" &&
+              APP_CONFIG?.ai_provider === "openai_compatible"
+            ? "OpenAI互換 AI"
+            : "Mistral AI";
       loadingDiv.appendChild(
-        document.createTextNode(" Mistral AI が星座比較分析を生成中..."),
+        document.createTextNode(` ${providerLabel} が星座比較分析を生成中...`),
       );
       aiResultContainer.appendChild(loadingDiv);
 

@@ -915,9 +915,15 @@ function buildDetailPanel(
   // 4. Action Buttons (AI Technical Line Drawing & Fullscreen View)
   const actionGroup = createEl("div", "control-group tool-actions-group");
   const isEligible = window.APP_CONFIG?.is_ai_technical_lines_eligible ?? false;
+  const isOpenAi =
+    typeof isOpenAiCompatibleProvider === "function"
+      ? isOpenAiCompatibleProvider()
+      : window.APP_CONFIG?.ai_provider === "openai_compatible";
   const aiBtnText = isEligible
     ? "✨ AIテクニカル描画"
-    : "🔒 AIテクニカル描画 (Medium/Large限定)";
+    : isOpenAi
+      ? "🔒 AIテクニカル描画 (設定要確認)"
+      : "🔒 AIテクニカル描画 (Medium/Large限定)";
   const aiBtnCls = isEligible
     ? "ai-tech-lines-btn"
     : "ai-tech-lines-btn locked";
@@ -926,7 +932,9 @@ function buildDetailPanel(
   aiTechBtn.type = "button";
   aiTechBtn.title = isEligible
     ? "AIがサポート線・抵抗線・トレンドラインを動的描画"
-    : "Mistral Medium/Largeモデル選択時のみ利用可能";
+    : isOpenAi
+      ? "AIプロバイダー設定の確認が必要です"
+      : "Mistral Medium/Largeモデル選択時のみ利用可能";
   actionGroup.appendChild(aiTechBtn);
 
   const fsBtn = createEl("button", "fs-chart-btn", "⛶ 全画面表示");
@@ -3198,11 +3206,17 @@ function showAiTechnicalLoading(container) {
     overlay.appendChild(
       createEl("div", "ai-tech-loading-title", "✨ AI テクニカル分析中"),
     );
+    const providerLabel =
+      typeof getAiProviderLabel === "function"
+        ? getAiProviderLabel()
+        : window.APP_CONFIG?.ai_provider === "openai_compatible"
+          ? "OpenAI互換 AI"
+          : "Mistral AI";
     overlay.appendChild(
       createEl(
         "div",
         "ai-tech-loading-subtitle",
-        "Mistral AI がサポート線・抵抗線・トレンドラインを動的解析中...",
+        `${providerLabel} がサポート線・抵抗線・トレンドラインを動的解析中...`,
       ),
     );
     container.style.position = "relative";
@@ -3223,11 +3237,14 @@ async function triggerAiTechnicalLines(wrapper) {
 
   const isEligible = window.APP_CONFIG?.is_ai_technical_lines_eligible ?? false;
   if (!isEligible) {
-    showToast(
-      "🔒 AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。設定画面（⚙）よりモデルを変更してください。",
-      "warning",
-      7000,
-    );
+    const isOpenAi =
+      typeof isOpenAiCompatibleProvider === "function"
+        ? isOpenAiCompatibleProvider()
+        : window.APP_CONFIG?.ai_provider === "openai_compatible";
+    const warningMsg = isOpenAi
+      ? "🔒 AIテクニカル線描画機能をご利用いただけません。設定画面（⚙）よりAPI設定をご確認ください。"
+      : "🔒 AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。設定画面（⚙）よりモデルを変更してください。";
+    showToast(warningMsg, "warning", 7000);
     return;
   }
 
@@ -3279,10 +3296,15 @@ async function triggerAiTechnicalLines(wrapper) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.ok) {
       if (data?.model_restricted || data?.details?.model_restricted) {
+        const isOpenAi =
+          typeof isOpenAiCompatibleProvider === "function"
+            ? isOpenAiCompatibleProvider()
+            : window.APP_CONFIG?.ai_provider === "openai_compatible";
+        const defaultRestrictedMsg = isOpenAi
+          ? "AIテクニカル線描画機能をご利用いただけません。設定画面（⚙）よりAPI設定をご確認ください。"
+          : "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。設定画面（⚙）よりモデルを変更してください。";
         const errorMsg =
-          data?.details?.reason ||
-          data?.error ||
-          "AIテクニカル線描画機能は Mistral Medium または Large モデルでのみご利用いただけます。設定画面（⚙）よりモデルを変更してください。";
+          data?.details?.reason || data?.error || defaultRestrictedMsg;
         showToast(`🔒 ${errorMsg}`, "warning", 8000);
       } else {
         showToast(
@@ -3452,9 +3474,15 @@ function openFullscreenChart(wrapper) {
     toolbar.replaceChildren();
     const isEligible =
       window.APP_CONFIG?.is_ai_technical_lines_eligible ?? false;
+    const isOpenAi =
+      typeof isOpenAiCompatibleProvider === "function"
+        ? isOpenAiCompatibleProvider()
+        : window.APP_CONFIG?.ai_provider === "openai_compatible";
     const aiBtnText = isEligible
       ? "✨ AIテクニカル描画"
-      : "🔒 AIテクニカル描画 (Medium/Large限定)";
+      : isOpenAi
+        ? "🔒 AIテクニカル描画 (設定要確認)"
+        : "🔒 AIテクニカル描画 (Medium/Large限定)";
     const aiBtnCls = isEligible
       ? "fs-btn ai-tech-lines-btn"
       : "fs-btn ai-tech-lines-btn locked";

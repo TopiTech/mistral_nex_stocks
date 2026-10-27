@@ -64,9 +64,20 @@ class TestDDGSSearchPoolLifecycle:
 
     def test_app_state_shutdown_executors_invokes_ddgs_shutdown(self):
         """Verify app_state.shutdown_executors calls shutdown_ddgs_pool."""
-        with patch("services.search.ddgs.shutdown_ddgs_pool") as mock_shutdown:
-            app_state.shutdown_executors()
-            mock_shutdown.assert_called_once_with(wait=False)
+        fake_state = MagicMock()
+        fake_state._shutdown_executors_done = False
+        fake_state.ai.mistral_clients_lock.acquire.return_value = False
+
+        with (
+            patch("services.search.ddgs.shutdown_ddgs_pool") as mock_shutdown,
+            patch("services.news_service.shutdown_news_fanout_pool"),
+            patch("services.realtime_engine.realtime_market_engine.stop"),
+            patch("app_state.yf_session_manager.close_all"),
+        ):
+            type(app_state).shutdown_executors(fake_state)
+
+        mock_shutdown.assert_called_once_with(wait=False)
+        fake_state.execution.shutdown.assert_called_once_with()
 
 
 class TestScreenerChipTabindexSync:

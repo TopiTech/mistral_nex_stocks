@@ -319,3 +319,12 @@ def reset_app_state_internals() -> None:
         crypto_utils.clear_ephemeral_credentials()
     except Exception:
         pass
+    if getattr(app_state, "_shutdown_executors_done", False) or (
+        hasattr(app_state, "execution")
+        and hasattr(app_state.execution, "shutdown_event")
+        and app_state.execution.shutdown_event.is_set()
+    ):
+        app_state._shutdown_executors_done = False
+        from execution_state import ExecutionState
+
+        app_state.execution = ExecutionState()

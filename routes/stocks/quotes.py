@@ -53,6 +53,7 @@ from utils.stock_payload import (
     _wait_for_initial_market_snapshot,
     error_response,
     fetch_stock_info_async,
+    ok_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -163,8 +164,8 @@ def api_indices() -> Any:
         with app_state.cache.sse_data_lock:
             data = resolve_indices_for_response()
     if not data:
-        return jsonify({"fetching": True})
-    return jsonify(data)
+        return ok_response({"fetching": True})
+    return ok_response(data)
 
 
 @quotes_bp.route("/api/stocks")
@@ -213,7 +214,7 @@ def api_stocks() -> Any:
             yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
     is_empty = not any(stocks.get(m) for m in ("us", "jp", "idx")) and not indices
-    return jsonify(
+    return ok_response(
         {
             "stocks": stocks,
             "indices": indices,
@@ -243,6 +244,8 @@ def api_stock_details() -> Any:
         if not cached_short or cached_short.get("failed") or cached_short.get("error"):
             return jsonify(
                 {
+                    "ok": False,
+                    "success": False,
                     "symbol": symbol,
                     "failed": True,
                     "sector": None,
@@ -254,14 +257,14 @@ def api_stock_details() -> Any:
         info = cached_short
     else:
         _submit_async_info_fetch(symbol)
-        return jsonify(
+        return ok_response(
             {
                 "symbol": symbol,
                 "fetching": True,
                 "message": "銘柄詳細を取得中です。しばらくしてから再読み込みしてください。",
             }
         )
-    return jsonify(
+    return ok_response(
         {
             "symbol": symbol,
             "sector": info.get("sector") or None,
@@ -322,6 +325,9 @@ def api_stock_history() -> Any:
         )
 
     def make_history_response(payload: Any, is_cacheable: bool = True) -> Any:
+        if isinstance(payload, dict) and "error" not in payload:
+            payload.setdefault("ok", True)
+            payload.setdefault("success", True)
         resp = jsonify(payload)
         if is_cacheable and "error" not in payload and not payload.get("fetching"):
             if is_market_open(market):
@@ -333,6 +339,8 @@ def api_stock_history() -> Any:
         return resp
 
     FETCHING_RESPONSE = {
+        "ok": True,
+        "success": True,
         "symbol": symbol,
         "history": [],
         "fetching": True,
@@ -495,4 +503,4 @@ def api_search() -> Any:
             details={"reason": str(err_msg)} if err_msg else None,
             status_code=502,
         )
-    return jsonify(result)
+    return ok_response(result)

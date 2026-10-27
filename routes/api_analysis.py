@@ -385,7 +385,7 @@ def get_trending():
     # error so the endpoint always returns a dict.
     if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"trending": []}
-    return jsonify(result)
+    return ok_response(result)
 
 
 @api_analysis_bp.route("/api/chat", methods=["POST"])
@@ -460,7 +460,7 @@ def api_chat():
                     current_app.logger.debug(
                         "Failed to close chat_history on cache hit: %s", close_exc
                     )
-            return jsonify(
+            return ok_response(
                 {
                     "reply": ai_content,
                     "request_token": operation_token,
@@ -473,7 +473,7 @@ def api_chat():
         # starting a NEW job here: the inflight entry was already popped, so a
         # re-poll would otherwise append the same user message to history again
         # and re-invoke Mistral with duplicated content.
-        return jsonify(
+        return ok_response(
             {
                 "reply": "(応答を生成できませんでした)",
                 "request_token": operation_token,
@@ -572,7 +572,7 @@ def api_chat():
     # で上限を設け、超過時は executor キュー満杯時と同じ 503 を返す(R3)。
     if data.get("stream") is True:
         if already_fetching:
-            return jsonify({"fetching": True})
+            return ok_response({"fetching": True})
         if not stream_chat_slots.acquire(blocking=False):
             current_app.logger.warning(
                 "Chat stream concurrency cap reached id=%s",
@@ -684,7 +684,7 @@ def api_chat():
     finished = result_holder["done"].wait(timeout=CHAT_PREPARE_WAIT_SEC)
     if not finished:
         elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
-        return jsonify({
+        return ok_response({
             "fetching": True,
             "step": result_holder.get("step", "generating"),
             "message": result_holder.get("message", "AI応答を生成中..."),
@@ -714,7 +714,7 @@ def api_chat():
         len(ai_content),
     )
 
-    return jsonify(
+    return ok_response(
         {
             "reply": ai_content,
             "request_token": operation_token,
@@ -1182,7 +1182,7 @@ def api_news():
                     current_app.logger.warning("Failed to schedule SWR news job: %s", exc)
                     with news_fetch_lock:
                         news_fetch_inflight.pop(inflight_key, None)
-        return jsonify(response_bundle)
+        return ok_response(response_bundle)
 
     # Fallback to standard synchronous wait and poll for the first fetch or force refresh
     with news_fetch_lock:
@@ -1268,7 +1268,7 @@ def api_news():
     finished = result_holder["done"].wait(timeout=NEWS_PREPARE_WAIT_SEC)
     if not finished:
         elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
-        return jsonify({
+        return ok_response({
             "fetching": True,
             "step": result_holder.get("step", "processing"),
             "message": result_holder.get("message", "ニュース要約を生成中..."),
@@ -1282,7 +1282,7 @@ def api_news():
     if not isinstance(result, dict):
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
     result["disclaimer"] = ANALYSIS_DISCLAIMER
-    return jsonify(result)
+    return ok_response(result)
 
 
 @api_analysis_bp.route("/api/analyze-v2", methods=["POST"])
@@ -1379,7 +1379,7 @@ def api_analyze_v2():
                         details={"reason": _sanitize_error_message(str(err_msg))},
                         status_code=502,
                     )
-            return jsonify(cached_result)
+            return ok_response(cached_result)
         # result was None (e.g. fetch failed to produce data) -> fall through
         # to start a fresh job below.
 
@@ -1759,9 +1759,9 @@ def api_analyze_v2():
                             details={"reason": _sanitize_error_message(str(err_msg))},
                             status_code=502,
                         )
-                return jsonify(cached_result)
+                return ok_response(cached_result)
         elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
-        return jsonify({
+        return ok_response({
             "fetching": True,
             "step": result_holder.get("step", "processing"),
             "message": result_holder.get("message", "AI分析を実行中..."),
@@ -1796,7 +1796,7 @@ def api_analyze_v2():
                 status_code=502,
             )
 
-    return jsonify(result_data)
+    return ok_response(result_data)
 
 
 # ProviderAPIError is imported from services.ai_service and re-exported for callers.

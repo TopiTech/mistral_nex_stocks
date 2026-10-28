@@ -2640,7 +2640,17 @@ async function bulkAnalyzeFavorites() {
         if (!item) break;
         const { stockKey, idx: _idx } = item;
         const stock = getStockByKey(stockKey);
-        if (!stock) continue;
+        if (!stock) {
+          failed.push({
+            symbol: stockKey,
+            market: "--",
+            name: stockKey,
+            stockKey,
+            error: "銘柄データが見つかりません",
+          });
+          completedCount++;
+          continue;
+        }
 
         // Update progress
         if (progressBar) {

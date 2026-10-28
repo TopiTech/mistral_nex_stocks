@@ -1016,44 +1016,61 @@ def _chat_error_response(
             getattr(flask_g, "request_id", "-"),
             exc_str,
         )
-        payload["reply"] = exc_str if "認証" in exc_str else "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
-        return jsonify(payload), 401
-
-    if isinstance(exc, (requests.ConnectionError, ConnectionError, httpx.NetworkError, httpx.ConnectError)):
+        msg = (
+            exc_str
+            if "認証" in exc_str
+            else "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
+        )
+        status_code = 401
+    elif isinstance(
+        exc,
+        (requests.ConnectionError, ConnectionError, httpx.NetworkError, httpx.ConnectError),
+    ):
         current_app.logger.error(
             "api_chat network error id=%s error_type=%s: %s",
             getattr(flask_g, "request_id", "-"),
             type(exc).__name__,
             exc_str,
         )
-        payload["reply"] = "AIサービスに接続できませんでした。ネットワーク環境またはAPI接続先を確認してください。"
-        return jsonify(payload), 503
-    if isinstance(exc, (httpx.TimeoutException, requests.Timeout)):
+        msg = "AIサービスに接続できませんでした。ネットワーク環境またはAPI接続先を確認してください。"
+        status_code = 503
+    elif isinstance(exc, (httpx.TimeoutException, requests.Timeout)):
         current_app.logger.error(
             "api_chat timeout error id=%s error_type=%s: %s",
             getattr(flask_g, "request_id", "-"),
             type(exc).__name__,
             exc_str,
         )
-        payload["reply"] = "AIサービス呼び出しがタイムアウトしました。モデルの応答に時間がかかっています。しばらく待ってから再試行してください。"
-        return jsonify(payload), 504
-    if isinstance(exc, (ValueError, TypeError)):
+        msg = "AIサービス呼び出しがタイムアウトしました。モデルの応答に時間がかかっています。しばらく待ってから再試行してください。"
+        status_code = 504
+    elif isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
             "api_chat processing error id=%s error_type=%s: %s",
             getattr(flask_g, "request_id", "-"),
             type(exc).__name__,
             exc_str,
         )
-        payload["reply"] = "入力データが不正です"
-        return jsonify(payload), 400
-    current_app.logger.error(
-        "api_chat system error id=%s error_type=%s: %s",
-        getattr(flask_g, "request_id", "-"),
-        type(exc).__name__,
-        exc_str,
-    )
-    payload["reply"] = f"チャット処理に失敗しました ({exc_str[:120]})" if exc_str else "チャット処理に失敗しました"
-    return jsonify(payload), 500
+        msg = "入力データが不正です"
+        status_code = 400
+    else:
+        current_app.logger.error(
+            "api_chat system error id=%s error_type=%s: %s",
+            getattr(flask_g, "request_id", "-"),
+            type(exc).__name__,
+            exc_str,
+        )
+        msg = (
+            f"チャット処理に失敗しました ({exc_str[:120]})"
+            if exc_str
+            else "チャット処理に失敗しました"
+        )
+        status_code = 500
+
+    payload["reply"] = msg
+    payload["error"] = msg
+    payload["message"] = msg
+    payload["code"] = status_code
+    return jsonify(payload), status_code
 
 
 def _is_cacheable_news_bundle(bundle: Any) -> bool:

@@ -350,6 +350,7 @@ async function initializeApp() {
   initStreamToggleEvents();
   initIndicesEvents();
   initVisibilityHandler();
+  initPortfolioStepButtons();
 
   setActiveTab("us");
   setBulkAnalyzeStatus("");
@@ -630,51 +631,26 @@ function renderTrendingBadges(trendingList) {
 // -----------------------------------------------------
 let _pfSharesHandler = null;
 let _pfPriceHandler = null;
+let _pfStepButtonsInitialized = false;
 
-function openPortfolioModal(stockKey) {
-  const stock = getStockByKey(stockKey);
-  if (!stock) return;
-
+function updatePortfolioModalTotalCost() {
   const sharesInput = DOM.get("pf-shares-input");
   const priceInput = DOM.get("pf-price-input");
   const costDisplay = DOM.get("pf-modal-total-cost");
-
-  if (_pfSharesHandler && sharesInput)
-    sharesInput.removeEventListener("input", _pfSharesHandler);
-  if (_pfPriceHandler && priceInput)
-    priceInput.removeEventListener("input", _pfPriceHandler);
-
-  const updatePortfolioModalTotalCost = () => {
-    if (!sharesInput || !priceInput || !costDisplay) return;
-    const shares = parseFloat(sharesInput.value) || 0;
-    const price = parseFloat(priceInput.value) || 0;
-    const total = shares * price;
-    costDisplay.textContent = total.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  };
-
-  _pfSharesHandler = updatePortfolioModalTotalCost;
-  _pfPriceHandler = updatePortfolioModalTotalCost;
-
-  openModal("portfolioModal", () => {
-    DOM.get("pf-modal-symbol").textContent = `${stock.symbol} - ${stock.name}`;
-    DOM.get("pf-shares-input").value = toFiniteNumber(stock.shares, 0);
-    DOM.get("pf-price-input").value = toFiniteNumber(stock.avg_price, 0);
-    const fxInput = DOM.get("pf-fx-rate-input");
-    if (fxInput)
-      fxInput.value =
-        stock.avg_fx_rate !== undefined && stock.avg_fx_rate !== null
-          ? toFiniteNumber(stock.avg_fx_rate, 0)
-          : "";
-    updatePortfolioModalTotalCost();
+  if (!sharesInput || !priceInput || !costDisplay) return;
+  const shares = parseFloat(sharesInput.value) || 0;
+  const price = parseFloat(priceInput.value) || 0;
+  const total = shares * price;
+  costDisplay.textContent = total.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
+}
 
-  sharesInput?.addEventListener("input", updatePortfolioModalTotalCost);
-  priceInput?.addEventListener("input", updatePortfolioModalTotalCost);
+function initPortfolioStepButtons() {
+  if (_pfStepButtonsInitialized) return;
+  _pfStepButtonsInitialized = true;
 
-  // Setup step buttons
   document.querySelectorAll("#portfolioModal .pf-step-btn").forEach((btn) => {
     btn.onclick = () => {
       const targetId = btn.getAttribute("data-target");
@@ -702,6 +678,40 @@ function openPortfolioModal(stockKey) {
       }
     };
   });
+}
+
+function openPortfolioModal(stockKey) {
+  const stock = getStockByKey(stockKey);
+  if (!stock) return;
+
+  initPortfolioStepButtons();
+
+  const sharesInput = DOM.get("pf-shares-input");
+  const priceInput = DOM.get("pf-price-input");
+
+  if (_pfSharesHandler && sharesInput)
+    sharesInput.removeEventListener("input", _pfSharesHandler);
+  if (_pfPriceHandler && priceInput)
+    priceInput.removeEventListener("input", _pfPriceHandler);
+
+  _pfSharesHandler = updatePortfolioModalTotalCost;
+  _pfPriceHandler = updatePortfolioModalTotalCost;
+
+  openModal("portfolioModal", () => {
+    DOM.get("pf-modal-symbol").textContent = `${stock.symbol} - ${stock.name}`;
+    DOM.get("pf-shares-input").value = toFiniteNumber(stock.shares, 0);
+    DOM.get("pf-price-input").value = toFiniteNumber(stock.avg_price, 0);
+    const fxInput = DOM.get("pf-fx-rate-input");
+    if (fxInput)
+      fxInput.value =
+        stock.avg_fx_rate !== undefined && stock.avg_fx_rate !== null
+          ? toFiniteNumber(stock.avg_fx_rate, 0)
+          : "";
+    updatePortfolioModalTotalCost();
+  });
+
+  sharesInput?.addEventListener("input", updatePortfolioModalTotalCost);
+  priceInput?.addEventListener("input", updatePortfolioModalTotalCost);
 
   const saveBtn = DOM.get("savePortfolioBtn");
   saveBtn.onclick = async () => {

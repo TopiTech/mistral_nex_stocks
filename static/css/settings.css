@@ -21,9 +21,6 @@ textarea,
 select {
   font: inherit;
 }
-.observatory-launch-wrapper {
-  margin-top: 14px;
-}
 .back-btn {
   padding: 8px 14px;
   border-radius: 10px;

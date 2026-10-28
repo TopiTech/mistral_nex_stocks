@@ -239,7 +239,9 @@ class APIClient {
         if (!response.ok) {
           const errCode = toNumber(data.error_code, 9999);
           const errMsg = toStringValue(
-            data.message ?? data.error,
+            data.message ??
+              data.error ??
+              (typeof data.reply === "string" ? data.reply : undefined),
             `HTTP ${response.status}`,
           );
           const errReason = toStringValue(data.details?.reason ?? "", "");

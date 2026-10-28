@@ -241,6 +241,13 @@ function filterAndRenderStocks() {
   const container = $("stockListContainer");
   if (!container) return;
 
+  const activeElement = document.activeElement;
+  let focusedSymbol = null;
+  if (activeElement && container.contains(activeElement)) {
+    focusedSymbol = activeElement.getAttribute("data-symbol");
+  }
+  const prevScrollTop = container.scrollTop;
+
   const fragment = document.createDocumentFragment();
 
   // Render Indices
@@ -325,6 +332,20 @@ function filterAndRenderStocks() {
       ? "該当する銘柄が見つかりません"
       : "表示可能なデータがありません";
     container.appendChild(emptyDiv);
+  }
+
+  container.scrollTop = prevScrollTop;
+  if (focusedSymbol) {
+    const escaped =
+      window.CSS && typeof CSS.escape === "function"
+        ? CSS.escape(focusedSymbol)
+        : focusedSymbol.replace(/"/g, '\\"');
+    const elementToFocus = container.querySelector(
+      `[data-symbol="${escaped}"]`,
+    );
+    if (elementToFocus && typeof elementToFocus.focus === "function") {
+      elementToFocus.focus({ preventScroll: true });
+    }
   }
 }
 
@@ -591,11 +612,15 @@ function isInjectableUrl(url) {
   return true;
 }
 
+let detectorGeneration = 0;
+
 // Ticker Auto-Detection logic for Active Web Page
 async function loadDetectedTickers() {
   const container = $("detectedListContainer");
   const titleEl = $("detectorPageTitle");
   if (!container) return;
+
+  const currentGen = ++detectorGeneration;
 
   container.textContent = "";
   const loadingDiv = document.createElement("div");
@@ -609,6 +634,7 @@ async function loadDetectedTickers() {
       active: true,
       currentWindow: true,
     });
+    if (currentGen !== detectorGeneration) return;
     if (!tab || !tab.id) {
       container.textContent = "";
       const emptyDiv = document.createElement("div");
@@ -624,6 +650,7 @@ async function loadDetectedTickers() {
 
     // Check if the current tab URL is eligible for script injection/messaging
     if (tabUrl && !isInjectableUrl(tabUrl)) {
+      if (currentGen !== detectorGeneration) return;
       container.textContent = "";
       const emptyDiv = document.createElement("div");
       emptyDiv.className = "detector-empty";
@@ -646,6 +673,7 @@ async function loadDetectedTickers() {
             target: { tabId: tab.id },
             files: ["content.js"],
           });
+          if (currentGen !== detectorGeneration) return;
           response = await chrome.tabs.sendMessage(tab.id, {
             action: "detectTickers",
           });
@@ -654,6 +682,8 @@ async function loadDetectedTickers() {
         }
       }
     }
+
+    if (currentGen !== detectorGeneration) return;
 
     if (
       !response ||
@@ -739,6 +769,7 @@ async function loadDetectedTickers() {
       container.appendChild(card);
     }
   } catch (err) {
+    if (currentGen !== detectorGeneration) return;
     console.error("loadDetectedTickers error:", err);
     const errorDiv = document.createElement("div");
     errorDiv.className = "detector-empty";

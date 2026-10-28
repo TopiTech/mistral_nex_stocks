@@ -417,6 +417,9 @@
  * Responsive: Screener Table (≤768px)
  * ============================================= */
 @media (max-width: 768px) {
+  body.screener-page {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
   .screener-container {
     padding: 12px 10px;
   }

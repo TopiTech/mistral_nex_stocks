@@ -230,7 +230,13 @@
               const priceEl = wrapper.querySelector(".compact-price");
               if (priceEl) {
                 priceEl.classList.add("scraping-success", "updating");
-                setTimeout(() => priceEl.classList.remove("updating"), 1200);
+                if (priceEl.__updatingTimer) {
+                  clearTimeout(priceEl.__updatingTimer);
+                }
+                priceEl.__updatingTimer = setTimeout(() => {
+                  priceEl.classList.remove("updating");
+                  priceEl.__updatingTimer = null;
+                }, 1200);
                 const formatted =
                   typeof newPrice === "number"
                     ? typeof window.formatPrice === "function"

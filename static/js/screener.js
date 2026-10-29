@@ -703,5 +703,20 @@
     initScreener();
     syncStaticColspanPlaceholders();
   });
-  window.addEventListener("resize", syncStaticColspanPlaceholders);
+  if (
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function"
+  ) {
+    window.addEventListener("resize", syncStaticColspanPlaceholders);
+    window.addEventListener("beforeunload", () => {
+      if (fetchTimeout) {
+        clearTimeout(fetchTimeout);
+        fetchTimeout = null;
+      }
+      if (screenerAbortController) {
+        screenerAbortController.abort();
+        screenerAbortController = null;
+      }
+    });
+  }
 })();

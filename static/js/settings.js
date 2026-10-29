@@ -117,6 +117,7 @@ async function loadStocks(retryAttempt = 0) {
 
 function renderList(market, stocks) {
   const listEl = document.getElementById(`${market}-list`);
+  if (!listEl) return;
   listEl.textContent = "";
   ensureDragContainer(listEl, market);
   if (!stocks.length) {
@@ -1493,6 +1494,23 @@ function initSettingsTabs() {
 }
 
 // showToastはutils.jsで定義済み（全ページ共通）
+
+// Cleanup pending timers and in-flight fetch requests on page unload
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("beforeunload", () => {
+    if (stocksLoadRetryTimer) {
+      clearTimeout(stocksLoadRetryTimer);
+      stocksLoadRetryTimer = null;
+    }
+    if (stocksLoadAbortController) {
+      stocksLoadAbortController.abort();
+      stocksLoadAbortController = null;
+    }
+  });
+}
 
 // Alias for backward compatibility with existing code
 const showSettingsMessage = (message, isError = true) => {

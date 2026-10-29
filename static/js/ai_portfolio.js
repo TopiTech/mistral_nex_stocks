@@ -1592,4 +1592,17 @@
     box.appendChild(retryButton);
     container.appendChild(box);
   }
+
+  if (
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function"
+  ) {
+    window.addEventListener("beforeunload", () => {
+      cancelAiPortfolioRequest();
+      if (savedAiPortfoliosAbortController) {
+        savedAiPortfoliosAbortController.abort();
+        savedAiPortfoliosAbortController = null;
+      }
+    });
+  }
 })();

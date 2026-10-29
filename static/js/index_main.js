@@ -1061,5 +1061,15 @@ function checkAlerts(stock, oldPrice) {
   }
 }
 
+// Cleanup pending initial stocks fetch request on page unload
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("beforeunload", () => {
+    invalidatePendingInitialStocksFetch();
+  });
+}
+
 // showToastはutils.jsで定義済み（全ページ共通）
 // #endregion Initialization

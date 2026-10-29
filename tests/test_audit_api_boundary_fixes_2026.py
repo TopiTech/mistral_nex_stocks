@@ -89,10 +89,6 @@ class TestChatErrorResponseEnvelope:
 class TestApiClientAndFrontendGuards:
     """Verify TASK-03 & TASK-08 frontend implementations."""
 
-    def test_api_client_error_msg_fallback_support(self) -> None:
-        ts_content = (ROOT_DIR / "static" / "js" / "api_client.ts").read_text(encoding="utf-8")
-        assert 'typeof data.reply === "string" ? data.reply : undefined' in ts_content
-
     def test_bulk_analyze_favorites_guard_increments_completed(self) -> None:
         api_js = (ROOT_DIR / "static" / "js" / "api.js").read_text(encoding="utf-8")
         guard_match = re.search(

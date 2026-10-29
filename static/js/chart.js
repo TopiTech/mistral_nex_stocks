@@ -463,10 +463,32 @@ async function fetchStockHistoryPayload(
     }
   }
 
-  const timeoutId = setTimeout(
-    () => controller.abort(),
-    CONSTANTS.TIMEOUT.STOCK_HISTORY,
-  );
+  // An internally-induced abort is a timeout, not a user cancellation. Track
+  // why the controller was aborted so callers can still return silently for a
+  // user abort while showing the timeout message for a slow server.
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, CONSTANTS.TIMEOUT.STOCK_HISTORY);
+
+  /**
+   * Apply one history response in data-first order.
+   *
+   * `fetching` is only a status flag: the server can legitimately return a
+   * populated (stale) history while a refresh is running. A payload is usable
+   * whenever history is present; only an empty payload is pending. Returns
+   * null when the caller should poll again.
+   */
+  const applyHistoryResponse = (data) => {
+    if (data?.error) throw new Error(data.error);
+    if (Array.isArray(data?.history) && data.history.length > 0) {
+      return normalizeHistoryData(data.history);
+    }
+    if (data?.fetching) return null;
+    if (data?.stale) return normalizeHistoryData([]);
+    throw new Error("表示可能なヒストリカルデータがありません。");
+  };
 
   const doFetch = async () => {
     let attempts = 0;
@@ -484,24 +506,16 @@ async function fetchStockHistoryPayload(
           { signal: controller.signal },
           { showToast: false },
         );
-        if (data?.error) throw new Error(data.error);
-        if (data?.fetching) {
-          attempts++;
-          if (attempts >= maxAttempts) {
-            throw new Error(
-              "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
-            );
-          }
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
+        const applied = applyHistoryResponse(data);
+        if (applied) return applied;
+        attempts++;
+        if (attempts >= maxAttempts) {
+          throw new Error(
+            "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
+          );
         }
-        if (!data?.history?.length) {
-          if (data?.stale) {
-            return normalizeHistoryData([]);
-          }
-          throw new Error("表示可能なヒストリカルデータがありません。");
-        }
-        return normalizeHistoryData(data.history);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
       } catch (err) {
         if (
           err.name === "AbortError" ||
@@ -523,10 +537,10 @@ async function fetchStockHistoryPayload(
               once: true,
             });
           }
-          const retryTimeoutId = setTimeout(
-            () => retryController.abort(),
-            CONSTANTS.TIMEOUT.STOCK_HISTORY_RETRY,
-          );
+          const retryTimeoutId = setTimeout(() => {
+            timedOut = true;
+            retryController.abort();
+          }, CONSTANTS.TIMEOUT.STOCK_HISTORY_RETRY);
           try {
             const { data: retryData } = await apiFetch(
               fetchUrl,
@@ -535,24 +549,16 @@ async function fetchStockHistoryPayload(
               },
               { showToast: false },
             );
-            if (retryData?.error) throw new Error(retryData.error);
-            if (retryData?.fetching) {
-              attempts++;
-              if (attempts < maxAttempts) {
-                await new Promise((resolve) => setTimeout(resolve, delay));
-                continue;
-              }
-              throw new Error(
-                "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
-              );
+            const retried = applyHistoryResponse(retryData);
+            if (retried) return retried;
+            attempts++;
+            if (attempts < maxAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, delay));
+              continue;
             }
-            if (!retryData?.history?.length) {
-              if (retryData?.stale) {
-                return normalizeHistoryData([]);
-              }
-              throw new Error("表示可能なヒストリカルデータがありません。");
-            }
-            return normalizeHistoryData(retryData.history);
+            throw new Error(
+              "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
+            );
           } finally {
             clearTimeout(retryTimeoutId);
             controller.signal.removeEventListener("abort", abortRetry);
@@ -565,6 +571,18 @@ async function fetchStockHistoryPayload(
 
   try {
     return await doFetch();
+  } catch (err) {
+    if (timedOut && err.name === "AbortError") {
+      // Same shape as fetchWithTimeout's timeout error so the caller can map
+      // it to the existing timeout message instead of treating it as a user
+      // cancellation (which is silent).
+      const timeoutErr = new Error(
+        "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
+      );
+      timeoutErr.name = "TimeoutError";
+      throw timeoutErr;
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutId);
     if (signal) {
@@ -1956,6 +1974,10 @@ async function refreshStockChart(wrapper, period, interval) {
         });
     }
   } catch (e) {
+    if (e.name === "TimeoutError") {
+      showChartError(wrapper, e.message, "error");
+      return;
+    }
     if (e.name === "AbortError" || signal.aborted) {
       return;
     }

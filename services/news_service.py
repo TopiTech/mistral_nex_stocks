@@ -87,6 +87,10 @@ class NewsService:
         """非同期並列でニュース・トレンドを収集し、LLMによる要約を実行して返す"""
         strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
         retrieve_status = {"us": "pending", "jp": "pending", "trends": "pending"}
+        # Per-source trend status. The aggregate ``trends`` status is derived
+        # from the merged result below, so one failed source cannot mark a
+        # non-empty trends section as degraded.
+        trend_source_status = {"us": "pending", "jp": "pending"}
         merged_trends = []
         trends_context = ""
 
@@ -189,8 +193,10 @@ class NewsService:
                         retrieve_status["jp"] = "success" if jp_context else "empty"
                     elif target == "us_trends":
                         us_trends = result if isinstance(result, list) else []
+                        trend_source_status["us"] = "success" if us_trends else "empty"
                     elif target == "jp_trends":
                         jp_trends = result if isinstance(result, list) else []
+                        trend_source_status["jp"] = "success" if jp_trends else "empty"
                 except Exception as fut_exc:
                     logger.warning(
                         "Future result retrieval error target=%s error_type=%s",
@@ -201,8 +207,10 @@ class NewsService:
                         retrieve_status["us"] = "error"
                     elif target == "jp_context":
                         retrieve_status["jp"] = "error"
-                    elif target in ("us_trends", "jp_trends"):
-                        retrieve_status["trends"] = "error"
+                    elif target == "us_trends":
+                        trend_source_status["us"] = "error"
+                    elif target == "jp_trends":
+                        trend_source_status["jp"] = "error"
                     continue
 
             for fut in not_done:
@@ -211,11 +219,10 @@ class NewsService:
                     retrieve_status["us"] = "timeout"
                 elif target == "jp_context":
                     retrieve_status["jp"] = "timeout"
-                elif target in ("us_trends", "jp_trends"):
-                    retrieve_status["trends"] = "timeout"
-
-            if retrieve_status["trends"] == "pending":
-                retrieve_status["trends"] = "success" if (us_trends or jp_trends) else "empty"
+                elif target == "us_trends":
+                    trend_source_status["us"] = "timeout"
+                elif target == "jp_trends":
+                    trend_source_status["jp"] = "timeout"
 
             seen_trends = set()
             for title in list(us_trends) + list(jp_trends):
@@ -228,6 +235,17 @@ class NewsService:
                 if len(merged_trends) >= 12:
                     break
             trends_context = "\n".join(f"- {title}" for title in merged_trends)
+            # Aggregate from what was actually produced: a non-empty merged
+            # list is usable even if one source failed. When nothing usable was
+            # produced, keep the most actionable degradation cause.
+            if merged_trends:
+                retrieve_status["trends"] = "success"
+            elif "timeout" in trend_source_status.values():
+                retrieve_status["trends"] = "timeout"
+            elif "error" in trend_source_status.values():
+                retrieve_status["trends"] = "error"
+            else:
+                retrieve_status["trends"] = "empty"
 
         except Exception as ctx_err:
             logger.warning("News context gather error_type=%s", type(ctx_err).__name__)
@@ -238,6 +256,7 @@ class NewsService:
                 "jp": "error",
                 "trends": "error",
             }
+            trend_source_status = {"us": "error", "jp": "error"}
 
         # H-2: wrap external context (news, trends) in XML/CDATA markers to
         # prevent the LLM from interpreting them as instructions. The system
@@ -417,6 +436,7 @@ class NewsService:
             },
             "trending_raw": merged_trends,
             "retrieve_status": retrieve_status,
+            "trend_source_status": trend_source_status,
         }
 
 

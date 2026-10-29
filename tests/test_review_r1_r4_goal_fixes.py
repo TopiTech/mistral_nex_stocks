@@ -2,6 +2,7 @@
 
 import ctypes
 import os
+import threading
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
@@ -34,11 +35,30 @@ def test_r1_tradingview_client_add_remove_connected_guard():
     assert mock_ws.send.called
 
 
-def test_r3_master_key_update_lock_acquisition():
-    """R3: _master_key_update_lock handles acquisition and release cleanly."""
-    # Run the lock context manager
-    with _master_key_update_lock():
-        assert True
+def test_r3_master_key_update_lock_serializes_across_threads():
+    """R3: a second thread cannot enter while the master-key lock is held."""
+    contender_started = threading.Event()
+    contender_acquired = threading.Event()
+
+    def contender() -> None:
+        contender_started.set()
+        with _master_key_update_lock():
+            contender_acquired.set()
+
+    thread = threading.Thread(target=contender, name="master-key-lock-contender", daemon=True)
+    try:
+        with _master_key_update_lock():
+            thread.start()
+            assert contender_started.wait(5.0), "contender thread did not start"
+            # The contender must remain outside while this thread owns the lock.
+            assert not contender_acquired.wait(0.25), (
+                "second thread acquired _master_key_update_lock while it was held"
+            )
+    finally:
+        if thread.ident is not None:
+            thread.join(timeout=5.0)
+
+    assert contender_acquired.is_set(), "lock was not released to the waiting thread"
 
 
 def test_r3_master_key_update_lock_posix(monkeypatch):

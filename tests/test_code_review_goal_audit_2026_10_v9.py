@@ -161,7 +161,7 @@ def test_embeddings_service_early_break_on_429():
          patch("credential_manager.is_openai_provider", return_value=False), \
          patch("app_state.app_state.market.is_circuit_open", return_value=False), \
          patch("services.ai_service._acquire_mistral_call_slot", return_value=0.0), \
-         patch("services.ai_service._wait_for_rate_limit_slot", return_value=False), \
+         patch("services.ai_service._wait_for_rate_limit_slot", return_value="ready"), \
          patch("app_state.app_state.ai.mark_mistral_429") as mock_mark:
 
         texts = [f"article_{i}" for i in range(10)]

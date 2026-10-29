@@ -184,15 +184,12 @@ class YFinanceProvider(BaseStockProvider):
         # worker) in the same failure bucket.
         circuit_key = history_circuit_key(symbol)
 
-        if m_state.is_circuit_open("yfinance_history", symbol=circuit_key):
-            logger.info("stock-history circuit open symbol=%s", circuit_key)
-            return pd.DataFrame()
-        if m_state.is_yf_rate_limited():
-            logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
-            return pd.DataFrame()
-
         # Speedup: serve a short-lived in-memory copy to avoid duplicate fetches
-        # of the same (symbol, period, interval) within one sync cycle.
+        # of the same (symbol, period, interval) within one sync cycle. This is
+        # deliberately checked *before* the availability gates: a cache hit
+        # performs no network I/O, so an open circuit or a 429 window must not
+        # turn a known-good cached frame into an empty result. The gates still
+        # protect the network fetch below, which is where they are meaningful.
         cache_key = history_short_cache_key(symbol, period, interval)
         try:
             with m_state.yfinance_short_cache_lock:
@@ -209,6 +206,13 @@ class YFinanceProvider(BaseStockProvider):
                 return cached_hist
         except (AttributeError, KeyError, RuntimeError):
             cached_hist = None
+
+        if m_state.is_circuit_open("yfinance_history", symbol=circuit_key):
+            logger.info("stock-history circuit open symbol=%s", circuit_key)
+            return pd.DataFrame()
+        if m_state.is_yf_rate_limited():
+            logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
+            return pd.DataFrame()
 
         t = self.get_ticker(symbol)
         if not t:
@@ -781,10 +785,10 @@ class YFinanceProvider(BaseStockProvider):
     @with_yfinance_retry(max_retries=2, base_delay=1.0, backoff_factor=2.0)
     def get_fast_info(self, symbol: str) -> dict:
         m_state = self._get_market_state()
-        if m_state.is_yf_rate_limited():
-            return {}
         # Speedup: reuse cached fast_info (previous close, currency, etc.) which
-        # rarely changes within a sync cycle.
+        # rarely changes within a sync cycle. Serve it before the rate-limit
+        # gate: a cache hit is not a network call, so a 429 must not discard
+        # known-good metadata. The gate below still blocks the network path.
         cache_key = f"fastinfo_{symbol}"
         try:
             with m_state.yfinance_short_cache_lock:
@@ -793,6 +797,9 @@ class YFinanceProvider(BaseStockProvider):
                 return dict(cached_fast)
         except (AttributeError, RuntimeError):
             cached_fast = None
+
+        if m_state.is_yf_rate_limited():
+            return {}
 
         t = self.get_ticker(symbol)
         if not t:

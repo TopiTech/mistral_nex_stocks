@@ -50,8 +50,7 @@ from routes.stocks.common import (
 )
 from utils.caching import (
     CACHE_FETCHING,
-    _get_cached_value,
-    _has_cached_key,
+    _get_cached_value_if_present,
     clear_cache_prefix,
 )
 from utils.normalization import (
@@ -617,12 +616,11 @@ def api_heatmap() -> Any:
 
     cache_key = f"heatmap_{market}"
 
-    if _has_cached_key(cache_key, CACHE_DURATION_HEATMAP):
-        cached = _get_cached_value(cache_key, CACHE_DURATION_HEATMAP)
-        if cached:
-            if isinstance(cached, dict) and "ok" not in cached:
-                cached = {"ok": True, "success": True, **cached}
-            return jsonify(cached)
+    cached_present, cached = _get_cached_value_if_present(cache_key, CACHE_DURATION_HEATMAP)
+    if cached_present and cached:
+        if isinstance(cached, dict) and "ok" not in cached:
+            cached = {"ok": True, "success": True, **cached}
+        return jsonify(cached)
 
     disk_cached = None
     try:

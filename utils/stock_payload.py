@@ -26,6 +26,7 @@ from utils.market_utils import is_market_open
 from utils.normalization import (
     _fmt,
     _fmt_vol,
+    normalize_history_candle,
     normalize_history_frame,
 )
 from utils.text_utils import _sanitize_error_message
@@ -473,12 +474,12 @@ def _finite_or_none(value, *, allow_negative=True, decimals=None):
 def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
     """Build chart_data and ohlc_data arrays from a DataFrame with MA columns."""
 
-    def _safe_ohlc(val, fallback=0.0):
+    def _finite_or_none(val):
         try:
             f = float(val)
-            return f if math.isfinite(f) else fallback
+            return f if math.isfinite(f) else None
         except (TypeError, ValueError, OverflowError):
-            return fallback
+            return None
 
     recent_df = df.reset_index()
     _DATE_COLUMN_CANDIDATES = ("Date", "date", "timestamp", "Time", "time", "Datetime")
@@ -507,7 +508,7 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
     for i, rd in enumerate(target_records):
         dt = rd.get(date_col)
         ts_ms = dt.timestamp() * 1000 if hasattr(dt, "timestamp") else str(dt)
-        c_val = _safe_ohlc(rd.get("Close"))
+        c_val = _finite_or_none(rd.get("Close"))
 
         try:
             raw_volume = rd.get("Volume", 0)
@@ -520,28 +521,30 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
         except (ValueError, TypeError, OverflowError):
             vol = 0
 
-        ohlc_data.append(
-            {
-                "x": ts_ms,
-                "o": _safe_ohlc(rd.get("Open")),
-                "h": _safe_ohlc(rd.get("High")),
-                "l": _safe_ohlc(rd.get("Low")),
-                "c": c_val,
-                "v": vol,
-            }
+        # A missing OHLC leg is synthesized at the close by the shared writer;
+        # a non-finite leg drops the candle rather than fabricating zeroes.
+        candle = normalize_history_candle(
+            ts_ms,
+            rd.get("Open"),
+            rd.get("High"),
+            rd.get("Low"),
+            c_val,
+            vol,
+            rd.get("MA5"),
+            rd.get("MA25"),
         )
+        if candle is not None:
+            ohlc_data.append(candle)
 
-        if num_records - i <= chart_data_limit:
+        if c_val is not None and c_val > 0 and num_records - i <= chart_data_limit:
             label = dt.strftime("%m/%d") if hasattr(dt, "strftime") else str(dt)
-            ma5_val = _safe_ohlc(rd.get("MA5"), fallback=None)
-            ma25_val = _safe_ohlc(rd.get("MA25"), fallback=None)
             chart.append(
                 {
                     "x": ts_ms,
                     "date": label,
                     "price": c_val,
-                    "ma5": ma5_val,
-                    "ma25": ma25_val,
+                    "ma5": _finite_or_none(rd.get("MA5")),
+                    "ma25": _finite_or_none(rd.get("MA25")),
                 }
             )
     return chart, ohlc_data

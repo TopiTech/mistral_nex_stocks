@@ -866,9 +866,9 @@ class TestCodeReviewGoalFixes:
 
 
 class TestR7RateLimitMaxWaitCap:
-    """R7: _wait_for_rate_limit_slot must poll the shutdown event in bounded
-    chunks so a 429 cooldown cannot hold a request thread for the full 300s
-    backoff. The chunk size is _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC (30s)."""
+    """R7: _wait_for_rate_limit_slot must sleep at most the documented 30s cap
+    and report ``rate_limited`` when the 429 cooldown is longer, so callers can
+    return a retryable error instead of holding a request thread for 300s."""
 
     def _restore_slot_state(self):
         """Reset the Mistral rate-limit slot state so tests are independent."""
@@ -878,7 +878,7 @@ class TestR7RateLimitMaxWaitCap:
         app_state.ai.mistral_last_call_ts = 0.0
         app_state.ai.mistral_429_streak = 0
 
-    def test_r7_short_wait_returns_in_single_chunk(self):
+    def test_r7_short_wait_returns_ready_in_single_chunk(self):
         """A wait that fits within the cap is consumed in a single chunk."""
         from services import ai_service
 
@@ -888,13 +888,12 @@ class TestR7RateLimitMaxWaitCap:
             "app_state.app_state.execution.shutdown_event.wait",
             side_effect=lambda s: chunks.append(s) or False,
         ):
-            aborted = ai_service._wait_for_rate_limit_slot(5.0)
-        assert aborted is False
+            status = ai_service._wait_for_rate_limit_slot(5.0)
+        assert status == "ready"
         assert chunks == [5.0]
 
-    def test_r7_long_429_cooldown_is_polled_in_chunks(self):
-        """A 300s wait is polled in 30s chunks so the shutdown_event can be
-        observed between iterations."""
+    def test_r7_long_cooldown_waits_only_the_cap_then_reports_limited(self):
+        """A 300s cooldown must sleep at most 30s and report rate_limited."""
         import services.ai_service as ai_svc
 
         self._restore_slot_state()
@@ -903,17 +902,25 @@ class TestR7RateLimitMaxWaitCap:
             "app_state.app_state.execution.shutdown_event.wait",
             side_effect=lambda s: chunks.append(s) or False,
         ):
-            aborted = ai_svc._wait_for_rate_limit_slot(300.0)
-        assert aborted is False
-        # R7: every chunk is capped at the 30s bound.
-        assert chunks, "shutdown_event.wait was never called"
-        for chunk in chunks:
-            assert chunk <= 30.0
-        # The cumulative wait equals the requested wait.
-        assert sum(chunks) == 300.0
+            status = ai_svc._wait_for_rate_limit_slot(300.0)
+        assert status == "rate_limited"
+        assert chunks == [ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC]
 
-    def test_r7_shutdown_signal_aborts_in_chunk(self):
-        """If shutdown_event.wait returns True mid-poll, the helper aborts."""
+    def test_r7_exact_cap_wait_is_ready(self):
+        """A cooldown equal to the cap is consumed completely and is ready."""
+        import services.ai_service as ai_svc
+
+        chunks: list[float] = []
+        with patch(
+            "app_state.app_state.execution.shutdown_event.wait",
+            side_effect=lambda s: chunks.append(s) or False,
+        ):
+            status = ai_svc._wait_for_rate_limit_slot(ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
+        assert status == "ready"
+        assert chunks == [ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC]
+
+    def test_r7_shutdown_signal_aborts_at_cap(self):
+        """If shutdown_event.wait returns True, the helper reports shutdown."""
         import services.ai_service as ai_svc
 
         call_count = 0
@@ -924,19 +931,114 @@ class TestR7RateLimitMaxWaitCap:
             return True  # shutdown signaled
 
         with patch("app_state.app_state.execution.shutdown_event.wait", side_effect=fake_wait):
-            aborted = ai_svc._wait_for_rate_limit_slot(120.0)
-        assert aborted is True
+            status = ai_svc._wait_for_rate_limit_slot(120.0)
+        assert status == "shutdown"
         # The first call must observe the cap (not the full 120s).
         assert call_count == 1
 
-    def test_r7_no_wait_returns_false_immediately(self):
-        """A zero wait returns False without calling shutdown_event."""
+    def test_r7_no_wait_returns_ready_immediately(self):
+        """A zero wait returns ready without calling shutdown_event."""
         import services.ai_service as ai_svc
 
         with patch("app_state.app_state.execution.shutdown_event.wait") as mock_wait:
-            aborted = ai_svc._wait_for_rate_limit_slot(0.0)
-        assert aborted is False
+            status = ai_svc._wait_for_rate_limit_slot(0.0)
+        assert status == "ready"
         mock_wait.assert_not_called()
+
+    def test_r7_call_returns_retryable_429_after_long_cooldown(self):
+        """The chat caller must fail retryably instead of calling under cooldown."""
+        import services.ai_service as ai_svc
+
+        client = MagicMock()
+        with (
+            patch("services.ai_service.is_preview_api_key", return_value=False),
+            patch("services.ai_service.is_openai_provider", return_value=False),
+            patch("services.ai_service._resolve_agents_target", return_value=(False, None)),
+            patch(
+                "services.ai_service._get_mistral_model_name",
+                return_value="mistral-small-2603",
+            ),
+            patch("services.ai_service._get_mistral_client", return_value=client),
+            patch("services.ai_service._acquire_mistral_call_slot", return_value=300.0),
+            patch(
+                "app_state.app_state.execution.shutdown_event.wait",
+                return_value=False,
+            ) as mock_wait,
+        ):
+            result = ai_svc.call_mistral_chat(
+                "test-key",
+                [{"role": "user", "content": "hi"}],
+                use_cache=False,
+            )
+
+        assert result["error"]["status_code"] == 429
+        assert mock_wait.call_args.args[0] == ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC
+        client.chat.complete.assert_not_called()
+
+    def test_r7_stream_returns_retryable_429_after_long_cooldown(self):
+        """The stream caller must emit 429 instead of entering the API call."""
+        import services.ai_service as ai_svc
+
+        client = MagicMock()
+        with (
+            patch("services.ai_service.is_preview_api_key", return_value=False),
+            patch("services.ai_service.is_openai_provider", return_value=False),
+            patch(
+                "services.ai_service._get_mistral_model_name",
+                return_value="mistral-small-2603",
+            ),
+            patch("services.ai_service._get_mistral_client", return_value=client),
+            patch("app_state.app_state.market.is_circuit_open", return_value=False),
+            patch(
+                "app_state.app_state.market.get_circuit_state",
+                return_value={"status": "CLOSED"},
+            ),
+            patch("services.ai_service._acquire_mistral_call_slot", return_value=300.0),
+            patch(
+                "app_state.app_state.execution.shutdown_event.wait",
+                return_value=False,
+            ) as mock_wait,
+        ):
+            events = list(
+                ai_svc.stream_mistral_chat(
+                    "test-key", [{"role": "user", "content": "hi"}]
+                )
+            )
+
+        assert events == [
+            {
+                "type": "error",
+                "message": ai_svc._public_mistral_error_message(
+                    Exception("rate limited"), 429
+                ),
+                "status_code": 429,
+            }
+        ]
+        assert mock_wait.call_args.args[0] == ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC
+        client.chat.stream.assert_not_called()
+
+    def test_r7_embeddings_stops_with_partial_result_after_long_cooldown(self):
+        """The best-effort embeddings caller must not start another API batch."""
+        from services import embeddings_service
+
+        client = MagicMock()
+        with (
+            patch("credential_manager.is_openai_provider", return_value=False),
+            patch("services.embeddings_service._get_client", return_value=client),
+            patch("app_state.app_state.market.is_circuit_open", return_value=False),
+            patch("services.ai_service._acquire_mistral_call_slot", return_value=300.0),
+            patch(
+                "app_state.app_state.execution.shutdown_event.wait",
+                return_value=False,
+            ) as mock_wait,
+        ):
+            result = embeddings_service.get_mistral_embeddings_batch(
+                ["conc1-unique-text"], api_key="test-key", batch_size=1
+            )
+
+        assert result == [None]
+        assert mock_wait.call_args.args[0] == 30.0
+        client.embeddings.create.assert_not_called()
 
 
 class TestR2RateLimitSlotReserved:

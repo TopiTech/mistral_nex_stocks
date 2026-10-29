@@ -184,13 +184,13 @@ def _ohlc_frame(n: int) -> pd.DataFrame:
     dates = pd.date_range("2024-01-01", periods=n, freq="D")
     df = pd.DataFrame(
         {
-            "Open": [float(i) + 0.1 for i in range(n)],
-            "High": [float(i) + 0.2 for i in range(n)],
-            "Low": [float(i) - 0.2 for i in range(n)],
-            "Close": [float(i) for i in range(n)],
+            "Open": [float(i) + 1.1 for i in range(n)],
+            "High": [float(i) + 1.2 for i in range(n)],
+            "Low": [float(i) + 0.8 for i in range(n)],
+            "Close": [float(i) + 1.0 for i in range(n)],
             "Volume": [1000 + i for i in range(n)],
-            "MA5": [float(i) + 0.5 for i in range(n)],
-            "MA25": [float(i) + 2.5 for i in range(n)],
+            "MA5": [float(i) + 1.5 for i in range(n)],
+            "MA25": [float(i) + 3.5 for i in range(n)],
         },
         index=dates,
     )
@@ -204,13 +204,13 @@ def test_u12_tail_slice_matches_post_conversion_slice():
     assert len(ohlc) == 365
     assert len(chart) == 100
     # Tail window is rows 35..399, not the head.
-    assert ohlc[0]["c"] == 35.0
-    assert ohlc[-1]["c"] == 399.0
+    assert ohlc[0]["c"] == 36.0
+    assert ohlc[-1]["c"] == 400.0
     assert ohlc[0]["v"] == 1035
     # Chart window is the last 100 of the retained tail.
-    assert chart[0]["price"] == 300.0
-    assert chart[-1]["price"] == 399.0
-    assert chart[0]["ma5"] == 300.5
+    assert chart[0]["price"] == 301.0
+    assert chart[-1]["price"] == 400.0
+    assert chart[0]["ma5"] == 301.5
     assert chart[0]["date"] == "01/01" or isinstance(chart[0]["date"], str)
 
 
@@ -218,7 +218,7 @@ def test_u12_short_and_empty_frames():
     chart, ohlc = _build_chart_ohlc_data(_ohlc_frame(10), chart_data_limit=100)
     assert len(ohlc) == 10
     assert len(chart) == 10
-    assert ohlc[0]["c"] == 0.0
+    assert ohlc[0]["c"] == 1.0
 
     empty = _ohlc_frame(0)
     chart_e, ohlc_e = _build_chart_ohlc_data(empty)

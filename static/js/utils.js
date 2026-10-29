@@ -741,6 +741,44 @@ if (typeof window !== "undefined") {
  * @param {RequestInit} [options]
  * @returns {Promise<Response>}
  */
+function callerAbortError() {
+  const error = new Error("リクエストがキャンセルされました");
+  error.name = "AbortError";
+  return error;
+}
+
+/**
+ * Wait for a shared promise without losing the caller's cancellation.
+ *
+ * The CSRF refresh itself is shared by all concurrent requests, so aborting it
+ * would cancel the refresh for everyone. Race only this caller's wait; the
+ * refresh continues for the other waiters.
+ * @param {Promise<unknown>} promise
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<unknown>}
+ */
+function raceWithCallerAbort(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(callerAbortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(callerAbortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function csrfFetch(url, options = {}) {
   const opts = { ...options };
   const timeoutMs =
@@ -774,7 +812,10 @@ async function csrfFetch(url, options = {}) {
   }
   let response = await fetchWithTimeout(url, opts, timeoutMs);
   if (unsafe && response.status === 400 && (await isCsrfRejection(response))) {
-    const refreshed = await refreshCsrfToken();
+    const refreshed = await raceWithCallerAbort(
+      refreshCsrfToken(),
+      opts.signal,
+    );
     const hasReadableStream =
       typeof globalThis !== "undefined" &&
       typeof globalThis.ReadableStream !== "undefined";

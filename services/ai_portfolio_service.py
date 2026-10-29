@@ -10,6 +10,7 @@ import math
 import os
 import re
 import threading
+import time
 import uuid
 from typing import Any
 
@@ -64,6 +65,12 @@ _HTML_TAG_RE = re.compile(r"<[^>]*>")
 # cannot start two expensive generations or persist duplicate portfolios.
 _AI_GEN_LOCK = threading.Lock()
 _AI_GEN_INFLIGHT: dict[str, threading.Event] = {}
+
+# A waiter may lose the slot to a third request between waking and re-acquiring.
+# Retry that handoff a bounded number of times, all within the historical 180s
+# generation wait budget, before surfacing the storage 503.
+_AI_GEN_HANDOFF_TIMEOUT_SEC = 180.0
+_AI_GEN_HANDOFF_MAX_ATTEMPTS = 3
 
 
 class PortfolioStorageError(RuntimeError):
@@ -358,6 +365,10 @@ def save_custom_ai_portfolio(portfolio: dict[str, Any]) -> bool:
 
             _write_saved_ai_portfolios(portfolios, master_key=master_key)
         return True
+    except PortfolioStorageError:
+        # Typed storage failures carry their own HTTP semantics; the route owns
+        # the 503 response and its single log entry.
+        raise
     except Exception as e:
         logger.error("Failed to save AI portfolio: %s", e)
         return False
@@ -380,6 +391,9 @@ def delete_custom_ai_portfolio(portfolio_id: str) -> bool:
 
             _write_saved_ai_portfolios(new_portfolios, master_key=master_key)
         return True
+    except PortfolioStorageError:
+        # The route owns the 503 response and its single log entry.
+        raise
     except Exception as e:
         logger.error("Failed to delete custom AI portfolio (%s): %s", portfolio_id, e)
         return False
@@ -631,12 +645,22 @@ def _acquire_ai_generation_slot(key: str) -> bool:
         return True
 
 
-def _wait_ai_generation_slot(key: str, timeout: float = 180.0) -> None:
-    """Block until the current generation for ``key`` finishes (or timeout)."""
+def _wait_ai_generation_slot(
+    key: str, timeout: float = _AI_GEN_HANDOFF_TIMEOUT_SEC
+) -> bool:
+    """Block until the current generation for ``key`` finishes (or timeout).
+
+    Returns ``True`` when a generation event was observed and waited on, and
+    ``False`` when the slot was already released before the wait began. The
+    caller uses that distinction to avoid spinning when a third request wins
+    the re-acquisition race.
+    """
     with _AI_GEN_LOCK:
         event = _AI_GEN_INFLIGHT.get(key)
-    if event is not None:
-        event.wait(timeout)
+    if event is None:
+        return False
+    event.wait(timeout)
+    return True
 
 
 def _release_ai_generation_slot(key: str) -> None:
@@ -683,18 +707,31 @@ def generate_ai_portfolio_by_theme(
     # portfolio it persisted instead of starting a second generation.
     if not _acquire_ai_generation_slot(key):
         logger.info("AI portfolio generation in progress for theme/id: %s; waiting", clean_id)
-        _wait_ai_generation_slot(key)
-        saved = _find_saved_ai_portfolio(clean_id, search_theme)
-        if saved is not None:
-            logger.info("Reusing AI portfolio generated concurrently for theme/id: %s", clean_id)
-            return saved
-        # The concurrent request did not persist anything (it may have failed).
-        # Fall back to acquiring generation slot and generating ourselves.
-        logger.warning(
-            "Concurrent generation for theme/id: %s saved nothing; falling back to self-generation",
-            clean_id,
-        )
-        if not _acquire_ai_generation_slot(key):
+        # A third request can win the slot between our event wake-up and the
+        # re-acquisition. Re-check the saved result and retry that handoff a
+        # bounded number of times instead of turning that one race into a 503.
+        deadline = time.monotonic() + _AI_GEN_HANDOFF_TIMEOUT_SEC
+        acquired_after_wait = False
+        for _attempt in range(_AI_GEN_HANDOFF_MAX_ATTEMPTS):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                break
+            waited = _wait_ai_generation_slot(key, timeout=remaining)
+            saved = _find_saved_ai_portfolio(clean_id, search_theme)
+            if saved is not None:
+                logger.info(
+                    "Reusing AI portfolio generated concurrently for theme/id: %s", clean_id
+                )
+                return saved
+            if _acquire_ai_generation_slot(key):
+                acquired_after_wait = True
+                break
+            if not waited:
+                # No event existed at the observed instant (the owner released
+                # between our lookup and wait). Yield briefly so a concurrent
+                # owner can publish its event rather than spinning.
+                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        if not acquired_after_wait:
             logger.warning(
                 "Could not acquire generation slot for theme/id: %s after concurrent failure",
                 clean_id,

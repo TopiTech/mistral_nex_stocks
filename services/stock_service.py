@@ -25,13 +25,23 @@ from utils.caching import (
     history_short_payload_cache_key,
 )
 from utils.market_utils import safe_get_ticker
-from utils.normalization import history_circuit_key, normalize_history_frame
+from utils.normalization import (
+    history_circuit_key,
+    normalize_history_candle,
+    normalize_history_frame,
+    sanitize_history_payload,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _finite_float(value, default: float | None = 0.0) -> float | None:
-    """Convert an external numeric value without allowing NaN/Inf downstream."""
+def _finite_float(value, default: float | None = None) -> float | None:
+    """Convert an external numeric value without allowing NaN/Inf downstream.
+
+    The default is ``None`` on purpose: a missing/non-finite number must never
+    silently become ``0.0``.  Callers that have a documented fallback (for
+    example the synthetic close price) pass it explicitly.
+    """
     if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
         return default
     try:
@@ -49,6 +59,28 @@ def _history_payload_short_cache_key(symbol: str, period: str, interval: str = "
 def _history_short_cache_key(symbol: str, period: str, interval: str) -> str:
     """Backward-compatible alias for :func:`utils.caching.history_short_cache_key`."""
     return history_short_cache_key(symbol, period, interval)
+
+
+def _history_unavailable_payload(
+    symbol: str, market: str, period: str, fetch_interval: str
+) -> dict:
+    """Return the canonical "no usable bars" payload.
+
+    Used both when the upstream frame is empty and when every bar is rejected
+    by :func:`normalize_history_candle`; the two cases are indistinguishable to
+    the client, and a filtered-to-empty series must not be cached as success.
+    """
+    circuit_key = history_circuit_key(symbol, market)
+    is_transient = app_state.market.is_yf_rate_limited() or app_state.market.is_circuit_open(
+        "yfinance_history", symbol=circuit_key
+    )
+    return {
+        "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
+        "symbol": symbol,
+        "interval_used": fetch_interval,
+        "period_requested": period,
+        "transient": is_transient,
+    }
 
 
 @with_yfinance_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
@@ -154,10 +186,23 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         with app_state.yfinance_short_cache_lock:
             cached_short = app_state.yfinance_short_cache.get(payload_cache_key)
         if isinstance(cached_short, dict):
-            # Return an isolated payload on cache hits as well.  A shallow
-            # copy would still share the mutable ``history`` list with the
-            # cache and let a response consumer poison subsequent requests.
-            return copy.deepcopy(cached_short)
+            # Revalidate on read: entries written by an older build may contain
+            # the former 0.0-OHLC candles.  On a hit, ``sanitize_history_payload``
+            # already returns an isolated deep copy (no shared history list).
+            sanitized_cached = sanitize_history_payload(cached_short)
+            if sanitized_cached is not None:
+                # The response field reports the caller's request, not the
+                # adjusted period used internally; an entry written by an
+                # older build may still carry the adjusted value.
+                sanitized_cached["period_requested"] = period
+                return sanitized_cached
+            logger.warning(
+                "Discarding unusable cached history payload key=%s symbol=%s",
+                payload_cache_key,
+                symbol,
+            )
+            with app_state.yfinance_short_cache_lock:
+                app_state.yfinance_short_cache.pop(payload_cache_key, None)
 
         t = safe_get_ticker(symbol)
         if not t:
@@ -174,13 +219,18 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         fetch_interval = requested_interval
         orig_period = period
         orig_interval = requested_interval
+        # The period passed to yfinance may be adjusted for interval
+        # compatibility. Keep the caller's value in ``period`` so
+        # ``period_requested``, the payload cache key, and error payloads all
+        # describe the request; only the fetch uses ``fetch_period``.
+        fetch_period = period
         # yfinance period vs interval compatibility adjustments
         if fetch_interval in ["1m", "2m"] and period not in ["1d", "5d"]:
-            period = "5d"
+            fetch_period = "5d"
         elif fetch_interval in ["5m", "15m", "30m"] and period in ["1y", "2y", "5y", "max"]:
-            period = "1mo"
+            fetch_period = "1mo"
         elif fetch_interval in ["60m", "1h"] and period in ["5y", "max"]:
-            period = "2y"
+            fetch_period = "2y"
 
         # MA25 計算のために日足では十分な期間を拡張して取得する
         extended_period_map = {
@@ -191,39 +241,42 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
             "2y": "5y",
             "5y": "10y",
         }
-        extended_period = period
-        if fetch_interval == "1d" and period in extended_period_map:
-            extended_period = extended_period_map[period]
+        extended_period = fetch_period
+        if fetch_interval == "1d" and fetch_period in extended_period_map:
+            extended_period = extended_period_map[fetch_period]
 
         hist = _history_with_timeout(extended_period, fetch_interval, symbol, market)
 
         # フォールバック 1: 1d/5m または指定足が失敗した場合のフォールバック
-        if hist.empty and period == "1d" and fetch_interval != "1d":
+        if hist.empty and fetch_period == "1d" and fetch_interval != "1d":
             logger.info(
-                "Fallback 1 for %s: %s/%s failed, trying 1d/1d", symbol, period, fetch_interval
+                "Fallback 1 for %s: %s/%s failed, trying 1d/1d",
+                symbol,
+                fetch_period,
+                fetch_interval,
             )
             hist = _history_with_timeout("1d", "1d", symbol, market)
             fetch_interval = "1d"
 
         # フォールバック 2: 空またはデータが少なすぎる場合 → 5d/1d を試す
-        if (hist.empty or len(hist) < 1) and period in ["1d", "5d"]:
+        if (hist.empty or len(hist) < 1) and fetch_period in ["1d", "5d"]:
             logger.info("%s: trying 5d/1d", symbol)
             hist = _history_with_timeout("5d", "1d", symbol, market)
             fetch_interval = "1d"
 
         # フォールバック 3: スクレイピング / API 代替手段
-        if hist.empty and period == "1d":
+        if hist.empty and fetch_period == "1d":
             logger.info("%s: all yfinance history fetches failed, trying fallback provider", symbol)
             fallback_quote = app_state.fallback_provider.get_latest_quote(symbol)
             if fallback_quote:
                 close_px = _finite_float(fallback_quote.get("regularMarketPrice"), default=None)
                 if close_px is not None:
                     # Scrapers return OHLC=None when unknown (they never fake a
-                    # previous close). None/NaN would later collapse to 0.0 in
-                    # _finite_float and render — and persist to the disk cache —
-                    # a bogus "0-yen open" candle, so substitute the close for
-                    # the bar. All-or-nothing keeps the candle well-formed
-                    # (H >= max(O, C), L <= min(O, C)).
+                    # previous close). A partial bar used to become a bogus
+                    # "0-yen open" candle; the candle writer now drops
+                    # non-finite legs, but substituting the close keeps this
+                    # known-good quote visible. All-or-nothing keeps the candle
+                    # well-formed (H >= max(O, C), L <= min(O, C)).
                     bar = [
                         _finite_float(fallback_quote.get("regularMarketOpen"), default=None),
                         _finite_float(fallback_quote.get("regularMarketDayHigh"), default=None),
@@ -251,18 +304,7 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
                     fetch_interval = "1d"
 
         if hist.empty:
-            circuit_key = history_circuit_key(symbol, market)
-            is_transient = (
-                app_state.market.is_yf_rate_limited()
-                or app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)
-            )
-            return {
-                "error": "データが見つかりませんでした。銘柄が上場廃止されているか、選択した期間のデータが存在しない可能性があります。",
-                "symbol": symbol,
-                "interval_used": fetch_interval,
-                "period_requested": period,
-                "transient": is_transient,
-            }
+            return _history_unavailable_payload(symbol, market, period, fetch_interval)
 
         # MA計算 (日足の場合のみ)
         # 拡張取得した全データで MA を計算するため NaN になる先頭行が減る
@@ -281,16 +323,20 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
                 "2y": pd.DateOffset(years=2),
                 "5y": pd.DateOffset(years=5),
             }
-            if extended_period != period and period in period_offset_map:
-                cutoff = hist.index[-1] - period_offset_map[period]
+            if extended_period != fetch_period and fetch_period in period_offset_map:
+                cutoff = hist.index[-1] - period_offset_map[fetch_period]
                 hist = hist[hist.index >= cutoff]
 
         timestamps = [int(dt.timestamp() * 1000) for dt in hist.index]
-        opens = hist["Open"].tolist() if "Open" in hist.columns else [0.0] * len(hist)
-        highs = hist["High"].tolist() if "High" in hist.columns else [0.0] * len(hist)
-        lows = hist["Low"].tolist() if "Low" in hist.columns else [0.0] * len(hist)
-        closes = hist["Close"].tolist() if "Close" in hist.columns else [0.0] * len(hist)
-        volumes = hist["Volume"].tolist() if "Volume" in hist.columns else [0.0] * len(hist)
+        # A missing OHLC column is passed as None and becomes a flat bar at the
+        # close.  A present-but-non-finite value stays NaN/Inf and is rejected
+        # by the candle writer, so corrupt market data is dropped rather than
+        # converted into a fabricated 0.0 candle.
+        opens = hist["Open"].tolist() if "Open" in hist.columns else [None] * len(hist)
+        highs = hist["High"].tolist() if "High" in hist.columns else [None] * len(hist)
+        lows = hist["Low"].tolist() if "Low" in hist.columns else [None] * len(hist)
+        closes = hist["Close"].tolist() if "Close" in hist.columns else [None] * len(hist)
+        volumes = hist["Volume"].tolist() if "Volume" in hist.columns else [None] * len(hist)
 
         ma5s = hist["MA5"].tolist() if "MA5" in hist.columns else [None] * len(hist)
         ma25s = hist["MA25"].tolist() if "MA25" in hist.columns else [None] * len(hist)
@@ -299,23 +345,28 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         for ts, o, h, low_val, c, v, ma5, ma25 in zip(
             timestamps, opens, highs, lows, closes, volumes, ma5s, ma25s, strict=True
         ):
-            volume_float = _finite_float(v, default=None)
-            vol = int(volume_float) if volume_float is not None else 0
-            d = {
-                "x": ts,
-                "o": _finite_float(o),
-                "h": _finite_float(h),
-                "l": _finite_float(low_val),
-                "c": _finite_float(c),
-                "v": vol,
-            }
-            ma5_value = _finite_float(ma5, default=None)
-            if ma5_value is not None:
-                d["ma5"] = ma5_value
-            ma25_value = _finite_float(ma25, default=None)
-            if ma25_value is not None:
-                d["ma25"] = ma25_value
-            data_list.append(d)
+            candle = normalize_history_candle(ts, o, h, low_val, c, v, ma5, ma25)
+            if candle is None:
+                logger.warning(
+                    "Dropping unusable history candle symbol=%s x=%s o=%r h=%r l=%r c=%r",
+                    symbol,
+                    ts,
+                    o,
+                    h,
+                    low_val,
+                    c,
+                )
+                continue
+            data_list.append(candle)
+
+        if not data_list:
+            logger.warning(
+                "All history candles were unusable symbol=%s period=%s interval=%s",
+                symbol,
+                fetch_period,
+                fetch_interval,
+            )
+            return _history_unavailable_payload(symbol, market, period, fetch_interval)
 
         # Build the result payload from data_list
         result = {
@@ -351,6 +402,19 @@ def fetch_history_async_task(
     circuit_key = history_circuit_key(symbol, market)
     try:
         res = fetch_history_sync_impl(symbol, market, period, interval=interval)
+        if isinstance(res, dict) and "error" not in res:
+            # Final choke point before both the short-lived and persistent
+            # caches: a producer added later cannot persist an invalid candle.
+            sanitized = sanitize_history_payload(res)
+            if sanitized is None:
+                logger.warning(
+                    "History produced no usable candles; refusing to cache symbol=%s period=%s",
+                    symbol,
+                    period,
+                )
+                res = _history_unavailable_payload(symbol, market, period, interval)
+            else:
+                res = sanitized
         probe_success = isinstance(res, dict) and "error" not in res
         if isinstance(res, dict) and "error" not in res:
             _set_cached_value(cache_key, res, duration)

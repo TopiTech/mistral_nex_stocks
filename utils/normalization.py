@@ -1,7 +1,9 @@
+import copy
 import logging
 import math
 import re
 import unicodedata
+from typing import Any
 
 import pandas as pd
 
@@ -201,6 +203,118 @@ def _fmt_vol(v):
         return None
 
 
+def _finite_number(value: Any) -> float | None:
+    """Return a finite float, or None for missing/bool/NaN/Inf/unparseable."""
+    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def normalize_history_candle(
+    timestamp: object,
+    open_value: object,
+    high_value: object,
+    low_value: object,
+    close_value: object,
+    volume: object = None,
+    ma5: object = None,
+    ma25: object = None,
+) -> dict[str, float | int] | None:
+    """Build one JSON-safe OHLCV candle, or return None when it is unusable.
+
+    This is the single writer for the history-candle contract.  All producers
+    (the yfinance serializer, fallback synthesis, and cache revalidation) must
+    use it so a non-finite value can never become a fabricated ``0.0`` candle.
+
+    Rules:
+    - ``x`` and ``c`` must be finite; ``c`` must be positive.
+    - ``o``/``h``/``l`` may be ``None`` (the source omitted the column); a
+      missing leg is filled with the close, which keeps the candle well-formed.
+    - A non-finite or non-positive ``o``/``h``/``l`` is corrupt data, not a
+      missing value: the whole candle is dropped.  A high below max(open,
+      close) or a low above min(open, close) is equally impossible and dropped.
+    - Volume is optional; a negative/non-finite volume becomes 0.
+    """
+    ts = _finite_number(timestamp)
+    close = _finite_number(close_value)
+    if ts is None or close is None or close <= 0:
+        return None
+
+    def _ohlc(value: object) -> float | None:
+        if value is None:
+            return close
+        numeric = _finite_number(value)
+        return numeric if numeric is not None and numeric > 0 else None
+
+    open_price = _ohlc(open_value)
+    high_price = _ohlc(high_value)
+    low_price = _ohlc(low_value)
+    if open_price is None or high_price is None or low_price is None:
+        return None
+    if high_price < max(open_price, close) or low_price > min(open_price, close):
+        return None
+
+    volume_value = _finite_number(volume)
+    candle: dict[str, float | int] = {
+        "x": int(ts),
+        "o": open_price,
+        "h": high_price,
+        "l": low_price,
+        "c": close,
+        "v": int(volume_value) if volume_value is not None and volume_value >= 0 else 0,
+    }
+    for key, value in (("ma5", ma5), ("ma25", ma25)):
+        moving_average = _finite_number(value)
+        if moving_average is not None:
+            candle[key] = moving_average
+    return candle
+
+
+def sanitize_history_payload(payload: object) -> dict[str, Any] | None:
+    """Return a copy of a history payload containing only valid candles.
+
+    Used at every cache read and write boundary so a payload persisted by an
+    older build (with non-finite OHLC collapsed to zero) cannot be served or
+    crash a consumer.  ``None`` means the payload is not a usable success
+    payload and the caller should refetch instead of serving it.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("error"):
+        return copy.deepcopy(payload)
+
+    history = payload.get("history")
+    if not isinstance(history, list) or not history:
+        return None
+
+    clean_history: list[dict[str, float | int]] = []
+    for bar in history:
+        if not isinstance(bar, dict):
+            continue
+        candle = normalize_history_candle(
+            bar.get("x"),
+            bar.get("o"),
+            bar.get("h"),
+            bar.get("l"),
+            bar.get("c"),
+            bar.get("v"),
+            bar.get("ma5"),
+            bar.get("ma25"),
+        )
+        if candle is not None:
+            clean_history.append(candle)
+
+    if not clean_history:
+        return None
+    sanitized = copy.deepcopy(payload)
+    sanitized["history"] = clean_history
+    return sanitized
+
+
 def normalize_history_frame(hist, inplace=False):
     """
     データフレームを正規化：インデックスを DatetimeIndex に変換、Close 列をチェック
@@ -232,9 +346,13 @@ def normalize_history_frame(hist, inplace=False):
         # A NaT index reaches ``Timestamp.timestamp()`` in both the chart and
         # history serializers and can abort an otherwise usable response.
         # Treat it like a missing close value at the normalization boundary.
+        # Non-finite closes (not just NaN) must also be removed here: the
+        # candle writer rejects them, and a frame full of them would otherwise
+        # look non-empty and defer the failure to the serializer.  Zero and
+        # negative closes stay in the frame on purpose: ``build_stock_payload``
+        # uses them to reject an unusable quote and its contract is tested.
         frame = frame[frame.index.notna()]
-        frame = frame.dropna(subset=["Close"])
-        return frame
+        return frame[frame["Close"].map(lambda value: _finite_number(value) is not None)]
     except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
         logger.exception("normalize_history_frame error")
         return pd.DataFrame()

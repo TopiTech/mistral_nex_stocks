@@ -324,17 +324,17 @@ class TestBuildChartOhlcData(unittest.TestCase):
         self.assertGreater(len(ohlc), 0)
 
     def test_nonfinite_ohlc_values_are_json_safe(self):
-        """NaN/Inf from a provider must not reach the chart JSON payload."""
-        dates = pd.date_range("2026-01-01", periods=2)
+        """NaN/Inf OHLC bars are omitted, never coerced to a 0.0 candle."""
+        dates = pd.date_range("2026-01-01", periods=3)
         df = pd.DataFrame(
             {
-                "Open": [100.0, float("inf")],
-                "High": [float("nan"), 105.0],
-                "Low": [95.0, float("-inf")],
-                "Close": [100.0, 102.0],
-                "Volume": [float("inf"), 1500],
-                "MA5": [float("inf"), float("nan")],
-                "MA25": [100.0, float("-inf")],
+                "Open": [100.0, float("inf"), 110.0],
+                "High": [float("nan"), 105.0, 115.0],
+                "Low": [95.0, float("-inf"), 105.0],
+                "Close": [100.0, 102.0, 110.0],
+                "Volume": [float("inf"), 1500, 2000],
+                "MA5": [float("inf"), float("nan"), 100.0],
+                "MA25": [100.0, float("-inf"), 105.0],
             },
             index=dates,
         )
@@ -342,13 +342,22 @@ class TestBuildChartOhlcData(unittest.TestCase):
         chart, ohlc = _build_chart_ohlc_data(df)
 
         json.dumps({"chart": chart, "ohlc": ohlc}, allow_nan=False)
-        for row in ohlc:
-            self.assertEqual(row["v"], 0 if row["x"] == ohlc[0]["x"] else 1500)
-            for key in ("o", "h", "l", "c"):
-                self.assertTrue(math.isfinite(row[key]))
+        # The two corrupt OHLC bars are gone; the valid close points remain.
+        self.assertEqual(len(chart), 3)
+        self.assertEqual(len(ohlc), 1)
+        self.assertEqual(ohlc[0]["o"], 110.0)
+        self.assertEqual(ohlc[0]["h"], 115.0)
+        self.assertEqual(ohlc[0]["l"], 105.0)
+        self.assertEqual(ohlc[0]["c"], 110.0)
+        self.assertEqual(ohlc[0]["v"], 2000)
+        for key in ("o", "h", "l", "c"):
+            self.assertTrue(math.isfinite(ohlc[0][key]))
+            self.assertGreater(ohlc[0][key], 0)
         self.assertIsNone(chart[0]["ma5"])
         self.assertIsNone(chart[1]["ma5"])
         self.assertIsNone(chart[1]["ma25"])
+        self.assertEqual(chart[2]["ma5"], 100.0)
+        self.assertEqual(chart[2]["ma25"], 105.0)
 
 
 class TestBuildPortfolioMetrics(unittest.TestCase):

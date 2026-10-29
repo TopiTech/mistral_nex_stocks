@@ -922,15 +922,15 @@ def _stream_chat_response(
                 elif event["type"] == "error":
                     status_code = int(event.get("status_code") or 0)
                     raw_message = str(event.get("message") or "Unknown stream error")
-                    detail = str(event.get("detail") or "")
                     with stream_state_lock:
                         stream_error = RuntimeError(raw_message)
+                    # The provider event is deliberately message+status only;
+                    # the HTTP layer never reads or forwards a raw body field.
                     app_logger.warning(
-                        "Chat stream API error id=%s status=%s message=%s detail=%s",
+                        "Chat stream API error id=%s status=%s message=%s",
                         request_id,
                         status_code,
                         raw_message,
-                        detail,
                     )
                     if status_code == 401:
                         friendly_message = (

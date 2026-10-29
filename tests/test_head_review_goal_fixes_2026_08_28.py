@@ -98,21 +98,6 @@ class TestR1CacheInvalidation(unittest.TestCase):
         self.assertIsNone(app_state.stock_disk_cache.get("info_disk_MSFT"))
 
 
-class TestR2ApiClientCsrfLogic(unittest.TestCase):
-    """R2: Verify api_client logic via inspection of compiled api_client.js."""
-
-    def test_r2_compiled_client_csrf_condition(self):
-        """api_client.js must not check errCode 1002 or 1003 for CSRF, but check details.reason."""
-        from pathlib import Path
-
-        client_js_path = Path("static/js/api_client.js")
-        content = client_js_path.read_text(encoding="utf-8")
-        self.assertNotIn("errCode === 1002", content)
-        self.assertNotIn("errCode === 1003", content)
-        self.assertIn("errReason", content)
-        self.assertIn("/csrf token/i.test(errReason)", content)
-
-
 class TestR3CryptoFailClosed(unittest.TestCase):
     """R3: Test fail-closed decryption on non-Windows platforms and unknown schemes."""
 

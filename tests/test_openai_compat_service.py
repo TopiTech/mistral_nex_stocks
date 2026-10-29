@@ -126,7 +126,9 @@ def test_stream_openai_chat_401_error():
     """Test stream_openai_chat yields structured error on HTTP 401."""
     mock_resp = MagicMock()
     mock_resp.status_code = 401
-    mock_resp.text = json.dumps({"error": {"message": "Missing Authentication header"}})
+    mock_resp.text = json.dumps(
+        {"error": {"message": "Missing Authentication header sk-live-secret-value"}}
+    )
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("httpx.Client.stream", return_value=mock_resp):
@@ -142,7 +144,11 @@ def test_stream_openai_chat_401_error():
     assert err["type"] == "error"
     assert err["status_code"] == 401
     assert "認証に失敗" in err["message"]
-    assert "Missing Authentication header" in err["detail"]
+    # SEC-2: the upstream body (and any key-looking token in it) must never
+    # ride along in the stream event consumed by the HTTP layer.
+    assert "detail" not in err
+    assert "sk-live-secret-value" not in json.dumps(err)
+    assert "Missing Authentication header" not in json.dumps(err)
 
 
 def test_call_openai_chat_plain_text():

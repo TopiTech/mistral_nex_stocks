@@ -124,10 +124,10 @@ def test_fetch_history_nonfinite_provider_values_are_json_safe():
     history = pd.DataFrame(
         {
             "Open": [100.0, float("inf")],
-            "High": [float("nan"), 105.0],
+            "High": [105.0, float("nan")],
             "Low": [95.0, float("-inf")],
             "Close": [100.0, 102.0],
-            "Volume": [float("inf"), 1500],
+            "Volume": [1000, 1500],
         },
         index=index,
     )
@@ -140,11 +140,12 @@ def test_fetch_history_nonfinite_provider_values_are_json_safe():
 
     assert "error" not in result, result
     json.dumps(result, allow_nan=False)
-    for row in result["history"]:
-        for key in ("o", "h", "l", "c"):
-            assert math.isfinite(row[key])
-    assert result["history"][0]["v"] == 0
-    assert result["history"][1]["v"] == 1500
+    # The corrupt second bar must be dropped, not turned into a 0.0 candle.
+    assert len(result["history"]) == 1
+    for key in ("o", "h", "l", "c"):
+        assert math.isfinite(result["history"][0][key])
+        assert result["history"][0][key] > 0
+    assert result["history"][0]["v"] == 1000
 
 
 def test_fallback_providers_use_session():

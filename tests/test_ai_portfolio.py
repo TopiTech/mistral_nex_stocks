@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from services.ai_portfolio_service import (
     DEFAULT_PRESET_CONFIGS,
+    PortfolioStorageError,
     delete_custom_ai_portfolio,
     generate_ai_portfolio_by_theme,
     load_saved_ai_portfolios,
@@ -297,6 +298,124 @@ def test_save_and_delete_custom_ai_portfolio(tmp_path):
 
         assert delete_custom_ai_portfolio("custom-test-123") is True
         assert len(load_saved_ai_portfolios()) == 0
+
+
+def test_save_custom_ai_portfolio_preserves_storage_error(tmp_path):
+    """A corrupt/undecryptable store must not be flattened to a generic False."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    with (
+        patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage),
+        patch(
+            "services.ai_portfolio_service._write_saved_ai_portfolios",
+            side_effect=PortfolioStorageError("store unavailable"),
+        ),
+    ):
+        with pytest.raises(PortfolioStorageError, match="store unavailable"):
+            save_custom_ai_portfolio(
+                {
+                    "id": "storage-fail",
+                    "title": "Storage failure",
+                    "items": [
+                        {
+                            "symbol": "AAPL",
+                            "market": "us",
+                            "weight_pct": 100.0,
+                            "target_price": 200.0,
+                        }
+                    ],
+                }
+            )
+
+
+def test_delete_custom_ai_portfolio_preserves_storage_error(tmp_path):
+    """A read failure during delete must reach the caller, not look like not-found."""
+    test_storage = tmp_path / "ai_portfolios.json"
+    with (
+        patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage),
+        patch(
+            "services.ai_portfolio_service._load_saved_ai_portfolios_strict",
+            side_effect=PortfolioStorageError("store unreadable"),
+        ),
+    ):
+        with pytest.raises(PortfolioStorageError, match="store unreadable"):
+            delete_custom_ai_portfolio("storage-fail")
+
+
+def _write_undecryptable_portfolio_store(path: Path) -> bytes:
+    path.write_text(
+        json.dumps({"scheme": "fernet", "value": "garbage-not-a-fernet-token"}),
+        encoding="utf-8",
+    )
+    return path.read_bytes()
+
+
+def test_api_save_maps_storage_failure_to_503(tmp_path):
+    """The real service→route path must map an undecryptable store to 503."""
+    from app import app
+
+    storage = tmp_path / "ai_portfolios.json"
+    original_bytes = _write_undecryptable_portfolio_store(storage)
+    original_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", storage),
+        ):
+            response = app.test_client().post(
+                "/api/ai-portfolio/save",
+                json={
+                    "portfolio": {
+                        "id": "storage-fail",
+                        "title": "Storage failure",
+                        "items": [
+                            {
+                                "symbol": "AAPL",
+                                "market": "us",
+                                "weight_pct": 100.0,
+                                "target_price": 200.0,
+                            }
+                        ],
+                    }
+                },
+            )
+        assert response.status_code == 503
+        body = response.get_json()
+        assert body["ok"] is False
+        assert body["error_code"] == 1203
+        assert "保存" in body["message"] or "保存" in body["details"]["reason"]
+        assert body["details"]["error_type"] == "PortfolioStorageError"
+        assert storage.read_bytes() == original_bytes
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = original_csrf
+
+
+def test_api_delete_maps_storage_failure_to_503_not_404(tmp_path):
+    """A real unreadable store must not be reported as a missing portfolio."""
+    from app import app
+
+    storage = tmp_path / "ai_portfolios.json"
+    original_bytes = _write_undecryptable_portfolio_store(storage)
+    original_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        with (
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", storage),
+        ):
+            response = app.test_client().post(
+                "/api/ai-portfolio/custom",
+                json={"id": "storage-fail"},
+            )
+        assert response.status_code == 503
+        body = response.get_json()
+        assert body["ok"] is False
+        assert body["error_code"] == 1203
+        assert "削除" in body["message"] or "削除" in body["details"]["reason"]
+        assert body["details"]["error_type"] == "PortfolioStorageError"
+        assert storage.read_bytes() == original_bytes
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = original_csrf
 
 
 def test_portfolio_transaction_resolves_master_key_before_config_lock(tmp_path):
@@ -1648,8 +1767,12 @@ def test_save_and_delete_refuse_to_replace_undecryptable_database(tmp_path):
     )
     original_bytes = test_storage.read_bytes()
     with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_storage):
-        assert save_custom_ai_portfolio({"id": "new", "title": "New", "items": []}) is False
-        assert delete_custom_ai_portfolio("old") is False
+        # The typed failure must reach the caller so the route can answer 503;
+        # a plain False would be indistinguishable from "not found" / a 500.
+        with pytest.raises(PortfolioStorageError):
+            save_custom_ai_portfolio({"id": "new", "title": "New", "items": []})
+        with pytest.raises(PortfolioStorageError):
+            delete_custom_ai_portfolio("old")
     assert test_storage.read_bytes() == original_bytes
 
 
@@ -1972,8 +2095,8 @@ def test_generate_ai_portfolio_concurrent_failure_fallback_self_generation(tmp_p
         aps._AI_GEN_INFLIGHT.clear()
 
 
-def test_generate_ai_portfolio_concurrent_failure_raises_503_storage_error():
-    """When concurrent generation fails to persist and retry slot cannot be acquired, raise PortfolioStorageError with status_code 503."""
+def test_generate_ai_portfolio_concurrent_failure_raises_503_after_bounded_handoff():
+    """After bounded handoff retries, a missing saved result still raises 503."""
     import threading
 
     from services import ai_portfolio_service as aps
@@ -1986,11 +2109,45 @@ def test_generate_ai_portfolio_concurrent_failure_raises_503_storage_error():
 
         with (
             patch("services.ai_portfolio_service._find_saved_ai_portfolio", return_value=None),
-            patch("services.ai_portfolio_service._acquire_ai_generation_slot", side_effect=[False, False]),
+            patch(
+                "services.ai_portfolio_service._acquire_ai_generation_slot",
+                side_effect=[False] * (aps._AI_GEN_HANDOFF_MAX_ATTEMPTS + 1),
+            ),
         ):
             with pytest.raises(aps.PortfolioStorageError) as exc_info:
                 aps.generate_ai_portfolio_by_theme(theme)
             assert exc_info.value.status_code == 503
+    finally:
+        aps._AI_GEN_INFLIGHT.clear()
+
+
+def test_generate_ai_portfolio_handoff_retries_when_third_request_wins(tmp_path):
+    """A waiter that loses the post-wake re-acquire race retries instead of 503."""
+    import threading
+
+    from services import ai_portfolio_service as aps
+
+    theme = "並行ハンドオフ再試行テーマ"
+    test_storage = tmp_path / "ai_portfolios_handoff.json"
+    try:
+        event = threading.Event()
+        aps._AI_GEN_INFLIGHT[theme] = event
+        event.set()
+
+        with (
+            patch.object(aps, "_find_saved_ai_portfolio", return_value=None),
+            patch.object(
+                aps,
+                "_acquire_ai_generation_slot",
+                side_effect=[False, False, True],
+            ) as acquire_mock,
+            patch.object(aps, "AI_PORTFOLIO_STORAGE_FILE", test_storage),
+            patch.object(aps, "get_mistral_api_key", return_value=""),
+        ):
+            result = aps.generate_ai_portfolio_by_theme(theme)
+
+        assert result["items"], result
+        assert acquire_mock.call_count == 3
     finally:
         aps._AI_GEN_INFLIGHT.clear()
 

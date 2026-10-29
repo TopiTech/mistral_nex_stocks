@@ -2,8 +2,7 @@
 Tests for API client build verification and frontend real-time / stream fixes.
 
 Verifies:
-1. TASK-09: api_client.ts / api_client.js uses this.resolveURL("/csrf-token")
-   and frontend build verification script passes.
+1. The compiled api_client.js matches TypeScript and exposes only the SSE surface.
 2. TASK-10: static/js/api.js buildStreamUrl aborts stream connection (returns null)
    on SSE ticket fetch failure or invalid ticket.
 3. TASK-11: static/js/realtime_client.js does not check cached.ptsElements.length === 0
@@ -48,19 +47,67 @@ def test_api_client_build_matches_generated() -> None:
     assert "matches the TypeScript output" in res.stdout
 
 
-def test_api_client_csrf_uses_resolve_url() -> None:
-    """Ensure CSRF token refresh uses this.resolveURL('/csrf-token') instead of hardcoded '/api/csrf-token'."""
-    ts_file = ROOT_DIR / "static" / "js" / "api_client.ts"
-    js_file = ROOT_DIR / "static" / "js" / "api_client.js"
+def test_api_client_exposes_only_the_sse_surface() -> None:
+    """The compiled client is an SSE client; REST transport has one owner (api.js).
 
-    ts_content = ts_file.read_text(encoding="utf-8")
-    js_content = js_file.read_text(encoding="utf-8")
+    ``APIClient`` used to expose a second, unused fetch/retry/CSRF stack. This
+    loads the real generated artifact and asserts the dead transport is gone
+    while the live SSE surface and error class remain.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to verify the generated API client")
 
-    assert 'fetch(this.resolveURL("/csrf-token")' in ts_content
-    assert 'fetch("/api/csrf-token"' not in ts_content
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
 
-    assert 'fetch(this.resolveURL("/csrf-token")' in js_content
-    assert 'fetch("/api/csrf-token"' not in js_content
+const source = fs.readFileSync(
+  path.join(process.cwd(), "static", "js", "api_client.js"),
+  "utf8",
+);
+const context = {
+  console,
+  setTimeout,
+  clearTimeout,
+  setInterval,
+  clearInterval,
+  EventSource: function EventSource() {},
+  document: {
+    hidden: false,
+    addEventListener() {},
+    removeEventListener() {},
+  },
+  window: { addEventListener() {}, removeEventListener() {} },
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(source, context, { filename: "api_client.js" });
+
+const client = new context.window.APIClient("/api");
+if (typeof client.openSSE !== "function") throw new Error("openSSE missing");
+if (typeof client.resolveURL !== "function") throw new Error("resolveURL missing");
+if (typeof context.window.APIError !== "function") throw new Error("APIError missing");
+if (client.timeout !== undefined) throw new Error("dead timeout config still exposed");
+for (const name of ["request", "get", "post", "put", "delete"]) {
+  if (client[name] !== undefined) {
+    throw new Error(`dead REST method still exposed: ${name}`);
+  }
+}
+process.stdout.write("ok");
+"""
+    result = subprocess.run(
+        [node, "-"],
+        cwd=ROOT_DIR,
+        input=script,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert result.stdout == "ok"
 
 
 def test_api_build_stream_url_aborts_on_ticket_failure() -> None:

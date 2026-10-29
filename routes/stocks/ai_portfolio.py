@@ -155,6 +155,18 @@ def _ai_portfolio_error_response(
     )
 
 
+def _portfolio_storage_error_response(
+    exc: PortfolioStorageError, operation: str, reason: str
+) -> tuple[Any, int]:
+    """Single mapping for typed portfolio-storage failures (HTTP 503)."""
+    current_app.logger.error("AI portfolio storage error during %s: %s", operation, exc)
+    return error_response(
+        ErrorCode.API_SERVICE_ERROR,
+        details={"reason": reason, "error_type": type(exc).__name__},
+        status_code=503,
+    )
+
+
 ai_portfolio_fetch_lock = threading.Lock()
 ai_portfolio_fetch_inflight: dict[str, Any] = {}
 
@@ -546,7 +558,14 @@ def api_save_ai_portfolio() -> Any:
             status_code=400,
         )
 
-    success = save_custom_ai_portfolio(canonical_portfolio)
+    try:
+        success = save_custom_ai_portfolio(canonical_portfolio)
+    except PortfolioStorageError as exc:
+        return _portfolio_storage_error_response(
+            exc,
+            "save",
+            "ポートフォリオの保存に失敗しました。しばらくしてから再試行してください。",
+        )
     if not success:
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
@@ -616,7 +635,14 @@ def api_delete_ai_portfolio() -> Any:
                 break
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Failed to resolve theme before AI portfolio delete: %s", exc)
-    success = delete_custom_ai_portfolio(portfolio_id)
+    try:
+        success = delete_custom_ai_portfolio(portfolio_id)
+    except PortfolioStorageError as exc:
+        return _portfolio_storage_error_response(
+            exc,
+            "delete",
+            "ポートフォリオの削除に失敗しました。しばらくしてから再試行してください。",
+        )
     if not success:
         return error_response(
             ErrorCode.NOT_FOUND,

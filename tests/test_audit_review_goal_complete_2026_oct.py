@@ -163,38 +163,6 @@ def test_format_stock_change_metrics_via_node():
     assert "ALL_OK" in res.stdout
 
 
-def test_api_client_delete_accepts_body_via_node():
-    """Verify APIClient.delete supports passing an optional body."""
-    node_script = """
-    const fs = require('fs');
-    const path = require('path');
-
-    const clientCode = fs.readFileSync(path.join(process.cwd(), 'static/js/api_client.js'), 'utf-8');
-
-    // Ensure delete method signature includes body parameter and JSON serialization
-    if (!clientCode.includes('delete(url, body)')) {
-      console.error('APIClient.delete signature missing body parameter');
-      process.exit(1);
-    }
-    if (!clientCode.includes('init.body = JSON.stringify(body)')) {
-      console.error('APIClient.delete missing body serialization');
-      process.exit(2);
-    }
-
-    console.log('CLIENT_DELETE_OK');
-    """
-
-    res = subprocess.run(
-        ["node", "-e", node_script],
-        cwd=str(ROOT_DIR),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert res.returncode == 0, f"Node script failed:\nstdout={res.stdout}\nstderr={res.stderr}"
-    assert "CLIENT_DELETE_OK" in res.stdout
-
-
 def test_add_stock_suppresses_duplicate_api_fetch_toast():
     """Verify addStock in static/js/api.js calls apiFetch with showToast: false."""
     content = (ROOT_DIR / "static/js/api.js").read_text(encoding="utf-8")

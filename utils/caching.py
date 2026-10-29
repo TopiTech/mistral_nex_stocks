@@ -290,6 +290,31 @@ def _get_cached_value(key, duration, default=None):
         return cache.get(safe, default)
 
 
+def _get_cached_value_if_present(key, duration, default=None) -> tuple[bool, Any]:
+    """Return ``(present, value)`` for one cache key in one critical section.
+
+    Callers must not emulate this with ``_has_cached_key()`` followed by
+    ``_get_cached_value()``: those take the lock (and therefore evaluate TTL
+    expiry) twice, so a key that expires between the calls looks absent even
+    though the caller already committed to using it — which turns a cache hit
+    into a duplicate background fetch.
+
+    The lookup itself is a single ``TTLCache.get`` so membership and value
+    come from the same expiry evaluation. ``present`` distinguishes a missing
+    key from a stored value that equals ``default`` (e.g. ``None``).
+    """
+    safe = sanitize_cache_key(key)
+    with global_cache.cache_lock:
+        cache = global_cache.caches.get(duration)
+        if cache is None:
+            return False, default
+        sentinel = object()
+        value = cache.get(safe, sentinel)
+        if value is sentinel:
+            return False, default
+        return True, value
+
+
 def get_cached_context_with_negative_cache(
     key, fetch_func, success_ttl=600, negative_ttl=90, bypass_negative_cache=False
 ):

@@ -127,7 +127,13 @@ def get_mistral_embeddings_batch(
         chunk_indices = uncached_indices[i : i + batch_size]
 
         wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
-        if _wait_for_rate_limit_slot(wait_before):
+        wait_status = _wait_for_rate_limit_slot(wait_before)
+        if wait_status != "ready":
+            if wait_status == "rate_limited":
+                logger.warning(
+                    "Mistral rate-limit cooldown exceeds the wait cap; "
+                    "returning partial embeddings for the remaining chunks"
+                )
             break
 
         try:
@@ -279,14 +285,10 @@ def rank_news_by_semantic_relevance(
     if not valid_items:
         return []
 
-    # 3. Batch compute embeddings for all articles in one round-trip
-    # (Fallback to individual get_mistral_embedding calls if get_mistral_embedding is patched in tests)
-    from unittest.mock import MagicMock
-
-    if isinstance(get_mistral_embedding, MagicMock):
-        article_vecs = [get_mistral_embedding(text, api_key) for text in article_texts]
-    else:
-        article_vecs = get_mistral_embeddings_batch(article_texts, api_key)
+    # 3. Batch compute embeddings for all articles in one round-trip. The
+    # batch helper is the single dependency here; callers/tests that need to
+    # substitute it patch this module attribute directly.
+    article_vecs = get_mistral_embeddings_batch(article_texts, api_key)
 
     # 4. Score and sort
     scored_items = []

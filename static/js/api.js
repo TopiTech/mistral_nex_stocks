@@ -244,6 +244,42 @@ if (typeof window !== "undefined") {
   window.INITIAL_SKELETON_MAX_WAIT_MS = INITIAL_SKELETON_MAX_WAIT_MS;
 }
 
+// Malformed realtime frames are recovered by requesting a fresh snapshot, but
+// a persistently malformed stream must not create an unbounded hot reconnect
+// loop. Reuse the APIClient's backoff policy and stop after a bounded number of
+// resync cycles, leaving the fallback poller as the terminal data path.
+const MAX_REALTIME_PARSE_ERRORS = 3;
+const MAX_REALTIME_RESYNCS = 3;
+
+/**
+ * Handle a malformed realtime frame.
+ *
+ * `recovery` is owned by the active connection and carries the two counters
+ * plus the two terminal actions, so this policy can be exercised without a
+ * browser EventSource.
+ */
+function handleRealtimeParseError(err, eventType, recovery) {
+  if (recovery.terminalized) return;
+  $logger.error(`${eventType} parse error:`, err);
+  recovery.parseErrorCount += 1;
+  if (recovery.parseErrorCount < MAX_REALTIME_PARSE_ERRORS) return;
+  recovery.parseErrorCount = 0;
+
+  if (recovery.resyncCount >= MAX_REALTIME_RESYNCS) {
+    $logger.error(
+      `[connectSSE] Realtime stream still malformed after ${recovery.resyncCount} resyncs. Stopping reconnect.`,
+    );
+    recovery.terminal();
+    return;
+  }
+
+  recovery.resyncCount += 1;
+  $logger.warn(
+    `[connectSSE] Detected ${MAX_REALTIME_PARSE_ERRORS} consecutive parse errors. Scheduling full resync ${recovery.resyncCount}/${MAX_REALTIME_RESYNCS}.`,
+  );
+  recovery.reconnect(recovery.resyncCount);
+}
+
 /**
  * Namespace for all SSE connection lifecycle state.
  * Previously these were loose module-level vars scattered across api.js and
@@ -830,24 +866,38 @@ function connectSSE(overrideMode) {
     }
   };
 
-  let realtimeParseErrorCount = 0;
-  const MAX_REALTIME_PARSE_ERRORS = 3;
-
-  const handleRealtimeParseError = (err, eventType) => {
-    $logger.error(`${eventType} parse error:`, err);
-    realtimeParseErrorCount++;
-    if (realtimeParseErrorCount >= MAX_REALTIME_PARSE_ERRORS) {
-      $logger.warn(
-        `[connectSSE] Detected ${realtimeParseErrorCount} consecutive parse errors. Triggering full resync.`,
+  const realtimeRecovery = {
+    parseErrorCount: 0,
+    resyncCount: 0,
+    terminalized: false,
+    reconnect: (attempt) => {
+      if (typeof sseApiClient === "undefined" || !sseApiClient) return;
+      // A full resync must not replay the malformed frames from the previous
+      // cursor. The reconnect itself goes through the shared backoff scheduler
+      // so the next request is delayed and jittered.
+      sseApiClient.lastEventId = 0;
+      sseApiClient.reconnectWithBackoff(handleSseError, attempt);
+      sseState.stockEventSource = null;
+      startSseFallbackPolling();
+    },
+    terminal: () => {
+      realtimeRecovery.terminalized = true;
+      $logger.error(
+        "[connectSSE] Real-time stream disabled after repeated malformed frames",
       );
-      realtimeParseErrorCount = 0;
       if (typeof sseApiClient !== "undefined" && sseApiClient) {
         sseApiClient.lastEventId = 0;
         sseApiClient.closeSSE();
       }
-      stopSseFallbackPolling();
-      connectSSE(currentMode);
-    }
+      sseState.stockEventSource = null;
+      state.isStreaming = false;
+      updateSseModeSelectorUI(0);
+      startSseFallbackPolling();
+      showToast(
+        "⚠️ リアルタイム配信を停止しました。ページを再読み込みしてください",
+        "#ff7d7d",
+      );
+    },
   };
 
   const attachRealtimeListeners = (es) => {
@@ -862,9 +912,10 @@ function connectSSE(overrideMode) {
         }
         // Replayed frames after a reconnect carry realtime data; the fallback
         // polling safety net must stop as soon as the stream delivers again.
-        markStreamAlive();
         const deltaData = JSON.parse(e.data);
-        realtimeParseErrorCount = 0;
+        realtimeRecovery.parseErrorCount = 0;
+        realtimeRecovery.resyncCount = 0;
+        markStreamAlive();
         if (
           deltaData &&
           deltaData.deltas &&
@@ -874,7 +925,7 @@ function connectSSE(overrideMode) {
           window.handleRealtimeDeltas(deltaData.deltas);
         }
       } catch (err) {
-        handleRealtimeParseError(err, "Realtime delta");
+        handleRealtimeParseError(err, "Realtime delta", realtimeRecovery);
       }
     });
     es.addEventListener("pts_update", (e) => {
@@ -885,9 +936,10 @@ function connectSSE(overrideMode) {
         ) {
           sseApiClient.resetHeartbeat();
         }
-        markStreamAlive();
         const ptsData = JSON.parse(e.data);
-        realtimeParseErrorCount = 0;
+        realtimeRecovery.parseErrorCount = 0;
+        realtimeRecovery.resyncCount = 0;
+        markStreamAlive();
         if (
           ptsData &&
           ptsData.deltas &&
@@ -897,7 +949,7 @@ function connectSSE(overrideMode) {
           window.handlePtsDeltas(ptsData.deltas);
         }
       } catch (err) {
-        handleRealtimeParseError(err, "PTS delta");
+        handleRealtimeParseError(err, "PTS delta", realtimeRecovery);
       }
     });
   };

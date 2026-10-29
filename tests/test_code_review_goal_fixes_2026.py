@@ -68,7 +68,7 @@ def test_embeddings_service_bounds_check():
     with (
         patch("services.embeddings_service._get_client", return_value=client_mock),
         patch("services.ai_service._acquire_mistral_call_slot", return_value=0.0),
-        patch("services.ai_service._wait_for_rate_limit_slot", return_value=False),
+        patch("services.ai_service._wait_for_rate_limit_slot", return_value="ready"),
     ):
         res = get_mistral_embeddings_batch(texts, api_key="fake-key", batch_size=2)
         assert len(res) == 2

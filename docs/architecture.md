@@ -111,7 +111,7 @@ sequenceDiagram
 | `static/js/index_main.js`          | メインダッシュボード初期化                      |
 | `static/js/realtime_client.js`     | リアルタイム更新描画(SSE購読は api.js に一元化) |
 | `static/js/tradingview_manager.js` | TradingView 系 UI 連携                          |
-| `static/js/api_client.js`          | API 呼び出し共通層                              |
+| `static/js/api_client.js`          | SSE 接続クライアント（REST は apiFetch/csrfFetch） |
 | `static/js/api.js`                 | SSE 接続・共通 fetch ラッパ                     |
 | `static/js/utils.js`               | 共通ユーティリティ・CSRF・検証                  |
 | `static/js/ui.js`                  | カード描画・モーダル・ポートフォリオ UI         |

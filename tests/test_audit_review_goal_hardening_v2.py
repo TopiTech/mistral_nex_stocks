@@ -111,8 +111,10 @@ def test_stock_history_ignores_non_mapping_memory_cache(client):
     from app_state import app_state
 
     with (
-        patch("routes.stocks.quotes._has_cached_key", return_value=True),
-        patch("routes.stocks.quotes._get_cached_value", return_value=["bad-history"]),
+        patch(
+            "routes.stocks.quotes._get_cached_value_if_present",
+            return_value=(True, ["bad-history"]),
+        ),
         patch("routes.stocks.quotes._submit_async_history_fetch", return_value=False),
         patch.object(app_state.stock_disk_cache, "get", return_value=None),
     ):

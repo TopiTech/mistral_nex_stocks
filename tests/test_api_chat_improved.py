@@ -96,6 +96,31 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         assert slot.acquire(blocking=False), "stream semaphore was not released"
         slot.release()
 
+    @patch("routes.api_analysis.stream_mistral_chat")
+    def test_stream_error_event_does_not_expose_provider_body(self, mock_stream):
+        """SEC-2: even a legacy event carrying detail must not reach the SSE payload."""
+        mock_stream.return_value = iter(
+            [
+                {
+                    "type": "error",
+                    "message": "OpenAI-compatible API call failed",
+                    "status_code": 400,
+                    "detail": '{"error":{"message":"sk-live-secret-value"}}',
+                }
+            ]
+        )
+        response, _chat_key, _inflight_key, _result_holder, _rollback, slot = (
+            self._make_stream_response("sec2-body")
+        )
+        try:
+            body = "".join(response.response)
+            assert "sk-live-secret-value" not in body
+            assert "detail" not in body
+            assert '"error"' in body
+        finally:
+            response.close()
+        self._assert_stream_slot_released(slot)
+
     def test_unstarted_stream_close_finalizes_state_and_rolls_back_user_turn(self):
         """R1: closing before iteration must not leak inflight state or a user turn."""
         from routes import api_analysis as ra

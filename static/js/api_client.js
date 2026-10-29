@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 統一 API クライアント with SSE ハートビート監視
- * フロントエンドの fetch 呼び出しを単一化
+ * SSE クライアント with ハートビート監視
+ * REST 呼び出しは apiFetch（api.js）と csrfFetch（utils.js）が所有する
  * SSE接続にハートビート監視と自動再接続を実装
  */
 const _log = {
@@ -11,7 +11,6 @@ const _log = {
   error: (...args) => console.error("[APIClient]", ...args),
 };
 const DEFAULT_CONFIG = {
-  timeout: 25000,
   sseHeartbeatTimeout: 45000,
   sseReconnectBaseDelay: 2000,
   sseReconnectMaxDelay: 30000,
@@ -22,7 +21,6 @@ class APIClient {
   constructor(baseURL = "/api", config = {}) {
     this.baseURL = baseURL;
     const mergedConfig = { ...DEFAULT_CONFIG, ...config };
-    this.timeout = mergedConfig.timeout;
     this.sseHeartbeatTimeout = mergedConfig.sseHeartbeatTimeout;
     this.sseReconnectBaseDelay = mergedConfig.sseReconnectBaseDelay;
     this.sseReconnectMaxDelay = mergedConfig.sseReconnectMaxDelay;
@@ -173,228 +171,31 @@ class APIClient {
     const cleanUrl = url.replace(/^\/+/, "");
     return cleanBase ? `${cleanBase}/${cleanUrl}` : `/${cleanUrl}`;
   }
-  async request(url, options = {}, maxRetries = 2) {
-    const fullURL = this.resolveURL(url);
-    let lastError = null;
-    const token = document
-      .querySelector('meta[name="csrf-token"]')
-      ?.getAttribute("content");
-    const method = (options.method || "GET").toUpperCase();
-    const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
-    const callerSignal = options.signal;
-    const throwIfCallerAborted = () => {
-      if (callerSignal?.aborted) {
-        throw new APIError(499, 1106, "リクエストがキャンセルされました");
-      }
-    };
-    if (token && !SAFE_METHODS.has(method)) {
-      const headers = new Headers(options.headers);
-      if (!headers.has("X-CSRFToken") && !headers.has("X-CSRF-Token")) {
-        headers.set("X-CSRFToken", token);
-      }
-      options = {
-        ...options,
-        headers,
-        credentials: options.credentials ?? "same-origin",
-      };
-    }
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      throwIfCallerAborted();
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-      const abortFromCaller = () => controller.abort();
-      if (callerSignal) {
-        if (callerSignal.aborted) {
-          controller.abort();
-        } else {
-          callerSignal.addEventListener("abort", abortFromCaller, {
-            once: true,
-          });
-        }
-      }
-      try {
-        const response = await fetch(fullURL, {
-          ...options,
-          signal: controller.signal,
-        });
-        const reqId = response.headers.get("X-MNS-Request-Id") || "-";
-        const rawText = await response.text();
-        let data = {};
-        if (rawText && rawText.trim()) {
-          try {
-            const parsed = JSON.parse(rawText);
-            data = isJsonObject(parsed) ? parsed : {};
-          } catch {
-            throw new APIError(
-              response.status,
-              9999,
-              response.ok
-                ? "サーバー応答の解析に失敗しました"
-                : `HTTP ${response.status}: ${rawText.slice(0, 200)}`,
-              { raw: rawText.slice(0, 1000) },
-              reqId,
-            );
-          }
-        }
-        if (!response.ok) {
-          const errCode = toNumber(data.error_code, 9999);
-          const errMsg = toStringValue(
-            data.message ??
-              data.error ??
-              (typeof data.reply === "string" ? data.reply : undefined),
-            `HTTP ${response.status}`,
-          );
-          const errReason = toStringValue(data.details?.reason ?? "", "");
-          const isCsrfErr =
-            (response.status === 400 || response.status === 403) &&
-            (/csrf token/i.test(errMsg) || /csrf token/i.test(errReason));
-          if (!SAFE_METHODS.has(method) && isCsrfErr && attempt === 0) {
-            try {
-              const freshRes = await fetch(this.resolveURL("/csrf-token"), {
-                method: "GET",
-                credentials: "same-origin",
-                headers: { "Cache-Control": "no-store" },
-                signal: controller.signal,
-              });
-              if (freshRes.ok) {
-                const freshData = await freshRes.json();
-                const freshToken =
-                  typeof freshData?.csrf_token === "string"
-                    ? freshData.csrf_token
-                    : "";
-                if (freshToken) {
-                  const meta = document.querySelector(
-                    'meta[name="csrf-token"]',
-                  );
-                  if (meta) meta.setAttribute("content", freshToken);
-                  const updatedHeaders = new Headers(options.headers);
-                  updatedHeaders.set("X-CSRFToken", freshToken);
-                  options = {
-                    ...options,
-                    headers: updatedHeaders,
-                    credentials: options.credentials ?? "same-origin",
-                  };
-                  throwIfCallerAborted();
-                  continue;
-                }
-              }
-            } catch (csrfErr) {
-              if (csrfErr instanceof APIError) {
-                throw csrfErr;
-              }
-              if (callerSignal?.aborted) {
-                throw new APIError(
-                  499,
-                  1106,
-                  "リクエストがキャンセルされました",
-                );
-              }
-              // Ignore CSRF refresh error and proceed to standard error handling
-            }
-          }
-          if (
-            SAFE_METHODS.has(method) &&
-            response.status >= 500 &&
-            attempt < maxRetries
-          ) {
-            lastError = new APIError(
-              response.status,
-              errCode,
-              errMsg,
-              data.details,
-              reqId,
-            );
-            await delay(
-              Math.min(1000 * Math.pow(2, attempt), 5000),
-              callerSignal,
-            );
-            throwIfCallerAborted();
-            continue;
-          }
-          throw new APIError(
-            response.status,
-            errCode,
-            errMsg,
-            data.details,
-            reqId,
-          );
-        }
-        return data;
-      } catch (error) {
-        if (error instanceof APIError) throw error;
-        const errorMessage = getErrorMessage(error);
-        if (isAbortError(error)) {
-          if (callerSignal?.aborted) {
-            throw new APIError(499, 1106, "リクエストがキャンセルされました");
-          }
-          if (SAFE_METHODS.has(method) && attempt < maxRetries) {
-            lastError = new APIError(
-              408,
-              1105,
-              "リクエストがタイムアウトしました",
-            );
-            await delay(
-              Math.min(1000 * Math.pow(2, attempt), 5000),
-              callerSignal,
-            );
-            throwIfCallerAborted();
-            continue;
-          }
-          throw new APIError(408, 1105, "リクエストがタイムアウトしました");
-        }
-        if (SAFE_METHODS.has(method) && attempt < maxRetries) {
-          lastError = new APIError(0, 9999, errorMessage);
-          await delay(
-            Math.min(1000 * Math.pow(2, attempt), 5000),
-            callerSignal,
-          );
-          throwIfCallerAborted();
-          continue;
-        }
-        throw new APIError(0, 9999, errorMessage);
-      } finally {
-        clearTimeout(timeoutId);
-        callerSignal?.removeEventListener("abort", abortFromCaller);
-      }
-    }
-    throw lastError || new APIError(0, 9999, "リクエストに失敗しました");
-  }
-  async get(url, params = {}, retryOptions = {}) {
-    const queryString = new URLSearchParams(params).toString();
-    const fullURL = queryString ? `${url}?${queryString}` : url;
-    return this.request(
-      fullURL,
-      { method: "GET" },
-      retryOptions.maxRetries ?? 2,
-    );
-  }
-  async post(url, body = {}) {
-    return this.request(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  }
-  async put(url, body = {}) {
-    return this.request(url, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  }
-  async delete(url, body) {
-    const init = { method: "DELETE" };
-    if (body !== undefined) {
-      init.headers = { "Content-Type": "application/json" };
-      init.body = JSON.stringify(body);
-    }
-    return this.request(url, init);
-  }
   resetHeartbeat(onError) {
     const handler = onError || this._lastSSEParams?.onError;
     if (handler) {
       this._resetHeartbeatTimer(handler);
     }
+  }
+  /**
+   * Schedule a reconnect through the same exponential-backoff/jitter policy
+   * used for transport failures.
+   *
+   * ``attempt`` is the 1-based resync cycle number. Passing it lets a caller
+   * continue a backoff sequence across connections even though ``onopen``
+   * resets the client's ordinary reconnect counter.
+   */
+  reconnectWithBackoff(onError, attempt) {
+    const handler = onError || this._lastSSEParams?.onError;
+    if (!handler) return;
+    if (
+      typeof attempt === "number" &&
+      Number.isFinite(attempt) &&
+      attempt > 0
+    ) {
+      this.sseReconnectAttempt = Math.floor(attempt) - 1;
+    }
+    this._handleReconnect(handler);
   }
   _resetHeartbeatTimer(onError) {
     if (this.sseHeartbeatTimer) clearTimeout(this.sseHeartbeatTimer);
@@ -632,42 +433,6 @@ class APIError extends Error {
       request_id: this.requestId,
     };
   }
-}
-function isJsonObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function toNumber(value, fallback) {
-  return typeof value === "number" ? value : fallback;
-}
-function toStringValue(value, fallback) {
-  return typeof value === "string" ? value : fallback;
-}
-function getErrorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-function isAbortError(error) {
-  return error instanceof DOMException && error.name === "AbortError";
-}
-function delay(ms, signal) {
-  return new Promise((resolve) => {
-    let timer = null;
-    const cleanup = () => {
-      if (timer !== null) clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-    };
-    const onAbort = () => {
-      cleanup();
-      resolve();
-    };
-    timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-    if (signal) {
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
-    }
-  });
 }
 window.APIClient = APIClient;
 window.APIError = APIError;

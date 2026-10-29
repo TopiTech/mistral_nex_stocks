@@ -60,6 +60,21 @@ def _openai_response_has_content(data: Any) -> bool:
     return bool(content and str(content).strip())
 
 
+def _stream_error_event(message: str, status_code: int) -> dict[str, str | int]:
+    """Build the only error envelope the streaming layer may emit.
+
+    Provider response bodies are untrusted and may contain credentials or
+    endpoint metadata.  Keeping the event construction here means a future
+    stream path cannot attach a raw ``detail``/body field by accident: callers
+    supply a public message and a status code, nothing else.
+    """
+    return {
+        "type": "error",
+        "message": message,
+        "status_code": int(status_code or 0),
+    }
+
+
 def _public_openai_error_message(exc: BaseException, status_code: int = 0) -> str:
     """Return a clean, actionable user error message for OpenAI-compatible API calls."""
     if isinstance(exc, httpx.TimeoutException):
@@ -108,13 +123,40 @@ def _create_httpx_client(**kwargs) -> httpx.Client:
     return httpx.Client(**kwargs)
 
 
+_CALL_OWNED_CLIENT_ATTR = "_mns_call_owned"
+
+
 def _get_openai_client(base_url: str, api_key: str | None = None) -> httpx.Client:
-    """Retrieve persistent pooled httpx.Client from app_state or fallback to ephemeral."""
+    """Retrieve the pooled httpx.Client, or create a call-owned one as fallback.
+
+    Ownership contract: a client returned from ``app_state.ai`` is shared and
+    must NOT be closed by the caller. If pooling fails, the fallback client is
+    marked as call-owned and the caller MUST release it through
+    ``_close_call_owned_openai_client()`` on every exit path (success,
+    exception, and generator close).
+    """
     try:
         return app_state.ai.get_or_create_openai_client(base_url, api_key)
     except Exception as exc:
         logger.debug("Failed getting pooled OpenAI client; using ephemeral client: %s", exc)
-        return _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True)
+        fallback = _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True)
+        setattr(fallback, _CALL_OWNED_CLIENT_ATTR, True)
+        return fallback
+
+
+def _close_call_owned_openai_client(client: Any) -> None:
+    """Release a client only when its lifetime belongs to this call.
+
+    Pooled clients are owned by ``app_state.ai`` and stay open for reuse. The
+    marker is set exclusively by ``_get_openai_client``'s fallback branch; an
+    unmarked client (including test doubles) is never closed here.
+    """
+    if client is None or getattr(client, _CALL_OWNED_CLIENT_ATTR, False) is not True:
+        return
+    try:
+        client.close()
+    except Exception as exc:
+        logger.debug("Failed closing call-owned OpenAI client: %s", exc)
 
 
 def _build_openai_headers(api_key: str | None = None) -> dict[str, str]:
@@ -488,6 +530,7 @@ def call_openai_chat(
         base_url,
     )
 
+    client: Any = None
     try:
         with app_state.ai.openai_call_semaphore:
             client = _get_openai_client(base_url, api_key)
@@ -749,6 +792,7 @@ def call_openai_chat(
             }
         }
     finally:
+        _close_call_owned_openai_client(client)
         if circuit_probe_claimed:
             app_state.market.release_circuit_probe("openai_compatible")
             circuit_probe_claimed = False
@@ -797,11 +841,10 @@ def stream_openai_chat(
 
     if app_state.market.is_circuit_open("openai_compatible"):
         logger.warning("OpenAI-compatible circuit is open. Skipping stream call.")
-        yield {
-            "type": "error",
-            "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
-            "status_code": 503,
-        }
+        yield _stream_error_event(
+            "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+            503,
+        )
         return
 
     circuit_probe_claimed = False
@@ -811,11 +854,10 @@ def stream_openai_chat(
             logger.warning(
                 "OpenAI-compatible circuit recovery probe already in progress. Skipping stream call."
             )
-            yield {
-                "type": "error",
-                "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
-                "status_code": 503,
-            }
+            yield _stream_error_event(
+                "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
+                503,
+            )
             return
         circuit_probe_claimed = True
 
@@ -846,6 +888,7 @@ def stream_openai_chat(
     full_parts: list[str] = []
     logger.info("OpenAI stream start model=%s base_url=%s", model, base_url)
 
+    client: Any = None
     try:
         with app_state.ai.openai_stream_semaphore:
             client = _get_openai_client(base_url, api_key)
@@ -932,12 +975,7 @@ def stream_openai_chat(
                     err_msg = _public_openai_error_message(
                         Exception(err_detail), stream.status_code
                     )
-                    yield {
-                        "type": "error",
-                        "message": err_msg,
-                        "status_code": stream.status_code,
-                        "detail": err_detail,
-                    }
+                    yield _stream_error_event(err_msg, stream.status_code)
                     return
 
                 for line in stream.iter_lines():
@@ -1021,12 +1059,9 @@ def stream_openai_chat(
             status_code,
             exc,
         )
-        yield {
-            "type": "error",
-            "message": _public_openai_error_message(exc, status_code),
-            "status_code": status_code,
-        }
+        yield _stream_error_event(_public_openai_error_message(exc, status_code), status_code)
     finally:
+        _close_call_owned_openai_client(client)
         if circuit_probe_claimed:
             app_state.market.release_circuit_probe("openai_compatible")
             circuit_probe_claimed = False
@@ -1347,6 +1382,7 @@ def get_openai_embeddings_batch(
             "model": target_model,
             "input": chunk_texts,
         }
+        client: Any = None
         try:
             client = _get_openai_client(base_url, api_key)
             resp = client.post(endpoint, json=payload, headers=headers)
@@ -1372,5 +1408,7 @@ def get_openai_embeddings_batch(
                 )
         except Exception as exc:
             logger.debug("OpenAI embeddings call failed (fallback to None): %s", exc)
+        finally:
+            _close_call_owned_openai_client(client)
 
     return results

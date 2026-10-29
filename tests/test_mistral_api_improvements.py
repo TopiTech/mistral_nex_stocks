@@ -685,7 +685,7 @@ class StreamMistralChatTestCase(unittest.TestCase):
         self.assertNotIn(secret, "\n".join(logs.output))
 
     @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
-    @patch("services.ai_service._wait_for_rate_limit_slot", return_value=True)
+    @patch("services.ai_service._wait_for_rate_limit_slot", return_value="shutdown")
     @patch("services.ai_service._get_mistral_client")
     def test_stream_releases_half_open_probe_on_early_exit(
         self, mock_get_client, mock_wait, mock_get_name

@@ -37,8 +37,8 @@ from routes.stocks.common import (
 from services.stock_service import fetch_history_async_task
 from utils.caching import (
     CACHE_FETCHING,
-    _get_cached_value,
-    _has_cached_key,
+    _get_cached_value_if_present,
+    clear_cache_key,
     get_cached,
     global_cache,
     sanitize_cache_key,
@@ -48,6 +48,7 @@ from utils.env_helpers import _is_testing as _stocks_is_testing
 from utils.normalization import (
     history_circuit_key,
     normalize_optional_number,
+    sanitize_history_payload,
 )
 from utils.stock_payload import (
     _wait_for_initial_market_snapshot,
@@ -399,11 +400,20 @@ def api_stock_history() -> Any:
         logger.info("stock-history circuit open symbol=%s - failing fast", circuit_key)
         return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
 
-    if _has_cached_key(cache_key, duration):
-        cached_data = _get_cached_value(cache_key, duration)
+    cached_present, cached_data = _get_cached_value_if_present(cache_key, duration)
+    if cached_present:
         if isinstance(cached_data, dict) and cached_data:
-            return make_history_response(cached_data)
-        if cached_data:
+            sanitized_cached = sanitize_history_payload(cached_data)
+            if sanitized_cached is not None:
+                return make_history_response(sanitized_cached)
+            logger.warning(
+                "Discarding unusable in-memory history cache symbol=%s market=%s period=%s",
+                symbol,
+                market,
+                period,
+            )
+            clear_cache_key(cache_key)
+        elif cached_data:
             logger.warning(
                 "Ignoring malformed in-memory history cache symbol=%s market=%s period=%s",
                 symbol,
@@ -429,16 +439,32 @@ def api_stock_history() -> Any:
 
     disk_data = app_state.stock_disk_cache.get(cache_key)
     if disk_data and isinstance(disk_data, dict) and "error" not in disk_data:
-        logger.info("Serving disk-cached history for %s period=%s", symbol, period)
-        return make_history_response(
-            {
-                **disk_data,
-                "stale": True,
-                "fetching": True,
-                "message": "キャッシュ済みデータを表示中です。最新データを取得中...",
-            },
-            is_cacheable=False,
-        )
+        sanitized_disk = sanitize_history_payload(disk_data)
+        if sanitized_disk is None:
+            # Legacy entry written before the candle validator existed (for
+            # example all-zero OHLC).  Drop it so it cannot be served forever,
+            # then fall through to the normal cold-cache refresh.
+            logger.warning(
+                "Deleting unusable disk-cached history symbol=%s market=%s period=%s",
+                symbol,
+                market,
+                period,
+            )
+            try:
+                app_state.stock_disk_cache.delete(cache_key)
+            except Exception as exc:
+                logger.debug("Failed to delete unusable disk history cache: %s", exc)
+        else:
+            logger.info("Serving disk-cached history for %s period=%s", symbol, period)
+            return make_history_response(
+                {
+                    **sanitized_disk,
+                    "stale": True,
+                    "fetching": True,
+                    "message": "キャッシュ済みデータを表示中です。最新データを取得中...",
+                },
+                is_cacheable=False,
+            )
 
     return make_history_response(
         {

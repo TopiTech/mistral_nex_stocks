@@ -378,8 +378,8 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
         finally:
             app_state.ai.mistral_429_streak = old_streak
 
-    def test_mistral_429_backoff_delays_next_call(self):
-        """On 3rd 429 streak, the cooldown should delay the next API call"""
+    def test_mistral_429_backoff_caps_wait_and_returns_429(self):
+        """A 300s cooldown waits only the 30s cap, then returns retryable 429."""
         from app_state import app_state
         from services.ai_service import call_mistral_chat
 
@@ -395,6 +395,7 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
 
                 def capture_wait(secs):
                     sleep_called_with.append(secs)
+                    return False
 
                 with (
                     patch(
@@ -403,20 +404,19 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
                     ),
                     patch("services.ai_service._get_mistral_client") as mock_client,
                 ):
-                    mock_client.return_value = MagicMock()
-                    call_mistral_chat(
+                    client = MagicMock()
+                    mock_client.return_value = client
+                    result = call_mistral_chat(
                         "test-key",
                         [{"role": "user", "content": "hello"}],
                         use_cache=False,
                     )
-                    # R7: the rate-limit wait is polled in bounded chunks so
-                    # the 30s cap applies per chunk. Sum the chunks to
-                    # assert the cumulative wait honored the 429 backoff.
-                    self.assertTrue(len(sleep_called_with) > 0)
-                    self.assertGreater(sum(sleep_called_with), 100)
-                    # Each chunk is capped at the new R7 bound.
-                    for chunk in sleep_called_with:
-                        self.assertLessEqual(chunk, 30.0)
+
+                # R7: one bounded wait, then the caller must see a retryable
+                # 429 instead of sleeping through the full backoff.
+                self.assertEqual(sleep_called_with, [30.0])
+                self.assertEqual(result["error"]["status_code"], 429)
+                client.chat.complete.assert_not_called()
         finally:
             app_state.ai.mistral_429_streak = old_streak
             app_state.ai.mistral_next_allowed_ts = old_next

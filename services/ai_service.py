@@ -10,7 +10,7 @@ import time
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 from flask import current_app, g, has_app_context
@@ -649,32 +649,30 @@ def _clamp_max_tokens(max_tokens: int) -> int:
     return max(64, min(raw, MISTRAL_MAX_TOKENS_CEIL))
 
 
-# Maximum time the caller will sleep waiting for the rate-limit slot (R7).
-# Beyond this cap the caller still returns 0 so the shutdown_event can be
-# polled periodically; the slot reservation itself remains governed by
-# ``mistral_next_allowed_ts`` / ``mistral_last_call_ts`` so the call that
-# fires under the cap will immediately re-enter the cooldown on the next
-# acquire (429 backoff continues to escalate).
+# Maximum time a caller will sleep waiting for the rate-limit slot (R7).
+# If the cooldown is longer than this, the helper reports ``rate_limited``
+# instead of sleeping for the full window; chat callers return a retryable
+# 429 and the best-effort embeddings path stops with its partial result.
 _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC = 30.0
 
+_MistralWaitStatus = Literal["ready", "shutdown", "rate_limited"]
 
-def _wait_for_rate_limit_slot(wait_before: float) -> bool:
-    """Poll shutdown_event while waiting for the rate-limit slot.
 
-    Returns ``True`` if shutdown was signaled (the caller should abort).
-    Returns ``False`` if the wait completed naturally. The actual sleep
-    is capped at ``_MISTRAL_RATE_LIMIT_MAX_WAIT_SEC`` so a 300s 429 cooldown
-    cannot hold a request thread indefinitely (R7).
+def _wait_for_rate_limit_slot(wait_before: float) -> _MistralWaitStatus:
+    """Wait at most ``_MISTRAL_RATE_LIMIT_MAX_WAIT_SEC`` for the slot.
+
+    Returns ``"ready"`` when the requested wait completed within the cap,
+    ``"shutdown"`` when shutdown was signaled, and ``"rate_limited"`` when the
+    cooldown is longer than the cap. The caller must translate the last state
+    into its own retryable error/partial-result path; this helper never hides
+    a still-active cooldown by claiming readiness.
     """
-    remaining = wait_before
-    if remaining <= 0.0:
-        return False
-    while remaining > 0.0:
-        chunk = min(remaining, _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
-        if app_state.execution.shutdown_event.wait(chunk):
-            return True
-        remaining -= chunk
-    return False
+    if wait_before <= 0.0:
+        return "ready"
+    waited = min(wait_before, _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
+    if app_state.execution.shutdown_event.wait(waited):
+        return "shutdown"
+    return "rate_limited" if wait_before > _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC else "ready"
 
 
 def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
@@ -686,9 +684,9 @@ def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
 
     The returned wait is the full ``next_allowed_ts - now`` (or the
     min-interval gap, whichever is larger). Callers must route the wait
-    through ``_wait_for_rate_limit_slot`` so the shutdown_signal can be
-    polled periodically and the 300s 429 cooldown cannot hold a request
-    thread indefinitely (R7).
+    through ``_wait_for_rate_limit_slot``; that helper bounds the sleep and
+    returns ``"rate_limited"`` when the cooldown is longer than the cap, so
+    the caller can fail retryably instead of holding a request thread (R7).
     """
     with app_state.ai.mistral_cooldown_lock:
         now_ts = time.time()
@@ -893,15 +891,27 @@ def call_mistral_chat(
     try:
         wait_before = _acquire_mistral_call_slot(min_interval_sec)
 
-        # R7: poll the shutdown event in bounded chunks so a 429 cooldown
-        # cannot hold a request thread for the full 300s window.
-        if _wait_for_rate_limit_slot(wait_before):
+        # R7: the helper waits at most the documented cap. A longer 429
+        # cooldown must fail retryably instead of holding this request thread.
+        wait_status = _wait_for_rate_limit_slot(wait_before)
+        if wait_status == "shutdown":
             # Shutdown signalled while waiting for the rate-limit slot:
             # abort instead of issuing a request during teardown.
             return {
                 "error": {
                     "message": "AI service is shutting down",
                     "status_code": 503,
+                }
+            }
+        if wait_status == "rate_limited":
+            logger.warning(
+                "Mistral rate-limit cooldown exceeds %.1fs cap; returning retryable 429",
+                _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC,
+            )
+            return {
+                "error": {
+                    "message": _public_mistral_error_message(Exception("rate limited"), 429),
+                    "status_code": 429,
                 }
             }
 
@@ -2034,13 +2044,25 @@ def stream_mistral_chat(
         return
 
     wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
-    # R7: poll the shutdown event in bounded chunks so a 429 cooldown cannot
-    # hold a stream thread for the full 300s window.
-    if _wait_for_rate_limit_slot(wait_before):
+    # R7: the helper waits at most the documented cap. A longer 429 cooldown
+    # must produce a retryable error instead of holding this stream thread.
+    wait_status = _wait_for_rate_limit_slot(wait_before)
+    if wait_status != "ready":
         if circuit_probe_claimed:
             app_state.market.release_circuit_probe("mistral")
             circuit_probe_claimed = False
-        yield {"type": "error", "message": "AIサービスはシャットダウン中です", "status_code": 503}
+        if wait_status == "shutdown":
+            yield {"type": "error", "message": "AIサービスはシャットダウン中です", "status_code": 503}
+        else:
+            logger.warning(
+                "Mistral stream rate-limit cooldown exceeds %.1fs cap; returning retryable 429",
+                _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC,
+            )
+            yield {
+                "type": "error",
+                "message": _public_mistral_error_message(Exception("rate limited"), 429),
+                "status_code": 429,
+            }
         return
 
     # NOTE: the semaphore is held for the WHOLE stream duration. A stream can

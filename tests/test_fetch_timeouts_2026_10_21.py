@@ -393,14 +393,43 @@ function abortError() {
 }
 
 const fastSignals = [];
+let csrfToken = "initial-token";
+let refreshStarted = false;
 const context = {
-  document: { querySelector: () => null },
+  document: {
+    querySelector(selector) {
+      if (!String(selector).includes("csrf-token")) return null;
+      return {
+        getAttribute: () => csrfToken,
+        setAttribute: (_name, value) => {
+          csrfToken = String(value);
+        },
+      };
+    },
+  },
   Headers,
   AbortController,
   setTimeout,
   clearTimeout,
+  showToast() {},
   fetch(url, options = {}) {
-    if (String(url).includes("/api/fast")) {
+    const target = String(url);
+    if (target.includes("/csrf-token")) {
+      refreshStarted = true;
+      return new Promise((resolve) => {
+        setTimeout(
+          () =>
+            resolve({
+              ok: true,
+              status: 200,
+              headers: { get: () => "application/json" },
+              json: async () => ({ csrf_token: "fresh-token" }),
+            }),
+          500,
+        );
+      });
+    }
+    if (target.includes("/api/fast")) {
       fastSignals.push(options.signal);
       return new Promise((resolve) => {
         setTimeout(
@@ -412,6 +441,24 @@ const context = {
             }),
           5,
         );
+      });
+    }
+    if (target.includes("/api/retry") && !refreshStarted) {
+      return Promise.resolve({
+        ok: false,
+        status: 400,
+        url: "/api/retry",
+        headers: {
+          get: (name) =>
+            String(name).toLowerCase() === "content-type"
+              ? "application/json"
+              : "",
+        },
+        clone: () => ({
+          json: async () => ({
+            details: { reason: "The CSRF token has expired" },
+          }),
+        }),
       });
     }
     return new Promise((resolve, reject) => {
@@ -428,8 +475,11 @@ const context = {
   },
 };
 vm.createContext(context);
+const apiSource = fs.readFileSync("static/js/api.js", "utf8");
+const apiEnd = apiSource.indexOf("// #region SSE & Real-time Integration");
+if (apiEnd < 0) throw new Error("API error-handler section not found");
 vm.runInContext(
-  `${source.slice(start, end)}\nglobalThis.__csrfFetch = csrfFetch;`,
+  `${source.slice(start, end)}\n${apiSource.slice(0, apiEnd)}\nglobalThis.__csrfFetch = csrfFetch;\nglobalThis.__apiFetch = apiFetch;`,
   context,
 );
 
@@ -489,13 +539,50 @@ function withWatchdog(promise, timeoutMs = 1500) {
     throw new Error("the timer aborted a response that had already arrived");
   }
 
+  // A caller abort while the CSRF retry is waiting for a refreshed token must
+  // settle immediately as AbortError, not wait for the refresh timeout and
+  // then be reclassified as a timeout.
+  const retryCaller = new AbortController();
+  const retryStartedAt = Date.now();
+  const retryPromise = context.__apiFetch("/api/retry", {
+    method: "POST",
+    signal: retryCaller.signal,
+    timeoutMs: 60000,
+  });
+  setTimeout(() => retryCaller.abort(), 20);
+  let retryError = null;
+  try {
+    await withWatchdog(retryPromise);
+  } catch (error) {
+    retryError = error;
+  }
+  const retryElapsedMs = Date.now() - retryStartedAt;
+  if (!retryError || retryError.name !== "AbortError") {
+    throw new Error(
+      `retry cancellation changed into ${retryError && retryError.name}`,
+    );
+  }
+  if (retryError.type !== "aborted") {
+    throw new Error(`retry cancellation type is ${retryError.type}`);
+  }
+  if (!refreshStarted) {
+    throw new Error("retry path never requested a CSRF refresh");
+  }
+  if (retryElapsedMs > 300) {
+    throw new Error(`retry abort waited ${retryElapsedMs}ms for the refresh`);
+  }
+
   process.stdout.write(
     JSON.stringify({
       timeoutName: timeoutError.name,
       abortName: abortErrorSeen.name,
       fastAborted: fastSignal.aborted,
+      retryName: retryError.name,
+      retryType: retryError.type,
+      retryElapsedMs,
     }),
   );
+  process.exit(0);
 })().catch((error) => {
   console.error(error.stack || error);
   process.exit(1);
@@ -537,8 +624,9 @@ def test_popup_stock_poll_times_out_and_marks_the_list_stale():
 def test_csrf_fetch_has_a_timeout_and_keeps_caller_cancellation_distinct():
     """csrfFetch must reject a hung request as TimeoutError, not hang or AbortError."""
     result = _run(_CSRF_HARNESS)
-    assert result == {
-        "timeoutName": "TimeoutError",
-        "abortName": "AbortError",
-        "fastAborted": False,
-    }
+    assert result["timeoutName"] == "TimeoutError"
+    assert result["abortName"] == "AbortError"
+    assert result["fastAborted"] is False
+    assert result["retryName"] == "AbortError"
+    assert result["retryType"] == "aborted"
+    assert result["retryElapsedMs"] <= 300

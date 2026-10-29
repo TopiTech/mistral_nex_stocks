@@ -75,21 +75,24 @@ def test_batch_embedding_failure_redacts_provider_diagnostics(caplog):
     assert "status=503" in caplog.text
 
 
+@patch("services.embeddings_service.get_mistral_embeddings_batch")
 @patch("services.embeddings_service.get_mistral_embedding")
-def test_rank_news_by_semantic_relevance(mock_get_emb):
+def test_rank_news_by_semantic_relevance(mock_get_emb, mock_get_emb_batch):
     """Verify semantic news ranking orders articles by cosine similarity score."""
 
-    # Query vector
-    def emb_side_effect(text, key):
+    def emb_for_text(text):
         if "半導体" in text:
             return [1.0, 0.0, 0.0]
-        elif "チップ" in text or "GPU" in text:
+        if "チップ" in text or "GPU" in text:
             return [0.9, 0.1, 0.0]
-        elif "飲食" in text or "カフェ" in text:
+        if "飲食" in text or "カフェ" in text:
             return [0.0, 1.0, 0.0]
         return [0.1, 0.1, 0.1]
 
-    mock_get_emb.side_effect = emb_side_effect
+    mock_get_emb.side_effect = lambda text, key: emb_for_text(text)
+    mock_get_emb_batch.side_effect = lambda texts, key: [
+        emb_for_text(text) for text in texts
+    ]
 
     news = [
         {"title": "新しいカフェがオープン", "snippet": "飲食業界の動向"},
@@ -101,3 +104,9 @@ def test_rank_news_by_semantic_relevance(mock_get_emb):
     assert len(ranked) == 3
     assert ranked[0]["title"] == "最新GPUチップが発売"
     assert ranked[0]["semantic_score"] > ranked[1]["semantic_score"]
+    # Production uses the batch dependency; the per-article helper must not be
+    # called for articles (only for the query vector).
+    mock_get_emb_batch.assert_called_once()
+    article_texts = mock_get_emb_batch.call_args.args[0]
+    assert len(article_texts) == 3
+    assert mock_get_emb.call_count == 1

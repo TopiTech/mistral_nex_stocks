@@ -16,7 +16,11 @@
 
   class RealtimeStockClient {
     constructor() {
-      this.priceStore = {};
+      // Previous prices are per-card UI state, not a symbol registry. They are
+      // kept on the card element (__realtimePrevPrice) so their lifetime is the
+      // card's lifetime: removing a watchlist entry/card releases the value
+      // instead of leaving it in a map that grows for the whole session and
+      // makes a re-added card flash against a price it never displayed.
       this.domCache = new Map();
     }
 
@@ -127,9 +131,7 @@
           const data = deltas[symbol];
           if (!data) return;
 
-          const prevPrice = this.priceStore[symbol];
           const newPrice = data.price;
-          this.priceStore[symbol] = newPrice;
 
           const cached = this._getElements(symbol);
 
@@ -223,6 +225,8 @@
               window.updateStockUI(wrapper, currentStock);
             } else {
               // Fallback: update .compact-price inside wrapper ONLY
+              const prevPrice = wrapper.__realtimePrevPrice;
+              wrapper.__realtimePrevPrice = newPrice;
               const priceEl = wrapper.querySelector(".compact-price");
               if (priceEl) {
                 priceEl.classList.add("scraping-success", "updating");

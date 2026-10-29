@@ -142,7 +142,7 @@ def test_mistral_fallback_chat_raises_sdk_error_not_attribute_error():
     with patch.object(svc, "_get_mistral_client", return_value=fake):
         with patch.object(svc.app_state.market, "is_circuit_open", return_value=False):
             with patch.object(svc, "_acquire_mistral_call_slot", return_value=0.0):
-                with patch.object(svc, "_wait_for_rate_limit_slot", return_value=False):
+                with patch.object(svc, "_wait_for_rate_limit_slot", return_value="ready"):
                     with patch.object(
                         svc.app_state.ai,
                         "mistral_call_semaphore",
@@ -160,7 +160,7 @@ def test_mistral_fallback_chat_raises_sdk_error_not_attribute_error():
     with patch.object(svc, "_get_mistral_client", return_value=fake):
         with patch.object(svc.app_state.market, "is_circuit_open", return_value=False):
             with patch.object(svc, "_acquire_mistral_call_slot", return_value=0.0):
-                with patch.object(svc, "_wait_for_rate_limit_slot", return_value=False):
+                with patch.object(svc, "_wait_for_rate_limit_slot", return_value="ready"):
                     with patch.object(
                         svc.app_state.ai,
                         "mistral_stream_semaphore",

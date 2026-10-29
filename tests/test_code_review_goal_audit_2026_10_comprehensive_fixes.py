@@ -259,8 +259,11 @@ def test_api_heatmap_unified_success_envelope():
 
     with app.test_client() as client:
         # 1. Fetching response mode
-        with patch("routes.stocks.views._has_cached_key", return_value=False), \
-             patch("routes.stocks.views.app_state.payload_disk_cache.get", return_value=None):
+        with patch(
+            "routes.stocks.views._get_cached_value_if_present", return_value=(False, None)
+        ), patch(
+            "routes.stocks.views.app_state.payload_disk_cache.get", return_value=None
+        ):
             res = client.get("/api/heatmap?market=us")
             assert res.status_code == 200
             data = res.get_json()
@@ -270,8 +273,10 @@ def test_api_heatmap_unified_success_envelope():
 
         # 2. In-memory cached response mode
         mock_cached = {"stocks": [{"symbol": "MSFT", "price": 400.0, "market_cap": 3000000000000}]}
-        with patch("routes.stocks.views._has_cached_key", return_value=True), \
-             patch("routes.stocks.views._get_cached_value", return_value=mock_cached):
+        with patch(
+            "routes.stocks.views._get_cached_value_if_present",
+            return_value=(True, mock_cached),
+        ):
             res2 = client.get("/api/heatmap?market=us")
             assert res2.status_code == 200
             data2 = res2.get_json()

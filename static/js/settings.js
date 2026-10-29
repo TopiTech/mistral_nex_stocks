@@ -323,6 +323,35 @@ function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
   };
 }
 
+/**
+ * Parse a settings-mutation response and surface the server's own reason.
+ * Both delete and reset go through this so the API envelope's
+ * details.reason/error message is not replaced by a bare HTTP status.
+ */
+async function readSettingsApiResponse(res) {
+  const payload = await res.text();
+  let data = {};
+  try {
+    data = payload ? JSON.parse(payload) : {};
+  } catch (_parseErr) {
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    throw new Error(
+      `サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`,
+    );
+  }
+  if (!res.ok) {
+    throw new Error(
+      data.details?.reason ||
+        data.error ||
+        `HTTP ${res.status}: ${res.statusText}`,
+    );
+  }
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
 async function executeDeleteStock(market, symbol) {
   try {
     const res = await csrfFetch("/api/stocks/delete", {
@@ -330,26 +359,7 @@ async function executeDeleteStock(market, symbol) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, market }),
     });
-    const payload = await res.text();
-    let data = {};
-    try {
-      data = payload ? JSON.parse(payload) : {};
-    } catch (_parseErr) {
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
-      throw new Error(
-        `サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`,
-      );
-    }
-    if (!res.ok) {
-      const msg =
-        data.details?.reason ||
-        data.error ||
-        `HTTP ${res.status}: ${res.statusText}`;
-      throw new Error(msg);
-    }
-    if (data.error) throw new Error(data.error);
+    await readSettingsApiResponse(res);
     loadStocks();
     showToast(`✓ ${symbol} を削除しました`, "#10b981");
   } catch (e) {
@@ -388,19 +398,7 @@ async function resetAllStocks() {
 
   try {
     const res = await csrfFetch("/api/stocks/reset", { method: "POST" });
-    const payload = await res.text();
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    }
-    let data = {};
-    try {
-      data = payload ? JSON.parse(payload) : {};
-    } catch (_parseErr) {
-      throw new Error(
-        `サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`,
-      );
-    }
-    if (data.error) throw new Error(data.error);
+    await readSettingsApiResponse(res);
     try {
       localStorage.removeItem("sort_us");
       localStorage.removeItem("sort_jp");

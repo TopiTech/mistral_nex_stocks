@@ -146,7 +146,7 @@ protobuf==7.36.1
     # via yfinance
 psutil==7.2.2
     # via mistral-nex-stocks
-pycparser==3.0 ; implementation_name != 'PyPy'
+pycparser==3.12 ; implementation_name != 'PyPy'
     # via cffi
 pydantic==2.13.5
     # via

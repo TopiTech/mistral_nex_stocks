@@ -12,7 +12,7 @@ import os
 import time
 from typing import Any
 
-from flask import current_app, g, jsonify, request
+from flask import current_app, g, request
 
 import routes.api_system
 from app_state import app_state
@@ -437,7 +437,7 @@ def api_credentials_verify():
                     "details": res_dict,
                 },
             )
-        return jsonify(res_dict), 200
+        return ok_response(res_dict)
 
     api_key = data.get("mistral_api_key")
     if not api_key:
@@ -461,9 +461,8 @@ def api_credentials_verify():
     )
 
     if is_preview_api_key(api_key):
-        return jsonify(
+        return ok_response(
             {
-                "ok": True,
                 "valid": True,
                 "preview": True,
                 "message": "プレビューモードです（APIキー未使用・サンプル出力）。",
@@ -501,9 +500,8 @@ def api_credentials_verify():
             latency_ms = int((time.time() - start_ts) * 1000)
             agent_model = getattr(agent, "model", None)
             agent_name = getattr(agent, "name", None)
-            return jsonify(
+            return ok_response(
                 {
-                    "ok": True,
                     "valid": True,
                     "mode": "agents",
                     "agent_name": agent_name if isinstance(agent_name, str) else "",
@@ -534,9 +532,8 @@ def api_credentials_verify():
         recommended_model = "mistral-medium-2604" if has_large else "mistral-small-2603"
         recommended_label = "Mistral Medium 3.5" if has_large else "Mistral Small 4"
 
-        return jsonify(
+        return ok_response(
             {
-                "ok": True,
                 "valid": True,
                 "tier": "paid" if has_large else "free",
                 "tier_name": tier_name,

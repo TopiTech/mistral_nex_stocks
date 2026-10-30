@@ -13,6 +13,15 @@ const MIN_KEY_LENGTHS = {
   tavily: Number(_appCfg.tavily_api_key_min_length) || 5,
 };
 
+let setupAbortController = null;
+
+function getOrCreateSetupAbortController() {
+  if (!setupAbortController || setupAbortController.signal.aborted) {
+    setupAbortController = new AbortController();
+  }
+  return setupAbortController;
+}
+
 const getEl = (id) => document.getElementById(id);
 const setErrorMessage = (message) => {
   const errorMsg = getEl("errorMsg");
@@ -116,6 +125,7 @@ async function verifyOpenaiSetup() {
         base_url: baseUrl,
         api_key: apiKey,
       }),
+      signal: getOrCreateSetupAbortController().signal,
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
@@ -139,6 +149,7 @@ async function verifyOpenaiSetup() {
       }
     }
   } catch (err) {
+    if (err?.name === "AbortError") return;
     if (statusEl) {
       statusEl.textContent = `エラー: ${err.message || "通信エラー"}`;
       statusEl.className = "verify-status error";
@@ -195,6 +206,7 @@ async function storeCredentials(options = {}) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: getOrCreateSetupAbortController().signal,
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
@@ -212,7 +224,10 @@ async function storeCredentials(options = {}) {
 async function getCredentialState() {
   const response = await fetchWithTimeout(
     "/api/credentials",
-    { cache: "no-store" },
+    {
+      cache: "no-store",
+      signal: getOrCreateSetupAbortController().signal,
+    },
     FAST_FETCH_TIMEOUT_MS,
   );
   const data = await response.json().catch(() => ({}));
@@ -275,6 +290,7 @@ async function startPreviewMode() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ preview_mode: true }),
+      signal: getOrCreateSetupAbortController().signal,
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.ok === false) {
@@ -288,6 +304,7 @@ async function startPreviewMode() {
     setErrorMessage("");
     window.location.href = "/main";
   } catch (error) {
+    if (error?.name === "AbortError") return;
     setErrorMessage(error.message || "プレビューモードを開始できませんでした");
     if (btn) btn.disabled = false;
   }
@@ -401,6 +418,7 @@ async function saveKey() {
     setErrorMessage("");
     window.location.href = "/main";
   } catch (error) {
+    if (error?.name === "AbortError") return;
     setErrorMessage(error.message || "APIキーの保存に失敗しました");
     if (saveBtn) {
       saveBtn.disabled = false;
@@ -531,3 +549,15 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   bootstrapLegacyCredentials();
 });
+
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("beforeunload", () => {
+    if (setupAbortController) {
+      setupAbortController.abort();
+      setupAbortController = null;
+    }
+  });
+}

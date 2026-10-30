@@ -16,7 +16,7 @@ from typing import Any, TypedDict
 import httpx
 import requests
 from cachetools import TTLCache
-from flask import Blueprint, current_app, g, jsonify, request, session
+from flask import Blueprint, current_app, g, request, session
 
 from app_state import app_state
 from constants import PORTFOLIO_SHARES_MAX
@@ -364,7 +364,7 @@ def api_generate_ai_portfolio() -> Any:
     finished = result_holder["done"].wait(timeout=3.0)
     if not finished:
         elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
-        return jsonify({
+        return ok_response({
             "fetching": True,
             "step": result_holder.get("step", "generating"),
             "message": result_holder.get("message", "AIポートフォリオを生成中..."),
@@ -498,7 +498,7 @@ def api_rebalance_ai_portfolio() -> Any:
     finished = result_holder["done"].wait(timeout=3.0)
     if not finished:
         elapsed = round(time.time() - result_holder.get("start_time", time.time()), 1)
-        return jsonify({
+        return ok_response({
             "fetching": True,
             "step": result_holder.get("step", "rebalancing"),
             "message": result_holder.get("message", "AIポートフォリオをリバランス中..."),

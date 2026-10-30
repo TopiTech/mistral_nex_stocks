@@ -116,15 +116,20 @@ function updateIntervalControlsVisibility(parentEl, stockKey, currentPeriod) {
 }
 
 // Cleanup all observers on page unload to prevent memory leaks
-document.addEventListener(
-  "beforeunload",
-  function cleanupIntersectionObserver() {
-    if (cardIntersectionObserver) {
-      cardIntersectionObserver.disconnect();
-      cardIntersectionObserver = null;
-    }
-  },
-);
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener(
+    "beforeunload",
+    function cleanupIntersectionObserver() {
+      if (cardIntersectionObserver) {
+        cardIntersectionObserver.disconnect();
+        cardIntersectionObserver = null;
+      }
+    },
+  );
+}
 
 // #region Detail Panel Management
 async function ensureStockDetails(wrapper) {

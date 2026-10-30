@@ -1005,7 +1005,12 @@ def _chat_error_response(
     exc: Any, flask_g: Any, operation_token: str | None = None
 ) -> "tuple[Any, int]":
     """Mistral / OpenAI 呼び出しで発生した例外を HTTP レスポンスへ変換する。"""
-    payload: dict[str, Any] = {"disclaimer": ANALYSIS_DISCLAIMER}
+    payload: dict[str, Any] = {
+        "ok": False,
+        "success": False,
+        "error_flag": True,
+        "disclaimer": ANALYSIS_DISCLAIMER,
+    }
     if operation_token:
         payload["request_token"] = operation_token
 

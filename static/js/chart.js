@@ -699,12 +699,6 @@ function compactStockCardLayout(container) {
   clearStockCardMinHeights(container);
 }
 
-// Flush pending cache writes on page unload (safety net for 300ms debounce)
-window.addEventListener("beforeunload", () => {
-  _flushChartPrefsToStorage();
-  _flushStockColors();
-});
-
 /**
  * Check AI API connectivity and update the header status badge.
  * Dynamically reflects provider (Mistral API, OpenAI API, Preview) and status.
@@ -870,10 +864,6 @@ function _flushChartPrefsToStorage() {
   _chartPrefDirtyKeys.clear();
 }
 
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeunload", _flushChartPrefsToStorage);
-}
-
 function _scheduleChartPrefPersist() {
   if (_chartPrefPersistTimer) clearTimeout(_chartPrefPersistTimer);
   _chartPrefPersistTimer = setTimeout(_flushChartPrefsToStorage, 300);
@@ -941,6 +931,28 @@ function _flushStockColors() {
 function _scheduleStockColorsPersist() {
   if (_stockColorsPersistTimer) clearTimeout(_stockColorsPersistTimer);
   _stockColorsPersistTimer = setTimeout(_flushStockColors, 300);
+}
+
+// Flush pending cache writes and cancel timers on page unload (safety net for debounced operations)
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("beforeunload", () => {
+    if (typeof historyPrefetchTimer !== "undefined" && historyPrefetchTimer) {
+      clearTimeout(historyPrefetchTimer);
+      historyPrefetchTimer = null;
+    }
+    if (
+      typeof historyPrefetchJobTimers !== "undefined" &&
+      Array.isArray(historyPrefetchJobTimers)
+    ) {
+      historyPrefetchJobTimers.forEach((timerId) => clearTimeout(timerId));
+      historyPrefetchJobTimers = [];
+    }
+    _flushChartPrefsToStorage();
+    _flushStockColors();
+  });
 }
 
 function getStockColor(stockKey) {

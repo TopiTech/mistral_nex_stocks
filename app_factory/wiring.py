@@ -11,6 +11,7 @@ import threading
 import time
 
 from flask import Flask
+from werkzeug.security import safe_join
 
 from app_state import app_state
 from constants import STATIC_MTIME_CACHE_TTL
@@ -119,14 +120,17 @@ def _configure_static_cache_buster(app: Flask) -> None:
     def static_url(filename: str) -> str:
         from flask import url_for
 
+        safe_path = safe_join(app.static_folder or "", filename) if app.static_folder else None
+        if safe_path is None:
+            return url_for("static", filename=filename)
+
         now = time.time()
         with _static_mtime_cache_lock:
             cached = _static_mtime_cache.get(filename)
             if cached and (now - cached[0]) < STATIC_MTIME_CACHE_TTL:
                 return url_for("static", filename=filename) + f"?v={cached[1]}"
-        file_path = os.path.join(app.static_folder or "", filename)
         try:
-            mtime = int(os.path.getmtime(file_path))
+            mtime = int(os.path.getmtime(safe_path))
             with _static_mtime_cache_lock:
                 if len(_static_mtime_cache) >= _static_mtime_cache_max_entries:
                     _static_mtime_cache.clear()

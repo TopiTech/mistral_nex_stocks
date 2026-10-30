@@ -253,7 +253,7 @@
           </div>
         </div>
 
-        <div class="mistral-model-content">
+        <div class="mistral-model-content"{% if app_config.ai_provider == 'openai_compatible' %} inert{% endif %}>
           <div class="section-title">🧠 Mistral AI モデル設定</div>
           <div class="note">
             銘柄分析や市場ニュース要約で使用するMistral

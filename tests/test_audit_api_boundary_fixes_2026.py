@@ -69,6 +69,8 @@ class TestChatErrorResponseEnvelope:
         assert "code" in data
         assert "disclaimer" in data
         assert data.get("request_token") == token
+        assert data.get("request_id") == "test-req-boundary-2026"
+        assert data.get("error_code") == f"ERR_CHAT_{expected_status}"
 
         # Verify equivalence
         assert data["error"] == data["reply"]
@@ -84,6 +86,8 @@ class TestChatErrorResponseEnvelope:
         assert "request_token" not in data
         assert data["error"] == data["message"] == data["reply"] == "入力データが不正です"
         assert data["code"] == 400
+        assert data["request_id"] == "test-req-boundary-2026"
+        assert data["error_code"] == "ERR_CHAT_400"
 
 
 class TestApiClientAndFrontendGuards:

@@ -360,8 +360,8 @@ class CORSHeadersComplianceTestCase(unittest.TestCase):
         response = self.client.options("/api/credentials")
         allowed_methods = response.headers.get("Access-Control-Allow-Methods", "")
 
-        # Should include at least GET
-        self.assertTrue(len(allowed_methods) > 0)
+        # Should include standard REST methods
+        self.assertEqual(allowed_methods, "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
     def test_access_control_allow_headers_set(self):
         """Access-Control-Allow-Headers should allow required headers"""

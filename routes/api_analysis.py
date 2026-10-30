@@ -1075,6 +1075,8 @@ def _chat_error_response(
     payload["error"] = msg
     payload["message"] = msg
     payload["code"] = status_code
+    payload["request_id"] = getattr(flask_g, "request_id", "-")
+    payload["error_code"] = f"ERR_CHAT_{status_code}"
     return jsonify(payload), status_code
 
 

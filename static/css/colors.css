@@ -377,10 +377,13 @@
 }
 
 /* =============================================
- * Responsive Breakpoints (single source of truth)
- * Usage: @media (max-width: var(--bp-mobile)) { ... }
- * ============================================= */
-:root {
+ * Responsive Breakpoints (single source of truth / reference constants)
+ * NOTE: CSS custom properties (var(--*)) cannot be evaluated inside @media query
+ * condition expressions in vanilla CSS spec. These variables are defined here
+ * as architectural reference constants and for consumption in JS / calc().
+ * When writing media queries in stylesheets, use literal pixel values directly:
+ *   e.g. @media (max-width: 640px) { ... }  /* aligns with --bp-mobile */
+* ============================================= */ :root {
   --bp-tiny: 400px;
   --bp-xsmall: 450px;
   --bp-small: 600px;

@@ -245,3 +245,145 @@ console.log("search keyboard accessibility checks passed");
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("search keyboard accessibility checks passed")
+
+
+def test_settings_mistral_model_blackout_inert():
+    """Verify templates/settings.html and static/js/settings.js inert handling for OpenAI mode."""
+    html_content = _read_file("templates/settings.html")
+    assert 'class="mistral-model-content"{% if app_config.ai_provider == \'openai_compatible\' %} inert{% endif %}' in html_content
+
+    js_content = _read_file("static/js/settings.js")
+    assert 'section?.querySelector(".mistral-model-content")' in js_content
+    assert 'content.setAttribute("inert", "")' in js_content
+    assert 'content.removeAttribute("inert")' in js_content
+
+    # Verify runtime behavior using Node.js
+    node = shutil.which("node")
+    if node is None:
+        return
+
+    script = """
+const vm = require("vm");
+
+let inertValue = null;
+const contentElement = {
+  setAttribute(attr, val) {
+    if (attr === "inert") inertValue = val;
+  },
+  removeAttribute(attr) {
+    if (attr === "inert") inertValue = null;
+  },
+};
+
+const sectionElement = {
+  classList: { toggle() {} },
+  setAttribute() {},
+  querySelector(sel) {
+    if (sel === ".mistral-model-content") return contentElement;
+    return null;
+  },
+};
+
+const document = {
+  getElementById(id) {
+    if (id === "mistral-model-section") return sectionElement;
+    if (id === "mistral-model-blackout-overlay") return { style: {}, setAttribute() {} };
+    if (id === "save-model-btn") return { disabled: false };
+    if (id === "model-selection-grid") return { querySelectorAll: () => [] };
+    return null;
+  },
+};
+
+const context = {
+  document,
+  console,
+  getInertValue: () => inertValue,
+};
+const code = `
+  function setMistralModelSectionBlackout(isBlackout) {
+    const section = document.getElementById("mistral-model-section");
+    const overlay = document.getElementById("mistral-model-blackout-overlay");
+    const saveBtn = document.getElementById("save-model-btn");
+    const grid = document.getElementById("model-selection-grid");
+    const content = section?.querySelector(".mistral-model-content");
+
+    if (section) {
+      section.classList.toggle("is-blacked-out", isBlackout);
+      section.setAttribute("aria-disabled", String(isBlackout));
+    }
+    if (content) {
+      if (isBlackout) {
+        content.setAttribute("inert", "");
+      } else {
+        content.removeAttribute("inert");
+      }
+    }
+    if (overlay) {
+      overlay.style.display = isBlackout ? "flex" : "none";
+      overlay.setAttribute("aria-hidden", String(!isBlackout));
+    }
+    if (saveBtn) {
+      saveBtn.disabled = isBlackout;
+    }
+    if (grid) {
+      grid.querySelectorAll('input[name="mistralModel"]').forEach((radio) => {
+        radio.disabled = isBlackout;
+      });
+    }
+  }
+  setMistralModelSectionBlackout(true);
+  if (getInertValue() !== "") throw new Error("inert was not set on blackout");
+  setMistralModelSectionBlackout(false);
+  if (getInertValue() !== null) throw new Error("inert was not removed on clear");
+  console.log("inert blackout test passed");
+`;
+vm.runInNewContext(code, context);
+"""
+    result = subprocess.run(
+        [node, "-e", script],
+        cwd=ROOT_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_ai_portfolio_chart_destruction_on_tab_switch():
+    """Verify that switching back to 'my' portfolio releases AI Chart.js instances."""
+    js_content = _read_file("static/js/ai_portfolio.js")
+
+    assert "function destroyAiPortfolioCharts()" in js_content
+    assert "aiSectorChartInstance.destroy()" in js_content
+    assert "aiSectorChartInstance = null" in js_content
+    assert "aiSummaryChartInstance.destroy()" in js_content
+    assert "aiSummaryChartInstance = null" in js_content
+
+    # Check switchToMy invokes destroyAiPortfolioCharts()
+    switch_match = re.search(r"const switchToMy\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\};", js_content)
+    assert switch_match is not None, "switchToMy definition not found in ai_portfolio.js"
+    switch_body = switch_match.group(1)
+    assert "destroyAiPortfolioCharts()" in switch_body, "destroyAiPortfolioCharts() must be called in switchToMy"
+
+
+def test_colors_css_media_query_comment_clarification():
+    """Verify static/css/colors.css explains vanilla CSS breakpoint variable semantics."""
+    css_content = _read_file("static/css/colors.css")
+
+    # The misleading usage should not exist
+    assert "@media (max-width: var(--bp-mobile))" not in css_content
+
+    # Accurate note about vanilla CSS spec should exist
+    assert "Responsive Breakpoints (single source of truth / reference constants)" in css_content
+    assert "CSS custom properties (var(--*)) cannot be evaluated inside @media query" in css_content
+
+
+def test_screener_results_count_aria_live():
+    """Verify templates/screener.html provides live region attributes for screen readers."""
+    screener_html = _read_file("templates/screener.html")
+
+    match = re.search(r'<div[^>]*class="[^"]*results-count[^"]*"[^>]*>', screener_html)
+    assert match is not None, "results-count element not found in screener.html"
+    tag = match.group(0)
+    assert 'aria-live="polite"' in tag, f"results-count missing aria-live='polite': {tag}"
+    assert 'aria-atomic="true"' in tag, f"results-count missing aria-atomic='true': {tag}"

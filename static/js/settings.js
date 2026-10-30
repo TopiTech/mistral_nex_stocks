@@ -907,10 +907,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const overlay = document.getElementById("mistral-model-blackout-overlay");
     const saveBtn = document.getElementById("save-model-btn");
     const grid = document.getElementById("model-selection-grid");
+    const content = section?.querySelector(".mistral-model-content");
 
     if (section) {
       section.classList.toggle("is-blacked-out", isBlackout);
       section.setAttribute("aria-disabled", String(isBlackout));
+    }
+    if (content) {
+      if (isBlackout) {
+        content.setAttribute("inert", "");
+      } else {
+        content.removeAttribute("inert");
+      }
     }
     if (overlay) {
       overlay.style.display = isBlackout ? "flex" : "none";

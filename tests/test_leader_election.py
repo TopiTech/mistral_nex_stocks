@@ -70,6 +70,7 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
             with patch("os.getpid", return_value=pid_b):
                 acquired_b = app_bg._try_acquire_leader_lock()
                 self.assertFalse(acquired_b)
+                self.assertIsNone(app_bg._LEADER_LOCK_FILE)
 
             # Close Process A's file handle to release lock
             if file_handle_a is not None:
@@ -78,6 +79,35 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
             # Now that the lock is released, we can safely read the lock file
             with open(self.lock_path, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read().strip(), str(pid_a))
+
+    def test_try_acquire_leader_lock_failure_releases_handle(self):
+        """When lock acquisition fails, the file handle must be closed immediately."""
+        with patch("app_bg.APP_DATA_DIR", Path(self.temp_dir)):
+            opened_files = []
+            real_open = open
+
+            def tracking_open(*args, **kwargs):
+                f = real_open(*args, **kwargs)
+                opened_files.append(f)
+                return f
+
+            # Simulate lock collision by raising OSError in locking
+            import bg.leader_election as le
+
+            lock_patch_target = (
+                "bg.leader_election.msvcrt.locking"
+                if getattr(le, "msvcrt", None) is not None
+                else "bg.leader_election.fcntl.flock"
+            )
+            with patch("builtins.open", side_effect=tracking_open):
+                with patch(lock_patch_target, side_effect=OSError("Lock collision")):
+                    acquired = app_bg._try_acquire_leader_lock()
+                    self.assertFalse(acquired)
+                    self.assertIsNone(app_bg._LEADER_LOCK_FILE)
+
+            self.assertTrue(len(opened_files) > 0)
+            for f in opened_files:
+                self.assertTrue(f.closed, "Failed lock attempt must close opened file handle")
 
     def test_warm_payload_cache_from_disk_updates_current_stocks_cache(self):
         with app.app_context():

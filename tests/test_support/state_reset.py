@@ -144,9 +144,12 @@ def _reset_caches_and_sessions(app_state: object) -> None:
         pass
 
     # YFinance short cache
-    if hasattr(app_state, "yfinance_short_cache"):
-        with app_state.yfinance_short_cache_lock:
-            app_state.yfinance_short_cache.clear()
+    short_cache = getattr(app_state, "yfinance_short_cache", None)
+    if short_cache is not None:
+        lock = getattr(app_state, "yfinance_short_cache_lock", None)
+        if lock is not None:
+            with lock:
+                short_cache.clear()
 
     # Disk cache lock timeout
     try:
@@ -218,10 +221,9 @@ def _reset_caches_and_sessions(app_state: object) -> None:
             app_state.messaging.listeners.clear()
 
     # SSE listener limiter
-    try:
-        app_state.sse_listener_limiter.reset_for_testing()
-    except AttributeError:
-        pass
+    sse_limiter = getattr(app_state, "sse_listener_limiter", None)
+    if sse_limiter is not None and hasattr(sse_limiter, "reset_for_testing"):
+        sse_limiter.reset_for_testing()
 
     # YFinance ticker instance cache
     try:

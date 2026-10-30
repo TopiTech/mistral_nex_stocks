@@ -190,10 +190,11 @@ def _try_acquire_leader_lock() -> bool:
         if os.name == "nt":  # Windows
             if msvcrt is not None:
                 lock_f = _get_leader_lock_file()
+                opened_here = False
                 if lock_f is None:
                     lock_path.touch(exist_ok=True)
                     lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
-                    _set_leader_lock_file(lock_f)
+                    opened_here = True
                 fd = lock_f.fileno()
                 try:
                     lock_f.seek(0)
@@ -202,25 +203,40 @@ def _try_acquire_leader_lock() -> bool:
                     lock_f.truncate(0)
                     lock_f.write(str(pid))
                     lock_f.flush()
+                    _set_leader_lock_file(lock_f)
                     return True
                 except OSError:
+                    try:
+                        lock_f.close()
+                    except OSError:
+                        pass
+                    if not opened_here:
+                        _set_leader_lock_file(None)
                     return False
             return _try_acquire_atomic_lock(lock_path, pid)
         else:  # Unix
             if fcntl is not None:
                 lock_f = _get_leader_lock_file()
+                opened_here = False
                 if lock_f is None:
                     lock_path.touch(exist_ok=True)
                     lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
-                    _set_leader_lock_file(lock_f)
+                    opened_here = True
                 try:
                     fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
                     lock_f.seek(0)
                     lock_f.truncate(0)
                     lock_f.write(str(pid))
                     lock_f.flush()
+                    _set_leader_lock_file(lock_f)
                     return True
                 except OSError:
+                    try:
+                        lock_f.close()
+                    except OSError:
+                        pass
+                    if not opened_here:
+                        _set_leader_lock_file(None)
                     return False
             return _try_acquire_atomic_lock(lock_path, pid)
     except (OSError, ValueError) as exc:

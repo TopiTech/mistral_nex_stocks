@@ -56,6 +56,7 @@
 
     const switchToMy = () => {
       cancelAiPortfolioRequest();
+      destroyAiPortfolioCharts();
       myTab.classList.add("active");
       myTab.setAttribute("aria-selected", "true");
       myTab.setAttribute("tabindex", "0");
@@ -1291,14 +1292,24 @@
     });
   }
 
+  function destroyAiPortfolioCharts() {
+    if (aiSectorChartInstance) {
+      aiSectorChartInstance.destroy();
+      aiSectorChartInstance = null;
+    }
+    if (aiSummaryChartInstance) {
+      aiSummaryChartInstance.destroy();
+      aiSummaryChartInstance = null;
+    }
+  }
+
   function drawAiPortfolioCharts(portfolio) {
     if (typeof Chart === "undefined") return;
+    destroyAiPortfolioCharts();
 
     // 1. Sector/Stock Distribution Doughnut Chart
     const sectorCanvas = document.getElementById("ai-pf-sector-canvas");
     if (sectorCanvas) {
-      if (aiSectorChartInstance) aiSectorChartInstance.destroy();
-
       const items = portfolio.items || [];
       const labels = items.map((it) => it.symbol);
       const dataValues = items.map((it) => it.weight_pct || 0);

@@ -194,7 +194,7 @@ def add_extension_cors_headers(response):
         "Content-Type, X-CSRFToken, X-CSRF-Token, X-MNS-Shutdown-Token, "
         "X-MNS-Admin-Token, X-MNS-Extension-Request, Authorization"
     )
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Access-Control-Max-Age"] = "600"
 

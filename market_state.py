@@ -506,7 +506,11 @@ class MarketDataState:
                 backoff = min(max(graduated, retry_after), self.scraper_max_backoff_sec)
             else:
                 backoff = graduated
-            self.scraper_block_until = now_ts + backoff
+            # Monotonic window: a later report of the same block event with a
+            # shorter backoff (e.g. a 60s default racing an earlier 300s
+            # Retry-After) must never shorten the cooldown and resume hammering
+            # the blocked upstream. Mirrors ``mark_yf_429``.
+            self.scraper_block_until = max(self.scraper_block_until, now_ts + backoff)
             if not was_blocked:
                 logger.warning(
                     "Web scraper global block detected; pausing all scrapers for %.0fs "

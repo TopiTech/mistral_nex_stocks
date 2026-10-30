@@ -356,14 +356,12 @@ class ScreenerQueryRequest(BaseModel):
     def _normalize_screener_limit(cls, v: Any) -> Any:
         if v is None or v == "":
             return 150
-        if isinstance(v, bool):
-            raise TypeError("limit_must_be_integer")
         if isinstance(v, str):
             try:
                 return int(v.strip())
             except (ValueError, TypeError) as exc:
                 raise ValueError("limit_must_be_integer") from exc
-        if isinstance(v, int):
+        if isinstance(v, int) and not isinstance(v, bool):
             return v
         raise ValueError("limit_must_be_integer")
 

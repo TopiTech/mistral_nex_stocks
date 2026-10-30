@@ -408,9 +408,12 @@ class StockDiskCache:
     def has(self, key: str, ttl: int | None = None) -> bool:
         """Return ``True`` if a valid (non-expired) entry exists.
 
-        Performs a lightweight check (file existence + mtime) without reading
-        or parsing the JSON content. More efficient than ``get() is not None``
-        when only presence is needed.
+        Freshness is resolved exactly like ``get()``: the embedded
+        ``stored_at`` timestamp wins over the file mtime, because copies and
+        restores reset mtimes. Parsing the small metadata envelope is required
+        for the two APIs to agree; reporting presence from mtime alone made
+        ``has()`` return True for an entry ``get()`` immediately treated as
+        expired (e.g. after a backup restore).
         """
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
@@ -419,8 +422,16 @@ class StockDiskCache:
                 if not path.exists():
                     return False
                 try:
-                    return time.time() - path.stat().st_mtime <= effective_ttl
-                except OSError:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(data, dict):
+                        return False
+                    stored_at = data.get("stored_at")
+                    if isinstance(stored_at, (int, float)) and not isinstance(stored_at, bool):
+                        age = time.time() - float(stored_at)
+                    else:
+                        age = time.time() - path.stat().st_mtime
+                    return age <= effective_ttl
+                except (OSError, ValueError, TypeError, AttributeError):
                     return False
         except DiskCacheLockTimeout as exc:
             _note_lock_timeout()

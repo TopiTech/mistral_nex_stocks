@@ -956,7 +956,7 @@ function connectSSE(overrideMode) {
 
   const buildStreamUrl = async () => {
     if (!isCurrentConnection()) return null;
-    let streamUrl = `/stocks/stream?mode=${currentMode}`;
+    let streamUrl = `/api/stocks/stream?mode=${currentMode}`;
     try {
       const ticketResponse = await csrfFetch("/api/stocks/stream/ticket", {
         method: "POST",

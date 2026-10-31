@@ -123,7 +123,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 continue
             seen_symbols.add((symbol, market))
             weight_raw = it.get("weight_pct")
-            if isinstance(weight_raw, bool):
+            if isinstance(weight_raw, bool) or type(weight_raw).__name__ in ("bool_", "bool"):
                 continue
             try:
                 weight_pct = float(weight_raw or 0.0)
@@ -134,7 +134,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             target_price: float | None = None
             target_raw = it.get("target_price")
             if target_raw is not None and str(target_raw).strip():
-                if isinstance(target_raw, bool):
+                if isinstance(target_raw, bool) or type(target_raw).__name__ in ("bool_", "bool"):
                     continue
                 try:
                     target_price = float(target_raw)

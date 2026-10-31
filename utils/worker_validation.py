@@ -41,7 +41,7 @@ def worker_validation_enabled(environ: Mapping[str, str] | None = None) -> bool:
 
 def _positive_int(value: Any) -> int | None:
     """Parse a positive process count without treating booleans as integers."""
-    if isinstance(value, bool):
+    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
         return None
     if isinstance(value, bytes):
         try:

@@ -125,6 +125,7 @@ def api_create_sse_ticket() -> Any:
 
 
 @stream_bp.route("/api/stocks/stream", methods=["GET"])
+@stream_bp.route("/stocks/stream", methods=["GET"])
 @rate_limit(max_requests=30, window_seconds=60)
 def api_stocks_stream() -> Any:
     """SSEストリームエンドポイント（接続数・モード切替対応）"""

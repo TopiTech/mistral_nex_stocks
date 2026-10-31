@@ -228,7 +228,14 @@ async function ensureStockDetails(wrapper) {
     }
 
     clearTimeout(timeoutId);
-    if (data && !data.error && !data.fetching) {
+    if (
+      data &&
+      data.ok !== false &&
+      data.success !== false &&
+      !data.failed &&
+      !data.error &&
+      !data.fetching
+    ) {
       stockDetailsCache.set(stockKey, data);
       renderDetailExtras(wrapper, data);
     } else if (data && data.fetching) {

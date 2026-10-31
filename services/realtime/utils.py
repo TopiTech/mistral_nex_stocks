@@ -416,8 +416,8 @@ def _extract_pts_fields(segment: str) -> dict[str, str]:
                     if val.get(sub) is not None:
                         val = val[sub]
                         break
-            if isinstance(val, bool):
-                fields[str(key)] = "true" if val else "false"
+            if isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
+                fields[str(key)] = "true" if bool(val) else "false"
             elif isinstance(val, (str, int, float)):
                 fields[str(key)] = str(val)
         if fields:

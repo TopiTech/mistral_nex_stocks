@@ -25,7 +25,7 @@ def _finite_float(value: Any, default: float | None = None) -> float | None:
 
 def _sanitize_fundamental_value(value: Any) -> Any:
     """Return a recursively JSON-safe value or a sentinel when it must be dropped."""
-    if value is None or isinstance(value, bool):
+    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
         return _DROP_FUNDAMENTAL_VALUE
     if isinstance(value, dict):
         clean_dict: dict[Any, Any] = {}

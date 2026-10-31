@@ -292,7 +292,8 @@
     }
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
+  const initRealtimeStockClient = () => {
+    if (window.realtimeClient) return;
     window.realtimeClient = new RealtimeStockClient();
     // Single-entry dispatch used by api.js (connectSSE) for realtime_update events.
     window.handleRealtimeDeltas = (deltas) => {
@@ -305,5 +306,16 @@
         window.realtimeClient.handlePtsDeltas(deltas);
       }
     };
-  });
+  };
+
+  if (typeof document !== "undefined" && document.addEventListener) {
+    document.addEventListener("DOMContentLoaded", initRealtimeStockClient);
+  }
+  if (
+    typeof document !== "undefined" &&
+    document.readyState &&
+    document.readyState !== "loading"
+  ) {
+    initRealtimeStockClient();
+  }
 })();

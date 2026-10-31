@@ -249,6 +249,7 @@ def api_stock_details() -> Any:
                     "success": False,
                     "symbol": symbol,
                     "failed": True,
+                    "error": "銘柄詳細情報の取得に失敗しました",
                     "sector": None,
                     "industry": None,
                     "market_cap": None,

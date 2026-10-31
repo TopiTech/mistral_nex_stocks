@@ -24,7 +24,7 @@ except ImportError:
     cffi_requests = None  # type: ignore[assignment]
     HAS_CURL_CFFI = False
 
-from utils.normalization import is_jp_stock_code
+from utils.normalization import is_bool_like, is_jp_stock_code
 
 logger = logging.getLogger(__name__)
 
@@ -416,7 +416,7 @@ def _extract_pts_fields(segment: str) -> dict[str, str]:
                     if val.get(sub) is not None:
                         val = val[sub]
                         break
-            if isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
+            if is_bool_like(val):
                 fields[str(key)] = "true" if bool(val) else "false"
             elif isinstance(val, (str, int, float)):
                 fields[str(key)] = str(val)

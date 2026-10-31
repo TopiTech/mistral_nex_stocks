@@ -26,6 +26,7 @@ from utils.market_utils import is_market_open
 from utils.normalization import (
     _fmt,
     _fmt_vol,
+    is_bool_like,
     normalize_history_candle,
     normalize_history_frame,
 )
@@ -376,18 +377,22 @@ def _extract_portfolio_fields(name_or_dict, market: str | None = None):
     name = name_or_dict.get("name", "") if isinstance(name_or_dict, dict) else name_or_dict
 
     if isinstance(name_or_dict, dict):
-        try:
-            val = float(name_or_dict.get("shares", 0.0))
-            shares = val if math.isfinite(val) and val >= 0 else 0.0
-        except (TypeError, ValueError, OverflowError):
-            shares = 0.0
-        try:
-            val = float(name_or_dict.get("avg_price", 0.0))
-            avg_price = val if math.isfinite(val) and val >= 0 else 0.0
-        except (TypeError, ValueError, OverflowError):
-            avg_price = 0.0
+        raw_sh = name_or_dict.get("shares", 0.0)
+        if not is_bool_like(raw_sh):
+            try:
+                val = float(raw_sh)
+                shares = val if math.isfinite(val) and val >= 0 else 0.0
+            except (TypeError, ValueError, OverflowError):
+                shares = 0.0
+        raw_ap = name_or_dict.get("avg_price", 0.0)
+        if not is_bool_like(raw_ap):
+            try:
+                val = float(raw_ap)
+                avg_price = val if math.isfinite(val) and val >= 0 else 0.0
+            except (TypeError, ValueError, OverflowError):
+                avg_price = 0.0
         fx_val = name_or_dict.get("avg_fx_rate")
-        if fx_val is not None:
+        if fx_val is not None and not is_bool_like(fx_val):
             try:
                 val = float(fx_val)
                 avg_fx_rate = val if math.isfinite(val) and val > 0 else None
@@ -458,7 +463,7 @@ def _finite_or_none(value, *, allow_negative=True, decimals=None):
         allow_negative: Keep negative numbers (meaningful for cash-flow fields).
         decimals: Optional rounding precision (e.g. 4 for dividend yield).
     """
-    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+    if value is None or is_bool_like(value):
         return None
     try:
         num = float(value)
@@ -473,14 +478,6 @@ def _finite_or_none(value, *, allow_negative=True, decimals=None):
 
 def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
     """Build chart_data and ohlc_data arrays from a DataFrame with MA columns."""
-
-    def _finite_or_none(val):
-        try:
-            f = float(val)
-            return f if math.isfinite(f) else None
-        except (TypeError, ValueError, OverflowError):
-            return None
-
     recent_df = df.reset_index()
     _DATE_COLUMN_CANDIDATES = ("Date", "date", "timestamp", "Time", "time", "Datetime")
     date_col = "Date"
@@ -512,12 +509,11 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
 
         try:
             raw_volume = rd.get("Volume", 0)
-            volume_float = (
-                float(raw_volume)
-                if raw_volume is not None and pd.notna(raw_volume)
-                else 0.0
-            )
-            vol = int(volume_float) if math.isfinite(volume_float) else 0
+            if raw_volume is not None and not is_bool_like(raw_volume) and pd.notna(raw_volume):
+                volume_float = float(raw_volume)
+                vol = int(volume_float) if math.isfinite(volume_float) else 0
+            else:
+                vol = 0
         except (ValueError, TypeError, OverflowError):
             vol = 0
 
@@ -565,7 +561,7 @@ def get_current_usdjpy_rate(
         if (
             usdjpy_info
             and usdjpy_info.get("price") not in (None, "--", "")
-            and not isinstance(usdjpy_info.get("price"), bool)
+            and not is_bool_like(usdjpy_info.get("price"))
         ):
             fx = float(usdjpy_info["price"])
             if math.isfinite(fx) and fx > 0:
@@ -583,7 +579,7 @@ def get_current_usdjpy_rate(
             rt_fx
             and isinstance(rt_fx, dict)
             and rt_fx.get("price") is not None
-            and not isinstance(rt_fx.get("price"), bool)
+            and not is_bool_like(rt_fx.get("price"))
         ):
             fx_p = float(rt_fx["price"])
             if math.isfinite(fx_p) and fx_p > 0:
@@ -597,7 +593,7 @@ def get_current_usdjpy_rate(
     try:
         raw_rate = getattr(app_state.market, "last_usdjpy_rate", 0.0)
         raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
-        if isinstance(raw_rate, bool) or isinstance(raw_ts, bool):
+        if is_bool_like(raw_rate) or is_bool_like(raw_ts):
             raise TypeError("bool not allowed")
         last_rate = float(raw_rate or 0.0)
         last_ts = float(raw_ts or 0.0)
@@ -622,7 +618,7 @@ def get_current_usdjpy_rate(
                     or cached_disk.get("previousClose")
                     or cached_disk.get("price")
                 )
-                if p_val is not None and not isinstance(p_val, bool):
+                if p_val is not None and not is_bool_like(p_val):
                     p_float = float(p_val)
                     if math.isfinite(p_float) and p_float > 0:
                         return p_float, False
@@ -633,9 +629,11 @@ def get_current_usdjpy_rate(
     # 5. Expired / fallback
     fallback_rate = default_rate
     try:
-        last_rate = float(getattr(app_state.market, "last_usdjpy_rate", 0.0) or 0.0)
-        if math.isfinite(last_rate) and last_rate > 0:
-            fallback_rate = last_rate
+        raw_last = getattr(app_state.market, "last_usdjpy_rate", 0.0)
+        if not is_bool_like(raw_last):
+            last_rate = float(raw_last or 0.0)
+            if math.isfinite(last_rate) and last_rate > 0:
+                fallback_rate = last_rate
     except (ValueError, TypeError, OverflowError):
         pass
 
@@ -753,26 +751,29 @@ def build_stock_payload(
         resolved_vol = None
         if "Volume" in hist.columns and not hist["Volume"].empty:
             last_vol = hist["Volume"].iloc[-1]
-            try:
-                last_vol_f = float(last_vol)
-                if math.isfinite(last_vol_f) and last_vol_f > 0:
-                    resolved_vol = _fmt_vol(last_vol_f)
-            except (TypeError, ValueError, OverflowError):
-                pass
+            if not is_bool_like(last_vol):
+                try:
+                    last_vol_f = float(last_vol)
+                    if math.isfinite(last_vol_f) and last_vol_f > 0:
+                        resolved_vol = _fmt_vol(last_vol_f)
+                except (TypeError, ValueError, OverflowError):
+                    pass
             if resolved_vol is None or resolved_vol <= 0:
                 pos_vols = hist["Volume"][hist["Volume"] > 0]
                 if not pos_vols.empty:
-                    try:
-                        latest_pos = float(pos_vols.iloc[-1])
-                        if math.isfinite(latest_pos) and latest_pos > 0:
-                            resolved_vol = _fmt_vol(latest_pos)
-                    except (TypeError, ValueError, OverflowError):
-                        pass
+                    latest_pos = pos_vols.iloc[-1]
+                    if not is_bool_like(latest_pos):
+                        try:
+                            latest_pos_f = float(latest_pos)
+                            if math.isfinite(latest_pos_f) and latest_pos_f > 0:
+                                resolved_vol = _fmt_vol(latest_pos_f)
+                        except (TypeError, ValueError, OverflowError):
+                            pass
 
         if (resolved_vol is None or resolved_vol <= 0) and isinstance(info, dict):
             for v_key in ("regularMarketVolume", "volume", "averageVolume", "averageVolume10days"):
                 cand = info.get(v_key)
-                if cand is not None:
+                if cand is not None and not is_bool_like(cand):
                     try:
                         cand_f = float(cand)
                         if math.isfinite(cand_f) and cand_f > 0:
@@ -998,20 +999,20 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                             rt_info
                             and rt_info.get("price") is not None
                             and isinstance(rt_info["price"], (int, float))
-                            and not isinstance(rt_info["price"], bool)
+                            and not is_bool_like(rt_info["price"])
                             and rt_info["price"] > 0
                         ):
                             r_copy["price"] = rt_info["price"]
                             if (
                                 rt_info.get("change") is not None
                                 and isinstance(rt_info["change"], (int, float))
-                                and not isinstance(rt_info["change"], bool)
+                                and not is_bool_like(rt_info["change"])
                             ):
                                 r_copy["change"] = rt_info["change"]
                             if (
                                 rt_info.get("change_percent") is not None
                                 and isinstance(rt_info["change_percent"], (int, float))
-                                and not isinstance(rt_info["change_percent"], bool)
+                                and not is_bool_like(rt_info["change_percent"])
                             ):
                                 r_copy["change_percent"] = rt_info["change_percent"]
                             # Volume is strictly sourced from yfinance, never from scrapers
@@ -1019,7 +1020,7 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                                 rt_info.get("source") == "tradingview"
                                 and rt_info.get("volume") is not None
                                 and isinstance(rt_info["volume"], (int, float))
-                                and not isinstance(rt_info["volume"], bool)
+                                and not is_bool_like(rt_info["volume"])
                                 and rt_info["volume"] > 0
                             ):
                                 r_copy["volume"] = rt_info["volume"]
@@ -1280,7 +1281,7 @@ def get_stock_volume(symbol: str) -> int | float | None:
                                     symbol.replace(".T", ""),
                                 ):
                                     vol = row.get("volume")
-                                    if vol is not None:
+                                    if vol is not None and not is_bool_like(vol):
                                         try:
                                             vval = float(vol)
                                             if math.isfinite(vval) and vval > 0:
@@ -1300,7 +1301,7 @@ def get_stock_volume(symbol: str) -> int | float | None:
         if isinstance(cached_info, dict):
             for v_key in ("regularMarketVolume", "volume", "averageVolume"):
                 raw_vol = cached_info.get(v_key)
-                if raw_vol is not None:
+                if raw_vol is not None and not is_bool_like(raw_vol):
                     try:
                         vval = float(raw_vol)
                         if math.isfinite(vval) and vval > 0:
@@ -1354,7 +1355,7 @@ def get_stock_previous_close(symbol: str) -> float | None:
                                 symbol.replace(".T", ""),
                             ):
                                 prev = row.get("previous_close")
-                                if prev is not None:
+                                if prev is not None and not is_bool_like(prev):
                                     try:
                                         pval = float(prev)
                                         if math.isfinite(pval) and pval > 0:
@@ -1363,7 +1364,12 @@ def get_stock_previous_close(symbol: str) -> float | None:
                                         pass
                                 p = row.get("price")
                                 c = row.get("change")
-                                if p is not None and c is not None:
+                                if (
+                                    p is not None
+                                    and c is not None
+                                    and not is_bool_like(p)
+                                    and not is_bool_like(c)
+                                ):
                                     try:
                                         pval = float(p) - float(c)
                                         if math.isfinite(pval) and pval > 0:
@@ -1382,7 +1388,7 @@ def get_stock_previous_close(symbol: str) -> float | None:
             raw_prev = cached_info.get("previousClose") or cached_info.get(
                 "regularMarketPreviousClose"
             )
-            if raw_prev is not None:
+            if raw_prev is not None and not is_bool_like(raw_prev):
                 try:
                     pval = float(raw_prev)
                     if math.isfinite(pval) and pval > 0:

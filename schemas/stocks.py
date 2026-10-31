@@ -23,6 +23,7 @@ from constants import (
     PORTFOLIO_TOTAL_VALUE_MAX,
 )
 from utils.normalization import (
+    is_bool_like,
     is_valid_symbol,
     normalize_market,
     normalize_symbol,
@@ -253,7 +254,7 @@ class PortfolioUpdateRequest(BaseModel):
     def require_numeric_fields(cls, v: Any) -> Any:
         if v is None or (isinstance(v, str) and not v.strip()):
             raise ValueError("field_required")
-        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+        if is_bool_like(v):
             raise ValueError("bool_type_not_allowed")
         return v
 
@@ -262,7 +263,7 @@ class PortfolioUpdateRequest(BaseModel):
     def normalize_optional_fx_rate(cls, v: Any) -> Any:
         if isinstance(v, str) and not v.strip():
             return None
-        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+        if is_bool_like(v):
             raise ValueError("bool_type_not_allowed")
         return v
 
@@ -361,7 +362,7 @@ class ScreenerQueryRequest(BaseModel):
                 return int(v.strip())
             except (ValueError, TypeError) as exc:
                 raise ValueError("limit_must_be_integer") from exc
-        if isinstance(v, int) and not isinstance(v, bool):
+        if isinstance(v, int) and not is_bool_like(v):
             return v
         raise ValueError("limit_must_be_integer")
 
@@ -379,7 +380,7 @@ class ScreenerQueryRequest(BaseModel):
     @classmethod
     def reject_boolean_numeric(cls, v: Any, info: ValidationInfo) -> Any:
         """Reject boolean values and parse numeric string inputs for filter fields."""
-        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+        if is_bool_like(v):
             raise ValueError("bool_type_not_allowed")
         if v is None:
             return None

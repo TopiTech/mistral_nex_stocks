@@ -33,6 +33,7 @@ from route_helpers import (
 )
 from services.stock_provider import YFTickerMissingError
 from utils.market_utils import is_market_open
+from utils.normalization import is_bool_like
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
@@ -340,7 +341,12 @@ def _process_fetched_stocks(
                 if prev_close is None:
                     price = row.get("price")
                     change = row.get("change")
-                    if price is not None and change is not None:
+                    if (
+                        price is not None
+                        and change is not None
+                        and not is_bool_like(price)
+                        and not is_bool_like(change)
+                    ):
                         try:
                             prev_close = float(price) - float(change)
                         except (TypeError, ValueError):
@@ -457,7 +463,7 @@ def _update_indices_data(
         if "USDJPY" in new_header_data:
             rate_dict = new_header_data["USDJPY"]
             price_val: object = rate_dict.get("price")
-            if price_val not in (None, "--", ""):
+            if price_val not in (None, "--", "") and not is_bool_like(price_val):
                 try:
                     rate_float = float(price_val)  # type: ignore[arg-type]
                     if math.isfinite(rate_float) and rate_float > 0:

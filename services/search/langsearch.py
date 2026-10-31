@@ -27,6 +27,7 @@ from constants import (
     LANGSEARCH_TOTAL_TIMEOUT_SEC,
 )
 from utils.http_utils import parse_retry_after
+from utils.normalization import is_bool_like
 
 logger = logging.getLogger(__name__)
 
@@ -498,7 +499,7 @@ def langsearch_rerank(query, documents, api_key):
             if not isinstance(result, dict):
                 continue
             idx = result.get("index")
-            if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < len(documents):
+            if isinstance(idx, int) and not is_bool_like(idx) and 0 <= idx < len(documents):
                 raw_doc = documents[idx]
                 doc: dict[str, Any] = (
                     dict(raw_doc) if isinstance(raw_doc, dict) else {"text": str(raw_doc)}
@@ -507,7 +508,7 @@ def langsearch_rerank(query, documents, api_key):
                 try:
                     score = (
                         float(score_raw)
-                        if score_raw is not None and not isinstance(score_raw, bool)
+                        if score_raw is not None and not is_bool_like(score_raw)
                         else 0.0
                     )
                     if not math.isfinite(score):

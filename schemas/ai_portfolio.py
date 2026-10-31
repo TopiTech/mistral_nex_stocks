@@ -15,6 +15,7 @@ from constants import (
     PORTFOLIO_AVG_PRICE_MAX,
 )
 from utils.normalization import (
+    is_bool_like,
     is_valid_symbol,
     market_symbol_mismatch,
     normalize_symbol_for_market,
@@ -62,14 +63,14 @@ class AIPortfolioItemSchema(BaseModel):
     @classmethod
     def reject_boolean_numeric(cls, v: Any) -> Any:
         """Reject boolean values for numeric fields."""
-        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+        if is_bool_like(v):
             raise ValueError("bool_type_not_allowed")
         return v
 
 
 def _is_bool_like(value: Any) -> bool:
     """Return True for bool and numpy-style bool scalars (route-exact check)."""
-    return isinstance(value, bool) or type(value).__name__ in ("bool_", "bool")
+    return is_bool_like(value)
 
 
 class AIPortfolioGenerateRequest(BaseModel):
@@ -210,7 +211,7 @@ class AIPortfolioCopyToMyItem(BaseModel):
     @classmethod
     def reject_boolean_numeric(cls, v: Any) -> Any:
         """Reject boolean values for numeric fields."""
-        if isinstance(v, bool) or type(v).__name__ in ("bool_", "bool"):
+        if is_bool_like(v):
             raise ValueError("bool_type_not_allowed")
         return v
 

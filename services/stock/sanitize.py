@@ -9,12 +9,14 @@ from typing import Any
 
 import pandas as pd
 
+from utils.normalization import is_bool_like
+
 _DROP_FUNDAMENTAL_VALUE = object()
 
 
 def _finite_float(value: Any, default: float | None = None) -> float | None:
     """Convert provider values while rejecting non-finite numbers."""
-    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+    if value is None or is_bool_like(value):
         return default
     try:
         numeric = float(value)
@@ -25,7 +27,7 @@ def _finite_float(value: Any, default: float | None = None) -> float | None:
 
 def _sanitize_fundamental_value(value: Any) -> Any:
     """Return a recursively JSON-safe value or a sentinel when it must be dropped."""
-    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+    if value is None or is_bool_like(value):
         return _DROP_FUNDAMENTAL_VALUE
     if isinstance(value, dict):
         clean_dict: dict[Any, Any] = {}
@@ -44,12 +46,7 @@ def _sanitize_fundamental_value(value: Any) -> Any:
 
     try:
         missing = pd.isna(value)
-        if isinstance(missing, (bool,)) and missing:
-            return _DROP_FUNDAMENTAL_VALUE
-        # NumPy bool_ is intentionally checked without importing NumPy solely
-        # for this helper.  Calling bool() is safe after excluding array-like
-        # results above.
-        if type(missing).__name__ == "bool_" and bool(missing):
+        if is_bool_like(missing) and bool(missing):
             return _DROP_FUNDAMENTAL_VALUE
     except (TypeError, ValueError):
         pass

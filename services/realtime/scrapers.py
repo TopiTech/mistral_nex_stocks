@@ -29,7 +29,7 @@ from services.realtime.utils import (
     _parse_quote_number,
     _scraper_market_state,
 )
-from utils.normalization import is_jp_stock_code
+from utils.normalization import is_bool_like, is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
 
 try:
@@ -811,7 +811,7 @@ class YahooJPRealtimeScraper:
         price = payload.get("price")
         if (
             symbol is None
-            or isinstance(price, bool)
+            or is_bool_like(price)
             or not isinstance(price, (int, float))
             or not math.isfinite(price)
         ):

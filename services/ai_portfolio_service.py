@@ -29,7 +29,7 @@ from credential_manager import (
 from crypto_utils import _is_windows, protect_data, unprotect_data
 from services.ai_service import _sanitize_prompt_text, call_mistral_chat, is_mistral_error
 from services.search_service import collect_symbol_research_context
-from utils.normalization import is_valid_symbol, normalize_symbol_for_market
+from utils.normalization import is_bool_like, is_valid_symbol, normalize_symbol_for_market
 from utils.text_utils import wrap_cdata
 from utils.validators import (
     AiPortfolioResponseSchema,
@@ -123,7 +123,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 continue
             seen_symbols.add((symbol, market))
             weight_raw = it.get("weight_pct")
-            if isinstance(weight_raw, bool) or type(weight_raw).__name__ in ("bool_", "bool"):
+            if is_bool_like(weight_raw):
                 continue
             try:
                 weight_pct = float(weight_raw or 0.0)
@@ -134,7 +134,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             target_price: float | None = None
             target_raw = it.get("target_price")
             if target_raw is not None and str(target_raw).strip():
-                if isinstance(target_raw, bool) or type(target_raw).__name__ in ("bool_", "bool"):
+                if is_bool_like(target_raw):
                     continue
                 try:
                     target_price = float(target_raw)

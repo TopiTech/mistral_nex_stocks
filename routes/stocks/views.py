@@ -54,6 +54,7 @@ from utils.caching import (
     clear_cache_prefix,
 )
 from utils.normalization import (
+    is_bool_like,
     is_jp_stock_code,
     is_valid_symbol,
     market_symbol_mismatch,
@@ -119,7 +120,7 @@ def api_screener() -> Any:
         return res
 
     def _parse_screener_float(val: Any) -> float | None:
-        if val is None or isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
+        if val is None or is_bool_like(val):
             return None
         try:
             if isinstance(val, str):
@@ -249,7 +250,7 @@ def api_screener() -> Any:
                 if item.get("forwardPE") is not None
                 else item.get("pe")
             )
-        if val is None or isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
+        if val is None or is_bool_like(val):
             return "" if field == "symbol" else -math.inf if reverse else math.inf
         if field == "symbol":
             return str(val)

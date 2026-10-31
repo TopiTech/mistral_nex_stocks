@@ -53,6 +53,7 @@ from services.ai_portfolio_service import (
     save_custom_ai_portfolio,
 )
 from services.ai_service import ProviderAPIError
+from utils.normalization import is_bool_like
 from utils.stock_payload import (
     _get_stock_container,
     error_response,
@@ -697,7 +698,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
     if has_us_items:
         rate_is_valid = True
         raw_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0)
-        if isinstance(raw_rate, bool) or type(raw_rate).__name__ in ("bool_", "bool"):
+        if is_bool_like(raw_rate):
             resolved_usdjpy_rate = 150.0
             rate_is_valid = False
         else:
@@ -710,7 +711,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
             resolved_usdjpy_rate = 150.0
             rate_is_valid = False
         raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
-        if isinstance(raw_ts, bool) or type(raw_ts).__name__ in ("bool_", "bool"):
+        if is_bool_like(raw_ts):
             usdjpy_rate_ts = 0.0
         else:
             try:

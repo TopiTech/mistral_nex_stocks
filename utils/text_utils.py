@@ -14,6 +14,7 @@ from flask import request
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge, UnsupportedMediaType
 
 from constants import MAX_JSON_SIZE
+from utils.normalization import is_bool_like
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,7 @@ def _sanitize_error_message(error_msg):
 
 def parse_non_negative_float(value, field_name, max_value=None):
     """Safely parse a number and ensure it is non-negative and finite."""
-    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+    if is_bool_like(value):
         raise ValueError(f"{field_name} must be a number")
     try:
         parsed = float(value)

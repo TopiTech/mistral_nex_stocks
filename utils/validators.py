@@ -13,6 +13,7 @@ from typing import Any, Literal, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.stocks import HeatmapQueryRequest, ScreenerQueryRequest
+from utils.normalization import is_bool_like
 
 logger = logging.getLogger(__name__)
 
@@ -925,7 +926,7 @@ _CONFIDENCE_NORM_MAP: dict[str, str] = {
 
 def _clean_numeric_price(val: Any) -> float | None:
     """Safely parse and clean a numeric price from diverse LLM output shapes."""
-    if val is None or isinstance(val, bool) or type(val).__name__ in ("bool_", "bool"):
+    if val is None or is_bool_like(val):
         return None
     if isinstance(val, (int, float)):
         f = float(val)
@@ -1090,7 +1091,7 @@ def validate_analysis_result(result):
     # If specific fields are present, sanity-check their types (non-blocking)
     if "target_price_3m" in normalized:
         tpm = normalized.get("target_price_3m")
-        if isinstance(tpm, bool) or type(tpm).__name__ in ("bool_", "bool"):
+        if is_bool_like(tpm):
             return False, "target_price_3m must be numeric"
         if not isinstance(tpm, (int, float)):
             try:

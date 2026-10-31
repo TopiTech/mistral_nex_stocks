@@ -14,6 +14,8 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from utils.normalization import is_bool_like
+
 _WORKER_ENV_NAMES = (
     "WEB_CONCURRENCY",
     "GUNICORN_WORKERS",
@@ -41,7 +43,7 @@ def worker_validation_enabled(environ: Mapping[str, str] | None = None) -> bool:
 
 def _positive_int(value: Any) -> int | None:
     """Parse a positive process count without treating booleans as integers."""
-    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+    if is_bool_like(value):
         return None
     if isinstance(value, bytes):
         try:

@@ -13,6 +13,16 @@ VALID_MARKETS = {"us", "jp", "idx"}
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9^][A-Z0-9._\-^=]{0,14}$")
 
 
+def is_bool_like(value: Any) -> bool:
+    """Return True if value is a Python bool or NumPy/custom scalar bool.
+
+    Standard ``isinstance(v, bool)`` returns False for NumPy's ``bool_``,
+    which causes scalar booleans to leak past type guards and be implicitly
+    coerced into 1 / 0 (e.g. via float() or int()).
+    """
+    return isinstance(value, bool) or type(value).__name__ in ("bool_", "bool")
+
+
 def normalize_market(market, default="us"):
     """Validates and normalizes market identifier."""
     value = str(market or default).strip().lower()
@@ -147,7 +157,7 @@ def is_valid_symbol(symbol):
 def normalize_optional_number(value, allow_negative=False, allow_zero=False):
     """Noneや不正値を除外して数値に変換する"""
     try:
-        if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        if value is None or is_bool_like(value):
             return None
         num = float(value)
         if pd.isna(num) or not math.isfinite(num):
@@ -172,8 +182,7 @@ def _fmt(v):
     try:
         if (
             v is None
-            or isinstance(v, bool)
-            or type(v).__name__ in ("bool_", "bool")
+            or is_bool_like(v)
             or (isinstance(v, float) and pd.isna(v))
         ):
             return None
@@ -190,8 +199,7 @@ def _fmt_vol(v):
     try:
         if (
             v is None
-            or isinstance(v, bool)
-            or type(v).__name__ in ("bool_", "bool")
+            or is_bool_like(v)
             or (isinstance(v, float) and pd.isna(v))
         ):
             return None
@@ -205,7 +213,7 @@ def _fmt_vol(v):
 
 def _finite_number(value: Any) -> float | None:
     """Return a finite float, or None for missing/bool/NaN/Inf/unparseable."""
-    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+    if value is None or is_bool_like(value):
         return None
     try:
         numeric = float(value)

@@ -34,7 +34,7 @@ from services.realtime.utils import (
     _tv_purge_key_variants,
     is_pts_session,
 )
-from utils.normalization import is_jp_stock_code
+from utils.normalization import is_bool_like, is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ class RealtimeMarketEngine:
         if (
             price is not None
             and isinstance(price, (int, float))
-            and not isinstance(price, bool)
+            and not is_bool_like(price)
             and math.isfinite(price)
             and price > 0
         ):

@@ -152,6 +152,21 @@ class RealtimeMarketEngine:
         with self.store_lock:
             if registration is not None and not self._registration_is_current_locked(registration):
                 return
+            existing = self.market_store.get(symbol)
+            if existing:
+                inc_vol = payload.get("volume")
+                try:
+                    inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
+                except (ValueError, TypeError):
+                    inc_vol_f = 0.0
+                if inc_vol_f <= 0:
+                    ex_vol = existing.get("volume")
+                    try:
+                        ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
+                    except (ValueError, TypeError):
+                        ex_vol_f = 0.0
+                    if ex_vol_f > 0:
+                        payload["volume"] = ex_vol
             self.market_store[symbol] = payload
             self._dirty_symbols.add(symbol)
             for pending in self._client_pending.values():
@@ -168,6 +183,21 @@ class RealtimeMarketEngine:
         with self.store_lock:
             if registration is not None and not self._registration_is_current_locked(registration):
                 return
+            existing = self.pts_store.get(symbol)
+            if existing:
+                inc_vol = payload.get("volume")
+                try:
+                    inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
+                except (ValueError, TypeError):
+                    inc_vol_f = 0.0
+                if inc_vol_f <= 0:
+                    ex_vol = existing.get("volume")
+                    try:
+                        ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
+                    except (ValueError, TypeError):
+                        ex_vol_f = 0.0
+                    if ex_vol_f > 0:
+                        payload["volume"] = ex_vol
             self.pts_store[symbol] = payload
             self._dirty_pts_symbols.add(symbol)
             for pending in self._client_pts_pending.values():

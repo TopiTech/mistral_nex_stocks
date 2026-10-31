@@ -749,6 +749,38 @@ def build_stock_payload(
         if exchange_val:
             register_ticker_exchange(symbol, exchange_val)
 
+        # Volume extraction with positive fallback (handles off-hours zero-volume bars)
+        resolved_vol = None
+        if "Volume" in hist.columns and not hist["Volume"].empty:
+            last_vol = hist["Volume"].iloc[-1]
+            try:
+                last_vol_f = float(last_vol)
+                if math.isfinite(last_vol_f) and last_vol_f > 0:
+                    resolved_vol = _fmt_vol(last_vol_f)
+            except (TypeError, ValueError, OverflowError):
+                pass
+            if resolved_vol is None or resolved_vol <= 0:
+                pos_vols = hist["Volume"][hist["Volume"] > 0]
+                if not pos_vols.empty:
+                    try:
+                        latest_pos = float(pos_vols.iloc[-1])
+                        if math.isfinite(latest_pos) and latest_pos > 0:
+                            resolved_vol = _fmt_vol(latest_pos)
+                    except (TypeError, ValueError, OverflowError):
+                        pass
+
+        if (resolved_vol is None or resolved_vol <= 0) and isinstance(info, dict):
+            for v_key in ("regularMarketVolume", "volume", "averageVolume", "averageVolume10days"):
+                cand = info.get(v_key)
+                if cand is not None:
+                    try:
+                        cand_f = float(cand)
+                        if math.isfinite(cand_f) and cand_f > 0:
+                            resolved_vol = _fmt_vol(cand_f)
+                            break
+                    except (TypeError, ValueError, OverflowError):
+                        pass
+
         return {
             "symbol": symbol,
             "name": choose_display_name(symbol, name, info),
@@ -771,7 +803,7 @@ def build_stock_payload(
             "high": _fmt(hist["High"].iloc[-1]) if "High" in hist.columns else None,
             "low": _fmt(hist["Low"].iloc[-1]) if "Low" in hist.columns else None,
             "open": _fmt(hist["Open"].iloc[-1]) if "Open" in hist.columns else None,
-            "volume": (_fmt_vol(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else None),
+            "volume": resolved_vol,
             "currency": currency,
             "market_state": market_state,
             "shares": shares,

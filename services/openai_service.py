@@ -15,6 +15,7 @@ import copy
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -26,7 +27,9 @@ from pydantic import BaseModel
 from app_state import app_state
 from constants import (
     MISTRAL_API_TIMEOUT_SEC,
-    MISTRAL_MAX_TOKENS_CEIL,
+    OPENAI_MAX_TOKENS_CEIL,
+    OPENAI_MAX_TOKENS_DEFAULT,
+    OPENAI_REASONING_MIN_TOKENS,
 )
 from credential_manager import (
     get_openai_base_url,
@@ -298,6 +301,93 @@ def verify_openai_connection(
         }
 
 
+def _extract_and_parse_openai_json(
+    raw_content: Any,
+    pydantic_cls: type[BaseModel] | None = None,
+) -> tuple[dict[str, Any] | None, Any]:
+    """Extract and parse/salvage JSON from OpenAI-compatible provider response.
+
+    Handles:
+      - raw_content already a dict / list
+      - <think> / <thought> / <thinking> / <reasoning> tags
+      - Markdown code blocks (```json ... ```)
+      - Truncated or escaped JSON via extract_json_payload
+      - Non-strict JSON decoding
+      - Pydantic model validation and analysis alias normalization
+    """
+    if raw_content is None:
+        return None, None
+
+    parsed_dict: dict[str, Any] | None = None
+
+    if isinstance(raw_content, dict):
+        parsed_dict = raw_content
+    elif isinstance(raw_content, list):
+        if pydantic_cls is None:
+            return None, raw_content
+    else:
+        text = str(raw_content).strip()
+        if not text:
+            return None, raw_content
+
+        clean_text = text
+        if any(tag in text for tag in ("<thought>", "<thinking>", "<think>", "<reasoning>")):
+            stripped = re.sub(
+                r"<(?:thought|thinking|think|reasoning)>.*?(?:</(?:thought|thinking|think|reasoning)>|$)",
+                "",
+                text,
+                flags=re.DOTALL,
+            ).strip()
+            if stripped:
+                clean_text = stripped
+
+        json_str: str | None = None
+        try:
+            json_str = extract_json_payload(clean_text)
+        except Exception:
+            pass
+
+        if not json_str and clean_text != text:
+            try:
+                json_str = extract_json_payload(text)
+            except Exception:
+                pass
+
+        if not json_str:
+            json_str = clean_text
+
+        if pydantic_cls is not None:
+            try:
+                parsed_model = pydantic_cls.model_validate_json(json_str)
+                parsed_dict = parsed_model.model_dump()
+            except Exception:
+                pass
+
+        if parsed_dict is None:
+            for parse_fn in (json.loads, lambda s: json.loads(s, strict=False)):
+                try:
+                    obj = parse_fn(json_str)
+                    if isinstance(obj, dict):
+                        parsed_dict = obj
+                        break
+                except Exception:
+                    pass
+
+    if parsed_dict is not None:
+        from utils.validators import _normalize_analysis_aliases
+
+        normalized_parsed = _normalize_analysis_aliases(parsed_dict)
+        if pydantic_cls is not None:
+            try:
+                validated_model = pydantic_cls.model_validate(normalized_parsed)
+                return validated_model.model_dump(), raw_content
+            except Exception:
+                return normalized_parsed, raw_content
+        return normalized_parsed, raw_content
+
+    return None, raw_content
+
+
 def _build_openai_cache_key(
     model: str,
     messages: list[Any],
@@ -369,7 +459,7 @@ def _build_openai_cache_key(
 def call_openai_chat(
     api_key: str,
     messages: list[Any],
-    max_tokens: int = 600,
+    max_tokens: int | None = None,
     use_cache: bool = True,
     response_format: Any = None,
     tools: Any = None,
@@ -386,7 +476,6 @@ def call_openai_chat(
 
     base_url = get_openai_base_url()
     model = _model_override if _model_override else get_openai_model()
-    token_limit = min(max(16, max_tokens), MISTRAL_MAX_TOKENS_CEIL)
 
     # Response format handling
     requires_pydantic_parse = False
@@ -394,7 +483,24 @@ def call_openai_chat(
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         requires_pydantic_parse = True
         pydantic_cls = response_format
-        token_limit = min(max(3000, token_limit), MISTRAL_MAX_TOKENS_CEIL)
+
+    if max_tokens is None:
+        if _is_openai_reasoning_model(model):
+            token_limit = OPENAI_REASONING_MIN_TOKENS
+        elif requires_pydantic_parse or (
+            isinstance(response_format, dict)
+            and response_format.get("type") in ("json_object", "json_schema")
+        ):
+            token_limit = max(3000, OPENAI_MAX_TOKENS_DEFAULT)
+        else:
+            token_limit = OPENAI_MAX_TOKENS_DEFAULT
+    else:
+        token_limit = min(max(16, max_tokens), OPENAI_MAX_TOKENS_CEIL)
+        if requires_pydantic_parse or (
+            isinstance(response_format, dict)
+            and response_format.get("type") in ("json_object", "json_schema")
+        ):
+            token_limit = min(max(3000, token_limit), OPENAI_MAX_TOKENS_CEIL)
 
     cred_scope = (
         hashlib.sha256(api_key.strip().encode("utf-8")).hexdigest()[:16]
@@ -685,61 +791,45 @@ def call_openai_chat(
                 app_state.ai.record_mistral_usage(usage, model=model)
                 app_state.ai.record_openai_usage(usage, model=model)
 
-            # Pydantic structured output post-processing
-            if requires_pydantic_parse and pydantic_cls is not None:
-                try:
-                    choices = data.get("choices") or []
-                    if choices and isinstance(choices, list):
-                        msg = choices[0].get("message") or {}
-                        raw_content = (
-                            msg.get("content")
-                            or msg.get("reasoning")
-                            or msg.get("reasoning_content")
-                            or msg.get("thinking")
-                            or ""
-                        )
-                        parsed_dict = None
-                        json_str = None
-                        try:
-                            json_str = extract_json_payload(str(raw_content))
-                        except Exception:
-                            pass
-                        if not json_str:
-                            json_str = str(raw_content)
-
-                        try:
-                            parsed_model = pydantic_cls.model_validate_json(json_str)
-                            parsed_dict = parsed_model.model_dump()
-                        except Exception:
-                            try:
-                                raw_dict = json.loads(json_str)
-                                if isinstance(raw_dict, dict):
-                                    parsed_dict = raw_dict
-                            except Exception:
-                                pass
-
-                        if parsed_dict is not None:
-                            from utils.validators import _normalize_analysis_aliases
-
-                            normalized_parsed = _normalize_analysis_aliases(parsed_dict)
-                            data["choices"][0]["message"]["parsed"] = normalized_parsed
-                            data["choices"][0]["message"]["content"] = normalized_parsed
-                        elif raw_content and not msg.get("content"):
-                            data["choices"][0]["message"]["content"] = raw_content
-                except Exception as p_err:
-                    logger.debug("Failed Pydantic parsing on OpenAI response: %s", p_err)
-            else:
-                choices = data.get("choices") or []
-                if choices and isinstance(choices, list):
-                    msg = choices[0].get("message") or {}
-                    if not msg.get("content"):
-                        reasoning_fallback = (
-                            msg.get("reasoning")
-                            or msg.get("reasoning_content")
-                            or msg.get("thinking")
-                        )
-                        if reasoning_fallback:
-                            data["choices"][0]["message"]["content"] = reasoning_fallback
+            # Structured output & fallback post-processing
+            choices = data.get("choices") or []
+            if choices and isinstance(choices, list) and choices:
+                msg = choices[0].get("message") or {}
+                raw_content = (
+                    msg.get("content")
+                    or msg.get("reasoning")
+                    or msg.get("reasoning_content")
+                    or msg.get("thinking")
+                    or ""
+                )
+                if requires_pydantic_parse and pydantic_cls is not None:
+                    parsed_dict, orig_content = _extract_and_parse_openai_json(
+                        raw_content, pydantic_cls=pydantic_cls
+                    )
+                    if parsed_dict is not None:
+                        data["choices"][0]["message"]["parsed"] = parsed_dict
+                        data["choices"][0]["message"]["content"] = parsed_dict
+                    elif orig_content and not msg.get("content"):
+                        data["choices"][0]["message"]["content"] = orig_content
+                elif isinstance(response_format, dict) and response_format.get("type") in (
+                    "json_object",
+                    "json_schema",
+                ):
+                    parsed_dict, orig_content = _extract_and_parse_openai_json(
+                        raw_content, pydantic_cls=None
+                    )
+                    if parsed_dict is not None:
+                        data["choices"][0]["message"]["parsed"] = parsed_dict
+                    if orig_content and not msg.get("content"):
+                        data["choices"][0]["message"]["content"] = orig_content
+                elif not msg.get("content"):
+                    reasoning_fallback = (
+                        msg.get("reasoning")
+                        or msg.get("reasoning_content")
+                        or msg.get("thinking")
+                    )
+                    if reasoning_fallback:
+                        data["choices"][0]["message"]["content"] = reasoning_fallback
 
             if use_cache and _openai_response_has_content(data):
                 with app_state.ai.mistral_response_lock:
@@ -819,7 +909,7 @@ def _close_stream_context(stream_cm: Any, stream: Any = None) -> None:
 def stream_openai_chat(
     api_key: str,
     messages: list[Any],
-    max_tokens: int = 600,
+    max_tokens: int | None = None,
     temperature: float | None = 0.7,
     reasoning_effort: str | None | bool = None,
     include_thinking: bool | None = None,
@@ -863,7 +953,14 @@ def stream_openai_chat(
 
     base_url = get_openai_base_url()
     model = _model_override if _model_override else get_openai_model()
-    token_limit = min(max(16, max_tokens), MISTRAL_MAX_TOKENS_CEIL)
+    if max_tokens is None:
+        token_limit = (
+            OPENAI_REASONING_MIN_TOKENS
+            if _is_openai_reasoning_model(model)
+            else OPENAI_MAX_TOKENS_DEFAULT
+        )
+    else:
+        token_limit = min(max(16, max_tokens), OPENAI_MAX_TOKENS_CEIL)
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 

@@ -320,7 +320,7 @@ def _tv_purge_key_variants(symbol: str) -> list[str]:
     return [v for v in variants if v]
 
 
-_ESCAPED_QUOTE_FIELDS = ("price", "priceChange", "priceChangeRate", "priceChangePercent")
+_ESCAPED_QUOTE_FIELDS = ("price", "priceChange", "priceChangeRate", "priceChangePercent", "volume", "tradingVolume")
 _ESCAPED_QUOTE_RES = {
     field: re.compile(r'\\"' + field + r'\\":{\\"value\\":\\"([^\\\\"]+)\\"')
     for field in _ESCAPED_QUOTE_FIELDS

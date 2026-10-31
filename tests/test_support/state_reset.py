@@ -28,6 +28,28 @@ def _reset_ai_state(app_state: object) -> None:
             ai.chat_history.close_all()
         except Exception:
             pass
+    if hasattr(ai, "close_all_openai_clients"):
+        try:
+            ai.close_all_openai_clients()
+        except Exception:
+            pass
+    elif hasattr(ai, "openai_clients"):
+        try:
+            for client in list(ai.openai_clients.values()):
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            ai.openai_clients.clear()
+        except Exception:
+            pass
+    if hasattr(ai, "openai_call_count"):
+        ai.openai_call_count = 0
+    if hasattr(ai, "openai_model_usage"):
+        try:
+            ai.openai_model_usage.clear()
+        except Exception:
+            pass
 
 
 def _reset_market_state(app_state: object) -> None:
@@ -247,6 +269,17 @@ def _reset_realtime_engine() -> None:
             realtime_market_engine.previous_pts_store.clear()
             realtime_market_engine._dirty_symbols.clear()
             realtime_market_engine._dirty_pts_symbols.clear()
+            if hasattr(realtime_market_engine, "_client_states"):
+                realtime_market_engine._client_states.clear()
+            if hasattr(realtime_market_engine, "_client_last_seen"):
+                realtime_market_engine._client_last_seen.clear()
+            if hasattr(realtime_market_engine, "_client_events"):
+                for ev in list(realtime_market_engine._client_events.values()):
+                    try:
+                        ev.set()
+                    except Exception:
+                        pass
+                realtime_market_engine._client_events.clear()
     except (ImportError, AttributeError):
         pass
 

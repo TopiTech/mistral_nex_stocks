@@ -107,7 +107,15 @@ def _warm_payload_cache_from_disk() -> None:
             current_empty = not any(
                 app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
             )
-            if current_empty:
+
+            def _has_real_prices(stocks_cache: dict) -> bool:
+                for m in ("us", "jp", "idx"):
+                    for item in stocks_cache.get(m, []):
+                        if isinstance(item, dict) and item.get("price") not in (None, "--", ""):
+                            return True
+                return False
+
+            if current_empty or not _has_real_prices(app_state.market.current_stocks_cache):
                 with app_state.cache.sse_data_lock:
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache

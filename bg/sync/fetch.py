@@ -90,6 +90,12 @@ def fetch_stock(
                 "yfinance is currently rate-limited. Sourcing cached/stale data for symbol=%s",
                 symbol,
             )
+        try:
+            cached_payload = app_state.payload_disk_cache.get(f"payload_{symbol}_{market}")
+            if isinstance(cached_payload, dict) and cached_payload:
+                return cached_payload
+        except Exception:
+            pass
         return None
 
     try:
@@ -116,6 +122,12 @@ def fetch_stock(
                 symbol,
                 period,
             )
+            try:
+                cached_payload = app_state.payload_disk_cache.get(f"payload_{symbol}_{market}")
+                if isinstance(cached_payload, dict) and cached_payload:
+                    return cached_payload
+            except Exception:
+                pass
             return None
 
         build_fn = _get_app_bg_attr("build_stock_payload", build_stock_payload)
@@ -159,6 +171,11 @@ def extract_batch_history(
         if isinstance(downloaded.columns, pd.MultiIndex):
             try:
                 return normalize_history_frame(downloaded.xs(symbol, axis=1, level=1))
+            except (KeyError, IndexError, ValueError):
+                pass
+
+            try:
+                return normalize_history_frame(downloaded.xs(symbol, axis=1, level=0))
             except (KeyError, IndexError, ValueError):
                 pass
 

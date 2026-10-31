@@ -1951,12 +1951,15 @@ input {
 }
 
 /* --- Fullscreen Chart Modal --- */
-.chart-fullscreen-modal {
+.chart-fullscreen-modal,
+.modal.chart-fullscreen-modal,
+#chart-fullscreen-modal {
   position: fixed;
   inset: 0;
-  z-index: 9999;
-  background: rgba(6, 9, 18, 0.94);
-  backdrop-filter: blur(12px);
+  z-index: var(--z-fullscreen, 20000) !important;
+  background: rgba(6, 9, 18, 0.94) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1966,16 +1969,21 @@ input {
   transition: opacity 0.25s ease;
 }
 
-.chart-fullscreen-modal.show {
+.chart-fullscreen-modal.show,
+.modal.chart-fullscreen-modal.show,
+#chart-fullscreen-modal.show {
   display: flex !important;
-  opacity: 1;
-  pointer-events: auto;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  z-index: var(--z-fullscreen, 20000) !important;
 }
 
-.chart-fullscreen-modal.hidden {
+.chart-fullscreen-modal.hidden,
+.modal.chart-fullscreen-modal.hidden,
+#chart-fullscreen-modal.hidden {
   display: none !important;
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .chart-fullscreen-content {

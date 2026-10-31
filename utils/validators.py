@@ -967,6 +967,16 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
             if alias in res and res[alias] is not None:
                 res["target_price_3m"] = res[alias]
                 break
+    if "upside_3m" not in res or not res["upside_3m"]:
+        for alias in ("upside", "upside_percent", "expected_upside", "expected_return"):
+            if alias in res and res[alias] is not None:
+                val = res[alias]
+                if isinstance(val, (int, float)):
+                    sign = "+" if val > 0 else ""
+                    res["upside_3m"] = f"{sign}{val}%"
+                else:
+                    res["upside_3m"] = str(val)
+                break
     if "confidence" not in res or not res["confidence"]:
         for alias in ("confidence_level", "certainty", "conviction"):
             if alias in res and isinstance(res[alias], str) and res[alias].strip():

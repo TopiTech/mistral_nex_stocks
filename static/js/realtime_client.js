@@ -196,7 +196,8 @@
                   if (data.change != null) sItem.change = data.change;
                   if (data.change_percent != null)
                     sItem.change_percent = data.change_percent;
-                  if (data.volume != null) sItem.volume = data.volume;
+                  if (data.volume != null && Number(data.volume) > 0)
+                    sItem.volume = data.volume;
                 }
               }
             });

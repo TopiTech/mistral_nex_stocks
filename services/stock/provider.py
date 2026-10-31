@@ -207,15 +207,25 @@ class YFinanceProvider(BaseStockProvider):
         except (AttributeError, KeyError, RuntimeError):
             cached_hist = None
 
+        disk_key = f"hist_df_{symbol}_{period}"
         if m_state.is_circuit_open("yfinance_history", symbol=circuit_key):
             logger.info("stock-history circuit open symbol=%s", circuit_key)
+            disk_hist = self._load_history_from_disk_cache(disk_key)
+            if disk_hist is not None and not disk_hist.empty:
+                return disk_hist
             return pd.DataFrame()
         if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
+            disk_hist = self._load_history_from_disk_cache(disk_key)
+            if disk_hist is not None and not disk_hist.empty:
+                return disk_hist
             return pd.DataFrame()
 
         t = self.get_ticker(symbol)
         if not t:
+            disk_hist = self._load_history_from_disk_cache(disk_key)
+            if disk_hist is not None and not disk_hist.empty:
+                return disk_hist
             return pd.DataFrame()
 
         try:
@@ -311,6 +321,10 @@ class YFinanceProvider(BaseStockProvider):
             price_value = _finite_float(price)
             prev_close_value = _finite_float(prev_close)
             volume_value = _finite_float(volume, default=0.0)
+            if (volume_value is None or volume_value <= 0.0) and "Volume" in df.columns:
+                pos_vols = df["Volume"][df["Volume"] > 0]
+                if not pos_vols.empty:
+                    volume_value = _finite_float(pos_vols.iloc[-1], default=0.0)
             open_value = _finite_float(open_p)
             high_value = _finite_float(high)
             low_value = _finite_float(low)
@@ -332,10 +346,10 @@ class YFinanceProvider(BaseStockProvider):
 
     def _fetch_single_history(self, symbol: str, period: str, m_state: Any) -> pd.DataFrame:
         """単一銘柄の履歴を yfinance から取得し、キャッシュを更新する"""
+        disk_key = f"hist_df_{symbol}_{period}"
         try:
             df = self.get_history(symbol, period=period)
             if df is not None and not df.empty:
-                cache_key = f"hist_df_{symbol}_{period}"
                 try:
                     data = {
                         "type": "dataframe",
@@ -343,7 +357,7 @@ class YFinanceProvider(BaseStockProvider):
                     }
                     from app_state import app_state
 
-                    app_state.stock_disk_cache.set(cache_key, data)
+                    app_state.stock_disk_cache.set(disk_key, data)
                 except (OSError, TypeError, ValueError) as cache_exc:
                     logger.debug("Failed to save df to disk cache for %s: %s", symbol, cache_exc)
                 return df
@@ -357,6 +371,9 @@ class YFinanceProvider(BaseStockProvider):
             TimeoutError,
         ) as exc:
             logger.warning("Failed to fetch history for %s: %s", symbol, exc)
+        cached = self._load_history_from_disk_cache(disk_key)
+        if cached is not None and not cached.empty:
+            return cached
         return pd.DataFrame()
 
     @staticmethod
@@ -641,6 +658,8 @@ class YFinanceProvider(BaseStockProvider):
                             if isinstance(batch_downloaded.columns, pd.MultiIndex):
                                 if sym in batch_downloaded.columns.get_level_values(1):
                                     sym_df = batch_downloaded.xs(sym, axis=1, level=1)
+                                elif sym in batch_downloaded.columns.get_level_values(0):
+                                    sym_df = batch_downloaded.xs(sym, axis=1, level=0)
                                 else:
                                     continue
                             elif len(cache_miss_symbols) == 1:

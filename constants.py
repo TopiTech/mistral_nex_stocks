@@ -359,6 +359,11 @@ REPAIR_NEWS_MAX_TOKENS = _env_int("MNS_REPAIR_NEWS_MAX_TOKENS", 1000, 128, 4000)
 # instead of being silently clamped to a hardcoded 2000. (M-2)
 MISTRAL_MAX_TOKENS_CEIL = _env_int("MNS_MISTRAL_MAX_TOKENS_CEIL", 8000, 256, 32000)
 
+# OpenAI-compatible API token limits & defaults
+OPENAI_MAX_TOKENS_DEFAULT = _env_int("MNS_OPENAI_MAX_TOKENS_DEFAULT", 2500, 256, 16000)
+OPENAI_MAX_TOKENS_CEIL = _env_int("MNS_OPENAI_MAX_TOKENS_CEIL", 16000, 256, 64000)
+OPENAI_REASONING_MIN_TOKENS = _env_int("MNS_OPENAI_REASONING_MIN_TOKENS", 4000, 512, 32000)
+
 # ------------------------------
 # Popular Stock Lists
 # ------------------------------

@@ -397,7 +397,6 @@ def api_stock_history() -> Any:
             return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
     if is_open:
-        logger.info("stock-history circuit open symbol=%s - failing fast", circuit_key)
         return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
 
     cached_present, cached_data = _get_cached_value_if_present(cache_key, duration)

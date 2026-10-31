@@ -463,7 +463,9 @@ function updateStockUI(wrapper, stock) {
       ".detail-high": formatPrice(stock.high, stock),
       ".detail-low": formatPrice(stock.low, stock),
       ".detail-volume":
-        stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
+        stock.volume != null && Number(stock.volume) > 0
+          ? Number(stock.volume).toLocaleString()
+          : "--",
     };
     for (const [sel, val] of Object.entries(elMap)) {
       const el = wrapper.querySelector(sel);
@@ -483,7 +485,9 @@ function updateStockUI(wrapper, stock) {
         ".detail-high": formatPrice(stock.high, stock),
         ".detail-low": formatPrice(stock.low, stock),
         ".detail-volume":
-          stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
+          stock.volume != null && Number(stock.volume) > 0
+            ? Number(stock.volume).toLocaleString()
+            : "--",
       };
       for (const [sel, val] of Object.entries(elMap)) {
         const el = drawerTarget.querySelector(sel);
@@ -755,7 +759,10 @@ function buildDetailPanel(
     {
       label: "出来高:",
       cls: "detail-volume",
-      val: stock.volume != null ? Number(stock.volume).toLocaleString() : "--",
+      val:
+        stock.volume != null && Number(stock.volume) > 0
+          ? Number(stock.volume).toLocaleString()
+          : "--",
     },
     {
       label: "セクター:",
@@ -3460,6 +3467,7 @@ function openFullscreenChart(wrapper) {
   modal.classList.remove("hidden");
   modal.classList.add("show");
   modal.style.display = "flex";
+  modal.style.zIndex = "20000";
   if (typeof lockBodyScroll === "function") {
     lockBodyScroll();
   }
@@ -3813,6 +3821,7 @@ function closeFsChartModal() {
     modal.classList.remove("show");
     modal.classList.add("hidden");
     modal.style.display = "none";
+    modal.style.zIndex = "";
     modal.setAttribute("aria-hidden", "true");
     modal.setAttribute("inert", "");
     delete modal.dataset.stockKey;

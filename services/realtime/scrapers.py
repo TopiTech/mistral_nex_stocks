@@ -874,12 +874,21 @@ class YahooJPRealtimeScraper:
                                     pct = float(p_clean)
                                 except ValueError:
                                     pass
+                        kabutan_vol = 0
+                        vol_el = soup.select_one("div#stockinfo_i2 dd") or soup.select_one(".si_i1_dl2 dd")
+                        if vol_el:
+                            v_clean = re.sub(r"[^\d]", "", vol_el.text)
+                            if v_clean:
+                                try:
+                                    kabutan_vol = int(v_clean)
+                                except ValueError:
+                                    pass
                         res_payload: TickerPayload = {
                             "symbol": f"{clean_code}.T",
                             "price": price,
                             "change": change,
                             "change_percent": pct,
-                            "volume": 0,
+                            "volume": kabutan_vol,
                             "source": "kabutan",
                             "updated_at": time.time(),
                         }
@@ -953,6 +962,7 @@ class YahooJPRealtimeScraper:
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
                 html = resp.text
+                next_data = None
                 price_str = self._extract_quote_field(html, "price")
                 if price_str is None:
                     next_data = _extract_next_data_quotes(html)
@@ -970,12 +980,19 @@ class YahooJPRealtimeScraper:
                         change_pct_str = self._extract_quote_field(html, "priceChangeRate")
                         if change_pct_str is None:
                             change_pct_str = self._extract_quote_field(html, "priceChangePercent")
+                        vol_str = self._extract_quote_field(html, "volume") or self._extract_quote_field(html, "tradingVolume")
+                        if not vol_str:
+                            if next_data is None:
+                                next_data = _extract_next_data_quotes(html)
+                            if next_data:
+                                vol_str = next_data.get("volume") or next_data.get("tradingVolume")
+                        vol_num = int(_parse_quote_number(vol_str)) if vol_str else 0
                         res_payload = {
                             "symbol": f"{clean_code}.T",
                             "price": price,
                             "change": change,
                             "change_percent": _parse_quote_number(change_pct_str),
-                            "volume": 0,
+                            "volume": vol_num,
                             "source": "yahoojp",
                             "updated_at": time.time(),
                         }

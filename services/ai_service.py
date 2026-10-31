@@ -824,10 +824,15 @@ def call_mistral_chat(
             if (api_key and not api_key.startswith("mns-preview"))
             else (get_openai_api_key() or "")
         )
+        effective_max_tokens: int | None = max_tokens
+        if max_tokens == 600:
+            effective_max_tokens = None
+        elif (response_format is not None) and (effective_max_tokens is not None and effective_max_tokens < 2500):
+            effective_max_tokens = 2500
         return call_openai_chat(
             eff_key,
             messages=messages,
-            max_tokens=max_tokens,
+            max_tokens=effective_max_tokens,
             use_cache=use_cache,
             response_format=response_format,
             tools=tools,

@@ -171,6 +171,8 @@ class MarketDataState:
         # build/sync path and bounded to prevent memory growth.
         self.previous_close_cache: TTLCache[str, float] = TTLCache(maxsize=2048, ttl=86400.0)
         self.previous_close_cache_lock = threading.RLock()
+        self.yfinance_volume_cache: TTLCache[str, int] = TTLCache(maxsize=2048, ttl=86400.0)
+        self.yfinance_volume_cache_lock = threading.RLock()
 
         # Circuit breakers
         self.circuit_lock = threading.RLock()
@@ -422,6 +424,46 @@ class MarketDataState:
             else:
                 self.previous_close_cache.pop(symbol, None)
                 self.previous_close_cache.pop(f"{symbol}.T", None)
+
+    def update_volume_cache(self, symbol: str, volume: float | str | None) -> None:
+        """Update the in-memory volume cache for *symbol*."""
+        if not symbol:
+            return
+        with self.yfinance_volume_cache_lock:
+            if volume is not None:
+                try:
+                    num = int(float(str(volume).replace(",", "").strip()))
+                    if num > 0:
+                        self.yfinance_volume_cache[symbol] = num
+                        if symbol.endswith(".T"):
+                            self.yfinance_volume_cache[symbol[:-2]] = num
+                        else:
+                            self.yfinance_volume_cache[f"{symbol}.T"] = num
+                        return
+                except (ValueError, TypeError):
+                    pass
+            self.yfinance_volume_cache.pop(symbol, None)
+
+    def get_volume_cached(self, symbol: str) -> int | None:
+        """Return the cached volume for *symbol* without sse_data_lock."""
+        if not symbol:
+            return None
+        with self.yfinance_volume_cache_lock:
+            value = self.yfinance_volume_cache.get(symbol)
+            if value is not None:
+                return value
+            if symbol.endswith(".T"):
+                return self.yfinance_volume_cache.get(symbol[:-2])
+            return self.yfinance_volume_cache.get(f"{symbol}.T")
+
+    def clear_volume_cache(self, symbol: str | None = None) -> None:
+        """Drop one symbol or the whole volume cache."""
+        with self.yfinance_volume_cache_lock:
+            if symbol is None:
+                self.yfinance_volume_cache.clear()
+            else:
+                self.yfinance_volume_cache.pop(symbol, None)
+                self.yfinance_volume_cache.pop(f"{symbol}.T", None)
 
     def mark_yf_429(self, retry_after: float | None = None) -> float:
         """

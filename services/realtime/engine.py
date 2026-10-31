@@ -24,8 +24,10 @@ from services.realtime.utils import (
     TickerPayload,
     _dedupe_pts_symbols,
     _get_yfinance_previous_close,
+    _get_yfinance_volume,
     _interruptible_sleep,
     _is_scraper_blocked,
+    _is_scraper_source,
     _is_yf_rate_limited,
     _normalize_tv_symbol,
     _scraper_market_state,
@@ -153,20 +155,31 @@ class RealtimeMarketEngine:
             if registration is not None and not self._registration_is_current_locked(registration):
                 return
             existing = self.market_store.get(symbol)
-            if existing:
-                inc_vol = payload.get("volume")
+            source = payload.get("source") or ""
+            # Volume is strictly sourced from yfinance, never from scrapers
+            if _is_scraper_source(source):
+                payload.pop("volume", None)
+
+            inc_vol = payload.get("volume")
+            try:
+                inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
+            except (ValueError, TypeError):
+                inc_vol_f = 0.0
+
+            if inc_vol_f > 0:
+                payload["volume"] = inc_vol
+            else:
+                ex_vol = existing.get("volume") if existing else None
                 try:
-                    inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
+                    ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
                 except (ValueError, TypeError):
-                    inc_vol_f = 0.0
-                if inc_vol_f <= 0:
-                    ex_vol = existing.get("volume")
-                    try:
-                        ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
-                    except (ValueError, TypeError):
-                        ex_vol_f = 0.0
-                    if ex_vol_f > 0:
-                        payload["volume"] = ex_vol
+                    ex_vol_f = 0.0
+                if ex_vol_f > 0:
+                    payload["volume"] = ex_vol
+                else:
+                    yf_vol = _get_yfinance_volume(symbol)
+                    if yf_vol is not None and yf_vol > 0:
+                        payload["volume"] = yf_vol
             self.market_store[symbol] = payload
             self._dirty_symbols.add(symbol)
             for pending in self._client_pending.values():
@@ -184,20 +197,30 @@ class RealtimeMarketEngine:
             if registration is not None and not self._registration_is_current_locked(registration):
                 return
             existing = self.pts_store.get(symbol)
-            if existing:
-                inc_vol = payload.get("volume")
+            source = payload.get("source") or ""
+            if _is_scraper_source(source):
+                payload.pop("volume", None)
+
+            inc_vol = payload.get("volume")
+            try:
+                inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
+            except (ValueError, TypeError):
+                inc_vol_f = 0.0
+
+            if inc_vol_f > 0:
+                payload["volume"] = inc_vol
+            else:
+                ex_vol = existing.get("volume") if existing else None
                 try:
-                    inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
+                    ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
                 except (ValueError, TypeError):
-                    inc_vol_f = 0.0
-                if inc_vol_f <= 0:
-                    ex_vol = existing.get("volume")
-                    try:
-                        ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
-                    except (ValueError, TypeError):
-                        ex_vol_f = 0.0
-                    if ex_vol_f > 0:
-                        payload["volume"] = ex_vol
+                    ex_vol_f = 0.0
+                if ex_vol_f > 0:
+                    payload["volume"] = ex_vol
+                else:
+                    yf_vol = _get_yfinance_volume(symbol)
+                    if yf_vol is not None and yf_vol > 0:
+                        payload["volume"] = yf_vol
             self.pts_store[symbol] = payload
             self._dirty_pts_symbols.add(symbol)
             for pending in self._client_pts_pending.values():

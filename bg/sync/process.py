@@ -346,6 +346,9 @@ def _process_fetched_stocks(
                         except (TypeError, ValueError):
                             prev_close = None
                 app_state.market.update_previous_close_cache(sym, prev_close)
+                vol = row.get("volume")
+                if vol is not None:
+                    app_state.market.update_volume_cache(sym, vol)
 
         announce_real_market_state()
         current_empty = not any(

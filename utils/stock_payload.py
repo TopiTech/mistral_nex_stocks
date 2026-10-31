@@ -1014,13 +1014,24 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                                 and not isinstance(rt_info["change_percent"], bool)
                             ):
                                 r_copy["change_percent"] = rt_info["change_percent"]
+                            # Volume is strictly sourced from yfinance, never from scrapers
                             if (
-                                rt_info.get("volume") is not None
+                                rt_info.get("source") == "tradingview"
+                                and rt_info.get("volume") is not None
                                 and isinstance(rt_info["volume"], (int, float))
                                 and not isinstance(rt_info["volume"], bool)
                                 and rt_info["volume"] > 0
                             ):
                                 r_copy["volume"] = rt_info["volume"]
+                            cur_vol = r_copy.get("volume")
+                            if (
+                                cur_vol is None
+                                or not isinstance(cur_vol, (int, float))
+                                or cur_vol <= 0
+                            ):
+                                yf_vol = get_stock_volume(sym)
+                                if yf_vol is not None and yf_vol > 0:
+                                    r_copy["volume"] = yf_vol
                             if rt_info.get("source"):
                                 r_copy["source"] = rt_info["source"]
                             if include_portfolio and r_copy.get("shares"):
@@ -1223,6 +1234,83 @@ def error_response(
         for k, v in extra_fields.items():
             body[k] = _sanitize_error_message(v) if isinstance(v, str) else v
     return (jsonify(body), status_code)
+
+
+def get_stock_volume(symbol: str) -> int | float | None:
+    """Return the yfinance-derived volume for a symbol, if available."""
+    if not symbol:
+        return None
+    from app_state import app_state
+
+    # 1. Volume cache: maintained by the sync path (_process_fetched_stocks)
+    #    and realtime updates. Read without sse_data_lock so realtime deltas
+    #    never contend with SSE stream serialization.
+    try:
+        cached = app_state.market.get_volume_cached(symbol)
+        if cached is not None:
+            return cached
+        if symbol.endswith(".T"):
+            cached = app_state.market.get_volume_cached(symbol[:-2])
+        else:
+            cached = app_state.market.get_volume_cached(f"{symbol}.T")
+        if cached is not None:
+            return cached
+    except Exception as exc:
+        logger.debug("Failed looking up volume cache for %s: %s", symbol, exc)
+
+    # 2. Fall back to target_stocks_cache / current_stocks_cache (cache miss only).
+    # Use non-blocking acquire so realtime producer updates never block on sse_data_lock.
+    try:
+        acquired = app_state.cache.sse_data_lock.acquire(blocking=False)
+        if acquired:
+            try:
+                for store in (
+                    app_state.market.target_stocks_cache,
+                    app_state.market.current_stocks_cache,
+                ):
+                    if not isinstance(store, dict):
+                        continue
+                    for market in ("us", "jp", "idx"):
+                        rows = store.get(market, [])
+                        if isinstance(rows, list):
+                            for row in rows:
+                                if isinstance(row, dict) and row.get("symbol") in (
+                                    symbol,
+                                    f"{symbol}.T",
+                                    symbol.replace(".T", ""),
+                                ):
+                                    vol = row.get("volume")
+                                    if vol is not None:
+                                        try:
+                                            vval = float(vol)
+                                            if math.isfinite(vval) and vval > 0:
+                                                return int(vval)
+                                        except (TypeError, ValueError, OverflowError):
+                                            pass
+            finally:
+                app_state.cache.sse_data_lock.release()
+    except Exception as exc:
+        logger.debug("Failed looking up volume from stocks cache for %s: %s", symbol, exc)
+
+    # 3. Try yfinance short cache info
+    try:
+        short_cache_key = f"info_short_{symbol}"
+        with app_state.yfinance_short_cache_lock:
+            cached_info = app_state.yfinance_short_cache.get(short_cache_key)
+        if isinstance(cached_info, dict):
+            for v_key in ("regularMarketVolume", "volume", "averageVolume"):
+                raw_vol = cached_info.get(v_key)
+                if raw_vol is not None:
+                    try:
+                        vval = float(raw_vol)
+                        if math.isfinite(vval) and vval > 0:
+                            return int(vval)
+                    except (TypeError, ValueError, OverflowError):
+                        pass
+    except Exception as exc:
+        logger.debug("Failed looking up volume from short cache for %s: %s", symbol, exc)
+
+    return None
 
 
 def get_stock_previous_close(symbol: str) -> float | None:

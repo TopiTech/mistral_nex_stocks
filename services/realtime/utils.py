@@ -294,6 +294,54 @@ def _get_yfinance_previous_close(symbol: str) -> float | None:
     return None
 
 
+def _get_yfinance_volume(symbol: str) -> int | float | None:
+    """Resolve yfinance volume for a symbol (JP, US, or index)."""
+    if not symbol:
+        return None
+    try:
+        from utils.stock_payload import get_stock_volume
+
+        vol = get_stock_volume(symbol)
+        if vol is not None and vol > 0:
+            return vol
+        if ":" in symbol:
+            bare = symbol.split(":")[-1]
+            vol = get_stock_volume(bare)
+            if vol is not None and vol > 0:
+                return vol
+        if "." in symbol and not symbol.endswith(".T"):
+            dash_sym = symbol.replace(".", "-")
+            vol = get_stock_volume(dash_sym)
+            if vol is not None and vol > 0:
+                return vol
+    except Exception as exc:
+        logger.debug("Failed getting stock volume for %s: %s", symbol, exc)
+    return None
+
+
+_SCRAPER_SOURCES = {
+    "sbi",
+    "sbi_pts",
+    "nikkei225jp",
+    "nikkei225jp_pts",
+    "nikkei225jp_adr",
+    "minkabu",
+    "minkabu_pts",
+    "kabutan",
+    "kabutan_pts",
+    "yahoojp",
+    "yahoojp_pts",
+}
+
+
+def _is_scraper_source(source: str | None) -> bool:
+    """Return True if source identifies a web scraper."""
+    if not source:
+        return False
+    s_low = str(source).strip().lower()
+    return s_low in _SCRAPER_SOURCES or s_low.startswith("scraper")
+
+
 def _tv_purge_key_variants(symbol: str) -> list[str]:
     """Candidate ``market_store`` keys referring to the same ticker as *symbol*."""
     normalized = _normalize_tv_symbol(symbol)

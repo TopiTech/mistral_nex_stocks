@@ -137,6 +137,7 @@
 
           // 1. Sync delta with global window.state.stocks & compute change from yfinance previous_close
           let yfPrevClose = null;
+          let foundStock = null;
           if (
             data.previous_close != null &&
             typeof data.previous_close === "number" &&
@@ -157,6 +158,7 @@
                       st.symbol === cached.cleanCode),
                 );
                 if (sItem) {
+                  foundStock = sItem;
                   // Resolve yfinance previous close from stock object
                   if (!yfPrevClose) {
                     if (
@@ -220,6 +222,24 @@
             const currentStock = wrapper.__stockData
               ? { ...wrapper.__stockData, ...data, is_realtime: true }
               : { ...data, is_realtime: true };
+
+            // Volume is strictly obtained from yfinance and must never be wiped out by scrapers
+            if (
+              wrapper.__stockData &&
+              wrapper.__stockData.volume != null &&
+              Number(wrapper.__stockData.volume) > 0
+            ) {
+              currentStock.volume = wrapper.__stockData.volume;
+            } else if (
+              foundStock &&
+              foundStock.volume != null &&
+              Number(foundStock.volume) > 0
+            ) {
+              currentStock.volume = foundStock.volume;
+            } else if (data.volume != null && Number(data.volume) > 0) {
+              currentStock.volume = data.volume;
+            }
+
             if (typeof window.updateExistingCard === "function") {
               window.updateExistingCard(wrapper, currentStock);
             } else if (typeof window.updateStockUI === "function") {

@@ -323,8 +323,22 @@ def _extract_and_parse_openai_json(
     if isinstance(raw_content, dict):
         parsed_dict = raw_content
     elif isinstance(raw_content, list):
-        if pydantic_cls is None:
-            return None, raw_content
+        if pydantic_cls is not None:
+            try:
+                validated_model = pydantic_cls.model_validate(raw_content)
+                dumped = validated_model.model_dump()
+                if isinstance(dumped, dict):
+                    return dumped, raw_content
+                return {"root": dumped}, raw_content
+            except Exception:
+                pass
+            for key in ("lines", "items", "data", "results"):
+                try:
+                    validated_model = pydantic_cls.model_validate({key: raw_content})
+                    return validated_model.model_dump(), raw_content
+                except Exception:
+                    pass
+        return None, raw_content
     else:
         text = str(raw_content).strip()
         if not text:

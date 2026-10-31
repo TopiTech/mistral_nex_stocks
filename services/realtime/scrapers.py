@@ -986,7 +986,7 @@ class YahooJPRealtimeScraper:
                                 next_data = _extract_next_data_quotes(html)
                             if next_data:
                                 vol_str = next_data.get("volume") or next_data.get("tradingVolume")
-                        vol_num = int(_parse_quote_number(vol_str)) if vol_str else 0
+                        vol_num = max(0, int(_parse_quote_number(vol_str))) if vol_str else 0
                         res_payload = {
                             "symbol": f"{clean_code}.T",
                             "price": price,
@@ -1046,7 +1046,7 @@ class YahooJPRealtimeScraper:
                             "price": price,
                             "change": _parse_quote_number(fields.get("changePrice")),
                             "change_percent": _parse_quote_number(fields.get("changeRate")),
-                            "volume": int(_parse_quote_number(fields.get("volume"))),
+                            "volume": max(0, int(_parse_quote_number(fields.get("volume")))),
                             "source": "yahoojp_pts",
                             "pts": True,
                             "pts_trading": bool(flag_match and flag_match.group(1) == "true"),

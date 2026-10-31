@@ -18,7 +18,6 @@ from flask import (
     Response,
     current_app,
     g,
-    jsonify,
     request,
     stream_with_context,
 )
@@ -142,9 +141,9 @@ def api_stocks_stream() -> Any:
 
     raw_mode = request.args.get("mode", "2").strip().lower()
     if raw_mode in ("0", "disabled", "off"):
-        return jsonify(
+        return ok_response(
             {"status": "disabled", "sse_mode": 0, "message": "SSE streaming disabled by client"}
-        ), 200
+        )
 
     sse_mode = 2 if raw_mode in ("2", "tradingview", "tradingview_realtime") else 1
 

@@ -110,8 +110,10 @@ disable_error_code = [
 ]
 files = [
     "app.py",
+    "app_factory",
     "app_bg.py",
     "bg",
+    "config",
     "config_store.py",
     "config_utils.py",
     "constants.py",
@@ -149,6 +151,7 @@ check_untyped_defs = true
 [tool.pyrefly]
 project-includes = [
     "app.py",
+    "app_factory",
     "app_bg.py",
     "bg",
     "config_store.py",

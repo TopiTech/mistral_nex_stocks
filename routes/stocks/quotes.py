@@ -326,9 +326,13 @@ def api_stock_history() -> Any:
         )
 
     def make_history_response(payload: Any, is_cacheable: bool = True) -> Any:
-        if isinstance(payload, dict) and "error" not in payload:
-            payload.setdefault("ok", True)
-            payload.setdefault("success", True)
+        if isinstance(payload, dict):
+            if "error" not in payload:
+                payload.setdefault("ok", True)
+                payload.setdefault("success", True)
+            else:
+                payload.setdefault("ok", False)
+                payload.setdefault("error_flag", True)
         resp = jsonify(payload)
         if is_cacheable and "error" not in payload and not payload.get("fetching"):
             if is_market_open(market):

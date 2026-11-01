@@ -34,7 +34,7 @@ from services.realtime.utils import (
     _tv_purge_key_variants,
     is_pts_session,
 )
-from utils.normalization import is_bool_like, is_jp_stock_code
+from utils.normalization import is_bool_like
 from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -139,9 +139,7 @@ class RealtimeMarketEngine:
             if prev_close and prev_close > 0:
                 change = price - prev_close
                 change_pct = (change / prev_close) * 100
-                is_jpy = symbol.endswith(".T") or is_jp_stock_code(symbol.replace(".T", ""))
-                decimals = 2 if is_jpy else 4
-                payload["change"] = round(change, decimals)
+                payload["change"] = round(change, 2)
                 payload["change_percent"] = round(change_pct, 2)
                 payload["previous_close"] = prev_close
                 try:
@@ -150,6 +148,24 @@ class RealtimeMarketEngine:
                     app_state.market.update_previous_close_cache(symbol, prev_close)
                 except Exception as exc:
                     logger.debug("Failed updating previous_close cache for %s: %s", symbol, exc)
+
+        raw_ch = payload.get("change")
+        if (
+            raw_ch is not None
+            and isinstance(raw_ch, (int, float))
+            and not is_bool_like(raw_ch)
+            and math.isfinite(raw_ch)
+        ):
+            payload["change"] = round(float(raw_ch), 2)
+
+        raw_chp = payload.get("change_percent")
+        if (
+            raw_chp is not None
+            and isinstance(raw_chp, (int, float))
+            and not is_bool_like(raw_chp)
+            and math.isfinite(raw_chp)
+        ):
+            payload["change_percent"] = round(float(raw_chp), 2)
 
         with self.store_lock:
             if registration is not None and not self._registration_is_current_locked(registration):

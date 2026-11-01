@@ -475,10 +475,10 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
         pts_time = parts[19] if len(parts) > 19 else ""
         tokyo_price = _parse_quote_number(parts[8]) if len(parts) > 8 else 0.0
         pts_change = (
-            (pts_price - tokyo_price) if (math.isfinite(tokyo_price) and tokyo_price > 0) else 0.0
+            round(pts_price - tokyo_price, 2) if (math.isfinite(tokyo_price) and tokyo_price > 0) else 0.0
         )
         pts_change_pct = (
-            (pts_change / tokyo_price * 100.0)
+            round((pts_change / tokyo_price * 100.0), 2)
             if (math.isfinite(tokyo_price) and tokyo_price > 0)
             else 0.0
         )

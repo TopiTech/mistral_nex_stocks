@@ -149,6 +149,20 @@ def test_format_stock_change_metrics_via_node():
       process.exit(7);
     }
 
+    // Test 5: Realtime TV-SSE floating-point noise on positive change (e.g. 9434.T)
+    const sb = formatStockChangeMetrics({ change: 1.5000030517578011, change_percent: 0.6446081097678038 });
+    if (sb.text !== '▲+1.5 (+0.64%)') {
+      console.error('Floating-point noise positive change failed:', sb);
+      process.exit(8);
+    }
+
+    // Test 6: Realtime TV-SSE floating-point noise on negative change (e.g. IONQ)
+    const ionq = formatStockChangeMetrics({ change: -1.679999313354493, change_percent: -5.296340951202964 });
+    if (ionq.text !== '▼-1.68 (-5.3%)') {
+      console.error('Floating-point noise negative change failed:', ionq);
+      process.exit(9);
+    }
+
     console.log('ALL_OK');
     """
 

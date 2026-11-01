@@ -222,7 +222,7 @@ class TradingViewWSClient:
                         try:
                             c_val = float(values["ch"])
                             if math.isfinite(c_val):
-                                change = c_val
+                                change = round(c_val, 2)
                         except (TypeError, ValueError):
                             pass
 
@@ -230,7 +230,7 @@ class TradingViewWSClient:
                         try:
                             cp_val = float(values["chp"])
                             if math.isfinite(cp_val):
-                                change_percent = cp_val
+                                change_percent = round(cp_val, 2)
                         except (TypeError, ValueError):
                             pass
 

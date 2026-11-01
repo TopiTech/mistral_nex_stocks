@@ -297,14 +297,23 @@ function formatStockChangeMetrics(stock) {
   let changeText = "--";
   let pctText = "--%";
 
-  if (Number.isFinite(stock?.change)) {
-    changeText = String(stock.change);
-    if (stock.change > 0) {
+  const changeNum =
+    typeof stock?.change === "number"
+      ? stock.change
+      : stock?.change != null && stock?.change !== ""
+        ? Number(stock.change)
+        : NaN;
+
+  if (Number.isFinite(changeNum)) {
+    let rawChange = Math.round((changeNum + Number.EPSILON) * 100) / 100;
+    if (Object.is(rawChange, -0)) rawChange = 0;
+    changeText = String(rawChange);
+    if (rawChange > 0) {
       changeCls = "pos";
       arrow = "▲";
       sign = "+";
       ariaPrefix = "上昇";
-    } else if (stock.change < 0) {
+    } else if (rawChange < 0) {
       changeCls = "neg";
       arrow = "▼";
       sign = "";
@@ -314,18 +323,27 @@ function formatStockChangeMetrics(stock) {
     }
   }
 
-  if (Number.isFinite(stock?.change_percent)) {
-    const pctSign = stock.change_percent > 0 ? "+" : "";
-    pctText = `${pctSign}${stock.change_percent}%`;
+  const pctNum =
+    typeof stock?.change_percent === "number"
+      ? stock.change_percent
+      : stock?.change_percent != null && stock?.change_percent !== ""
+        ? Number(stock.change_percent)
+        : NaN;
+
+  if (Number.isFinite(pctNum)) {
+    let rawPct = Math.round((pctNum + Number.EPSILON) * 100) / 100;
+    if (Object.is(rawPct, -0)) rawPct = 0;
+    const pctSign = rawPct > 0 ? "+" : "";
+    pctText = `${pctSign}${rawPct}%`;
   }
 
   const className = changeCls
     ? `compact-change ${changeCls}`
     : "compact-change";
-  const text = Number.isFinite(stock?.change)
+  const text = Number.isFinite(changeNum)
     ? `${arrow}${sign}${changeText} (${pctText})`
     : `-- (${pctText})`;
-  const ariaLabel = Number.isFinite(stock?.change)
+  const ariaLabel = Number.isFinite(changeNum)
     ? `${ariaPrefix} ${sign}${changeText} (${pctText})`
     : `データなし (${pctText})`;
 

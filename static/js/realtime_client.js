@@ -187,8 +187,15 @@
                     typeof data.price === "number" &&
                     Number.isFinite(data.price)
                   ) {
-                    const newChange = data.price - yfPrevClose;
-                    const newPct = (newChange / yfPrevClose) * 100;
+                    const diff = data.price - yfPrevClose;
+                    let newChange =
+                      Math.round((diff + Number.EPSILON) * 100) / 100;
+                    if (Object.is(newChange, -0)) newChange = 0;
+                    let newPct =
+                      Math.round(
+                        ((diff / yfPrevClose) * 100 + Number.EPSILON) * 100,
+                      ) / 100;
+                    if (Object.is(newPct, -0)) newPct = 0;
                     data.change = newChange;
                     data.change_percent = newPct;
                     data.previous_close = yfPrevClose;
@@ -207,14 +214,37 @@
 
           // If not resolved from state, check if delta had calculated change/pct
           if (
-            !data.change &&
+            data.change == null &&
             yfPrevClose &&
             yfPrevClose > 0 &&
-            typeof data.price === "number"
+            typeof data.price === "number" &&
+            Number.isFinite(data.price)
           ) {
-            data.change = data.price - yfPrevClose;
-            data.change_percent = (data.change / yfPrevClose) * 100;
+            const diff = data.price - yfPrevClose;
+            let newChange = Math.round((diff + Number.EPSILON) * 100) / 100;
+            if (Object.is(newChange, -0)) newChange = 0;
+            let newPct =
+              Math.round(((diff / yfPrevClose) * 100 + Number.EPSILON) * 100) /
+              100;
+            if (Object.is(newPct, -0)) newPct = 0;
+            data.change = newChange;
+            data.change_percent = newPct;
             data.previous_close = yfPrevClose;
+          }
+
+          if (typeof data.change === "number" && Number.isFinite(data.change)) {
+            let rc = Math.round((data.change + Number.EPSILON) * 100) / 100;
+            if (Object.is(rc, -0)) rc = 0;
+            data.change = rc;
+          }
+          if (
+            typeof data.change_percent === "number" &&
+            Number.isFinite(data.change_percent)
+          ) {
+            let rp =
+              Math.round((data.change_percent + Number.EPSILON) * 100) / 100;
+            if (Object.is(rp, -0)) rp = 0;
+            data.change_percent = rp;
           }
 
           // 2. Stock card wrappers

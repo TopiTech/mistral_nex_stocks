@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 
@@ -71,6 +72,16 @@ class TestCodeReviewDefectRegression(unittest.TestCase):
             payload_us = {"symbol": "AAPL", "price": 130.1234}
             engine._handle_producer_update(payload_us)
             self.assertEqual(engine.market_store["AAPL"]["change"], 6.6674)
+
+            # Test direct raw_ch for JP symbol (when price is omitted or change already calculated)
+            payload_raw_jp = {"symbol": "6758.T", "change": 12.3456}
+            engine._handle_producer_update(payload_raw_jp)
+            self.assertEqual(engine.market_store["6758.T"]["change"], 12.35)
+
+            # Test direct raw_ch for US symbol
+            payload_raw_us = {"symbol": "MSFT", "change": 12.345678}
+            engine._handle_producer_update(payload_raw_us)
+            self.assertEqual(engine.market_store["MSFT"]["change"], 12.3457)
 
     def test_tv_purge_key_variants_alphanumeric_jp(self) -> None:
         """_tv_purge_key_variants should map alphanumeric JP symbols to their .T counterparts."""
@@ -158,6 +169,33 @@ class TestCodeReviewDefectRegression(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             data = resp.get_json()
             self.assertIsNone(data["pe_ratio"])
+
+    def test_tv_client_raw_float_parsing(self) -> None:
+        """TradingViewWSClient should parse raw finite floats without premature 2-decimal truncation."""
+        from services.realtime.tv_client import TradingViewWSClient
+
+        updates = []
+        client = TradingViewWSClient(on_update_callback=lambda p: updates.append(p))
+        # Format a real ~m~ packet
+        payload_body = json.dumps({
+            "m": "qsd",
+            "p": [
+                "s1",
+                {
+                    "n": "AAPL",
+                    "v": {
+                        "lp": 240.1234,
+                        "ch": 6.6674,
+                        "chp": 2.854,
+                    },
+                },
+            ],
+        })
+        raw_msg = f"~m~{len(payload_body)}~m~{payload_body}"
+        client._on_message(None, raw_msg)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["change"], 6.6674)
+        self.assertEqual(updates[0]["change_percent"], 2.854)
 
     def test_fullscreen_chart_modal_a11y_markup(self) -> None:
         """The fullscreen chart modal should have explicit accessible dialog labelling."""

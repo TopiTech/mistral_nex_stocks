@@ -120,7 +120,11 @@ def test_api_build_stream_url_aborts_on_ticket_failure() -> None:
     assert "Ticket endpoint returned an invalid response" in content
 
     # Check that return null is invoked on ticket failure
-    ticket_section = content[content.find("const buildStreamUrl = async () =>"):content.find("const openSseWithTicket = async () =>")]
+    ticket_section = content[
+        content.find("const buildStreamUrl = async () =>") : content.find(
+            "const openSseWithTicket = () =>"
+        )
+    ]
     assert "if (!ticketResponse.ok)" in ticket_section
     assert "if (!ticketData?.ok)" in ticket_section
     assert "return null;" in ticket_section

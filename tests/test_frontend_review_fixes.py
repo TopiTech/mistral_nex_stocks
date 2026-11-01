@@ -109,7 +109,11 @@ def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
     assert "connectionGeneration" in api_source
     assert "ticketAbortController.abort()" in api_source
     assert "signal: ticketAbortController.signal" in api_source
-    assert "if (!streamUrl || !isCurrentConnection()) return;" in api_source
+    # The ticket is now resolved by APIClient before the initial open, so the
+    # guard lives at the top of openSseWithTicket while buildStreamUrl returns
+    # null for every stale/failed ticket request.
+    assert "if (!isCurrentConnection()) return;" in api_source
+    assert "if (!isCurrentConnection()) return null;" in api_source
     assert "urlProvider?: () => string | null | Promise<string | null>;" in client_source
     assert "if (this._lastSSEParams !== params) return;" in client_source
 

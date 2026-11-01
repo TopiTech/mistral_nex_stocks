@@ -362,11 +362,28 @@ class APIClient {
     onError: SSEErrorHandler,
     options: SSEOptions = {},
   ): EventSource | null {
+    const initialParams: SSEParams = { url, onMessage, onError, options };
     if (!this.isVisibilityPaused) {
-      this._lastSSEParams = { url, onMessage, onError, options };
+      this._lastSSEParams = initialParams;
     }
     this._teardownSSE();
     this._reconnecting = false;
+    // The very first connection may not have a URL yet: the stream URL is
+    // minted asynchronously (a short-lived, single-use SSE ticket), and that
+    // request can fail (rate limit, backend restart, expired session). Route
+    // the initial open through the same resolve -> open -> onError/reconnect
+    // path used for reconnects, so an initial ticket failure starts fallback
+    // polling and retries with backoff instead of leaving the page marked as
+    // streaming while no EventSource exists. Previously only reconnects used
+    // this path; api.js awaited the ticket itself and silently returned on
+    // failure, freezing the UI until a manual reload or mode switch.
+    if (!url && options.urlProvider) {
+      // An explicit connect request supersedes a deferred visibility pause:
+      // keep it as the params _resumeSSE reopens so the requested mode wins.
+      this._lastSSEParams = initialParams;
+      this._openWithResolvedUrl(initialParams);
+      return null;
+    }
     const fullURL = this.resolveURL(url);
     try {
       const eventSource = new EventSource(fullURL);

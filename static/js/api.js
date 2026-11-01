@@ -996,14 +996,17 @@ function connectSSE(overrideMode) {
     return isCurrentConnection() ? streamUrl : null;
   };
 
-  const openSseWithTicket = async () => {
+  const openSseWithTicket = () => {
+    if (!isCurrentConnection()) return;
     // EventSource cannot send custom headers. The CSRF-protected POST sets a
     // short-lived, session-bound HttpOnly cookie which the same-origin stream
     // request sends automatically. Never copy that credential into the URL.
-    const streamUrl = await buildStreamUrl();
-    if (!streamUrl || !isCurrentConnection()) return;
-
-    sseApiClient.openSSE(streamUrl, processSseData, handleSseError, {
+    //
+    // url is intentionally empty: APIClient resolves it through urlProvider
+    // before the first open, so a failed initial ticket request goes through
+    // the shared onError/backoff path (fallback polling + retry) instead of
+    // silently leaving the stream closed while state.isStreaming stays true.
+    sseApiClient.openSSE("", processSseData, handleSseError, {
       autoReconnect: true,
       maxReconnectAttempts: 7,
       // Every reconnect needs a brand-new ticket; the old one was consumed.

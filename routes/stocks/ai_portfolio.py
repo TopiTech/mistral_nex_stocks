@@ -19,7 +19,7 @@ from cachetools import TTLCache
 from flask import Blueprint, current_app, g, request, session
 
 from app_state import app_state
-from constants import PORTFOLIO_SHARES_MAX
+from constants import DEFAULT_USDJPY_RATE, PORTFOLIO_SHARES_MAX
 from error_codes import ErrorCode
 from route_helpers import (
     _parse_ai_copy_to_my_request,
@@ -694,21 +694,21 @@ def api_copy_ai_portfolio_to_my() -> Any:
     stale_warning: str | None = None
 
     has_us_items = any(m == "us" for _, m, _, _ in raw_validated_items)
-    resolved_usdjpy_rate = 150.0
+    resolved_usdjpy_rate = DEFAULT_USDJPY_RATE
     if has_us_items:
         rate_is_valid = True
-        raw_rate = getattr(app_state.market, "last_usdjpy_rate", 150.0)
+        raw_rate = getattr(app_state.market, "last_usdjpy_rate", DEFAULT_USDJPY_RATE)
         if is_bool_like(raw_rate):
-            resolved_usdjpy_rate = 150.0
+            resolved_usdjpy_rate = DEFAULT_USDJPY_RATE
             rate_is_valid = False
         else:
             try:
                 resolved_usdjpy_rate = float(raw_rate)
             except (TypeError, ValueError):
-                resolved_usdjpy_rate = 150.0
+                resolved_usdjpy_rate = DEFAULT_USDJPY_RATE
                 rate_is_valid = False
         if not math.isfinite(resolved_usdjpy_rate) or resolved_usdjpy_rate <= 0:
-            resolved_usdjpy_rate = 150.0
+            resolved_usdjpy_rate = DEFAULT_USDJPY_RATE
             rate_is_valid = False
         raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
         if is_bool_like(raw_ts):
@@ -729,7 +729,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
 
         if is_stale:
             try:
-                resolved_fx, is_est = get_current_usdjpy_rate(default_rate=150.0)
+                resolved_fx, is_est = get_current_usdjpy_rate(default_rate=DEFAULT_USDJPY_RATE)
                 if not is_est and math.isfinite(resolved_fx) and resolved_fx > 0:
                     resolved_usdjpy_rate = resolved_fx
                     usdjpy_rate_ts = now

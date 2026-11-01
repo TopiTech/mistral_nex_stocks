@@ -15,6 +15,7 @@ from pathlib import Path
 
 import config_store
 from app_state import app_state
+from constants import DEFAULT_USDJPY_RATE
 from crypto_utils import _is_windows, protect_data, unprotect_data
 from utils.normalization import normalize_symbol_for_market
 
@@ -342,12 +343,12 @@ def load_user_stocks(force=False):
             snapshot_us_keys = list(us.keys())
             snapshot_jp_keys = list(jp.keys())
             try:
-                loaded_rate = float(data.get("last_usdjpy_rate", 150.00))
+                loaded_rate = float(data.get("last_usdjpy_rate", DEFAULT_USDJPY_RATE))
                 app_state.market.last_usdjpy_rate = (
-                    loaded_rate if math.isfinite(loaded_rate) and loaded_rate > 0.0 else 150.00
+                    loaded_rate if math.isfinite(loaded_rate) and loaded_rate > 0.0 else DEFAULT_USDJPY_RATE
                 )
             except (ValueError, TypeError):
-                app_state.market.last_usdjpy_rate = 150.00
+                app_state.market.last_usdjpy_rate = DEFAULT_USDJPY_RATE
             try:
                 rate_ts = float(data.get("last_usdjpy_rate_ts", 0.0))
                 app_state.market.last_usdjpy_rate_ts = (
@@ -657,11 +658,11 @@ def save_user_stocks():
                 if not math.isfinite(rate_ts) or rate_ts <= 0.0:
                     rate_ts = 0.0
                 try:
-                    rate_val = float(getattr(app_state.market, "last_usdjpy_rate", 150.00))
+                    rate_val = float(getattr(app_state.market, "last_usdjpy_rate", DEFAULT_USDJPY_RATE))
                     if not math.isfinite(rate_val) or rate_val <= 0.0:
-                        rate_val = 150.00
+                        rate_val = DEFAULT_USDJPY_RATE
                 except (TypeError, ValueError):
-                    rate_val = 150.00
+                    rate_val = DEFAULT_USDJPY_RATE
                 data = {
                     "us": copy.deepcopy(app_state.market.user_us),
                     "jp": copy.deepcopy(app_state.market.user_jp),

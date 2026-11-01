@@ -62,5 +62,3 @@ def safe_temp_dir(**kwargs: Any) -> tempfile.TemporaryDirectory:
     """
     kwargs.setdefault("ignore_cleanup_errors", True)
     return tempfile.TemporaryDirectory(**kwargs)
-
-

@@ -14,6 +14,7 @@ import pandas as pd
 from flask import Response, jsonify
 
 from app_state import app_state
+from constants import DEFAULT_USDJPY_RATE
 from error_codes import ErrorCode, get_error_message
 from sectors import (
     PREDEFINED_INDUSTRIES,
@@ -547,7 +548,7 @@ def _build_chart_ohlc_data(df, chart_data_limit=100, ohlc_data_limit=365):
 
 
 def get_current_usdjpy_rate(
-    default_rate: float = 150.0,
+    default_rate: float = DEFAULT_USDJPY_RATE,
     max_age_sec: float = 24 * 3600,
 ) -> tuple[float, bool]:
     """Resolve the latest USDJPY FX rate with fallback chain (memory -> realtime -> disk -> default).
@@ -646,7 +647,7 @@ def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_p
     portfolio_pl_raw = (current_price - avg_price) * shares
 
     if currency == "USD":
-        current_fx, _ = get_current_usdjpy_rate(default_rate=150.0)
+        current_fx, _ = get_current_usdjpy_rate(default_rate=DEFAULT_USDJPY_RATE)
         value_jpy = portfolio_val_raw * current_fx
         cost_jpy = (shares * avg_price) * (avg_fx_rate if avg_fx_rate is not None else current_fx)
         pl_jpy = value_jpy - cost_jpy

@@ -1192,12 +1192,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const promptInput = document.getElementById("custom-prompt-input");
   const savePromptBtn = document.getElementById("save-prompt-btn");
   const promptStatus = document.getElementById("prompt-save-status");
+  const promptCounter = document.getElementById("custom-prompt-counter");
+
+  const updatePromptCounter = () => {
+    if (!promptInput) return;
+    const len = promptInput.value.length;
+    if (promptCounter) {
+      promptCounter.textContent = `${len} / 5000文字`;
+    }
+    if (savePromptBtn) {
+      savePromptBtn.disabled = len > 5000;
+    }
+  };
 
   // _currentCredentialsData はモジュール先頭(line 15)で宣言済み —
   // ここで再宣言すると外側が永久に null の死んだ状態になり、
   // クロージャ外のヘルパーから参照した際に黙って null を読む。
 
   if (promptInput && savePromptBtn) {
+    updatePromptCounter();
+    promptInput.addEventListener("input", updatePromptCounter);
+
     // Load existing credentials state (custom prompt, model catalog, etc.)
     apiFetch("/api/credentials", {}, { showToast: false })
       .then(({ data }) => {
@@ -1205,6 +1220,7 @@ document.addEventListener("DOMContentLoaded", () => {
           _currentCredentialsData = data;
           if (data.custom_ai_prompt) {
             promptInput.value = data.custom_ai_prompt;
+            updatePromptCounter();
           }
           if (modelGrid) {
             renderModelOptions(
@@ -1295,7 +1311,7 @@ document.addEventListener("DOMContentLoaded", () => {
         logger.error("Save prompt error:", err);
         showToast(`プロンプトの保存に失敗しました: ${err.message}`, "#ff7d7d");
       } finally {
-        savePromptBtn.disabled = false;
+        savePromptBtn.disabled = promptInput.value.length > 5000;
         savePromptBtn.textContent = "保存";
       }
     });

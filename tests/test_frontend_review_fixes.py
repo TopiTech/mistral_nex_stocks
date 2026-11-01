@@ -572,4 +572,3 @@ def test_eventsource_wrapped_listener_exception_handling():
     """
     proc = subprocess.run([node, "-e", script], capture_output=True, text=True, check=False)
     assert proc.returncode == 0, f"Node script failed: {proc.stderr}"
-

@@ -2079,23 +2079,19 @@ async function chatPollingReply(payload) {
 }
 
 async function sendChat(wrapper) {
-  const stockKey = wrapper.dataset.stockKey;
-  const input =
-    wrapper.querySelector(".chat-input") ||
-    document.querySelector("#stock-detail-drawer .chat-input");
-  const sendBtn =
-    wrapper.querySelector(".chat-send-btn") ||
-    document.querySelector("#stock-detail-drawer .chat-send-btn");
-  const log =
-    wrapper.querySelector(".chat-log") ||
-    document.querySelector("#stock-detail-drawer .chat-log");
+  if (!wrapper || typeof wrapper.querySelector !== "function") return;
+  const input = wrapper.querySelector(".chat-input");
+  if (!input) return;
+  const sendBtn = wrapper.querySelector(".chat-send-btn");
+  const log = wrapper.querySelector(".chat-log");
+  const stockKey = wrapper.dataset?.stockKey;
 
-  if (input?.disabled || sendBtn?.disabled) return;
+  if (input.disabled || sendBtn?.disabled) return;
 
-  const msg = input?.value.trim();
+  const msg = input.value.trim();
   if (!msg || !HAS_MISTRAL_API_KEY) return;
 
-  if (input) input.disabled = true;
+  input.disabled = true;
   if (sendBtn) sendBtn.disabled = true;
 
   if (!log) {

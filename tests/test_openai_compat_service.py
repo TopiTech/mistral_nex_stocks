@@ -856,5 +856,3 @@ def test_get_openai_embeddings_batch_all_empty():
 
     mock_post.assert_not_called()
     assert results == [None, None, None]
-
-

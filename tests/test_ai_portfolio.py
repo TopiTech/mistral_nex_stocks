@@ -2172,4 +2172,3 @@ def test_ai_portfolio_error_response_handles_portfolio_storage_error():
         payload = resp.get_json()
         assert payload["ok"] is False
         assert payload["error_code"] == int(ErrorCode.API_SERVICE_ERROR)
-

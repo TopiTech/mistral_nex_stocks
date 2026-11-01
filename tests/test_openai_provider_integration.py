@@ -323,5 +323,3 @@ def test_generate_ai_portfolio_resolves_openai_key_when_none():
     assert result["title"] == "AI Semiconductors"
 
     clear_api_credentials()
-
-

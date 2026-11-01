@@ -1046,22 +1046,29 @@ function setActiveTab(tab) {
   const idx = DOM.get("idx-stocks");
   const pf = DOM.get("portfolio-wrapper");
 
-  [us, jp, idx, pf].forEach((panel) => panel?.removeAttribute("hidden"));
   if (us) {
-    us.style.display = tab === "us" ? "grid" : "none";
-    us.toggleAttribute("hidden", tab !== "us");
+    const isHidden = tab !== "us";
+    us.style.display = isHidden ? "none" : "grid";
+    us.toggleAttribute("hidden", isHidden);
+    us.classList.toggle("hidden", isHidden);
   }
   if (jp) {
-    jp.style.display = tab === "jp" ? "grid" : "none";
-    jp.toggleAttribute("hidden", tab !== "jp");
+    const isHidden = tab !== "jp";
+    jp.style.display = isHidden ? "none" : "grid";
+    jp.toggleAttribute("hidden", isHidden);
+    jp.classList.toggle("hidden", isHidden);
   }
   if (idx) {
-    idx.style.display = tab === "idx" ? "grid" : "none";
-    idx.toggleAttribute("hidden", tab !== "idx");
+    const isHidden = tab !== "idx";
+    idx.style.display = isHidden ? "none" : "grid";
+    idx.toggleAttribute("hidden", isHidden);
+    idx.classList.toggle("hidden", isHidden);
   }
   if (pf) {
-    pf.style.display = tab === "portfolio" ? "block" : "none";
-    pf.toggleAttribute("hidden", tab !== "portfolio");
+    const isHidden = tab !== "portfolio";
+    pf.style.display = isHidden ? "none" : "block";
+    pf.toggleAttribute("hidden", isHidden);
+    pf.classList.toggle("hidden", isHidden);
   }
 
   if (tab === "portfolio") {

@@ -769,4 +769,3 @@ def test_a2_startup_lock_posix_budget_exhaustion_raises_oserror(tmp_path, monkey
                     raise AssertionError("body must not run without the lock")
 
     assert fake_fcntl.flock.call_count == 2  # bounded: 2 acquire attempts, no yield
-

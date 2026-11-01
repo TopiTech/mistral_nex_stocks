@@ -309,7 +309,12 @@
           id="custom-prompt-input"
           rows="3"
           placeholder="カスタムプロンプトを入力..."
+          maxlength="5000"
+          aria-describedby="custom-prompt-counter"
         ></textarea>
+        <div id="custom-prompt-counter" class="form-hint" aria-live="polite">
+          0 / 5000文字
+        </div>
         <div
           style="
             margin-top: 12px;

@@ -7,7 +7,6 @@ Manages stock data, market status, yfinance rate limiting, and circuit breakers.
 
 import logging
 import math
-import os
 import threading
 import time
 from typing import Any
@@ -15,6 +14,7 @@ from typing import Any
 from cachetools import TTLCache
 
 from constants import (
+    DEFAULT_USDJPY_RATE,
     HISTORY_SEMAPHORE_CAPACITY,
     SCRAPER_BACKOFF_INITIAL,
     SCRAPER_BACKOFF_MAX,
@@ -80,12 +80,7 @@ class MarketDataState:
         self.user_idx: dict[str, Any] = {}
         self.user_stocks_lock = threading.RLock()
 
-        default_usdjpy = 150.00
-        try:
-            default_usdjpy = float(os.environ.get("MNS_DEFAULT_USDJPY", "150.00"))
-        except (ValueError, TypeError):
-            pass
-        self.last_usdjpy_rate = default_usdjpy
+        self.last_usdjpy_rate = DEFAULT_USDJPY_RATE
         # R5: record the timestamp of the last USDJPY update so consumers can
         # warn (or refuse) when the cached rate is stale. A backend that
         # boots, runs once, then idles for a day will leave this older than

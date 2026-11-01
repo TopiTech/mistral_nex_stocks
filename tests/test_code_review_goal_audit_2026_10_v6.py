@@ -445,4 +445,3 @@ run().catch((err) => {
 """
     out = _run_node(script)
     assert "copy_sanitizes_target_price_ok" in out
-

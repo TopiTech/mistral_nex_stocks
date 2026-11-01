@@ -629,22 +629,48 @@ function renderTrendingBadges(trendingList) {
 // -----------------------------------------------------
 // Portfolio Modal Logic
 // -----------------------------------------------------
+let _currentPfStock = null;
 let _pfSharesHandler = null;
 let _pfPriceHandler = null;
+let _pfFxRateHandler = null;
 let _pfStepButtonsInitialized = false;
 
 function updatePortfolioModalTotalCost() {
   const sharesInput = DOM.get("pf-shares-input");
   const priceInput = DOM.get("pf-price-input");
+  const fxInput = DOM.get("pf-fx-rate-input");
   const costDisplay = DOM.get("pf-modal-total-cost");
   if (!sharesInput || !priceInput || !costDisplay) return;
+
   const shares = parseFloat(sharesInput.value) || 0;
   const price = parseFloat(priceInput.value) || 0;
   const total = shares * price;
-  costDisplay.textContent = total.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+
+  const isUs =
+    _currentPfStock &&
+    (_currentPfStock.market === "us" || _currentPfStock.currency === "USD");
+
+  if (isUs) {
+    const fxVal = parseFloat(fxInput?.value);
+    const fxRate =
+      !isNaN(fxVal) && fxVal > 0
+        ? fxVal
+        : (typeof state !== "undefined" && state.exchangeRate) ||
+          (typeof window !== "undefined" && window.State?.exchangeRate) ||
+          150;
+    const jpyEstimated = Math.round(total * fxRate);
+    const usdFormatted = total.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const jpyFormatted = jpyEstimated.toLocaleString(undefined);
+    costDisplay.textContent = `$${usdFormatted} (約${jpyFormatted}円)`;
+  } else {
+    costDisplay.textContent = `${total.toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    })}円`;
+  }
 }
 
 function initPortfolioStepButtons() {
@@ -683,25 +709,29 @@ function initPortfolioStepButtons() {
 function openPortfolioModal(stockKey) {
   const stock = getStockByKey(stockKey);
   if (!stock) return;
+  _currentPfStock = stock;
 
   initPortfolioStepButtons();
 
   const sharesInput = DOM.get("pf-shares-input");
   const priceInput = DOM.get("pf-price-input");
+  const fxInput = DOM.get("pf-fx-rate-input");
 
   if (_pfSharesHandler && sharesInput)
     sharesInput.removeEventListener("input", _pfSharesHandler);
   if (_pfPriceHandler && priceInput)
     priceInput.removeEventListener("input", _pfPriceHandler);
+  if (_pfFxRateHandler && fxInput)
+    fxInput.removeEventListener("input", _pfFxRateHandler);
 
   _pfSharesHandler = updatePortfolioModalTotalCost;
   _pfPriceHandler = updatePortfolioModalTotalCost;
+  _pfFxRateHandler = updatePortfolioModalTotalCost;
 
   openModal("portfolioModal", () => {
     DOM.get("pf-modal-symbol").textContent = `${stock.symbol} - ${stock.name}`;
     DOM.get("pf-shares-input").value = toFiniteNumber(stock.shares, 0);
     DOM.get("pf-price-input").value = toFiniteNumber(stock.avg_price, 0);
-    const fxInput = DOM.get("pf-fx-rate-input");
     if (fxInput)
       fxInput.value =
         stock.avg_fx_rate !== undefined && stock.avg_fx_rate !== null
@@ -710,8 +740,9 @@ function openPortfolioModal(stockKey) {
     updatePortfolioModalTotalCost();
   });
 
-  sharesInput?.addEventListener("input", updatePortfolioModalTotalCost);
-  priceInput?.addEventListener("input", updatePortfolioModalTotalCost);
+  sharesInput?.addEventListener("input", _pfSharesHandler);
+  priceInput?.addEventListener("input", _pfPriceHandler);
+  fxInput?.addEventListener("input", _pfFxRateHandler);
 
   const saveBtn = DOM.get("savePortfolioBtn");
   saveBtn.onclick = async () => {

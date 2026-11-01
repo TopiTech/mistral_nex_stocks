@@ -580,4 +580,3 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             app_state.ai.chat_history.close = original_close
             app_state.execution.executor = original_executor
             real_executor.shutdown(wait=False)
-

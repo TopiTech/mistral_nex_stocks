@@ -777,10 +777,3 @@ class TestAPI10NestedDetailsSanitization:
         data = resp.get_json()
         assert "abcdef1234567890" not in str(data)
         assert "[REDACTED]" in data["nested"]["hint"]
-
-
-
-
-
-
-

@@ -2069,17 +2069,54 @@ function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
   const canvas = DOM.get("pf-sector-canvas");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
+  const container = canvas.parentElement;
+
+  let emptyElem = container?.querySelector(".pf-sector-empty-state");
 
   const sectorMap = {};
-  holdings.forEach((stock) => {
-    const sector = stock.sector || "Other";
-    const shares = toFiniteNumber(stock.shares, 0);
-    const price = toFiniteNumber(stock.price, 0);
-    const rate = stock.currency === "USD" ? usdJpyRate : 1.0;
-    const value = shares * price * rate;
+  let totalValue = 0;
+  if (Array.isArray(holdings)) {
+    holdings.forEach((stock) => {
+      const sector = stock.sector || "Other";
+      const shares = toFiniteNumber(stock.shares, 0);
+      const price = toFiniteNumber(stock.price, 0);
+      const rate = stock.currency === "USD" ? usdJpyRate : 1.0;
+      const value = shares * price * rate;
+      if (value > 0) {
+        sectorMap[sector] = (sectorMap[sector] || 0) + value;
+        totalValue += value;
+      }
+    });
+  }
 
-    sectorMap[sector] = (sectorMap[sector] || 0) + value;
-  });
+  if (!holdings || holdings.length === 0 || totalValue <= 0) {
+    if (pfSectorChartInstance) {
+      pfSectorChartInstance.destroy();
+      pfSectorChartInstance = null;
+    }
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    canvas.style.display = "none";
+    if (container) {
+      if (!emptyElem) {
+        emptyElem = document.createElement("div");
+        emptyElem.className = "pf-sector-empty-state";
+        emptyElem.setAttribute("role", "status");
+        emptyElem.style.cssText =
+          "display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary, #94a3b8); font-size: 0.85rem; text-align: center; padding: 20px;";
+        container.appendChild(emptyElem);
+      }
+      emptyElem.textContent = "保有銘柄が登録されていません";
+      emptyElem.style.display = "flex";
+    }
+    return;
+  }
+
+  if (emptyElem) {
+    emptyElem.style.display = "none";
+  }
+  canvas.style.display = "";
 
   const sortedSectors = Object.entries(sectorMap).sort((a, b) => b[1] - a[1]);
   const labels = sortedSectors.map((s) => s[0]);

@@ -40,8 +40,6 @@ from utils.caching import (
     _get_cached_value_if_present,
     clear_cache_key,
     get_cached,
-    global_cache,
-    sanitize_cache_key,
 )
 from utils.env_helpers import _env_bool as _stocks_env_bool
 from utils.env_helpers import _is_testing as _stocks_is_testing
@@ -505,37 +503,34 @@ def api_search() -> Any:
             details={"reason": "検索ワードは200文字以内で入力してください"},
         )
 
-    def _search() -> Any:
+    def _search() -> dict[str, Any]:
         try:
             results = app_state.stock_provider.search(q, max_results=10)
             return {"results": results}
         except (requests.RequestException, ValueError, KeyError, AttributeError) as exc:
             current_app.logger.error("Search API failed (%s): %s", q, exc)
-            return {
-                "error": get_error_message(ErrorCode.API_SERVICE_ERROR, lang="ja"),
-                "error_code": int(ErrorCode.API_SERVICE_ERROR),
-            }
+            raise
 
-    result = get_cached(
-        f"search_{q.lower()}",
-        _search,
-        duration=CACHE_DURATION_SEARCH,
-        valid_func=lambda payload: (
-            isinstance(payload, dict)
-            and (
-                isinstance(payload.get("results"), list)
-                or ("error" in payload and "error_code" in payload)
-            )
-        ),
-    )
+    try:
+        result = get_cached(
+            f"search_{q.lower()}",
+            _search,
+            duration=CACHE_DURATION_SEARCH,
+            valid_func=lambda payload: bool(
+                isinstance(payload, dict) and isinstance(payload.get("results"), list)
+            ),
+        )
+    except (requests.RequestException, ValueError, KeyError, AttributeError):
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={"reason": get_error_message(ErrorCode.API_SERVICE_ERROR, lang="ja")},
+            status_code=502,
+        )
+
     if result is CACHE_FETCHING or not isinstance(result, dict):
         result = {"results": []}
     if "error" in result:
         err_msg = result.get("error")
-        with global_cache.cache_lock:
-            cache = global_cache.caches.get(CACHE_DURATION_SEARCH)
-            if cache is not None:
-                cache.pop(sanitize_cache_key(f"search_{q.lower()}"), None)
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
             details={"reason": str(err_msg)} if err_msg else None,

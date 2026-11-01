@@ -19,6 +19,7 @@
       this.inFlightRequests = new Map();
       this.activeHistoryKey = null;
       this.isPlaying = false;
+      this.isProcessingFrame = false;
       this.playTimer = null;
       this.retryTimers = new Set();
 
@@ -157,24 +158,44 @@
       }
 
       this.isPlaying = true;
+      this.isProcessingFrame = false;
       if (this.els.timePlayBtn) {
         this.els.timePlayBtn.textContent = "⏸ 一時停止";
       }
 
-      this.playTimer = setInterval(() => {
-        const cursor = this.state.state.timeCursor;
-        if (cursor <= 0) {
-          this.stopTimelapse();
-        } else {
-          this.state.setTimeCursor(cursor - 1);
-        }
-      }, 250);
+      const scheduleNextFrame = () => {
+        if (!this.isPlaying) return;
+        this.playTimer = setTimeout(async () => {
+          if (!this.isPlaying) return;
+          if (this.isProcessingFrame) {
+            scheduleNextFrame();
+            return;
+          }
+          this.isProcessingFrame = true;
+          try {
+            const cursor = this.state.state.timeCursor;
+            if (cursor <= 0) {
+              this.stopTimelapse();
+              return;
+            }
+            await this.state.setTimeCursor(cursor - 1);
+          } finally {
+            this.isProcessingFrame = false;
+          }
+          if (this.isPlaying) {
+            scheduleNextFrame();
+          }
+        }, 250);
+      };
+
+      scheduleNextFrame();
     }
 
     stopTimelapse() {
       this.isPlaying = false;
+      this.isProcessingFrame = false;
       if (this.playTimer) {
-        clearInterval(this.playTimer);
+        clearTimeout(this.playTimer);
         this.playTimer = null;
       }
       if (this.els.timePlayBtn) {

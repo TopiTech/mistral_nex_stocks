@@ -579,14 +579,32 @@ document.addEventListener("DOMContentLoaded", () => {
     loadDetectedTickers().catch((e) => console.error("Rescan failed:", e));
   });
 
-  $("copyDiagBtn")?.addEventListener("click", async () => {
+  let copyDiagTimer = null;
+  const copyDiagBtn = $("copyDiagBtn");
+  const defaultDiagBtnText = copyDiagBtn?.textContent || "診断コピー";
+
+  copyDiagBtn?.addEventListener("click", async () => {
     const text = $("diagBox")?.textContent || "";
-    if (text) {
+    if (!text) return;
+
+    if (copyDiagTimer) {
+      clearTimeout(copyDiagTimer);
+      copyDiagTimer = null;
+    }
+
+    copyDiagBtn.disabled = true;
+    try {
       await navigator.clipboard.writeText(text);
-      const btn = $("copyDiagBtn");
-      const old = btn.textContent;
-      btn.textContent = "コピー完了!";
-      setTimeout(() => (btn.textContent = old), 1500);
+      copyDiagBtn.textContent = "コピー完了!";
+    } catch (err) {
+      console.error("Failed to copy diagnostics to clipboard:", err);
+      copyDiagBtn.textContent = "コピー失敗";
+    } finally {
+      copyDiagTimer = setTimeout(() => {
+        copyDiagBtn.textContent = defaultDiagBtnText;
+        copyDiagBtn.disabled = false;
+        copyDiagTimer = null;
+      }, 1500);
     }
   });
 

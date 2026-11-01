@@ -537,6 +537,7 @@ def _auto_remove_invalid_symbols(
         return
 
     removed: list[tuple[str, str, Any, int]] = []
+    restored_symbols: list[tuple[str, str]] = []
     persist_error: Exception | None = None
     with app_state.market.invalid_symbol_lock, app_state.market.user_stocks_lock:
         get_cont_fn = _get_app_bg_attr("_get_stock_container", _get_stock_container)
@@ -572,14 +573,24 @@ def _auto_remove_invalid_symbols(
                 for symbol, market, original_stock, streak in removed:
                     container = get_cont_fn(market)
                     if container is not None:
-                        container[symbol] = original_stock
-                    app_state.market.invalid_symbol_streak[symbol] = streak
+                        # BE-003: Safety guard: do not overwrite if symbol was re-added or updated by user
+                        # while locks were released during slow disk persistence.
+                        if symbol not in container:
+                            container[symbol] = original_stock
+                            app_state.market.invalid_symbol_streak[symbol] = streak
+                            restored_symbols.append((symbol, market))
+                        else:
+                            logger.info(
+                                "Skipping rollback for %s in %s; modified concurrently by user",
+                                symbol,
+                                market,
+                            )
             persist_error = exc
 
     if persist_error is not None:
         logger.error(
             "Failed to persist auto-removed invalid symbols; restored %s: %s",
-            [(symbol, market) for symbol, market, _stock, _streak in removed],
+            restored_symbols,
             persist_error,
         )
         schedule_fn = _get_app_bg_attr("schedule_sync_all_stocks_now", None)

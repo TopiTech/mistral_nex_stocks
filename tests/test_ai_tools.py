@@ -84,5 +84,3 @@ def test_tool_calculate_technical_levels_rate_limited(monkeypatch):
     res = _tool_calculate_technical_levels({"symbol": "NVDA", "market": "us", "period": "3mo"})
     assert res["symbol"] == "NVDA"
     assert res["status"] == "データ取得失敗"
-
-

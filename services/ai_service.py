@@ -1386,6 +1386,8 @@ def call_mistral_chat_with_tools(
             return {str(key): _json_safe_tool_value(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
             return [_json_safe_tool_value(item) for item in value]
+        if isinstance(value, (set, frozenset)):
+            return [_json_safe_tool_value(item) for item in sorted(value, key=str)]
         if value is None or isinstance(value, (str, int, bool)):
             return value
         try:

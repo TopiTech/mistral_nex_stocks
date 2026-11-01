@@ -42,6 +42,7 @@ class StockPayloadDict(TypedDict, total=False):
     price: float | str
     change: float | str
     change_pct: float | str
+    change_percent: float | str
     volume: int | str
     market_cap: float | str
     pe_ratio: float | str
@@ -54,6 +55,41 @@ class StockPayloadDict(TypedDict, total=False):
     is_open: bool
     sparkline: list[float]
     tv_symbol: str
+    market_state: str
+    previous_close: float | str | None
+    chart_data: list[dict[str, Any]]
+    ohlc_data: list[dict[str, Any]]
+    high: float | str | None
+    low: float | str | None
+    open: float | str | None
+    exchange: str | None
+    snapshot_ts_ms: int
+    shares: float | int | None
+    avg_price: float | None
+    avg_fx_rate: float | None
+    portfolio_value: float | None
+    portfolio_pl: float | None
+    fifty_two_week_high: float | str | None
+    fifty_two_week_low: float | str | None
+    dividend_yield: float | None
+    eps: float | str | None
+    beta: float | str | None
+    forward_pe: float | str | None
+    price_to_book: float | str | None
+    target_mean_price: float | str | None
+    recommendation: str | None
+    next_earnings: str | None
+    shares_outstanding: float | int | None
+    float_shares: float | int | None
+    held_percent_insiders: float | str | None
+    held_percent_institutions: float | str | None
+    short_ratio: float | str | None
+    short_percent_of_float: float | str | None
+    fifty_day_average: float | str | None
+    two_hundred_day_average: float | str | None
+    price_to_sales: float | str | None
+    enterprise_to_ebitda: float | str | None
+    profit_margins: float | str | None
 
 
 class ScreenerFilterSchema(ScreenerQueryRequest):

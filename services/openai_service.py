@@ -1257,6 +1257,8 @@ def call_openai_chat_with_tools(
             return {str(k): _json_safe_tool_value(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [_json_safe_tool_value(v) for v in value]
+        if isinstance(value, (set, frozenset)):
+            return [_json_safe_tool_value(v) for v in sorted(value, key=str)]
         if value is None or isinstance(value, (str, int, bool)):
             return value
         try:

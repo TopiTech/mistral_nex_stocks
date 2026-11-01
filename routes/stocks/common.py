@@ -131,6 +131,8 @@ def _json_safe(value: Any) -> Any:
         return {str(k) if not isinstance(k, str) else k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe(v) for v in sorted(value, key=str)]
     if hasattr(value, "tolist"):
         try:
             return [_json_safe(v) for v in value.tolist()]

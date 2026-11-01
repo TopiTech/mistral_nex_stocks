@@ -306,6 +306,30 @@ class SearchServicesCoverageBoostTestCase(unittest.TestCase):
 class FallbackProviderCoverageTestCase(unittest.TestCase):
     """Tests for fallback_provider.py."""
 
+    def setUp(self):
+        super().setUp()
+        try:
+            from app_state import app_state
+
+            market = getattr(app_state, "market", None)
+            if market is not None:
+                market.scraper_block_until = 0.0
+                market.scraper_block_streak = 0
+        except Exception:
+            pass
+
+    def tearDown(self):
+        try:
+            from app_state import app_state
+
+            market = getattr(app_state, "market", None)
+            if market is not None:
+                market.scraper_block_until = 0.0
+                market.scraper_block_streak = 0
+        except Exception:
+            pass
+        super().tearDown()
+
     def test_yahoo_web_scraper_with_root_app_main(self):
         mock_session = MagicMock()
         mock_resp = MagicMock()
@@ -320,9 +344,10 @@ class FallbackProviderCoverageTestCase(unittest.TestCase):
         mock_session.get.return_value = mock_resp
         provider = YahooWebScraperProvider()
         provider.session = mock_session
-        quote = provider.get_latest_quote("AAPL")
-        self.assertIsNotNone(quote)
-        self.assertEqual(quote["regularMarketPrice"], 182.5)
+        with patch("services.fallback_provider._is_scraper_blocked", return_value=False):
+            quote = provider.get_latest_quote("AAPL")
+            self.assertIsNotNone(quote)
+            self.assertEqual(quote["regularMarketPrice"], 182.5)
 
     def test_yahoo_web_scraper_429_or_error(self):
         mock_session = MagicMock()
@@ -332,8 +357,19 @@ class FallbackProviderCoverageTestCase(unittest.TestCase):
         mock_session.get.return_value = mock_resp
         provider = YahooWebScraperProvider()
         provider.session = mock_session
-        quote = provider.get_latest_quote("AAPL")
-        self.assertIsNone(quote)
+        try:
+            quote = provider.get_latest_quote("AAPL")
+            self.assertIsNone(quote)
+        finally:
+            try:
+                from app_state import app_state
+
+                market = getattr(app_state, "market", None)
+                if market is not None:
+                    market.scraper_block_until = 0.0
+                    market.scraper_block_streak = 0
+            except Exception:
+                pass
 
     def test_nikkei225jp_provider_adr_parsing(self):
         mock_session = MagicMock()
@@ -364,11 +400,17 @@ class FallbackProviderCoverageTestCase(unittest.TestCase):
             "0",
         ]
         adr_resp.text = f'A0[0]="{"_".join(parts)}"\n'
+        adr_resp.content = adr_resp.text.encode("utf-8")
         mock_session.get.return_value = adr_resp
         provider = Nikkei225JPProvider()
         provider.session = mock_session
-        quote = provider.get_latest_quote("7203.T")
-        self.assertIsNotNone(quote)
+        with patch("services.fallback_provider._is_scraper_blocked", return_value=False):
+            quote = provider.get_latest_quote("7203.T")
+            self.assertIsNotNone(quote)
+            self.assertEqual(quote["symbol"], "7203.T")
+            self.assertEqual(quote["regularMarketPrice"], 2500.0)
+            self.assertEqual(quote["regularMarketPreviousClose"], 2450.0)
+            self.assertEqual(quote["source"], "nikkei225jp_adr")
 
     def test_composite_fallback_provider_close_delegates(self):
         composite = CompositeFallbackProvider()

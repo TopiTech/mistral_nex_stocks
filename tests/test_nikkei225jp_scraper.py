@@ -154,7 +154,10 @@ def test_nikkei225jp_provider_fallback():
     mock_resp.content = SAMPLE_ADR_ALL_JS.encode("utf-8")
     mock_session.get.return_value = mock_resp
 
-    with patch.object(provider, "_get_client", return_value=(mock_session, True)):
+    with (
+        patch.object(provider, "_get_client", return_value=(mock_session, True)),
+        patch("services.fallback_provider._is_scraper_blocked", return_value=False),
+    ):
         quote = provider.get_latest_quote("7203.T")
         assert quote is not None
         assert quote["symbol"] == "7203.T"

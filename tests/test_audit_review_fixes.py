@@ -146,6 +146,7 @@ class TestAuditReviewFixes(unittest.TestCase):
         with (
             patch.object(provider, "_get_client", return_value=(mock_client, True)),
             patch.object(provider, "_refresh_adr_cache", return_value={}),
+            patch("services.fallback_provider._is_scraper_blocked", return_value=False),
         ):
             quote = provider.get_latest_quote("7203.T")
             self.assertIsNotNone(quote)

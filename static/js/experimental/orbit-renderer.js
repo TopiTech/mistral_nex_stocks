@@ -186,6 +186,19 @@
 
     assignOrbits(stockList, selectedSymbol) {
       if (!stockList || !stockList.length) return [];
+      // 不変の入力(stockList 参照・selectedSymbol・radii)が続くフレームでは
+      // 割当結果を再利用する。従来は 60fps で毎フレーム 1 銘柄 1 オブジェクト
+      // の spread 割当を再構築しており、ノード数が多いと GC 圧と O(n²) の
+      // 角度分離パス負荷が増えていた。resize で radii オブジェクトが差し替わる
+      // と再計算され、nodeRenderData(実座標)は従来どおり毎フレーム更新される。
+      if (
+        this._orbitAssignmentCache &&
+        this._orbitAssignmentCache.stockList === stockList &&
+        this._orbitAssignmentCache.selectedSymbol === selectedSymbol &&
+        this._orbitAssignmentCache.radii === this.radii
+      ) {
+        return this._orbitAssignmentCache.result;
+      }
       const result = [];
       const nonCenterStocks = [];
 
@@ -246,6 +259,12 @@
         });
       });
 
+      this._orbitAssignmentCache = {
+        stockList,
+        selectedSymbol,
+        radii: this.radii,
+        result,
+      };
       return result;
     }
 

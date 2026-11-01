@@ -47,12 +47,24 @@
     }
 
     bindState() {
+      this._lastOpenKey = "closed";
       this.state.subscribe((key, val, data) => {
         if (key === "aiDiveOpen" || key === "aiDiveSymbol") {
-          if (data.aiDiveOpen && data.aiDiveSymbol) {
-            this.openModal(data.aiDiveSymbol, data);
-          } else {
+          // openAiDive()/closeAiDive() は 1 回のトランジションで 2 つのキーを
+          // 個別に通知する。サブスクライバがどちらのキーでも full open 扱いに
+          // すると openModal(→ POST /api/news)が 1 回のオープンに 2 回走り、
+          // ニュースのレート制限を 2 倍消費していた。論理状態が変化した
+          // ときだけ openModal/closeModal を呼ぶ。
+          const openKey =
+            data.aiDiveOpen && data.aiDiveSymbol
+              ? `open:${data.aiDiveSymbol}`
+              : "closed";
+          if (openKey === this._lastOpenKey) return;
+          this._lastOpenKey = openKey;
+          if (openKey === "closed") {
             this.closeModal();
+          } else {
+            this.openModal(data.aiDiveSymbol, data);
           }
         }
       });
@@ -368,11 +380,25 @@
           return {
             title,
             summary,
-            source: section.status || "Market",
-            time: section.timestamp || "最近",
+            // セクション契約は {content, timestamp, status}。status は取得
+            // 状態(success/empty/error)であり媒体名ではないため、媒体ラベル
+            // は固定文言にする(FE-exp-14)。
+            source: "Market",
+            time: this.formatNewsTimestamp(section.timestamp),
           };
         })
         .filter(Boolean);
+    }
+
+    formatNewsTimestamp(timestamp) {
+      if (!timestamp || typeof timestamp !== "string") return "最近";
+      // ISO 文字列の生の時刻部分(T00:00:00)は出さず日付のみを表示する。
+      const datePart = timestamp.split("T")[0];
+      if (!datePart) return "最近";
+      const parts = datePart.split("-");
+      return parts.length === 3
+        ? `${parts[0]}/${parts[1]}/${parts[2]}`
+        : datePart;
     }
 
     resetTier4Ai() {
@@ -438,22 +464,24 @@
       }
       this._abortController = new AbortController();
 
-      const payload = {
-        symbol: stock.symbol,
-        name: stock.displayName || stock.name || stock.symbol,
-        price: stock.price,
-        chart_data: stock.chartData || [],
-        sector: stock.sector,
-        industry: stock.industry,
-        market_cap: stock.marketCap,
-        pe_ratio: stock.peRatio,
-        market: stock.market || "us",
-        // M-5: delegate to the single createRequestToken system; it throws
-        // rather than fabricating a predictable Math.random()-based token.
-        request_token: global.createRequestToken(),
-      };
-
+      // payload 構築(= createRequestToken 呼び出し)も try 内に置く。トークン
+      // 生成は Web Crypto 不在時に意図的に throw する(M-5)が、try 外だと
+      // finally が走らずボタンが「実行中...」のまま固まる(FE-exp-9)。
       try {
+        const payload = {
+          symbol: stock.symbol,
+          name: stock.displayName || stock.name || stock.symbol,
+          price: stock.price,
+          chart_data: stock.chartData || [],
+          sector: stock.sector,
+          industry: stock.industry,
+          market_cap: stock.marketCap,
+          pe_ratio: stock.peRatio,
+          market: stock.market || "us",
+          // M-5: delegate to the single createRequestToken system; it throws
+          // rather than fabricating a predictable Math.random()-based token.
+          request_token: global.createRequestToken(),
+        };
         let data = {};
         let resOk = false;
         const maxAttempts = 30;
@@ -485,9 +513,11 @@
             break;
           }
           if (startBtn) {
+            // 経過時間のフォールバックは実際のポーリング間隔(2 秒)に一致
+            // させる(server が elapsed_sec を出す場合はそちらを優先)。
             const elapsed = data.elapsed_sec
               ? `${Math.round(data.elapsed_sec)}s`
-              : `${attempt * 8}s`;
+              : `${attempt * 2}s`;
             const msg = data.message || "AI分析・思考中...";
             startBtn.textContent = `⏳ ${msg} (${elapsed})`;
           }

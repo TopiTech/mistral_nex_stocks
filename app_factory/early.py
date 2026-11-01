@@ -31,6 +31,28 @@ def _resolve_is_windows_runtime() -> bool:
         return _is_windows_runtime()
 
 
+def _resolve_app_data_log_dir() -> Path:
+    """LIFECYCLE-14: prefer the resolved runtime APP_DATA_DIR over the source tree.
+
+    With no MNS_LOG_DIR/MNS_DATA_DIR/MNS_APP_DATA_DIR override, startup crash
+    logs must land in the same runtime directory the rest of the app uses
+    (config_store.APP_DATA_DIR) instead of accumulating ``backend.log``/
+    ``error.log`` inside the project root. The package root is kept only as a
+    last resort when APP_DATA_DIR itself cannot be resolved (e.g. config_store
+    fails to import during a broken startup), so a crash is still written
+    somewhere inspectable.
+    """
+    try:
+        import config_store
+
+        return Path(config_store.APP_DATA_DIR)
+    except Exception:
+        # Last-resort fallback: the whole hook is best-effort, and a startup
+        # crash may break config_store imports, so keep the legacy location
+        # reachable rather than losing the traceback entirely.
+        return Path(__file__).resolve().parent.parent
+
+
 def _early_excepthook(exc_type, exc_value, exc_tb):
     """Ensure startup exceptions (e.g. missing dependencies) are written to log files."""
     if exc_type is None:
@@ -69,9 +91,11 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
             or os.environ.get("TESTING")
         )
         if not data_dir_override and not is_testing:
-            base_dir = Path(__file__).resolve().parent.parent
-            if base_dir not in log_dirs:
-                log_dirs.append(base_dir)
+            # LIFECYCLE-14: crash logs go to the runtime data dir, not the
+            # source tree (APP_DATA_DIR resolution, same as the rest of the app).
+            fallback_dir = _resolve_app_data_log_dir()
+            if fallback_dir not in log_dirs:
+                log_dirs.append(fallback_dir)
 
         tb_lines = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
         timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")

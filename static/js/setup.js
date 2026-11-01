@@ -312,6 +312,9 @@ async function startPreviewMode() {
 
 async function saveKey() {
   const saveBtn = getEl("saveBtn");
+  // Enterキーハンドラ経由でも二重送信しないよう、検証より先に
+  // 送信中フラグ(ボタンのdisabled)で再入を止める。
+  if (saveBtn?.disabled) return;
   const aiProvider = getAiProvider();
   const langsearchInput = getEl("langsearchApiKey");
   const tavilyInput = getEl("tavilyApiKey");

@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import re
+import threading
 import time
 from collections.abc import Callable, Iterable
 from datetime import datetime
@@ -182,6 +183,37 @@ def _parse_quote_number(value: Any, default: float = 0.0) -> float:
         return default
 
 
+# SVC-10 / SVC-17: the class-anchored selector is the primary price path; the
+# fallback must require a price label (現在値/株価/終値) within a short window.
+# A bare "...円" match anywhere on the page returned unrelated figures such as
+# 手数料290円 as the stock price — a confidently wrong price is worse than no
+# fallback.
+_MINKABU_PRICE_CLASS_RE = re.compile(r"class=[\"']stock_price[\"'][^>]*>\s*([0-9,]+\.?[0-9]*)")
+_MINKABU_PRICE_LABEL_RE = re.compile(r"(現在値|株価|終値)[^0-9]{0,20}([0-9,]+\.?[0-9]*)")
+
+
+def extract_minkabu_price(html: str) -> float | None:
+    """Extract the current stock price from a minkabu page (SVC-10/SVC-17).
+
+    Shared by the request-time fallback (``services/fallback_provider``) and
+    the realtime scraper (``services/realtime/scrapers``) so the two copies of
+    the Minkabu parser cannot drift apart again. Returns a positive finite
+    price, or ``None`` when no labelled/class-anchored price is present.
+    """
+    if not html:
+        return None
+    match = _MINKABU_PRICE_CLASS_RE.search(html)
+    if match:
+        token = match.group(1)
+    else:
+        labelled = _MINKABU_PRICE_LABEL_RE.search(html)
+        if not labelled:
+            return None
+        token = labelled.group(2)
+    price = _parse_quote_number(token)
+    return price if price > 0 else None
+
+
 SCRAPER_BLOCK_STATUS_CODES = (401, 402, 403, 429, 439)
 _scraper_market_ref: Any | None = None
 
@@ -269,29 +301,112 @@ def _normalize_tv_symbol(symbol: str) -> str:
     return get_tradingview_symbol(tv_symbol)
 
 
-def _get_yfinance_previous_close(symbol: str) -> float | None:
-    """Resolve yfinance previous close price for a symbol (JP, US, or index)."""
+def _previous_close_cache_variants(symbol: str) -> list[str]:
+    """Symbol variants to consult in the lock-free previous-close cache.
+
+    Mirrors the variant expansion ``get_stock_previous_close`` applies on its
+    cache-first step (bare/.T pairs, exchange prefix, dash form) so the
+    producer fast path can resolve a cache hit without touching
+    ``sse_data_lock`` (SVC-21).
+    """
+    variants: list[str] = []
+
+    def _add(variant: str) -> None:
+        if not variant or variant in variants:
+            return
+        variants.append(variant)
+        pair = variant[:-2] if variant.endswith(".T") else f"{variant}.T"
+        if pair not in variants:
+            variants.append(pair)
+
+    _add(symbol)
+    if ":" in symbol:
+        _add(symbol.split(":", 1)[-1])
+    if "." in symbol and not symbol.endswith(".T"):
+        _add(symbol.replace(".", "-"))
+    return variants
+
+
+def _previous_close_lock_free(symbol: str) -> float | None:
+    """Cache-only previous-close lookup that never takes ``sse_data_lock``.
+
+    The previous-close cache is guarded by its own dedicated lock, so producer
+    threads resolve the common case even while the SSE serializer holds
+    ``sse_data_lock`` (SVC-21; pinned by
+    tests/test_sse_mode2_resilience.py::test_producer_update_not_blocked_by_sse_data_lock,
+    which seeds the cache and holds ``sse_data_lock`` in another thread).
+    """
     if not symbol:
         return None
     try:
-        from utils.stock_payload import get_stock_previous_close
+        from app_state import app_state
 
-        prev = get_stock_previous_close(symbol)
-        if prev is not None and prev > 0:
-            return prev
-        if ":" in symbol:
-            bare = symbol.split(":")[-1]
-            prev = get_stock_previous_close(bare)
-            if prev is not None and prev > 0:
-                return prev
-        if "." in symbol and not symbol.endswith(".T"):
-            dash_sym = symbol.replace(".", "-")
-            prev = get_stock_previous_close(dash_sym)
-            if prev is not None and prev > 0:
-                return prev
+        market = app_state.market
+        for variant in _previous_close_cache_variants(symbol):
+            cached = market.get_previous_close_cached(variant)
+            if cached is not None and cached > 0:
+                return float(cached)
     except Exception as exc:
-        logger.debug("Failed getting stock previous close for %s: %s", symbol, exc)
+        logger.debug("Failed reading previous_close cache for %s: %s", symbol, exc)
     return None
+
+
+def _get_yfinance_previous_close(symbol: str) -> float | None:
+    """Resolve yfinance previous close price for a symbol (JP, US, or index).
+
+    SVC-21: this runs on the TradingView/scraper producer threads for every
+    quote update. Order matters:
+    1. Lock-free cache read — a cache hit (the common case, maintained by the
+       sync path and by prior producer updates) must resolve while another
+       thread holds ``sse_data_lock``.
+    2. On a miss, probe ``sse_data_lock`` non-blocking before the cache-miss
+       store scan inside ``get_stock_previous_close`` (which acquires the
+       lock): a blocking acquire would queue quote ingestion behind SSE stream
+       serialization. When the lock is busy, skip enrichment for this tick —
+       the engine keeps the incoming value and the next update recomputes.
+       ``sse_data_lock`` is an RLock, so the inner re-acquire by this same
+       thread still succeeds once the probe wins.
+    """
+    if not symbol:
+        return None
+    cached = _previous_close_lock_free(symbol)
+    if cached is not None:
+        return cached
+    # Bind the probe lock in a non-optional local: a guaranteed-non-None handle
+    # at release() time (mypy/pyrefly union-attr clean) with a single failure
+    # path (probe lost or lock unresolvable) that drops this tick's enrichment
+    # instead of stalling the producer thread.
+    try:
+        from app_state import app_state
+
+        candidate: threading.RLock = app_state.cache.sse_data_lock
+        if not candidate.acquire(blocking=False):
+            return None
+    except Exception as exc:
+        logger.debug("Failed probing sse_data_lock for previous close: %s", exc)
+        return None
+    try:
+        try:
+            from utils.stock_payload import get_stock_previous_close
+
+            prev = get_stock_previous_close(symbol)
+            if prev is not None and prev > 0:
+                return prev
+            if ":" in symbol:
+                bare = symbol.split(":")[-1]
+                prev = get_stock_previous_close(bare)
+                if prev is not None and prev > 0:
+                    return prev
+            if "." in symbol and not symbol.endswith(".T"):
+                dash_sym = symbol.replace(".", "-")
+                prev = get_stock_previous_close(dash_sym)
+                if prev is not None and prev > 0:
+                    return prev
+        except Exception as exc:
+            logger.debug("Failed getting stock previous close for %s: %s", symbol, exc)
+        return None
+    finally:
+        candidate.release()
 
 
 def _get_yfinance_volume(symbol: str) -> int | float | None:

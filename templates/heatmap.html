@@ -106,12 +106,11 @@
       <div class="spinner"></div>
       <p>市場データを取得しています...</p>
     </div>
-    <div id="heatmap-canvas" class="heatmap-canvas" aria-live="polite"></div>
-    <div
-      id="heatmap-3d-canvas"
-      class="heatmap-3d-canvas hidden"
-      aria-live="polite"
-    ></div>
+    <!-- ヒートマップ領域は再描画毎にサブツリーを再構築するため、aria-liveを
+         付けない(大量ノードの読み上げ flood を防ぐ)。エラー表示は
+         showError()が role="alert" を持つ単一ノードとして挿入する。 -->
+    <div id="heatmap-canvas" class="heatmap-canvas"></div>
+    <div id="heatmap-3d-canvas" class="heatmap-3d-canvas hidden"></div>
 
     <!-- 3D Camera & Overlay Controls -->
     <div id="heatmap-3d-controls" class="heatmap-3d-controls hidden">

@@ -330,7 +330,10 @@ def api_add_stock() -> Any:
     except UserStocksPersistError as exc:
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
-            if container is not None:
+            # API-7: conditional rollback — only undo this request's own write.
+            # An unconditional pop could discard a concurrent mutation
+            # committed between the persist attempt and this re-entry.
+            if container is not None and container.get(symbol) == name:
                 container.pop(symbol, None)
         current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
         return error_response(
@@ -393,7 +396,11 @@ def api_delete_stock() -> Any:
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
             if container is not None:
-                container.update(previous_values)
+                # API-7: restore only keys a concurrent request has not
+                # rewritten since this request removed them.
+                for stored_symbol, previous in previous_values.items():
+                    if stored_symbol not in container:
+                        container[stored_symbol] = previous
         current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
         return error_response(
             ErrorCode.FILE_ERROR,
@@ -527,7 +534,8 @@ def api_add_stock_ext() -> Any:
     except UserStocksPersistError as exc:
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
-            if container is not None:
+            # API-7: conditional rollback — never clobber a concurrent write.
+            if container is not None and container.get(symbol) == name:
                 container.pop(symbol, None)
         current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
         return error_response(
@@ -566,11 +574,11 @@ def api_reset_stocks() -> Any:
         save_user_stocks()
     except UserStocksPersistError as exc:
         with app_state.market.user_stocks_lock:
-            (
-                app_state.market.user_us,
-                app_state.market.user_jp,
-                app_state.market.user_idx,
-            ) = previous_us, previous_jp, previous_idx
+            # API-7: merge instead of a full-dict restore — concurrent
+            # mutations committed after the reset must not be discarded.
+            app_state.market.user_us = {**previous_us, **app_state.market.user_us}
+            app_state.market.user_jp = {**previous_jp, **app_state.market.user_jp}
+            app_state.market.user_idx = {**previous_idx, **app_state.market.user_idx}
         current_app.logger.error("Failed to persist stock reset: %s", exc)
         return error_response(
             ErrorCode.FILE_ERROR,

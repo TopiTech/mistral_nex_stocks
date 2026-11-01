@@ -243,19 +243,27 @@ def api_stock_details() -> Any:
         cached_short = app_state.yfinance_short_cache.get(short_cache_key)
     if isinstance(cached_short, dict):
         if not cached_short or cached_short.get("failed") or cached_short.get("error"):
-            return jsonify(
-                {
-                    "ok": False,
+            # API-5: build the failure through the shared envelope owner so all
+            # 7 documented error-envelope keys are present while status stays
+            # 200 and every legacy UI key (ok/success/failed/symbol/sector/...)
+            # is preserved (purely additive contract). Unpack so the route
+            # returns the Response object exactly as before (direct-call tests
+            # rely on resp.get_json() / resp.status_code).
+            resp, _status = error_response(
+                ErrorCode.FETCH_FAILED,
+                status_code=200,
+                message="銘柄詳細情報の取得に失敗しました",
+                extra_fields={
                     "success": False,
-                    "symbol": symbol,
                     "failed": True,
-                    "error": "銘柄詳細情報の取得に失敗しました",
+                    "symbol": symbol,
                     "sector": None,
                     "industry": None,
                     "market_cap": None,
                     "pe_ratio": None,
-                }
+                },
             )
+            return resp
         info = cached_short
     else:
         _submit_async_info_fetch(symbol)

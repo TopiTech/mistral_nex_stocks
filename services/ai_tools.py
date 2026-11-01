@@ -328,7 +328,28 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                         if p_val is not None:
                             price = float(p_val)
                     if price is None:
-                        hist = ticker.history(period="1d")
+                        # SVC-12: mirror _tool_calculate_technical_levels —
+                        # every network-bound ticker.history call must hold
+                        # yfinance_history_semaphore, otherwise parallel agent
+                        # tool threads bypass the throttle and raise 429
+                        # exposure. When the slot cannot be acquired within the
+                        # timeout, skip the history fallback instead of firing
+                        # an unthrottled request.
+                        from constants import HISTORY_SEMAPHORE_TIMEOUT
+
+                        acquired = app_state.market.yfinance_history_semaphore.acquire(
+                            blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT
+                        )
+                        if not acquired:
+                            return {
+                                "symbol": symbol,
+                                "market": market,
+                                "status": "データ取得不可",
+                            }
+                        try:
+                            hist = ticker.history(period="1d")
+                        finally:
+                            app_state.market.yfinance_history_semaphore.release()
                         if hist is not None and not hist.empty and "Close" in hist:
                             closes = hist["Close"].dropna()
                             if not closes.empty:

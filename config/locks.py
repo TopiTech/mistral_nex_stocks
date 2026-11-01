@@ -18,74 +18,103 @@ from config.paths import _ensure_runtime_dir
 
 @contextmanager
 def config_update_lock():
-    """Serialize load-modify-save updates across threads and processes."""
-    with config_store._CONFIG_LOCK:
-        _ensure_runtime_dir()
-        update_lock_file = config_store.CONFIG_FILE.with_suffix(
-            config_store.CONFIG_FILE.suffix + ".update.lock"
-        )
-        fd = os.open(str(update_lock_file), os.O_CREAT | os.O_RDWR, 0o600)
-        locked = False
+    """Serialize load-modify-save updates across threads and processes.
+
+    Thread-reentrant (DATA-2): the underlying msvcrt/flock lock is owned per
+    open file description, so a nested acquisition from the same thread via a
+    second descriptor self-conflicts (Windows: ~10 s stall then a misleading
+    ``RuntimeError``; POSIX: ~15 s) and can AB-BA deadlock against
+    ``_MASTER_KEY_LOCK`` when ``_master_key_update_lock()`` nests this
+    context. A thread that already owns the lock re-enters immediately and
+    relies on the outer acquisition's file lock and ``_CONFIG_LOCK``.
+
+    Lock ordering (DATA-8): the cross-process file lock is acquired BEFORE
+    the in-process ``_CONFIG_LOCK``. Readers (``load_config``) only need
+    ``_CONFIG_LOCK``; holding it across the bounded cross-process file-lock
+    wait (and the caller's long keyring/DPAPI/disk critical section) used to
+    stall every config read in this process whenever another process was
+    mid-transaction. ``_CONFIG_LOCK`` is now scoped to the caller's critical
+    section (the ``yield``) only.
+    """
+    depth = getattr(config_store._UPDATE_LOCK_STATE, "depth", 0)
+    if depth > 0:
+        config_store._UPDATE_LOCK_STATE.depth = depth + 1
         try:
-            if os.name == "nt":
-                import msvcrt
-
-                if os.fstat(fd).st_size < 1:
-                    try:
-                        os.write(fd, b"L")
-                        os.lseek(fd, 0, os.SEEK_SET)
-                    except OSError:
-                        pass
-                os.lseek(fd, 0, os.SEEK_SET)
-                for attempt in range(20):
-                    try:
-                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-                        locked = True
-                        break
-                    except OSError as err:
-                        if attempt == 19:
-                            raise RuntimeError("config update lock is busy") from err
-                        time.sleep(0.05 * (attempt + 1))
-            else:
-                import fcntl  # pylint: disable=import-error
-
-                for fl_attempt in range(100):
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
-                        locked = True
-                        break
-                    except OSError as fl_err:
-                        import errno as _errno
-
-                        if getattr(fl_err, "errno", None) not in (
-                            _errno.EAGAIN,
-                            _errno.EWOULDBLOCK,
-                        ):
-                            raise
-                        if fl_attempt == 99:
-                            raise RuntimeError("config update lock is busy") from fl_err
-                        time.sleep(0.05 * (1 + fl_attempt % 5))
-                if not locked:
-                    raise RuntimeError("config update lock is busy")
             yield
         finally:
-            if locked:
+            config_store._UPDATE_LOCK_STATE.depth = depth
+        return
+    _ensure_runtime_dir()
+    update_lock_file = config_store.CONFIG_FILE.with_suffix(
+        config_store.CONFIG_FILE.suffix + ".update.lock"
+    )
+    fd = os.open(str(update_lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+    locked = False
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            if os.fstat(fd).st_size < 1:
                 try:
-                    if os.name == "nt":
-                        import msvcrt
-
-                        os.lseek(fd, 0, os.SEEK_SET)
-                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
-                    else:
-                        import fcntl  # pylint: disable=import-error
-
-                        fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                    os.write(fd, b"L")
+                    os.lseek(fd, 0, os.SEEK_SET)
                 except OSError:
                     pass
+            os.lseek(fd, 0, os.SEEK_SET)
+            for attempt in range(20):
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                    locked = True
+                    break
+                except OSError as err:
+                    if attempt == 19:
+                        raise RuntimeError("config update lock is busy") from err
+                    time.sleep(0.05 * (attempt + 1))
+        else:
+            import fcntl  # pylint: disable=import-error
+
+            for fl_attempt in range(100):
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                    locked = True
+                    break
+                except OSError as fl_err:
+                    import errno as _errno
+
+                    if getattr(fl_err, "errno", None) not in (
+                        _errno.EAGAIN,
+                        _errno.EWOULDBLOCK,
+                    ):
+                        raise
+                    if fl_attempt == 99:
+                        raise RuntimeError("config update lock is busy") from fl_err
+                    time.sleep(0.05 * (1 + fl_attempt % 5))
+            if not locked:
+                raise RuntimeError("config update lock is busy")
+        with config_store._CONFIG_LOCK:
+            config_store._UPDATE_LOCK_STATE.depth = 1
             try:
-                os.close(fd)
+                yield
+            finally:
+                config_store._UPDATE_LOCK_STATE.depth = 0
+    finally:
+        if locked:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                else:
+                    import fcntl  # pylint: disable=import-error
+
+                    fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
             except OSError:
                 pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 @contextmanager

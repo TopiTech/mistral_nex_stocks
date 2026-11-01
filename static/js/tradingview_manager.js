@@ -11,11 +11,13 @@
   // (R9). renderAdvancedChart() creates a fresh closure per render (each
   // fullscreen open / exchange switch), and registering them all would (a)
   // leak listeners on every open/close and (b) let a stale closure's
-  // doNyseFallbackSwitch re-render the OLD symbol over the current chart.
+  // doExchangeFallbackSwitch re-render the OLD symbol over the current chart.
   // The previous handler is removed before the new one is installed, and
-  // clearContainer() detaches it as well.
+  // clearContainer() detaches it when clearing the owning chart container.
   let activeMessageHandler = null;
+  let activeMessageHandlerOwner = null;
   let _tickerTapeGeneration = 0;
+  let _chartGeneration = 0;
 
   const DEFAULT_TAPE_SYMBOLS = [
     { proName: "INDEX:NKY", title: "日経225", description: "日経225" },
@@ -453,25 +455,26 @@
     }
 
     // 6. Symbol heuristics (dot/dash class shares or 1-2 character tickers default to NYSE)
+    // ヒューリスティック推定は的中保証がないため isFallback: true を返す
+    // (自動リカバリの発動条件)。誤推定例: ON(ナスダック)→ NYSE:ON。
+    // キャッシュにも書き込まず(確定値のみキャッシュ)、毎回フラグ付きで解決する。
     if (
       !clean.startsWith("^") &&
       !clean.endsWith(".T") &&
       !clean.includes(":")
     ) {
       if (clean.includes(".") || clean.includes("-")) {
-        KNOWN_US_STOCK_TV_MAP[clean] = `NYSE:${clean}`;
         return {
           tvSymbol: `NYSE:${clean}`,
           exchangePrefix: "NYSE",
-          isFallback: false,
+          isFallback: true,
         };
       }
       if (clean.length <= 2 && /^[A-Z]+$/.test(clean)) {
-        KNOWN_US_STOCK_TV_MAP[clean] = `NYSE:${clean}`;
         return {
           tvSymbol: `NYSE:${clean}`,
           exchangePrefix: "NYSE",
-          isFallback: false,
+          isFallback: true,
         };
       }
     }
@@ -507,12 +510,16 @@
         typeof container === "string"
           ? document.getElementById(container)
           : container;
-      // Detach the window-level TradingView error handler: the chart it was
-      // created for is being destroyed, and leaving it registered would let a
-      // stale closure re-render an old symbol (R9).
-      if (activeMessageHandler) {
+      // メッセージハンドラは「チャート用コンテナ」の所有物。テープ用
+      // コンテナのクリアではチャートのハンドラを解除しない(所有コンテナと
+      // 一致する場合、または所有者が不明な場合のみ解除する)。
+      if (
+        activeMessageHandler &&
+        (!activeMessageHandlerOwner || activeMessageHandlerOwner === el)
+      ) {
         window.removeEventListener("message", activeMessageHandler);
         activeMessageHandler = null;
+        activeMessageHandlerOwner = null;
       }
       if (el) {
         el.replaceChildren();
@@ -560,7 +567,14 @@
       script.src =
         "https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js";
       script.async = true;
-      script.text = JSON.stringify(config);
+      // インラインスクリプトとして埋め込むため、JSON.stringifyの出力に
+      // `</script>` 等のHTML断片が含まれるとHTMLパーサでタグが閉じられ
+      // XSSになる。`<`/`>`/`&`をJSONエスケープ表記に置換して無害化する
+      // (JSONパーサは \u003c 等を正しくデコードする)。
+      script.text = JSON.stringify(config)
+        .replace(/</g, "\\u003c")
+        .replace(/>/g, "\\u003e")
+        .replace(/&/g, "\\u0026");
 
       const nonce =
         document.querySelector("script[nonce]")?.getAttribute("nonce") || "";
@@ -591,6 +605,9 @@
     renderAdvancedChart(containerId, ticker, exchange, options = {}) {
       const container = document.getElementById(containerId);
       if (!container) return;
+      // チャート描画毎に世代を進める。tv.js読み込み待ちの閉包が古い
+      // シンボルでマウントしないよう、完了時に世代を照合する(R9相当)。
+      const chartGen = ++_chartGeneration;
 
       this.clearContainer(container);
 
@@ -616,16 +633,18 @@
 
       const statusSpan = document.createElement("span");
       statusSpan.className = "tv-exchange-status";
+      statusSpan.setAttribute("role", "status");
 
       const currentPrefix = currentTvSymbol.includes(":")
         ? currentTvSymbol.split(":")[0]
         : "NASDAQ";
-      if (options.switchedToNyse) {
-        statusSpan.textContent =
-          "⚠️ NASDAQでシンボルが見つからないためNYSEに自動切り替えしました";
+      if (options.autoFallback) {
+        // 自動リカバリのみ警告を出す(手動の取引所切替では出さない)。
+        const fromExchange = options.autoFallbackFrom || "NASDAQ";
+        statusSpan.textContent = `⚠️ ${fromExchange}でシンボルが見つからないため${currentPrefix}に自動切り替えしました`;
         statusSpan.style.color = "#f0a500";
-      } else if (meta.isFallback && currentPrefix === "NASDAQ") {
-        statusSpan.textContent = "市場: NASDAQ (自動判定フォールバック)";
+      } else if (meta.isFallback && currentPrefix !== "TSE") {
+        statusSpan.textContent = `市場: ${currentPrefix} (自動判定フォールバック)`;
       } else {
         statusSpan.textContent = `市場: ${currentPrefix}`;
       }
@@ -644,6 +663,7 @@
         btn.style.cursor = "pointer";
         btn.style.border = "none";
         const isActive = currentPrefix === exName;
+        btn.setAttribute("aria-pressed", String(isActive));
         btn.style.background = isActive
           ? "#2962ff"
           : isDark
@@ -655,7 +675,6 @@
           KNOWN_US_STOCK_TV_MAP[baseTicker] = newTvSym;
           this.renderAdvancedChart(containerId, baseTicker, exName, {
             forceTvSymbol: newTvSym,
-            switchedToNyse: exName === "NYSE",
           });
         };
         return btn;
@@ -691,16 +710,19 @@
       container.appendChild(chartInnerContainer);
 
       let hasSwitched = false;
-      const doNyseFallbackSwitch = (reason) => {
+      const doExchangeFallbackSwitch = (reason) => {
         if (hasSwitched) return;
         hasSwitched = true;
+        // 現在のプレフィックスから見て自動リカバリ先を決める
+        // (NYSE推定の誤り → NASDAQ へ、それ以外 → NYSE へ)。
+        const targetPrefix = currentPrefix === "NYSE" ? "NASDAQ" : "NYSE";
+        const newSymbol = `${targetPrefix}:${baseTicker}`;
         console.warn(
-          `TradingView symbol fallback triggered for ${baseTicker} (${reason}). Switching to NYSE:${baseTicker}`,
+          `TradingView symbol fallback triggered for ${baseTicker} (${reason}). Switching to ${newSymbol}`,
         );
 
         // Register in client-side map
-        const newNyseSymbol = `NYSE:${baseTicker}`;
-        KNOWN_US_STOCK_TV_MAP[baseTicker] = newNyseSymbol;
+        KNOWN_US_STOCK_TV_MAP[baseTicker] = newSymbol;
 
         // Update global state if the stock is tracked there (window.state.stocks
         // is keyed by market). (R20: replaces the dead ``window.appState`` lookup.)
@@ -713,17 +735,18 @@
               (s) => s && (s.symbol === baseTicker || s.ticker === baseTicker),
             );
             if (st) {
-              st.tv_symbol = newNyseSymbol;
-              st.exchange = "NYSE";
+              st.tv_symbol = newSymbol;
+              st.exchange = targetPrefix;
               break;
             }
           }
         }
 
-        // Re-render with NYSE force symbol
-        this.renderAdvancedChart(containerId, baseTicker, "NYSE", {
-          forceTvSymbol: newNyseSymbol,
-          switchedToNyse: true,
+        // Re-render with the fallback exchange forced
+        this.renderAdvancedChart(containerId, baseTicker, targetPrefix, {
+          forceTvSymbol: newSymbol,
+          autoFallback: true,
+          autoFallbackFrom: currentPrefix,
         });
       };
 
@@ -750,9 +773,11 @@
             typeof event.data === "string"
               ? event.data
               : JSON.stringify(event.data);
+          // 自動リカバリ後の再レンダー(autoFallback)では再度の自動切替を
+          // 許さない(NASDAQ⇄NYSE の無限ピングポングを防ぐ)。
           if (
-            (currentPrefix === "NASDAQ" && meta.isFallback) ||
-            options.forceTvSymbol
+            (meta.isFallback || options.forceTvSymbol) &&
+            !options.autoFallback
           ) {
             if (
               dataStr.includes("invalid-symbol") ||
@@ -765,8 +790,9 @@
               window.removeEventListener("message", messageHandler);
               if (activeMessageHandler === messageHandler) {
                 activeMessageHandler = null;
+                activeMessageHandlerOwner = null;
               }
-              doNyseFallbackSwitch("postMessage error event");
+              doExchangeFallbackSwitch("postMessage error event");
             }
           }
         } catch (_err) {
@@ -778,9 +804,13 @@
         window.removeEventListener("message", activeMessageHandler);
       }
       activeMessageHandler = messageHandler;
+      activeMessageHandlerOwner = container;
       window.addEventListener("message", messageHandler);
 
       const mountWidget = () => {
+        // 世代が変わっていたら(より新しいrenderAdvancedChartが呼ばれた)、
+        // 古い閉包はマウントしない。重複ウィジェット/旧シンボル描画を防ぐ。
+        if (chartGen !== _chartGeneration) return;
         if (window.TradingView && window.TradingView.widget) {
           try {
             new window.TradingView.widget({
@@ -800,8 +830,8 @@
             });
           } catch (e) {
             console.error("TradingView Advanced Chart render error:", e);
-            if (currentPrefix === "NASDAQ" && meta.isFallback) {
-              doNyseFallbackSwitch("widget constructor exception");
+            if (meta.isFallback && !options.autoFallback) {
+              doExchangeFallbackSwitch("widget constructor exception");
             }
           }
         }
@@ -823,6 +853,12 @@
           tvScript.onload = mountWidget;
           document.head.appendChild(tvScript);
         } else {
+          // 読み込み中スクリプトへの古い待ち閉包を除去してから積む
+          // (同一要素に複数のloadリスナーが溜まるのを防ぐ)。
+          if (tvScript._pendingMountHandler) {
+            tvScript.removeEventListener("load", tvScript._pendingMountHandler);
+          }
+          tvScript._pendingMountHandler = mountWidget;
           tvScript.addEventListener("load", mountWidget);
         }
       }

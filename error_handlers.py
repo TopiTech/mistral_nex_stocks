@@ -86,6 +86,7 @@ def register_error_handlers(app: Flask) -> None:
             message="Forbidden",
             status_code=403,
             error_code=ErrorCode.FORBIDDEN,
+            details={"reason": None},
         )
 
     @app.errorhandler(404)
@@ -94,6 +95,7 @@ def register_error_handlers(app: Flask) -> None:
             message="Not Found",
             status_code=404,
             error_code=ErrorCode.NOT_FOUND,
+            details={"reason": None},
         )
 
     @app.errorhandler(405)
@@ -102,6 +104,7 @@ def register_error_handlers(app: Flask) -> None:
             message="Method Not Allowed",
             status_code=405,
             error_code=ErrorCode.METHOD_NOT_ALLOWED,
+            details={"reason": None},
         )
 
     @app.errorhandler(413)
@@ -110,6 +113,7 @@ def register_error_handlers(app: Flask) -> None:
             message="Payload Too Large",
             status_code=413,
             error_code=ErrorCode.PAYLOAD_TOO_LARGE,
+            details={"reason": None},
         )
 
     @app.errorhandler(429)
@@ -118,6 +122,7 @@ def register_error_handlers(app: Flask) -> None:
             message="Too Many Requests",
             status_code=429,
             error_code=ErrorCode.TOO_MANY_REQUESTS,
+            details={"reason": None},
         )
 
     @app.errorhandler(500)
@@ -127,6 +132,7 @@ def register_error_handlers(app: Flask) -> None:
             message="Internal Server Error",
             status_code=500,
             error_code=ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": None},
         )
 
     @app.errorhandler(TimeoutError)
@@ -136,6 +142,7 @@ def register_error_handlers(app: Flask) -> None:
             message="Service Unavailable (Timeout)",
             status_code=503,
             error_code=ErrorCode.TIMEOUT_ERROR,
+            details={"reason": None},
         )
 
     @app.errorhandler(Exception)
@@ -158,10 +165,19 @@ def register_error_handlers(app: Flask) -> None:
                 error.code,
                 error.description,
             )
+            # API-4: statuses outside the table (415/422/502/503/...) must not
+            # degrade to error_code 9999 / code null — derive a typed code from
+            # the status class so the envelope stays specific.
+            mapped_code = code_mapping.get(error.code) if error.code is not None else None
+            if mapped_code is None and error.code is not None:
+                if 400 <= error.code < 500:
+                    mapped_code = ErrorCode.BAD_REQUEST
+                elif error.code >= 500:
+                    mapped_code = ErrorCode.SYSTEM_ERROR
             return _build_error_response(
                 message=error.name or "HTTP Error",
                 status_code=error.code or 500,
-                error_code=code_mapping.get(error.code) if error.code is not None else None,
+                error_code=mapped_code,
                 details={"reason": None},
             )
 

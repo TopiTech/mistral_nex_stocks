@@ -97,7 +97,17 @@ def cleanup_global_executors():
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_manifest_exists():
-    """Ensure native host test manifest exists during test session."""
+    """Ensure native host test manifest exists during test session.
+
+    LIFECYCLE-12: the manifest is a gitignored machine artifact that several
+    tests (tests/test_cors_security.py) parse from ``native_host/``. Under
+    ``-n auto --dist=loadfile`` every xdist worker runs this fixture, so the
+    creation must be atomic (temp file + ``os.replace``) to prevent torn reads,
+    and the teardown unlink must be limited to single-process runs: a worker
+    that unlinks at *its* session end could break tests still running on
+    another worker. Under xdist the generated (installer-equivalent, gitignored)
+    manifest is left in place rather than risking an early unlink race.
+    """
     import json
 
     manifest_path = (
@@ -111,15 +121,20 @@ def ensure_manifest_exists():
             / "com.mistral_nex_stocks.host.json.template"
         )
         if template_path.exists():
+            tmp_path = manifest_path.with_suffix(".json.tmp")
             try:
                 data = json.loads(template_path.read_text(encoding="utf-8"))
                 data["allowed_origins"] = ["chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"]
-                manifest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                os.replace(tmp_path, manifest_path)
                 created = True
             except Exception:
-                pass
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
     yield
-    if created and manifest_path.exists():
+    if created and manifest_path.exists() and os.environ.get("PYTEST_XDIST_WORKER") is None:
         try:
             manifest_path.unlink()
         except Exception:
@@ -197,6 +212,12 @@ def reset_app_state():
             _reset_db_state()
         except Exception:
             pass
+        # LIFECYCLE-11: the native host caches its verified caller-ancestry
+        # verdict process-wide; reset it per test so tests that patch
+        # ``_get_ancestor_process_names`` keep observing per-call evaluation.
+        _nh = sys.modules.get("native_host.native_host")
+        if _nh is not None:
+            _nh._reset_caller_ancestry_cache()
 
     _clear_persisted_state()
     yield

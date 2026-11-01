@@ -113,12 +113,23 @@
       raw.pe_ratio !== undefined ? raw.pe_ratio : raw.peRatio,
       null,
     );
+    // /api/stock-details と /api/stocks 行ビルダーは snake_case の
+    // fifty_two_week_high/low を送出するため、フォールバック連鎖に含める
+    // (camelCase(yfinance 原始キー)のみを見ていては常に 0 のままだった)。
     const high52 = toFiniteNumberSafe(
-      raw.high52 !== undefined ? raw.high52 : raw.fiftyTwoWeekHigh,
+      raw.high52 !== undefined
+        ? raw.high52
+        : raw.fiftyTwoWeekHigh !== undefined
+          ? raw.fiftyTwoWeekHigh
+          : raw.fifty_two_week_high,
       0,
     );
     const low52 = toFiniteNumberSafe(
-      raw.low52 !== undefined ? raw.low52 : raw.fiftyTwoWeekLow,
+      raw.low52 !== undefined
+        ? raw.low52
+        : raw.fiftyTwoWeekLow !== undefined
+          ? raw.fiftyTwoWeekLow
+          : raw.fifty_two_week_low,
       0,
     );
 
@@ -190,7 +201,7 @@
    */
   function normalizeStockHistory(rawHistory) {
     if (!Array.isArray(rawHistory)) return [];
-    return rawHistory
+    const points = rawHistory
       .map((item) => {
         if (!item || typeof item !== "object") return null;
         const close = toFiniteNumberSafe(
@@ -237,8 +248,6 @@
             new Date(timestamp).toISOString().split("T")[0];
         }
 
-        const changePercent = open > 0 ? ((close - open) / open) * 100 : 0;
-
         return {
           timestamp,
           dateStr,
@@ -247,12 +256,22 @@
           low,
           close,
           price: close,
-          changePercent,
+          changePercent: 0,
           volume,
         };
       })
       .filter(Boolean)
       .sort((a, b) => a.timestamp - b.timestamp);
+
+    // Δ% はライブの change_percent(前日終値基準)と同じ基準で計算する。
+    // ギャップのある日は open 基準だと前日比と食い違い、同じ「±x.xx%」が
+    // 別の値を指してしまうため、先頭のみ open 基準にフォールバックする。
+    for (let i = 0; i < points.length; i++) {
+      const baseClose = i > 0 ? points[i - 1].close : points[i].open;
+      points[i].changePercent =
+        baseClose > 0 ? ((points[i].close - baseClose) / baseClose) * 100 : 0;
+    }
+    return points;
   }
 
   /**

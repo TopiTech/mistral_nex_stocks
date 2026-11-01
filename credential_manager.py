@@ -816,6 +816,12 @@ def require_extension_token(request_obj: Any) -> tuple[bool, str]:
     expected_token = get_or_create_extension_api_token()
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.removeprefix("Bearer ").strip()
-        if secrets.compare_digest(token, expected_token):
+        # secrets.compare_digest() raises TypeError for str inputs containing
+        # non-ASCII characters; the header is attacker-controlled, so a
+        # non-ASCII token must be rejected here instead of crashing the
+        # endpoint with an unhandled 500 (DATA-3). Branching on ASCII-ness
+        # leaks nothing the attacker does not already control; the compare
+        # itself stays constant-time for ASCII inputs.
+        if token.isascii() and secrets.compare_digest(token, expected_token):
             return True, ""
     return False, "invalid or missing extension token"

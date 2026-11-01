@@ -266,6 +266,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const item = document.createElement("button");
       item.type = "button";
       item.className = "search-result-item";
+      // combobox/listbox 契約(FE-tpl-2): 結果項目を option として告知する。
+      item.setAttribute("role", "option");
+      item.setAttribute(
+        "aria-selected",
+        String(st.symbol === state.state.selectedSymbol),
+      );
       if (st.symbol === state.state.selectedSymbol) {
         item.classList.add("selected");
       }
@@ -340,6 +346,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   marketButtons.forEach((item, index) => {
     const isCurrent = (state.state.market || "us") === item.key;
+    // URL(?market=jp / ?market=all)から初期化された状態とボタン表示を
+    // 初期時点で一致させる。テンプレートの US デフォルトのまま残すと、
+    // JP データ表示中に US ボタンが押下状態に見える(aria 状態の嘘)。
+    // switchMarket と同じ 3 状態チャンネル(class / aria-pressed /
+    // tabindex)を再読み込みなしで同期する。
+    item.btn.classList.toggle("active", isCurrent);
+    item.btn.setAttribute("aria-pressed", String(isCurrent));
     item.btn.setAttribute("tabindex", isCurrent ? "0" : "-1");
     item.btn.addEventListener("click", () => switchMarket(item.key));
     item.btn.addEventListener("keydown", (event) => {

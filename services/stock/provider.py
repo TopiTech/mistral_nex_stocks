@@ -38,6 +38,32 @@ from utils.tradingview_mapper import get_ticker_exchange, resolve_exchange_prefi
 logger = logging.getLogger("services.stock_provider")
 
 
+def _normalize_major_holders_frame(df: pd.DataFrame) -> dict[str, Any]:
+    """Flatten a yfinance ``get_major_holders`` frame to {attribute: value}.
+
+    SVC-15: ``DataFrame.to_dict()`` defaults to the ``dict`` orient, producing
+    ``{column: {index: value}}`` (e.g. ``{"Value": {...}}``) instead of the
+    flat mapping the endpoint implies, and yfinance's frame shape drifted
+    across versions. Two shapes are handled explicitly:
+
+    * legacy two-column ``Label``/``Value`` frame, and
+    * attribute-indexed single-column frame (index=attribute, column=Value).
+
+    Anything else falls back to the first column keyed by index rather than
+    fabricating nested dicts.
+    """
+    if "Label" in df.columns and "Value" in df.columns:
+        result: dict[str, Any] = {}
+        for label, value in zip(df["Label"], df["Value"], strict=False):
+            if label is not None and value is not None:
+                result[str(label)] = value
+        return result
+    if len(df.columns) >= 1:
+        series = df.iloc[:, 0]
+        return {str(idx): val for idx, val in series.items() if val is not None}
+    return {}
+
+
 # Bounded per-process cache of live ``yf.Ticker`` instances, keyed by symbol.
 #
 # Why this exists: ``yf.Ticker`` construction is cheap, but the *first* use of a
@@ -1113,7 +1139,14 @@ class YFinanceProvider(BaseStockProvider):
             df = t.get_major_holders()
             if df is None or (isinstance(df, pd.DataFrame) and df.empty):
                 return {}
-            return {str(k): v for k, v in df.to_dict().items() if v is not None}
+            if not isinstance(df, pd.DataFrame):
+                # Non-frame payloads have no orient to normalize; fail closed
+                # instead of returning an accidental nested shape.
+                return {}
+            # SVC-15: normalize orientation explicitly — the default
+            # ``to_dict()`` orient returned nested column dicts instead of the
+            # flat attribute→value mapping consumers expect.
+            return _normalize_major_holders_frame(df)
         except Exception as exc:
             logger.debug("yfinance major_holders failed for %s: %s", symbol, exc)
             if _is_yfinance_rate_limit_error(exc):

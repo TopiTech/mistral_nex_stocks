@@ -788,8 +788,40 @@ def call_openai_chat(
                     }
                 }
 
-            data = resp.json()
+            # SVC-09: a 200 response with a broken/HTML body must surface as a
+            # typed 502 instead of the generic app-side 500 the outer handler
+            # would produce for JSONDecodeError. Circuit accounting deliberately
+            # does NOT record a failure here: tests/test_code_review_u14_circuit_
+            # and_scraper_fixes.py::test_call_openai_chat_invalid_json_body_does_
+            # not_trip_circuit pins that a garbage 200 body must never open the
+            # circuit (U14/K-10 decision — parse failures are not classified as
+            # provider health). Release a claimed half-open probe instead so the
+            # probing flag cannot stick.
+            try:
+                data = resp.json()
+            except ValueError:
+                logger.warning(
+                    "OpenAI-compat 200 response has invalid JSON body id=%s model=%s url=%s",
+                    req_id,
+                    model,
+                    endpoint,
+                )
+                if circuit_probe_claimed:
+                    app_state.market.release_circuit_probe("openai_compatible")
+                    circuit_probe_claimed = False
+                return {
+                    "error": {
+                        "message": "Invalid JSON response from OpenAI provider",
+                        "status_code": 502,
+                    }
+                }
             if not isinstance(data, dict):
+                # Same class of malformed 200 body (valid JSON, wrong shape):
+                # typed 502 for the caller, but no circuit failure per the U14
+                # pinned contract above.
+                if circuit_probe_claimed:
+                    app_state.market.release_circuit_probe("openai_compatible")
+                    circuit_probe_claimed = False
                 return {
                     "error": {
                         "message": "Invalid JSON response from OpenAI provider",
@@ -1212,6 +1244,12 @@ def call_openai_chat_with_tools(
         # surface as a graceful 502-shaped error, not an AttributeError.
         return {"error": {"message": message, "status_code": 502}}
 
+    # SVC-07: a malformed ``messages`` payload is a caller bug that must fail
+    # fast; silently coercing it to an empty conversation makes the model
+    # answer unanchored and can burn the full tool-call budget on junk.
+    if not isinstance(messages, list) or not messages:
+        return _tool_loop_error("messages must be a non-empty list")
+
     def _json_safe_tool_value(value: Any) -> Any:
         if isinstance(value, float):
             return value if math.isfinite(value) else None
@@ -1243,9 +1281,18 @@ def call_openai_chat_with_tools(
         return serialized
 
     active_tools = tools if tools is not None else MISTRAL_FINANCIAL_TOOLS
-    current_messages = list(messages) if isinstance(messages, list) else []
+    # SVC-07: messages is guaranteed to be a non-empty list by the guard above;
+    # no defensive coercion — a caller bug must not become an empty conversation.
+    current_messages = list(messages)
 
-    max_tool_iterations = max(1, min(int(max_tool_iterations), 8))
+    # SVC-08: mirror the Mistral twin's normalization — this public helper is
+    # also used by tests/integrations, so a malformed value must not raise a
+    # raw ValueError/TypeError out of the agent loop.
+    try:
+        normalized_iterations = int(max_tool_iterations)
+    except (TypeError, ValueError):
+        normalized_iterations = 5
+    max_tool_iterations = max(1, min(normalized_iterations, 8))
 
     for iteration in range(max_tool_iterations):
         use_cache = iteration == 0 and not active_tools

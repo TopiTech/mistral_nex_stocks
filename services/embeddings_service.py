@@ -89,6 +89,7 @@ def get_mistral_embeddings_batch(
         _extract_error_response,
         _extract_mistral_wait_seconds,
         _is_mistral_capacity_error,
+        _release_mistral_call_slot,
         _wait_for_rate_limit_slot,
     )
 
@@ -129,6 +130,9 @@ def get_mistral_embeddings_batch(
         wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
         wait_status = _wait_for_rate_limit_slot(wait_before)
         if wait_status != "ready":
+            # Abort without issuing a request: roll the unused pacing
+            # reservation back so recovery traffic is not delayed (SVC-02).
+            _release_mistral_call_slot()
             if wait_status == "rate_limited":
                 logger.warning(
                     "Mistral rate-limit cooldown exceeds the wait cap; "

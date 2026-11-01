@@ -282,7 +282,7 @@
       }
     }
 
-    async fetchHistoryForSymbol(symbol, granularity) {
+    async fetchHistoryForSymbol(symbol, granularity, attempt = 0) {
       if (!symbol) return;
       const cleanSymbol = String(symbol).trim().toUpperCase();
       const period = granularity || "3mo";
@@ -333,11 +333,17 @@
         if (!this.isCurrentHistoryContext(cleanSymbol, period)) return;
 
         if (data && data.fetching) {
+          // 上限付きリトライ(他ループと同じ ~20 回)。サーバーが fetching を
+          // 亜空返し続ける場合に無制限ポーリングを続行しない(FE-exp-8)。
+          if (attempt >= 20) {
+            this.showHistoryError();
+            return;
+          }
           // Data is currently being retrieved on server, retry in 1.5 seconds
           const timerId = setTimeout(() => {
             this.retryTimers.delete(timerId);
             if (this.isCurrentHistoryContext(cleanSymbol, period)) {
-              this.fetchHistoryForSymbol(cleanSymbol, period);
+              this.fetchHistoryForSymbol(cleanSymbol, period, attempt + 1);
             }
           }, 1500);
           this.retryTimers.add(timerId);
@@ -354,8 +360,12 @@
           if (this.isCurrentHistoryContext(cleanSymbol, period)) {
             this.applyHistoricalData(cleanSymbol, period, normalized);
           }
-        } else {
-          if (this.isCurrentHistoryContext(cleanSymbol, period)) {
+        } else if (this.isCurrentHistoryContext(cleanSymbol, period)) {
+          if (data && data.error) {
+            // レガシー契約: /api/stock-history は HTTP 200 + error ボディを
+            // 返しうる。LIVE 表示と区別してエラー状態を出す(FE-exp-10)。
+            this.showHistoryError();
+          } else {
             this.updateTimelineUI(this.state.state, false);
           }
         }
@@ -365,7 +375,8 @@
           this.isCurrentHistoryContext(cleanSymbol, period)
         ) {
           console.warn("[TemporalController] History fetch error:", err);
-          this.updateTimelineUI(this.state.state, false);
+          // 取得失敗を「LIVE 表示」に見えさせない(FE-exp-10)。
+          this.showHistoryError();
         }
       } finally {
         if (this.inFlightRequests.get(cacheKey) === controller) {
@@ -382,6 +393,21 @@
           .toUpperCase() === symbol &&
         this.state.state.timeGranularity === period
       );
+    }
+
+    showHistoryError() {
+      // 履歴取得失敗は「LIVE」表示と区別し、スライダーを無効のまま
+      // エラーであることを明示する(FE-exp-8/10)。
+      if (this.els.timeDisplay) {
+        this.els.timeDisplay.textContent = "履歴取得に失敗しました";
+      }
+      if (this.els.timeBadge) {
+        this.els.timeBadge.textContent = "ERROR";
+        this.els.timeBadge.className = "time-badge scrubbed";
+      }
+      if (this.els.timeSlider) {
+        this.els.timeSlider.disabled = true;
+      }
     }
 
     applyHistoricalData(symbol, period, history) {

@@ -672,7 +672,17 @@ class SQLiteChatHistoryStore:
                 msgs.append(dict(append))
                 changed = True
                 if max_msgs is not None and len(msgs) > max_msgs:
-                    msgs = [msgs[0]] + msgs[-(max_msgs - 1) :]
+                    # DATA-11: guard the max_msgs <= 1 boundary — `-(1 - 1)`
+                    # is `0`, and `msgs[-0:]` is a no-op copy that kept every
+                    # message AND duplicated the first one. Keep the first
+                    # message (usually the system prompt) plus the most recent
+                    # `max_msgs - 1` messages; degenerate budgets collapse to
+                    # just the first message so the trim stays total.
+                    keep_tail = max_msgs - 1
+                    if keep_tail > 0:
+                        msgs = [msgs[0]] + msgs[-keep_tail:]
+                    else:
+                        msgs = [msgs[0]]
             if changed:
                 self._write_messages(cursor, session_id, msgs)
             return msgs

@@ -1186,6 +1186,24 @@ def ok_response(payload: dict | None = None, **kwargs: Any) -> Response:
     return jsonify(body)
 
 
+def _sanitize_error_value(value: Any) -> Any:
+    """Recursively sanitize string leaves in an error-envelope payload.
+
+    API-10: ``error_response`` previously sanitized only first-level strings,
+    so nested provider-error dicts (e.g. ``details["provider_error"]``) were
+    shipped verbatim while their sibling ``reason`` string was redacted.
+    Walking dicts/lists here keeps the single-owner guarantee for every call
+    site; numbers, booleans and ``None`` pass through untouched.
+    """
+    if isinstance(value, str):
+        return _sanitize_error_message(value)
+    if isinstance(value, dict):
+        return {k: _sanitize_error_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_error_value(item) for item in value]
+    return value
+
+
 def error_response(
     error_code: ErrorCode | int | str | None,
     status_code: int = 400,
@@ -1221,7 +1239,7 @@ def error_response(
     sanitized_details: dict[str, Any] = {}
     if details:
         for k, v in details.items():
-            sanitized_details[k] = _sanitize_error_message(v) if isinstance(v, str) else v
+            sanitized_details[k] = _sanitize_error_value(v)
     body: dict[str, Any] = {
         "ok": False,
         "error": message,
@@ -1233,7 +1251,7 @@ def error_response(
     }
     if extra_fields:
         for k, v in extra_fields.items():
-            body[k] = _sanitize_error_message(v) if isinstance(v, str) else v
+            body[k] = _sanitize_error_value(v)
     return (jsonify(body), status_code)
 
 

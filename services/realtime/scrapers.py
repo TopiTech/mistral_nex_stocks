@@ -28,6 +28,7 @@ from services.realtime.utils import (
     _mark_scraper_blocked_from_status,
     _parse_quote_number,
     _scraper_market_state,
+    extract_minkabu_price,
 )
 from utils.normalization import is_bool_like, is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
@@ -554,23 +555,22 @@ class MinkabuScraper(_BaseFallbackScraper):
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
                 html = resp.text
-                m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
-                if not m:
-                    m = re.search(r"([0-9,]+\.?[0-9]*)\s*円", html)
-                if m:
-                    price = _parse_quote_number(m.group(1))
-                    if price > 0:
-                        payload: TickerPayload = {
-                            "symbol": symbol,
-                            "price": price,
-                            "change": 0.0,
-                            "change_percent": 0.0,
-                            "source": "minkabu",
-                            "updated_at": time.time(),
-                        }
-                        logger.debug("[Minkabu Scraper] Quote for %s: price=%.2f", symbol, price)
-                        self._record_fetch_success(symbol)
-                        return payload
+                # SVC-17: shared label-anchored extractor — the bare
+                # "...円" fallback matched unrelated figures (手数料290円)
+                # and streamed them as live quotes.
+                price = extract_minkabu_price(html)
+                if price is not None:
+                    payload: TickerPayload = {
+                        "symbol": symbol,
+                        "price": price,
+                        "change": 0.0,
+                        "change_percent": 0.0,
+                        "source": "minkabu",
+                        "updated_at": time.time(),
+                    }
+                    logger.debug("[Minkabu Scraper] Quote for %s: price=%.2f", symbol, price)
+                    self._record_fetch_success(symbol)
+                    return payload
             self._record_fetch_failure(symbol)
         except Exception as exc:
             logger.debug("[Minkabu Scraper] Failed fetch for %s: %s", symbol, exc)
@@ -578,7 +578,15 @@ class MinkabuScraper(_BaseFallbackScraper):
         return None
 
     def fetch_pts_quote(self, symbol: str) -> TickerPayload | None:
-        """Fetch the PTS quote for *symbol* from Minkabu."""
+        """Fetch the PTS quote for *symbol* from Minkabu.
+
+        SVC-18: ``fetch_quote`` scrapes the regular-session page
+        (``minkabu.jp/stock/{code}``), so the price it returns is the daytime
+        price, not a live after-hours print. The payload is still used as the
+        lowest-tier PTS fallback, but it is explicitly marked
+        ``pts_price_source="regular_session"`` so consumers can grey it out
+        instead of presenting stale regular-session data as live PTS.
+        """
         if self._is_in_cooldown(symbol, kind="pts"):
             return None
         payload = self.fetch_quote(symbol)
@@ -587,6 +595,7 @@ class MinkabuScraper(_BaseFallbackScraper):
             payload["pts"] = True
             payload["pts_trading"] = False
             payload["pts_time"] = ""
+            payload["pts_price_source"] = "regular_session"
             self._record_fetch_success(symbol, kind="pts")
             return payload
         self._record_fetch_failure(symbol, kind="pts")

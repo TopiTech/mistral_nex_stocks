@@ -186,6 +186,14 @@ class ShutdownTokenManager:
                 return False
             if not token or not isinstance(token, str):
                 return False
+            # A-1 (cross-cutting twin of DATA-3): secrets.compare_digest()
+            # raises TypeError for str inputs containing non-ASCII characters;
+            # the caller-supplied token is attacker-controlled, so reject it
+            # here instead of letting the endpoint crash with an unhandled
+            # 500. The stored token is secrets.token_urlsafe() (ASCII), and
+            # the compare below stays constant-time for ASCII inputs.
+            if not token.isascii():
+                return False
 
             import secrets
 
@@ -224,6 +232,11 @@ class ShutdownTokenManager:
             if not self.shutdown_token or self.shutdown_token_used:
                 return False
             if not token or not isinstance(token, str):
+                return False
+            # A-1 (DATA-3 twin): non-ASCII caller tokens must be rejected
+            # (fail-closed False) before compare_digest's ASCII-only str
+            # contract can raise TypeError → HTTP 500.
+            if not token.isascii():
                 return False
             import secrets
 

@@ -290,6 +290,15 @@ def load_config() -> dict[str, Any]:
                 e,
                 exc_info=True,
             )
+            # DATA-1: record a negative cache entry keyed to the corrupt
+            # file's current stat so repeated load_config() calls (every
+            # credential getter calls it per request) do not re-read,
+            # re-backup, re-rotate and re-log a full traceback each time.
+            # Repairing or replacing the file changes mtime/size, which
+            # invalidates this entry; the next load then re-reads and clears
+            # _CONFIG_CORRUPTED on success.
+            config_store._CONFIG_CACHE["data"] = copy.deepcopy(config_store.DEFAULT_CONFIG)
+            config_store._CONFIG_CACHE["key"] = _config_cache_key()
             return copy.deepcopy(config_store.DEFAULT_CONFIG)
 
 
@@ -303,10 +312,17 @@ def save_config(cfg, create_backup=True):
             )
         _ensure_runtime_dir()
 
+        # DATA-5: a non-dict payload is a caller bug, not a "reset to
+        # defaults" request. Coercing it used to overwrite the user's real
+        # config.json with DEFAULT_CONFIG — silent, permanent data loss
+        # (opposite of the fail-closed contract enforced above).
+        if not isinstance(cfg, dict):
+            raise TypeError(f"save_config expects dict, got {type(cfg).__name__}")
+
         # 保存直前にプロセス内キャッシュを無効化し、次回 load_config で最新を読む
         config_store._CONFIG_CACHE["data"] = None
         config_store._CONFIG_CACHE["key"] = None
-        data = cfg.copy() if isinstance(cfg, dict) else {}
+        data = cfg.copy()
         for k, v in config_store.DEFAULT_CONFIG.items():
             data.setdefault(k, copy.deepcopy(v))
         if not isinstance(data.get("api_credentials"), dict):
@@ -326,10 +342,31 @@ def save_config(cfg, create_backup=True):
                 if not isinstance(backup_data, dict):
                     raise TypeError("existing config root must be a JSON object")
                 backup_data["api_credentials"] = {}
-                # Strip all secret entries from backups to avoid leaking secrets
-                for secret_key in ("flask_secret_key", "mns_master_key", "extension_api_token"):
+                # Strip secret entries from backups to avoid leaking secrets —
+                # EXCEPT the master key (DATA-6). mns_master_key is the Fernet
+                # trust anchor for every encrypted value (user_stocks.json,
+                # flask secret, extension token, ai_portfolios); stripping it
+                # made this .bak only a partial rollback point: restoring it
+                # regenerated a fresh master key and permanently orphaned all
+                # ciphertext — the exact failure config/master_key.py fails
+                # closed to prevent. The entry is never raw key material: it
+                # is the keyring/DPAPI-protected dict written by
+                # crypto_utils._encode_secret, and this .bak is written with
+                # the same restricted permissions as config.json itself, so
+                # retaining it adds no exposure while keeping restores whole.
+                for secret_key in ("flask_secret_key", "extension_api_token"):
                     if secret_key in backup_data:
                         del backup_data[secret_key]
+                # Restore guidance for the secrets that ARE stripped
+                # (non-secret, additive key that .bak readers ignore).
+                backup_data["_restore_note"] = (
+                    "Sanitized backup: api_credentials/flask_secret_key/"
+                    "extension_api_token were stripped; mns_master_key is "
+                    "retained (protected entry, never plaintext) so "
+                    "restoring this file as config.json keeps the Fernet "
+                    "trust anchor. Re-supply the API credentials and flask "
+                    "secret after a restore."
+                )
                 # H-4: Write backup to a temp file with restricted permissions
                 # BEFORE the rename, so the backup file is never exposed with
                 # open permissions, even momentarily.
@@ -364,7 +401,34 @@ def save_config(cfg, create_backup=True):
                         logger.warning(
                             "Failed to set backup config file permissions: %s", chmod_exc
                         )
-            except (OSError, TypeError, json.JSONDecodeError) as e:
+            except (TypeError, json.JSONDecodeError) as corrupt_exc:
+                # DATA-7: the on-disk config exists but is unparseable (or
+                # has a non-object root). Corruption detection otherwise only
+                # happens lazily in load_config; a save-first process would
+                # os.replace the only recoverable copy. Salvage a sanitized
+                # backup (same helper + naming as the load path) and converge
+                # on the documented fail-closed contract instead of silently
+                # destroying the file.
+                corrupt_backup = config_store.CONFIG_FILE.with_suffix(
+                    config_store.CONFIG_FILE.suffix + f".corrupt.{datetime.now(UTC):%Y%m%d%H%M%S}.bak"
+                )
+                try:
+                    _sanitize_and_backup_corrupt_config(config_store.CONFIG_FILE, corrupt_backup)
+                    logger.warning("Corrupted config backed up to %s", corrupt_backup)
+                    _rotate_corrupt_backups(config_store.CONFIG_FILE.parent)
+                except (OSError, ValueError) as backup_exc:
+                    logger.warning(
+                        "Failed to backup corrupted config %s: %s",
+                        config_store.CONFIG_FILE,
+                        backup_exc,
+                    )
+                config_store._CONFIG_CORRUPTED = True
+                raise RuntimeError(
+                    "Refusing to save config over corrupted configuration file "
+                    f"{config_store.CONFIG_FILE}. Manual recovery required or "
+                    "remove corrupted file first."
+                ) from corrupt_exc
+            except OSError as e:
                 logger.warning("Failed to create config backup: %s", e)
             finally:
                 if backup_tmp.exists():

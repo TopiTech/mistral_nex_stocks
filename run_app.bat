@@ -2,12 +2,16 @@
 setlocal
 cd /d "%~dp0"
 
+REM LIFECYCLE-9: keep the errorlevel capture at top level. Inside a
+REM parenthesized ( ... ) block cmd.exe expands %errorlevel% when the block is
+REM PARSED (before `uv run` executes), which always reported success. Top-level
+REM lines are expanded per-line, after uv ran, so the real exit code propagates.
 where uv >nul 2>nul
-if not errorlevel 1 (
-    uv run --locked python app.py
-    exit /b %errorlevel%
-)
+if errorlevel 1 goto uv_missing
+uv run --locked python app.py
+exit /b %errorlevel%
 
+:uv_missing
 if "%MNS_ALLOW_UNLOCKED%"=="1" goto fallback
 if /I "%MNS_ALLOW_UNLOCKED%"=="true" goto fallback
 if /I "%MNS_ALLOW_UNLOCKED%"=="yes" goto fallback
@@ -27,3 +31,4 @@ if not defined PYTHON_EXE (
 if not defined PYTHON_EXE set "PYTHON_EXE=python"
 
 %PYTHON_EXE% app.py
+exit /b %errorlevel%

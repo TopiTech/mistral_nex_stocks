@@ -139,6 +139,14 @@ async function ensureStockDetails(wrapper) {
     return;
   }
 
+  // 進行中の取得があれば破棄してから再実行する(リトライボタン/再オープンで
+  // 重複ポーリングループが走り、遅い側の失敗が新しい描画を上書きするのを防ぐ)。
+  wrapper.__detailsReqController?.abort();
+  const requestController = new AbortController();
+  wrapper.__detailsReqController = requestController;
+  const isCurrentRequest = () =>
+    wrapper.__detailsReqController === requestController;
+
   const detailInner = wrapper.querySelector(".detail-inner");
   const sectorEl = wrapper.querySelector(".detail-sector");
   const industryEl = wrapper.querySelector(".detail-industry");
@@ -160,7 +168,7 @@ async function ensureStockDetails(wrapper) {
   const symbol = wrapper.dataset.symbol;
   const market = wrapper.dataset.market || "us";
 
-  const controller = new AbortController();
+  const controller = requestController;
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   const showErrorBanner = (text) => {
@@ -210,13 +218,23 @@ async function ensureStockDetails(wrapper) {
       }
       url.search = new URLSearchParams({ symbol, market }).toString();
       const res = await fetch(url.toString(), { signal: controller.signal });
+      // HTTPステータスを明示的に確認する(プロキシ等の502 JSONボディを
+      // 成功扱いにしないため)。
+      let body = null;
       try {
-        return await res.json();
+        body = await res.json();
       } catch (_jsonErr) {
+        body = null;
+      }
+      if (!res.ok) {
         return {
-          error: `サーバー応答の解析に失敗しました (HTTP ${res.status})`,
+          error:
+            body?.error ||
+            body?.details?.reason ||
+            `サーバー応答エラー (HTTP ${res.status})`,
         };
       }
+      return body ?? { error: "サーバー応答の解析に失敗しました" };
     };
 
     let data = null;
@@ -228,14 +246,10 @@ async function ensureStockDetails(wrapper) {
     }
 
     clearTimeout(timeoutId);
-    if (
-      data &&
-      data.ok !== false &&
-      data.success !== false &&
-      !data.failed &&
-      !data.error &&
-      !data.fetching
-    ) {
+    if (!isCurrentRequest()) return;
+    // 成功は「明示的な ok:true」のみとし、失敗フラグの不在を成功と見なさない
+    // (空オブジェクトやプロキシの502ボディをキャッシュで恒久汚染しない)。
+    if (data && data.ok === true && !data.fetching) {
       stockDetailsCache.set(stockKey, data);
       renderDetailExtras(wrapper, data);
     } else if (data && data.fetching) {
@@ -248,6 +262,7 @@ async function ensureStockDetails(wrapper) {
     }
   } catch (e) {
     clearTimeout(timeoutId);
+    if (!isCurrentRequest()) return;
     const isTimeout = e.name === "AbortError";
     const statusText = isTimeout ? "タイムアウト" : "取得失敗";
     showErrorBanner(statusText);
@@ -333,7 +348,9 @@ function updateStockUI(wrapper, stock) {
       ? stock.chart_data[stock.chart_data.length - 1].x
       : "";
   const oldDataStr = wrapper.dataset.lastDataHash;
-  const newDataStr = `${stock.price}|${stock.change}|${stock.change_percent}|${stock.shares}|${stock.avg_price}|${lastChartTs}`;
+  // 変更検知ハッシュは描画する全フィールドを覆う(価格が静止している間も
+  // volume/high/low/pts_price の変化でドローワー等が更新されるように)。
+  const newDataStr = `${stock.price}|${stock.change}|${stock.change_percent}|${stock.shares}|${stock.avg_price}|${lastChartTs}|${stock.volume}|${stock.high}|${stock.low}|${stock.pts_price}`;
 
   if (oldDataStr === newDataStr) return;
   wrapper.dataset.lastDataHash = newDataStr;
@@ -353,7 +370,13 @@ function updateStockUI(wrapper, stock) {
     const formattedPrice = formatPrice(newPrice, stock);
     if (priceEl.textContent !== formattedPrice) {
       priceEl.textContent = formattedPrice;
-      if (oldPrice != null && newPrice !== oldPrice && oldPrice !== "--") {
+      // 価格欠損(null/undefined)時に flash-down を誤再生しないよう、
+      // 両値が有限数値のときのみフラッシュする。
+      if (
+        Number.isFinite(newPrice) &&
+        Number.isFinite(oldPrice) &&
+        newPrice !== oldPrice
+      ) {
         const flashClass = newPrice > oldPrice ? "flash-up" : "flash-down";
         triggerPriceFlash(priceEl, flashClass);
       }
@@ -364,9 +387,9 @@ function updateStockUI(wrapper, stock) {
       ["tradingview", "yahoojp", "sbi", "alphavantage", "yahoous"].includes(
         (stock.source || "").toLowerCase(),
       );
-    if (isScrapedOrRealtime) {
-      priceEl.classList.add("scraping-success");
-    }
+    // 前回の更新がライブ由来でも、今回の更新がポーリング由来なら緑パルスを
+    // 維持しない(データ鮮度を誤って示さないよう毎回トグルする)。
+    priceEl.classList.toggle("scraping-success", isScrapedOrRealtime);
     priceEl.classList.add("updating");
     if (priceEl.__updateTimer) clearTimeout(priceEl.__updateTimer);
     priceEl.__updateTimer = setTimeout(
@@ -418,6 +441,10 @@ function updateStockUI(wrapper, stock) {
   }
 
   // スパークラインの更新
+  // 注意: 以下の「再描画抑制」判断はスパークライン描画のみを対象とする。
+  // 関数全体を return すると、以降に続くドローワー詳細項目の数値更新と
+  // リアルタイムチャート追従が実行されず、切断中のスナップショット更新で
+  // ドローワーが停止するため、return は使わず描画ブロックを条件分岐する。
   if (!hasSparklinePoints) {
     setSparklineVisibility(wrapper, false);
   } else {
@@ -426,9 +453,7 @@ function updateStockUI(wrapper, stock) {
     setSparklineVisibility(wrapper, true);
 
     // 鮮度が低いデータは可視状態を維持し、不要な再描画だけ抑制する
-    if (!freshSparklineData && !wasHidden) {
-      return;
-    }
+    const skipStaleRedraw = !freshSparklineData && !wasHidden;
 
     // リロード直後の差し替えジャンプを抑えるため、初回ライブ更新の1回目は再描画を抑制
     const isFirstLiveRefresh =
@@ -436,19 +461,19 @@ function updateStockUI(wrapper, stock) {
     if (stock.__live_update) {
       wrapper.dataset.liveSparkSeen = "1";
     }
-    if (isFirstLiveRefresh && !wasHidden) {
-      return;
-    }
+    const skipFirstLiveRefresh = isFirstLiveRefresh && !wasHidden;
 
-    const needsInitialDraw = wasHidden;
-    if (
-      needsInitialDraw ||
-      shouldUpdateSparkline(wrapper, stockKey, stock.chart_data)
-    ) {
-      if (isElementInViewport(wrapper)) {
-        drawSparkline(wrapper, stock.chart_data);
-      } else {
-        wrapper.__pendingSparklineData = stock.chart_data;
+    if (!skipStaleRedraw && !skipFirstLiveRefresh) {
+      const needsInitialDraw = wasHidden;
+      if (
+        needsInitialDraw ||
+        shouldUpdateSparkline(wrapper, stockKey, stock.chart_data)
+      ) {
+        if (isElementInViewport(wrapper)) {
+          drawSparkline(wrapper, stock.chart_data);
+        } else {
+          wrapper.__pendingSparklineData = stock.chart_data;
+        }
       }
     }
   }
@@ -862,6 +887,9 @@ function buildDetailPanel(
       style.label,
     );
     btn.dataset.type = style.id;
+    // 初回描画からスクリーンリーダーへアクティブ状態を告知するため、
+    // .active と同時に aria-pressed を初期化する(FE-ui3-6)。
+    btn.setAttribute("aria-pressed", String(currentType === style.id));
     typeGroup.appendChild(btn);
   });
   chartControls.appendChild(typeGroup);
@@ -898,6 +926,10 @@ function buildDetailPanel(
       p.toUpperCase(),
     );
     btn.dataset.period = p;
+    btn.setAttribute(
+      "aria-pressed",
+      String(getChartPref(stockKey, "period", "3mo") === p),
+    );
     periodGroup.appendChild(btn);
   });
   chartControls.appendChild(periodGroup);
@@ -922,6 +954,7 @@ function buildDetailPanel(
       item.label,
     );
     btn.dataset.interval = item.id;
+    btn.setAttribute("aria-pressed", String(currentInterval === item.id));
     intervalGroup.appendChild(btn);
   });
   chartControls.appendChild(intervalGroup);
@@ -1403,6 +1436,9 @@ function renderStocks(market, stocks) {
   });
   renderFavorites();
   updateTabCounts();
+  // ローディング表示(renderSkeletons)が設定した aria-busy を描画完了時に
+  // 解除する(SSE再描画経路で永続 busy になるのを防ぐ)。
+  container.setAttribute("aria-busy", "false");
 }
 
 function toggleDetail(wrapper) {
@@ -1560,6 +1596,20 @@ function renderSkeletons() {
     // スクリーンリーダーにローディング状態を伝える(解除はデータ描画側が担う)
     container.setAttribute("aria-busy", "true");
 
+    // ライブカードが残っている場合に備えた完全な後始末(描画側の削除ループと
+    // 同等: チャート破棄・observer解除・レジストリ削除)。これを行わずに
+    // textContent="" すると Chart インスタンスと detached ラッパーが漏れる。
+    Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
+      if (currentDrawerActiveWrapper === w) {
+        closeStockDetailDrawer();
+      }
+      w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+      if (cardIntersectionObserver) {
+        cardIntersectionObserver.unobserve(w);
+      }
+      unregisterWrapper(w.dataset.stockKey, w);
+    });
+
     // 見栄えのために8個程度スケルトンを表示
     container.textContent = "";
     const fragment = document.createDocumentFragment();
@@ -1578,6 +1628,18 @@ function renderInitialLoadingTimeoutState() {
   ["us", "jp", "idx"].forEach((m) => {
     const container = document.getElementById(`${m}-stocks`);
     if (!container) return;
+    // ライブカードを消す前に後始末する(renderSkeletons と同一: チャート
+    // 破棄・observer解除・レジストリ削除)。取り残しを防ぐ。
+    Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
+      if (currentDrawerActiveWrapper === w) {
+        closeStockDetailDrawer();
+      }
+      w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
+      if (cardIntersectionObserver) {
+        cardIntersectionObserver.unobserve(w);
+      }
+      unregisterWrapper(w.dataset.stockKey, w);
+    });
     container.textContent = "";
     container.appendChild(
       createEl(
@@ -1610,6 +1672,11 @@ function renderPortfolio() {
   if (holdings.length === 0) {
     if (summaryContainer) summaryContainer.style.display = "none";
     Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
+      // ドロワーが開いたカードを消す場合は先にドロワーを閉じる
+      // (detached ラッパーへの描画とチャート取り残しを防ぐ)。
+      if (currentDrawerActiveWrapper === w) {
+        closeStockDetailDrawer();
+      }
       w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
       if (cardIntersectionObserver) {
         cardIntersectionObserver.unobserve(w);
@@ -1650,6 +1717,10 @@ function renderPortfolio() {
   // 不要になったカードを削除
   Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
     if (!existingKeys.has(w.dataset.stockKey)) {
+      // 保有解消でカードが消える場合もドロワーを先に閉じる(FE-ui-2)。
+      if (currentDrawerActiveWrapper === w) {
+        closeStockDetailDrawer();
+      }
       w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
       if (cardIntersectionObserver) {
         cardIntersectionObserver.unobserve(w);
@@ -1765,7 +1836,11 @@ function drawPortfolioSummaryChart(holdings) {
 
       totalValue += price * info.shares * info.rate;
     });
-    return { x: new Date(dateStr).getTime(), y: totalValue };
+    // buildLocalDateKey はローカル日付文字列なので、`new Date("YYYY-MM-DD")`
+    // (UTC 0時解釈)で再パースすると UTC 西側で前日にずれる。
+    // ローカル各部から Date を組み立てる。
+    const [year, month, day] = dateStr.split("-").map(Number);
+    return { x: new Date(year, month - 1, day).getTime(), y: totalValue };
   });
 
   // 3. データの変更がない場合は再描画をスキップ (SSEなどでのチラつき防止)
@@ -1896,7 +1971,10 @@ function updatePortfolioHeader(
   isMixedCurrency,
   chartAnimationControl,
 ) {
-  if (usdJpyRate === null && isMixedCurrency) {
+  // USD を含む保有では為替レート欠損時に「1.0」で誤った JPY 合計を出さない。
+  // mixed 判定でなく「USD を含むか」で待機表示にする(全USD構成でも同様)。
+  const hasUsdHoldings = holdings.some((s) => s.currency === "USD");
+  if (usdJpyRate == null && hasUsdHoldings) {
     const valEl = DOM.get("pf-total-value");
     if (valEl) valEl.textContent = "為替データ取得中...";
     return;
@@ -2024,8 +2102,10 @@ function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
             label: (ctx) => {
               const val = ctx.raw;
               const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
-              const pct = ((val / total) * 100).toFixed(1);
-              return ` ${ctx.label}: ${val.toLocaleString(undefined, { maximumFractionDigits: 0 })} JPY (${pct}%)`;
+              // 全保有が0のとき NaN% を出さない
+              const pct = total > 0 ? ((val / total) * 100).toFixed(1) : null;
+              const pctText = pct !== null ? ` (${pct}%)` : "";
+              return ` ${ctx.label}: ${val.toLocaleString(undefined, { maximumFractionDigits: 0 })} JPY${pctText}`;
             },
           },
         },
@@ -2055,6 +2135,16 @@ function getAllStocks() {
 }
 
 const formatMarketCap = (value) => {
+  // Number() は null/"" を 0 に変換するため、空白値は先に "--" を返す
+  // (screener.js/data-adapter.js の兄弟実装と同じ契約)。
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    typeof value === "boolean"
+  ) {
+    return "--";
+  }
   const num = Number(value);
   if (Number.isNaN(num)) return value ?? "--";
   return num.toLocaleString();
@@ -2195,14 +2285,19 @@ function setBulkAnalyzeStatus(message = "", type = "", structuredData = null) {
         const stockKey =
           item.stockKey ||
           (item.market ? makeStockKey(item.market, item.symbol) : null);
+        // O(1) レジストリLookupを優先し、DOMフォールバックでは CSS.escape で
+        // セレクタ注入(引用符を含むシンボルでの SyntaxError)を防ぐ。
         const matchingWrapper =
           (stockKey
+            ? wrapperRegistryMap.get(stockKey)?.values().next().value
+            : null) ||
+          (stockKey
             ? document.querySelector(
-                `.stock-wrapper[data-stock-key="${stockKey}"]`,
+                `.stock-wrapper[data-stock-key="${CSS.escape(stockKey)}"]`,
               )
             : null) ||
           document.querySelector(
-            `.stock-wrapper[data-symbol="${item.symbol}"]`,
+            `.stock-wrapper[data-symbol="${CSS.escape(item.symbol || "")}"]`,
           );
         const stockData = matchingWrapper?.__stockData ||
           (stockKey ? getStockByKey(stockKey) : null) || {
@@ -2344,7 +2439,6 @@ function showChartError(wrapper, msg, type = "error") {
 const drawSparkline = (wrapper, data) => {
   const canvas = wrapper.querySelector(".spark-canvas");
   if (!canvas || !data?.length) return;
-  setSparklineVisibility(wrapper, true);
 
   const stockKey = wrapper.dataset.stockKey;
   if (stockKey) {
@@ -2355,10 +2449,13 @@ const drawSparkline = (wrapper, data) => {
   // Clean up any legacy Chart.js instance on this canvas
   destroyChart(canvas);
 
+  // OHLC ペイロード({o,h,l,c})と価格列({price})の双方を受け取り、
+  // 描画可能点が揃うまで可視化しない(空のスパークラインを見せるのを防ぐ)。
   const prices = data
-    .map((d) => (typeof d === "number" ? d : d?.price))
+    .map((d) => (typeof d === "number" ? d : (d?.price ?? d?.c)))
     .filter((p) => typeof p === "number" && !isNaN(p));
   if (prices.length < 2) return;
+  setSparklineVisibility(wrapper, true);
 
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(rect.width || 0, 100);
@@ -2460,6 +2557,9 @@ let currentDrawerSymbol = "";
 let currentDrawerName = "";
 let currentDrawerMarket = "us";
 let aiDrawerTrigger = null;
+// 送信ごとに単調増加する生成トークン。古いリクエストの finally が
+// 新しいセッションの入力状態を上書きするのを防ぐ(FE-ui3-1)。
+let aiDrawerSendGeneration = 0;
 
 function openAiDrawer(symbol, name, market) {
   aiDrawerTrigger =
@@ -2510,10 +2610,13 @@ function openAiDrawer(symbol, name, market) {
   }
 
   if (overlay) {
+    // 既に開いているドロワーの再オープンではスクロールロックを重複取得しない
+    // (参照カウントの過剰加算で単一クローズに解除しきれないのを防ぐ)。
+    const wasHidden = overlay.classList.contains("hidden");
     overlay.removeAttribute("inert");
     overlay.classList.remove("hidden");
     overlay.setAttribute("aria-hidden", "false");
-    if (typeof lockBodyScroll === "function") {
+    if (typeof lockBodyScroll === "function" && wasHidden) {
       lockBodyScroll();
     }
   }
@@ -2559,6 +2662,7 @@ async function sendAiDrawerMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
   if (inputEl.disabled) return;
+  const generation = ++aiDrawerSendGeneration;
 
   inputEl.disabled = true;
   if (sendBtn) sendBtn.disabled = true;
@@ -2705,12 +2809,21 @@ async function sendAiDrawerMessage() {
   } catch (err) {
     loadingMsg.textContent = `エラー: ${err.message || "接続エラーが発生しました。"}`;
   } finally {
-    inputEl.disabled = false;
-    if (sendBtn) {
-      sendBtn.disabled = false;
-      sendBtn.textContent = originalBtnText;
+    // 現行の送信だけが入力状態を復元する(古い完了が新しいセッションの
+    // 「送信中...」表示を壊すのを防ぐ)。
+    if (generation === aiDrawerSendGeneration) {
+      inputEl.disabled = false;
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = originalBtnText;
+      }
+      // ドロワーが閉じている間はフォーカスを奪わない(閉じた状態で
+      // フォーカスを移すと、ユーザーの新しい操作対象を横取りする)。
+      const overlay = document.getElementById("ai-drawer-overlay");
+      if (!overlay || !overlay.classList.contains("hidden")) {
+        inputEl.focus();
+      }
     }
-    inputEl.focus();
   }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -2976,6 +3089,13 @@ function openStockDetailDrawer(stock, wrapper) {
   const overlay = document.getElementById("stock-detail-drawer-overlay");
   if (!overlay) return;
 
+  // 前のドロワーを先に閉じる。open 設定(drawerEl の open クラス/ dataset /
+  // トリガー記録)後に close すると、close 側が new 側の状態を消してしまっ
+  // た(ドロワーが開いたまま中身だけ壊れる)ため、順序は固定する。
+  if (currentDrawerActiveWrapper && currentDrawerActiveWrapper !== wrapper) {
+    closeStockDetailDrawer();
+  }
+
   const stockKey =
     wrapper?.dataset?.stockKey ||
     makeStockKey(stock.market || "us", stock.symbol);
@@ -2985,9 +3105,6 @@ function openStockDetailDrawer(stock, wrapper) {
     drawerEl.dataset.stockKey = stockKey;
   }
 
-  if (currentDrawerActiveWrapper && currentDrawerActiveWrapper !== wrapper) {
-    closeStockDetailDrawer();
-  }
   currentDrawerActiveWrapper = wrapper;
   stockDetailDrawerTrigger =
     document.activeElement instanceof HTMLElement
@@ -3060,10 +3177,12 @@ function openStockDetailDrawer(stock, wrapper) {
     }
   }
 
+  // 既に開いている場合(別銘柄への切替含む)はロックを重複取得しない。
+  const overlayWasHidden = overlay.classList.contains("hidden");
   overlay.removeAttribute("inert");
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
-  if (typeof lockBodyScroll === "function") {
+  if (typeof lockBodyScroll === "function" && overlayWasHidden) {
     lockBodyScroll();
   }
 
@@ -3297,7 +3416,10 @@ async function triggerAiTechnicalLines(wrapper) {
 
   try {
     const period = getChartPref(stockKey, "period", "3mo");
-    const prefetch = getFreshPrefetchedHistory(stockKey, period);
+    // インターバル指定中(1h等)は対応する履歴を参照する(自動キーで
+    // 参照してヒットせず、不一致の履歴を送ってしまうのを防ぐ)。
+    const interval = getChartPref(stockKey, "interval", "auto");
+    const prefetch = getFreshPrefetchedHistory(stockKey, period, interval);
     const historyData = prefetch ? prefetch.formattedData : [];
 
     const fetchFn = typeof csrfFetch === "function" ? csrfFetch : fetch;
@@ -3468,6 +3590,9 @@ function openFullscreenChart(wrapper) {
 
   const modal = document.getElementById("chart-fullscreen-modal");
   if (!modal) return;
+  // 再オープン時にスクロールロックを重複取得しない
+  // (単一クローズで解除しきれずページがスクロール不能になるのを防ぐ)。
+  const modalWasHidden = modal.classList.contains("hidden");
   modal.dataset.stockKey = stockKey;
   modal.removeAttribute("inert");
   modal.setAttribute("aria-hidden", "false");
@@ -3475,7 +3600,7 @@ function openFullscreenChart(wrapper) {
   modal.classList.add("show");
   modal.style.display = "flex";
   modal.style.zIndex = "20000";
-  if (typeof lockBodyScroll === "function") {
+  if (modalWasHidden && typeof lockBodyScroll === "function") {
     lockBodyScroll();
   }
   modal._previousFocus = document.activeElement;
@@ -3526,6 +3651,7 @@ function openFullscreenChart(wrapper) {
       );
       btn.type = "button";
       btn.dataset.type = type;
+      btn.setAttribute("aria-pressed", String(currentType === type));
       typeGroup.appendChild(btn);
     });
     toolbar.appendChild(typeGroup);
@@ -3545,6 +3671,7 @@ function openFullscreenChart(wrapper) {
       const isOn = getChartPref(stockKey, key, def) === "on";
       const btn = createEl("button", `chip-btn ${isOn ? "active" : ""}`, label);
       btn.type = "button";
+      btn.setAttribute("aria-pressed", String(isOn));
       if (key === "volume") {
         btn.dataset.volume = "on";
       } else {
@@ -3555,7 +3682,9 @@ function openFullscreenChart(wrapper) {
     toolbar.appendChild(indGroup);
 
     const periodGroup = createEl("div", "control-group period-controls");
-    ["1d", "5d", "1mo", "3mo", "6mo", "1y"].forEach((period) => {
+    // カード側と同一の正規リストを使う("max" が欠けたままになり、max選択中
+    // にフルスクリーンへ開くとアクティブボタンが無くなるのを防ぐ)。
+    CONSTANTS.PERIODS.forEach((period) => {
       const btn = createEl(
         "button",
         `control-btn ${currentPeriod === period ? "active" : ""}`,
@@ -3563,6 +3692,7 @@ function openFullscreenChart(wrapper) {
       );
       btn.type = "button";
       btn.dataset.period = period;
+      btn.setAttribute("aria-pressed", String(currentPeriod === period));
       periodGroup.appendChild(btn);
     });
     toolbar.appendChild(periodGroup);
@@ -3586,6 +3716,7 @@ function openFullscreenChart(wrapper) {
       );
       btn.type = "button";
       btn.dataset.interval = item.id;
+      btn.setAttribute("aria-pressed", String(currentInterval === item.id));
       intervalGroup.appendChild(btn);
     });
     toolbar.appendChild(intervalGroup);
@@ -3604,14 +3735,18 @@ function openFullscreenChart(wrapper) {
         btn.addEventListener("click", () => {
           if (btn.dataset.type) {
             setChartPref(stockKey, "type", btn.dataset.type);
-            toolbar
-              .querySelectorAll("[data-type]")
-              .forEach((b) => b.classList.toggle("active", b === btn));
+            toolbar.querySelectorAll("[data-type]").forEach((b) => {
+              const on = b === btn;
+              b.classList.toggle("active", on);
+              b.setAttribute("aria-pressed", String(on));
+            });
           } else if (btn.dataset.period) {
             setChartPref(stockKey, "period", btn.dataset.period);
-            toolbar
-              .querySelectorAll("[data-period]")
-              .forEach((b) => b.classList.toggle("active", b === btn));
+            toolbar.querySelectorAll("[data-period]").forEach((b) => {
+              const on = b === btn;
+              b.classList.toggle("active", on);
+              b.setAttribute("aria-pressed", String(on));
+            });
             updateIntervalControlsVisibility(
               toolbar,
               stockKey,
@@ -3619,9 +3754,11 @@ function openFullscreenChart(wrapper) {
             );
           } else if (btn.dataset.interval) {
             setChartPref(stockKey, "interval", btn.dataset.interval);
-            toolbar
-              .querySelectorAll("[data-interval]")
-              .forEach((b) => b.classList.toggle("active", b === btn));
+            toolbar.querySelectorAll("[data-interval]").forEach((b) => {
+              const on = b === btn;
+              b.classList.toggle("active", on);
+              b.setAttribute("aria-pressed", String(on));
+            });
           } else if (btn.dataset.ind) {
             const key = btn.dataset.ind;
             const curr = getChartPref(
@@ -3632,11 +3769,13 @@ function openFullscreenChart(wrapper) {
             const next = curr === "on" ? "off" : "on";
             setChartPref(stockKey, key, next);
             btn.classList.toggle("active", next === "on");
+            btn.setAttribute("aria-pressed", String(next === "on"));
           } else if (btn.dataset.volume !== undefined) {
             const curr = getChartPref(stockKey, "volume", "on");
             const next = curr === "on" ? "off" : "on";
             setChartPref(stockKey, "volume", next);
             btn.classList.toggle("active", next === "on");
+            btn.setAttribute("aria-pressed", String(next === "on"));
           }
           const p = getChartPref(stockKey, "period", "3mo");
           const inv = getChartPref(stockKey, "interval", "auto");

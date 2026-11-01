@@ -14,6 +14,12 @@ from config.paths import _ensure_runtime_dir
 
 logger = logging.getLogger("config_store")
 
+# POSIX write-lock retry budget (DATA-4): ~2.5 s worst case, mirroring the
+# bounded LOCK_EX|LOCK_NB pattern of config/locks.py. Module-level constants
+# so tests can shrink the budget.
+_FCNTL_LOCK_MAX_RETRIES = 100
+_FCNTL_LOCK_RETRY_DELAY_SEC = 0.025
+
 
 def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
     """Copy a legacy source-tree file into the runtime directory if needed.
@@ -141,7 +147,27 @@ def _write_and_replace_with_fcntl_lock(
 
         lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
+            # DATA-4: mirror config/locks.py — bounded LOCK_EX|LOCK_NB retries
+            # instead of an unbounded blocking LOCK_EX. A hung holder (slow
+            # disk, debugger stop, stuck NFS) must not freeze save_config
+            # while it holds _CONFIG_LOCK (every load_config then queues
+            # behind it); RuntimeError surfaces through save_config's
+            # fail-fast branch, same contract as the Windows sibling.
+            import errno as _errno
+
+            for attempt in range(_FCNTL_LOCK_MAX_RETRIES):
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                    break
+                except OSError as fl_err:
+                    if getattr(fl_err, "errno", None) not in (
+                        _errno.EAGAIN,
+                        _errno.EWOULDBLOCK,
+                    ):
+                        raise
+                    if attempt == _FCNTL_LOCK_MAX_RETRIES - 1:
+                        raise RuntimeError("config write lock busy") from fl_err
+                    time.sleep(_FCNTL_LOCK_RETRY_DELAY_SEC)
             _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
             o_dir = getattr(os, "O_DIRECTORY", None)

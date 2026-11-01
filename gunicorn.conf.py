@@ -33,6 +33,14 @@ def _env_int(name, default, minimum, maximum):
 # Do NOT change this value. Multi-worker mode is UNSUPPORTED.
 workers = 1
 
+# LIFECYCLE-3: never preload the app into the master process. With preload,
+# `wsgi:app` is imported (and ``bootstrap()`` runs background threads) in the
+# master; threads do not survive fork, so workers would serve HTTP/SSE with no
+# leader election or sync loops and with a duplicated leader-lock fd. The PID
+# guard in ``app_factory.boot``/``_ensure_bootstrap_called`` repairs a forked
+# child, but the root-cause fix is to keep app loading in the worker.
+preload_app = False
+
 # gthread mode lets Flask serve multiple requests concurrently without spawning
 # additional processes (all threads share the same in-memory state).
 worker_class = "gthread"

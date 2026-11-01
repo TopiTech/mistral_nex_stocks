@@ -48,9 +48,17 @@ function validateSymbol(symbol) {
  * @returns {Object} {valid: boolean, value?: number, error?: string}
  */
 function validateNumberInput(value, min, max) {
-  const num = parseFloat(value);
+  // parseFloat の前方一致許容("10abc"→10)を排除し、完全一致の数値文字列
+  // のみ受理する。min/max が数値で与えられない場合は範囲検証が不能なので
+  // 不正扱いにする。
+  const raw = typeof value === "number" ? value : String(value ?? "").trim();
+  const num = typeof raw === "number" ? raw : raw === "" ? NaN : Number(raw);
 
-  if (isNaN(num)) {
+  if (!Number.isFinite(num)) {
+    return { valid: false, error: "有効な数値を入力してください" };
+  }
+
+  if (typeof min !== "number" || typeof max !== "number" || min > max) {
     return { valid: false, error: "有効な数値を入力してください" };
   }
 
@@ -114,9 +122,16 @@ const toFiniteNumber = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
+// ユーザー入力専用: Number() は "0x10"/"0b1"/"1e3" など JS リテラル文法も
+// 受け付けてしまうため、十進数の形をしていることを先に検証する。
+const DECIMAL_NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.?\d+)$/;
+
 function parseRequiredNonNegativeNumber(value, label) {
   const raw = String(value ?? "").trim();
   if (!raw) return { ok: false, error: `${label}を入力してください` };
+  if (!DECIMAL_NUMBER_PATTERN.test(raw)) {
+    return { ok: false, error: `${label}は数値で入力してください` };
+  }
   const num = Number(raw);
   if (!Number.isFinite(num))
     return { ok: false, error: `${label}は数値で入力してください` };
@@ -127,6 +142,9 @@ function parseRequiredNonNegativeNumber(value, label) {
 function parseOptionalNonNegativeNumber(value, label) {
   const raw = String(value ?? "").trim();
   if (!raw) return { ok: true, value: null };
+  if (!DECIMAL_NUMBER_PATTERN.test(raw)) {
+    return { ok: false, error: `${label}は数値で入力してください` };
+  }
   const num = Number(raw);
   if (!Number.isFinite(num))
     return { ok: false, error: `${label}は数値で入力してください` };
@@ -137,7 +155,9 @@ function parseOptionalNonNegativeNumber(value, label) {
 /* --- Button Loading Helpers (Prevent XSS) --- */
 function setButtonLoading(btn, loadingText) {
   if (!btn) return;
-  if (!btn.dataset.originalText) {
+  // dataset は空文字も正当な保存値なので、truthiness でなく存在で判定する
+  // (2回目の呼出でスピナーテキストを original として上書きするのを防ぐ)。
+  if (!("originalText" in btn.dataset)) {
     btn.dataset.originalText = btn.textContent || "";
   }
   btn.disabled = true;
@@ -196,6 +216,9 @@ function unlockBodyScroll() {
 function openModal(modalId, onOpenCallback) {
   const modal = DOM.get(modalId);
   if (!modal) return;
+  // 既に開いているモーダルの再オープンではスクロールロックを重複取得しない
+  // (参照カウントが過剰加算され、単一クローズで解除しきれなくなるのを防ぐ)。
+  const wasOpen = modal.classList.contains("show");
   if (modal._keydownHandler) {
     modal.removeEventListener("keydown", modal._keydownHandler);
     modal._keydownHandler = null;
@@ -206,7 +229,7 @@ function openModal(modalId, onOpenCallback) {
   modal.classList.remove("hidden");
   modal.classList.add("show");
   modal.style.display = "flex";
-  lockBodyScroll();
+  if (!wasOpen) lockBodyScroll();
   if (typeof onOpenCallback === "function") {
     onOpenCallback(modal);
   }
@@ -261,6 +284,9 @@ function openModal(modalId, onOpenCallback) {
 function closeModal(modalId) {
   const modal = DOM.get(modalId);
   if (!modal) return;
+  // 開いていないモーダルのクローズではロックを解放しない(他モーダルの
+  // 参照カウントを誤って減らしてスクロールロックを外すのを防ぐ)。
+  const wasOpen = modal.classList.contains("show");
   if (modal._keydownHandler) {
     modal.removeEventListener("keydown", modal._keydownHandler);
     modal._keydownHandler = null;
@@ -273,7 +299,7 @@ function closeModal(modalId) {
   modal.style.display = "none";
   modal.setAttribute("aria-hidden", "true");
   modal.setAttribute("inert", "");
-  unlockBodyScroll();
+  if (wasOpen) unlockBodyScroll();
   if (
     modal._previousFocus &&
     typeof modal._previousFocus.focus === "function"
@@ -327,7 +353,18 @@ class Logger {
             stack: arg.stack,
           };
         }
-        const str = JSON.stringify(targetObj);
+        // 循環参照や BigInt を含むオブジェクトは JSON.stringify が例外を
+        // 投げる。ログ呼び出しが元のエラーを新たな TypeError で上書きしない
+        // よう、直列化失敗時は安全な文字列にフォールバックする。
+        let str;
+        try {
+          str = JSON.stringify(targetObj);
+        } catch {
+          return "[unserializable object]";
+        }
+        if (typeof str !== "string") {
+          return String(str);
+        }
         let sanitized = str;
         this.sensitivePatterns.forEach((pattern) => {
           sanitized = sanitized.replace(pattern, "[REDACTED]");
@@ -513,12 +550,16 @@ document.addEventListener("DOMContentLoaded", () => {
   // If user set default view mode to 'observatory' and is accessing main dashboard directly without override parameter
   const path = window.location.pathname;
   const urlParams = new URLSearchParams(window.location.search);
+  // クエリ文字列(main?q=SYM 等のディープリンク)はリダイレクト先へ引き継ぐ。
+  // さらに q パラメータが在る場合はダッシュボード側で株式選択を処理できる
+  // よう、リダイレクト自体を見送る(orbit ページは q を読まないため)。
   if (
     (path === "/" || path === "/main") &&
     getDefaultViewModePreference() === "observatory" &&
-    !urlParams.has("view")
+    !urlParams.has("view") &&
+    !urlParams.has("q")
   ) {
-    window.location.replace("/experimental/orbit");
+    window.location.replace(`/experimental/orbit${window.location.search}`);
     return;
   }
 
@@ -797,13 +838,19 @@ async function csrfFetch(url, options = {}) {
   opts.headers = headersObj;
   const method = String(opts.method || "GET").toUpperCase();
   const unsafe = !_CSRF_SAFE_METHODS.has(method);
+  // HTTPヘッダー名は大文字小文字を区別しない。呼び出し側が任意のケーシング
+  // でトークンを渡していても重複ヘッダー(値が "a, b" に結合され Flask-WTF
+  // が400を返す)を作らないよう、既存キーを大文字小文字非依存で探す。
+  // "X-CSRF-Token"(ハイフン表記)も従来どおり尊重する。
+  const findCsrfHeaderKey = (headers) =>
+    Object.keys(headers).find((key) => {
+      const lower = key.toLowerCase();
+      return lower === "x-csrftoken" || lower === "x-csrf-token";
+    });
   if (unsafe) {
     const token = readCsrfToken();
-    if (
-      token &&
-      !opts.headers["X-CSRFToken"] &&
-      !opts.headers["X-CSRF-Token"]
-    ) {
+    const existingCsrfKey = findCsrfHeaderKey(opts.headers);
+    if (token && !existingCsrfKey) {
       opts.headers["X-CSRFToken"] = token;
     }
     if (!Object.prototype.hasOwnProperty.call(opts, "credentials")) {
@@ -822,6 +869,12 @@ async function csrfFetch(url, options = {}) {
     const isStream =
       hasReadableStream && opts.body instanceof globalThis.ReadableStream;
     if (refreshed && (!opts.body || !isStream)) {
+      // 更新トークンは正規化したキーに統一して書き込む(古いケーシングの
+      // キーが残って再送でも400が続くのを防ぐ)。
+      const staleKey = findCsrfHeaderKey(opts.headers);
+      if (staleKey && staleKey !== "X-CSRFToken") {
+        delete opts.headers[staleKey];
+      }
       opts.headers["X-CSRFToken"] = readCsrfToken();
       response = await fetchWithTimeout(url, opts, timeoutMs);
     }

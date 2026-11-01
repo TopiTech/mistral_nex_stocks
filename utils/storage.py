@@ -24,6 +24,14 @@ USER_STOCKS_FILE = str(config_store.USER_STOCKS_FILE)
 LEGACY_USER_STOCKS_FILE = str(config_store.BASE_DIR / "user_stocks.json")
 _USER_STOCKS_READ_FAILED = object()
 
+# A-2 (cross-cutting twin of DATA-4): bounded POSIX write-lock retry budget for
+# the user_stocks persistence path — ~2.5 s worst case, mirroring the bounded
+# LOCK_EX|LOCK_NB pattern of config/atomic_write.py and config/locks.py instead
+# of an unbounded blocking flock(LOCK_EX). Module-level constants so tests can
+# shrink the budget.
+_STORAGE_FCNTL_LOCK_MAX_RETRIES = 100
+_STORAGE_FCNTL_LOCK_RETRY_DELAY_SEC = 0.025
+
 
 def _normalize_jp_holding_keys(holdings: dict) -> dict:
     """Canonicalize unambiguous persisted JP numeric tickers to ``.T`` form and sanitize FX fields.
@@ -513,11 +521,33 @@ def _write_user_stocks_with_lock(
             ) from exc
     else:  # Unix/POSIX
         try:
+            import errno as _errno
             import fcntl  # type: ignore[import]  # Unix-only; unavailable on Windows
 
             lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)  # type: ignore[attr-defined]
+                # A-2 (DATA-4 twin): bounded LOCK_EX|LOCK_NB retries instead of
+                # an unbounded blocking LOCK_EX. A hung holder (slow disk,
+                # debugger stop, stuck NFS) must not freeze every user_stocks
+                # save indefinitely. Budget exhaustion raises BlockingIOError
+                # (an OSError), which the fail-closed handler below converts to
+                # UserStocksPersistError — the same rollback contract as any
+                # other lock failure; non-EAGAIN errors still raise immediately.
+                for attempt in range(_STORAGE_FCNTL_LOCK_MAX_RETRIES):
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                        break
+                    except OSError as fl_err:
+                        if getattr(fl_err, "errno", None) not in (
+                            _errno.EAGAIN,
+                            _errno.EWOULDBLOCK,
+                        ):
+                            raise
+                        if attempt == _STORAGE_FCNTL_LOCK_MAX_RETRIES - 1:
+                            raise BlockingIOError(
+                                _errno.EWOULDBLOCK, "user_stocks write lock busy"
+                            ) from fl_err
+                        time.sleep(_STORAGE_FCNTL_LOCK_RETRY_DELAY_SEC)
                 old_umask = os.umask(0o077)
                 try:
                     fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

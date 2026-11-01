@@ -13,9 +13,11 @@ let stocksLoadRetryTimer = null;
 let stocksLoadAbortController = null;
 let stocksLoadGeneration = 0;
 let _currentCredentialsData = null;
+// 移動操作の多重実行ガード: 連打で同一スワップが2回適用されるのを防ぐ。
+const stocksMoveInFlight = new Set();
 
-// getSortOrderとsaveSortOrderはutils.jsで定義済み（全ページ共通）
-// saveSortOrderはlocalStorageに保存するユーティリティ
+// getSortOrder は utils.js で定義済み(全ページ共通)。
+// saveSortOrder は本ページで使う localStorage 保存ユーティリティ。
 function saveSortOrder(market, order) {
   try {
     localStorage.setItem(`sort_${market}`, JSON.stringify(order));
@@ -159,6 +161,7 @@ function renderList(market, stocks) {
     deleteBtn.className = "delete-btn";
     deleteBtn.type = "button";
     deleteBtn.textContent = "削除";
+    deleteBtn.setAttribute("aria-label", `${stock.symbol} を削除`);
 
     const moveUpBtn = document.createElement("button");
     moveUpBtn.className = "stock-move-btn stock-move-up";
@@ -201,30 +204,38 @@ function renderList(market, stocks) {
 }
 
 async function moveStock(market, symbol, direction) {
-  const order = getSortOrder(market);
-  const stocksObj = await fetchStocksForMarket(market);
-  const userStocks = (stocksObj || []).filter(
-    (s) => !DEFAULT_SYMBOLS[market].includes(s.symbol),
-  );
-  const symbols = [...userStocks.map((s) => s.symbol)];
+  // 連打で同一スワップが2回適用されるのを防ぐ(非同期待機中の再入を遮断)。
+  const moveKey = `${market}:${symbol}`;
+  if (stocksMoveInFlight.has(moveKey)) return;
+  stocksMoveInFlight.add(moveKey);
+  try {
+    const order = getSortOrder(market);
+    const stocksObj = await fetchStocksForMarket(market);
+    const userStocks = (stocksObj || []).filter(
+      (s) => !DEFAULT_SYMBOLS[market].includes(s.symbol),
+    );
+    const symbols = [...userStocks.map((s) => s.symbol)];
 
-  // order にないものは末尾に追加（既存の並びを尊重）
-  const ordered = order.filter((s) => symbols.includes(s));
-  symbols.forEach((s) => {
-    if (!ordered.includes(s)) ordered.push(s);
-  });
+    // order にないものは末尾に追加（既存の並びを尊重）
+    const ordered = order.filter((s) => symbols.includes(s));
+    symbols.forEach((s) => {
+      if (!ordered.includes(s)) ordered.push(s);
+    });
 
-  const idx = ordered.indexOf(symbol);
-  const target = idx + direction;
-  if (idx === -1 || target < 0 || target >= ordered.length) return;
+    const idx = ordered.indexOf(symbol);
+    const target = idx + direction;
+    if (idx === -1 || target < 0 || target >= ordered.length) return;
 
-  [ordered[idx], ordered[target]] = [ordered[target], ordered[idx]];
-  saveSortOrder(market, ordered);
-  renderList(market, userStocks);
-  showSettingsMessage(
-    `${symbol} を${direction < 0 ? "上" : "下"}に移動しました`,
-    false,
-  );
+    [ordered[idx], ordered[target]] = [ordered[target], ordered[idx]];
+    saveSortOrder(market, ordered);
+    renderList(market, userStocks);
+    showSettingsMessage(
+      `${symbol} を${direction < 0 ? "上" : "下"}に移動しました`,
+      false,
+    );
+  } finally {
+    stocksMoveInFlight.delete(moveKey);
+  }
 }
 
 async function fetchStocksForMarket(market) {
@@ -369,11 +380,6 @@ async function executeDeleteStock(market, symbol) {
   }
 }
 
-async function deleteStock(market, symbol) {
-  if (!confirm(`${symbol} を削除しますか？`)) return;
-  return executeDeleteStock(market, symbol);
-}
-
 async function resetAllStocks() {
   const resetBtn = document.getElementById("reset-btn");
   if (resetBtn && !resetBtn.__isConfirming) {
@@ -439,7 +445,17 @@ function logout() {
         throw new Error(detail);
       }
       try {
-        sessionStorage.clear();
+        // 既知の認証関連キーのみ削除する(機能フラグ等の無関係な
+        // sessionStorage エントリを巻き上げない)。
+        ["MISTRAL_API_KEY", "LANGSEARCH_API_KEY", "TAVILY_API_KEY"].forEach(
+          (key) => {
+            try {
+              sessionStorage.removeItem(key);
+            } catch (_e) {
+              // Ignore storage access failures in restricted contexts.
+            }
+          },
+        );
       } catch (_e) {}
       // Server-side clear succeeded, navigate to setup
       location.href = "/setup?logout=1";
@@ -730,17 +746,17 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     if (!anyChecked) {
       const recommendedModel = models.find((m) => m.recommended);
+      // サーバー提供のモデル名を CSS セレクタへ直接埋め込むと、名前に
+      // 引用符等が含まれた場合に SyntaxError で描画全体が中断する。
+      // 値一致で radio を探す(後段の既定値フォールバックも同様)。
+      const findRadioByValue = (value) =>
+        Array.from(
+          container.querySelectorAll('input[name="mistralModel"]'),
+        ).find((radio) => radio.value === value);
       const defaultRadio =
-        (recommendedModel &&
-          container.querySelector(
-            `input[name="mistralModel"][value="${recommendedModel.name}"]`,
-          )) ||
-        container.querySelector(
-          'input[name="mistralModel"][value="mistral-small-2603"]',
-        ) ||
-        container.querySelector(
-          'input[name="mistralModel"][value="mistral-medium-2604"]',
-        ) ||
+        (recommendedModel && findRadioByValue(recommendedModel.name)) ||
+        findRadioByValue("mistral-small-2603") ||
+        findRadioByValue("mistral-medium-2604") ||
         container.querySelector('input[name="mistralModel"]');
       if (defaultRadio) defaultRadio.checked = true;
     }
@@ -794,10 +810,12 @@ document.addEventListener("DOMContentLoaded", () => {
               `保存に失敗しました (HTTP ${res.status})`,
           );
         }
-        modelStatus.textContent = "✓ モデル設定を保存しました";
-        setTimeout(() => {
-          modelStatus.textContent = "";
-        }, 3000);
+        if (modelStatus) {
+          modelStatus.textContent = "✓ モデル設定を保存しました";
+          setTimeout(() => {
+            modelStatus.textContent = "";
+          }, 3000);
+        }
         const headerBadge = document.querySelector(".model-badge");
         if (headerBadge && data.model_badge) {
           headerBadge.textContent = data.model_badge;
@@ -1206,17 +1224,19 @@ document.addEventListener("DOMContentLoaded", () => {
           updateConnectionModeDisplay(data);
 
           const oaUrlInput = document.getElementById("openai-base-url-input");
-          if (oaUrlInput && data.openai_base_url) {
+          // ユーザーが既に入力・編集済みの値は、遅れて到着したGET応答で
+          // 上書きしない(編集内容の喪失を防ぐ)。
+          if (oaUrlInput && data.openai_base_url && !oaUrlInput.value) {
             oaUrlInput.value = data.openai_base_url;
           }
           const oaModelInput = document.getElementById("openai-model-input");
-          if (oaModelInput && data.openai_model) {
+          if (oaModelInput && data.openai_model && !oaModelInput.value) {
             oaModelInput.value = data.openai_model;
           }
           const oaEmbInput = document.getElementById(
             "openai-embeddings-model-input",
           );
-          if (oaEmbInput && data.openai_embeddings_model) {
+          if (oaEmbInput && data.openai_embeddings_model && !oaEmbInput.value) {
             oaEmbInput.value = data.openai_embeddings_model;
           }
           const oaKeyInput = document.getElementById("openai-api-key-input");
@@ -1265,10 +1285,12 @@ document.addEventListener("DOMContentLoaded", () => {
               `保存に失敗しました (HTTP ${res.status})`,
           );
 
-        promptStatus.textContent = "✓ 保存しました";
-        setTimeout(() => {
-          promptStatus.textContent = "";
-        }, 3000);
+        if (promptStatus) {
+          promptStatus.textContent = "✓ 保存しました";
+          setTimeout(() => {
+            promptStatus.textContent = "";
+          }, 3000);
+        }
       } catch (err) {
         logger.error("Save prompt error:", err);
         showToast(`プロンプトの保存に失敗しました: ${err.message}`, "#ff7d7d");
@@ -1291,7 +1313,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const selectedProvider =
         document.querySelector('input[name="aiProvider"]:checked')?.value ||
         "mistral";
-      payload.ai_provider = selectedProvider;
 
       if (selectedProvider === "openai_compatible") {
         const oaUrl = document
@@ -1309,7 +1330,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (oaUrl) payload.openai_base_url = oaUrl;
         if (oaModel) payload.openai_model = oaModel;
-        if (oaEmb !== undefined) payload.openai_embeddings_model = oaEmb;
+        // 空文字は保存層で「存続値の上書き(実質クリア)」になるため、
+        // 兄弟フィールドと同じく入力があるときのみ送信する。
+        if (oaEmb) payload.openai_embeddings_model = oaEmb;
         if (oaKey) payload.openai_api_key = oaKey;
       } else {
         if (mistralInput && mistralInput.value.trim()) {
@@ -1331,10 +1354,16 @@ document.addEventListener("DOMContentLoaded", () => {
         payload.alphavantage_api_key = alphaInput.value.trim();
       }
 
-      if (Object.keys(payload).length === 0) {
+      // 「何も入力がない」判定は ai_provider 書き込み前に行う。無条件に先で
+      // 書いてしまうと空判定が常に非空となり、警告パスが死にコードになる。
+      // プロバイダ切替のみ(既存値と異なる)は保存対象として残す。
+      const providerChanged =
+        selectedProvider !== _currentCredentialsData?.ai_provider;
+      if (Object.keys(payload).length === 0 && !providerChanged) {
         showToast("変更する設定またはAPIキーを入力してください", "#ff9800");
         return;
       }
+      payload.ai_provider = selectedProvider;
 
       saveAlphaBtn.disabled = true;
       saveAlphaBtn.textContent = "保存中...";

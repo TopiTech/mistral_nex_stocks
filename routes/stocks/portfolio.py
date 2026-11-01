@@ -210,8 +210,16 @@ def api_update_portfolio() -> Any:
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
             if container is not None:
-                container.pop(symbol, None)
-                if matching_symbol is not None and previous_value is not None:
+                # API-7: conditional rollback — only undo this request's own
+                # write and never overwrite a concurrent mutation committed
+                # between the persist attempt and this re-entry.
+                if container.get(symbol) == val:
+                    container.pop(symbol, None)
+                if (
+                    matching_symbol is not None
+                    and previous_value is not None
+                    and matching_symbol not in container
+                ):
                     container[matching_symbol] = previous_value
         current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
         return error_response(

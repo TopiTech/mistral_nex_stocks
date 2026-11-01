@@ -123,6 +123,16 @@ document.addEventListener("DOMContentLoaded", () => {
     btn?.click();
   });
 
+  // トグル再描画が現在表示中の市場と異なる市場のデータを描画しないための
+  // データセット有効性チェック。読み込み失敗/切替途中の旧データを描画しない。
+  function hasRenderableStocks() {
+    return Boolean(
+      state.rawStocks &&
+      state.rawStocks.length &&
+      state.rawStocksMarket === state.currentMarket,
+    );
+  }
+
   function switchMarket(market) {
     if (state.currentMarket === market) return;
     state.currentMarket = market;
@@ -169,7 +179,7 @@ document.addEventListener("DOMContentLoaded", () => {
       els.canvas3d?.classList.remove("hidden");
       els.controls3d?.classList.remove("hidden");
       start3DAnimation();
-      if (state.rawStocks && state.rawStocks.length) {
+      if (hasRenderableStocks()) {
         const normalized = state.rawStocks
           .map(normalizeStock)
           .filter((stock) => stock.size > 0);
@@ -187,7 +197,7 @@ document.addEventListener("DOMContentLoaded", () => {
       els.canvas?.classList.remove("hidden");
       els.canvas3d?.classList.add("hidden");
       els.controls3d?.classList.add("hidden");
-      if (state.rawStocks && state.rawStocks.length) {
+      if (hasRenderableStocks()) {
         const normalized = state.rawStocks
           .map(normalizeStock)
           .filter((stock) => stock.size > 0);
@@ -224,7 +234,7 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     els.sizeVolume?.setAttribute("tabindex", metric === "volume" ? "0" : "-1");
 
-    if (state.rawStocks && state.rawStocks.length) {
+    if (hasRenderableStocks()) {
       const normalized = state.rawStocks
         .map(normalizeStock)
         .filter((stock) => stock.size > 0);
@@ -248,6 +258,11 @@ document.addEventListener("DOMContentLoaded", () => {
         node.classList.toggle("is-dimmed", dimmed);
         node.setAttribute("aria-hidden", String(dimmed));
         if (dimmed) {
+          // フォーカス中のノードがaria-hiddenに落入るとスクリーンリーダーが
+          // 非表示要素を読み上げ続けるため、フォーカスを検索入力へ退避する。
+          if (node.contains(document.activeElement)) {
+            els.search?.focus();
+          }
           node.setAttribute("tabindex", "-1");
           node.setAttribute("aria-disabled", "true");
         } else {
@@ -287,9 +302,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function showError(message) {
-    if (!els.canvas) return;
-    els.canvas.textContent = "";
+  function buildErrorNode(message) {
     const error = document.createElement("div");
     error.className = "heatmap-error-state";
     error.setAttribute("role", "alert");
@@ -302,7 +315,23 @@ document.addEventListener("DOMContentLoaded", () => {
     span.textContent =
       "市場が休場中、またはデータ取得に時間がかかっています。しばらくしてから再試行してください。";
     error.append(icon, strong, span);
-    els.canvas.appendChild(error);
+    return error;
+  }
+
+  function showError(message) {
+    // 3D表示中は2Dキャンバスは display:none のため、エラーは表示中の
+    // コンテナ(3Dキャンバス)へ描画しないとユーザーに伝わらない。
+    if (state.viewMode === "3d") {
+      if (!els.canvas3d) return;
+      els.canvas3d
+        .querySelectorAll(".heatmap-error-state")
+        .forEach((node) => node.remove());
+      els.canvas3d.appendChild(buildErrorNode(message));
+      return;
+    }
+    if (!els.canvas) return;
+    els.canvas.textContent = "";
+    els.canvas.appendChild(buildErrorNode(message));
   }
 
   // escapeHtmlはutils.jsで定義済み（全ページ共通）
@@ -323,13 +352,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const safeVolume = Number.isFinite(volume) ? volume : 0;
     const fallbackSize = Math.max(safePrice, 1) * Math.max(safeVolume, 1);
 
+    // 出来高モードでもvolume欠落行は価格の代理値ではなく時価総額
+    // (なければ従来どおりfallbackSize)でサイズする。出来高提供環境では
+    // 従来と同じく volume * price を使う。
     const size =
-      state.sizeMetric === "volume"
-        ? volume > 0
-          ? volume * Math.max(safePrice, 1)
-          : Number.isFinite(fallbackSize)
-            ? fallbackSize
-            : 1
+      state.sizeMetric === "volume" && volume > 0
+        ? volume * Math.max(safePrice, 1)
         : Number.isFinite(rawMarketCap) && rawMarketCap > 0
           ? rawMarketCap
           : Number.isFinite(fallbackSize)
@@ -360,6 +388,10 @@ document.addEventListener("DOMContentLoaded", () => {
         state.timeoutId = null;
       }
       state.pollRetries = 0;
+      // 前の市場のデータを新しい市場の読み込み中に再表示しないよう無効化する
+      // (失敗/中断後のトグル操作が旧市場のタイルを再描画するのを防ぐ)。
+      state.rawStocks = [];
+      state.rawStocksMarket = null;
       // 新規ロードのみキャンバスをクリアしてローディング表示
       setLoading(true);
       if (els.canvas) els.canvas.textContent = "";
@@ -407,7 +439,17 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const stocks = Array.isArray(data.stocks) ? data.stocks : [];
+      // ヒートマップAPIの行はmarketを含まないことがある(後方互換のため
+      // バックエンドが提供する場合はそちらを優先)。書式整形
+      // (formatNumber/formatCompact)が正しい通貨記号を使うよう要求市場で補完する。
+      stocks.forEach((row) => {
+        if (!row || typeof row !== "object") return;
+        if (row.market !== "us" && row.market !== "jp") {
+          row.market = requestMarket;
+        }
+      });
       state.rawStocks = stocks;
+      state.rawStocksMarket = requestMarket;
       const normalized = stocks
         .map(normalizeStock)
         .filter((stock) => stock.size > 0);
@@ -702,6 +744,15 @@ document.addEventListener("DOMContentLoaded", () => {
     parent.appendChild(node);
   }
 
+  // moveTooltipはmousemove毎にgetBoundingClientRectを呼ぶと読み書き競合で
+  // レイアウト再計算を強制するため、ツールチップ表示時とウィンドウサイズ
+  // 変更時に寸法をキャッシュしてイベント毎の測定を避ける。
+  let tooltipSizeCache = null;
+  let viewportSizeCache = {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
+
   function showTooltip(node, stock, changePercent) {
     if (!els.tooltip) return;
     const priceText = formatNumber(stock.price, stock.market);
@@ -717,6 +768,7 @@ document.addEventListener("DOMContentLoaded", () => {
     detail.textContent = `価格: ${priceText} / 前日比: ${changeText} / 時価総額: ${marketCap}`;
     els.tooltip.append(strong, nameSpan, detail);
     els.tooltip.classList.add("show");
+    tooltipSizeCache = els.tooltip.getBoundingClientRect();
     if (node && node.classList) {
       node.classList.add("is-tooltip-open");
     }
@@ -725,14 +777,19 @@ document.addEventListener("DOMContentLoaded", () => {
   function moveTooltip(event) {
     if (!els.tooltip) return;
     const padding = 16;
-    const tooltipRect = els.tooltip.getBoundingClientRect();
+    const tooltipRect = tooltipSizeCache || els.tooltip.getBoundingClientRect();
+    if (!tooltipSizeCache) {
+      tooltipSizeCache = tooltipRect;
+    }
+    const viewWidth = viewportSizeCache.width || window.innerWidth;
+    const viewHeight = viewportSizeCache.height || window.innerHeight;
     let left = event.clientX + padding;
     let top = event.clientY + padding;
 
-    if (left + tooltipRect.width > window.innerWidth - padding) {
+    if (left + tooltipRect.width > viewWidth - padding) {
       left = event.clientX - tooltipRect.width - padding;
     }
-    if (top + tooltipRect.height > window.innerHeight - padding) {
+    if (top + tooltipRect.height > viewHeight - padding) {
       top = event.clientY - tooltipRect.height - padding;
     }
 
@@ -741,6 +798,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function hideTooltip() {
+    tooltipSizeCache = null;
     if (!els.tooltip) return;
     els.tooltip.classList.remove("show");
     els.canvas
@@ -753,7 +811,6 @@ document.addEventListener("DOMContentLoaded", () => {
   /* --- 3D Scene Initialization & Rendering --- */
   function init3DScene() {
     if (!els.canvas3d || typeof THREE === "undefined") return false;
-    state.three.isInit = true;
 
     const width = els.canvas3d.clientWidth || 1000;
     const height = els.canvas3d.clientHeight || 600;
@@ -908,6 +965,10 @@ document.addEventListener("DOMContentLoaded", () => {
     renderer.domElement.addEventListener("mouseleave", hideTooltip);
 
     start3DAnimation();
+    // 初期化が完了してから成功フラグを立てる。途中で例外が発生した場合
+    // (WebGLコンテキスト取得失敗など)は呼び出し側のcatchでisInit=falseに
+    // 戻し、次回再試行できるようにする。
+    state.three.isInit = true;
     return true;
   }
 
@@ -963,10 +1024,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function render3DHeatmap(stocks) {
     if (!state.three.isInit) {
-      if (!init3DScene()) return;
+      try {
+        if (!init3DScene()) return;
+      } catch (error) {
+        console.error("3D heatmap initialization failed:", error);
+        state.three.isInit = false;
+        return;
+      }
     }
     const { scene } = state.three;
     if (!scene || typeof THREE === "undefined") return;
+    // 描画成功時は以前のエラー表示を除去する
+    els.canvas3d
+      ?.querySelectorAll(".heatmap-error-state")
+      .forEach((node) => node.remove());
 
     if (state.three.stockMeshes) {
       state.three.stockMeshes.forEach((mesh) => {
@@ -1179,6 +1250,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   const _resizeHandler = () => {
+    viewportSizeCache = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
     hideTooltip();
     if (
       state.viewMode === "3d" &&

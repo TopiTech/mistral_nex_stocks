@@ -88,7 +88,11 @@ jobs:
         run: uv run --locked --group lint flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Run pylint (errors only)
-        run: uv run --locked --group lint pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/
+        # LIFECYCLE-10: the target list must cover the lifecycle modules that
+        # own bootstrap/leader-election/background-loop logic (app_factory/,
+        # bg/, the entry points and the shutdown manager), not only the
+        # pre-facade-extraction modules.
+        run: uv run --locked --group lint pylint --errors-only --disable=import-error app.py app_factory/ bg/ app_bg.py wsgi.py gunicorn.conf.py shutdown_manager.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/ scripts/
 
   type-check:
     runs-on: ubuntu-latest

@@ -117,6 +117,12 @@
       }
 
       // 3. Hover state when not dragging
+      // モーダル/ドロワー等のオーバーレイ越しの pointermove ではホバー状態を
+      // 書き換えない(背面ノードのツールチップが、パネルを閉じた瞬間に
+      // 出現するのを防ぐ。ドラッグ中は上の分岐で追跡を継続する)。
+      if (e.target !== this.canvas) {
+        return;
+      }
       const hitNode = this.renderer.hitTest(pos.x, pos.y);
       if (hitNode) {
         this.canvas.style.cursor = this.state.state.isConnectMode

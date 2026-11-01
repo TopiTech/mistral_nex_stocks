@@ -194,8 +194,8 @@ SCRAPER_BACKOFF_MULTIPLIER = _env_float("MNS_SCRAPER_BACKOFF_MULTIPLIER", 2.0, 1
 # --- yfinance HTTP request pacing & adaptive throttling (429/401 hardening) ---
 # Base minimum spacing between ANY two yfinance HTTP requests. Higher headroom
 # directly reduces 429/401 pressure from parallel/looping fetches.
-# Bumped from 2.5s -> 3.0s: 401 Invalid Crumb連続ループ対策として
-# ベース間隔を広げ、 adaptive interval の成長余裕を確保する。
+# NOTE: a 3.0 s bump was once documented here but was not shipped — the shipped
+# default is 0.5 s. Keep this comment in sync with the value below (DATA-10).
 YFINANCE_REQ_MIN_INTERVAL_BASE = _env_float("MNS_YFINANCE_REQ_MIN_INTERVAL_BASE", 0.5, 0.1, 10.0)
 # Hard ceiling for the adaptive spacing interval during sustained rate-limiting.
 # 12.0 -> 20.0: 持続的なブロック時にさらに間隔を広げられるようにする。

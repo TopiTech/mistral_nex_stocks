@@ -788,6 +788,9 @@ def api_copy_ai_portfolio_to_my() -> Any:
     added_count = 0
     skipped_symbols: list[str] = []
     added_symbols: list[tuple[str, str, float, float, float | None]] = []
+    # API-7: remember the exact holding dicts this request wrote so the
+    # rollback below can be conditional on the write still being ours.
+    written_entries: list[tuple[str, str, dict[str, Any]]] = []
     with app_state.market.user_stocks_lock:
         new_by_market: dict[str, int] = {}
         for symbol, market, _target, _shares in parsed_items:
@@ -817,6 +820,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
             if avg_fx_val is not None:
                 holding_entry["avg_fx_rate"] = avg_fx_val
             container[symbol] = holding_entry
+            written_entries.append((symbol, market, holding_entry))
             added_symbols.append((symbol, market, target_price, shares, avg_fx_val))
             added_count += 1
 
@@ -826,10 +830,12 @@ def api_copy_ai_portfolio_to_my() -> Any:
         except Exception as exc:
             logger.warning("save_user_stocks during copy-to-my: %s", exc)
             with app_state.market.user_stocks_lock:
-                for symbol, market, _, _, _ in added_symbols:
-                    container = _get_stock_container(market)
-                    if container is not None:
-                        container.pop(symbol, None)
+                # API-7: conditional rollback — only remove entries this
+                # request wrote that no concurrent mutation has replaced.
+                for sym, mkt, written_entry in written_entries:
+                    container = _get_stock_container(mkt)
+                    if container is not None and container.get(sym) == written_entry:
+                        container.pop(sym, None)
             return error_response(
                 ErrorCode.FILE_ERROR,
                 details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},

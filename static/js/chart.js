@@ -609,6 +609,9 @@ function prefetchStockHistory(
   const startedAt = Date.now();
   const effectiveInterval =
     interval || getChartPref(stockKey, "interval", "auto");
+  // 先行取得完了時点のチャート取得IDを記録し、完了時に別の取得が
+  // 進行中/完了済みなら適用しない(古い期間のデータで上書き防止)。
+  const fetchIdAtStart = wrapper.dataset.chartFetchId;
 
   const cacheKey = getHistoryPrefetchKey(stockKey, period, effectiveInterval);
   if (getFreshPrefetchedHistory(stockKey, period, effectiveInterval)) return;
@@ -630,6 +633,11 @@ function prefetchStockHistory(
       const latestRealtimeAt = stockRealtimeUpdateAt.get(stockKey) || 0;
       if (latestRealtimeAt > startedAt) return;
       if (!wrapper.isConnected) return;
+      // この先行取得より後にrefreshStockChartが開始された場合
+      // (chartFetchIdが変わっている)、またはユーザーが別の期間を選択
+      // 中なら、キャッシュへの記録のみ行ってstock.chart_dataは更新しない。
+      if (wrapper.dataset.chartFetchId !== fetchIdAtStart) return;
+      if (getChartPref(stockKey, "period", "3mo") !== period) return;
       applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData);
     })
     .catch(() => {
@@ -648,7 +656,16 @@ function scheduleHistoryPrefetchWarmup() {
   historyPrefetchJobTimers = [];
   historyPrefetchTimer = setTimeout(() => {
     const now = Date.now();
-    if (now - historyPrefetchLastRunAt < 400) return;
+    const elapsed = now - historyPrefetchLastRunAt;
+    if (elapsed < 400) {
+      // スロットルに掛かった場合、実行を捨てずに残り時間後に再スケジュール
+      // (先読みトリガが黙って失われるのを防ぐ)。
+      historyPrefetchTimer = setTimeout(
+        () => scheduleHistoryPrefetchWarmup(),
+        400 - elapsed,
+      );
+      return;
+    }
     historyPrefetchLastRunAt = now;
 
     for (const [key, entry] of historyPrefetchCache.entries()) {
@@ -1207,7 +1224,15 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   if (!canvas) return;
 
   const ctx = canvas.getContext("2d");
-  if (!data || data.length < 2) return;
+  if (!data || data.length < 2) {
+    // 描画不能データでは旧チャートを(新しい期間のチャートとして)残さず、
+    // 破棄してから情報表示を出す(空データで旧チャートが残るのを防ぐ)。
+    _safeDestroyChart(canvas);
+    if (wrapper && !options.targetCanvas) {
+      showChartError(wrapper, NO_HISTORY_MSG, "info");
+    }
+    return;
+  }
 
   const stockKey = wrapper
     ? wrapper.dataset.stockKey
@@ -1219,8 +1244,11 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   const interval =
     options.interval ||
     (wrapper ? getChartPref(stockKey, "interval", "auto") : "auto");
+  // options.volume は明示的な false/"off" のみ無効化にする(|| の偽値罠を回避)。
   const showVolume =
-    (options.volume || getChartPref(stockKey, "volume", "on")) !== "off";
+    options.volume !== undefined
+      ? options.volume !== false && options.volume !== "off"
+      : getChartPref(stockKey, "volume", "on") !== "off";
 
   // Indicator preferences
   const showMA5 = getChartPref(stockKey, "ind_ma5", "on") !== "off";
@@ -1277,6 +1305,15 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
       };
     })
     .filter((d) => d.x > 0);
+
+  // 正規化後に有効点が不足する場合(タイムスタンプ欠損等)、空データの
+  // チャートを黙って描かず情報表示を出して中断する。
+  if (normalizedOhlc.length < 2) {
+    if (wrapper && !options.targetCanvas) {
+      showChartError(wrapper, NO_HISTORY_MSG, "info");
+    }
+    return;
+  }
 
   const closeSeries = normalizedOhlc.map((d) => ({ x: d.x, y: d.c }));
   const datasets = [];
@@ -1952,6 +1989,9 @@ async function refreshStockChart(wrapper, period, interval) {
     const { formattedData, ohlcData } = result;
     wrapper.dataset.lastRefresh = Date.now().toString();
 
+    // プレビュー経路と同様、キャッシュ上限を強制してから書き込む
+    // (TTLスイープのみに依存して上限を超えたまま滞留しないように)。
+    _enforcePrefetchCacheLimit();
     historyPrefetchCache.set(
       getHistoryPrefetchKey(stockKey, targetPeriod, targetInterval),
       {
@@ -2007,10 +2047,16 @@ async function refreshStockChart(wrapper, period, interval) {
       isInformational ? "info" : "error",
     );
   } finally {
-    if (wrapper._chartAbortController === chartAbortController) {
+    const isCurrentFetch =
+      wrapper._chartAbortController === chartAbortController;
+    if (isCurrentFetch) {
       wrapper._chartAbortController = null;
     }
-    container?.classList?.remove("loading");
+    // 後続のrefreshStockChartが進行中の場合はローディング表示を消さない
+    // (所有権のある要求のみが状態を解除する)。
+    if (isCurrentFetch || wrapper._chartAbortController === null) {
+      container?.classList?.remove("loading");
+    }
   }
 }
 

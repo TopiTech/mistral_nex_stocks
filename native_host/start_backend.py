@@ -34,6 +34,14 @@ PID_FILE = _STATE_DIR / ".backend.pid"
 _LEGACY_PID_FILE = ROOT / ".backend.pid"
 STARTUP_LOCK_FILE = _STATE_DIR / ".backend.start.lock"
 _LEGACY_STARTUP_LOCK_FILE = ROOT / ".backend.start.lock"
+# A-2 (cross-cutting twin of DATA-4): bound the POSIX startup-lock wait instead
+# of an unbounded blocking flock(LOCK_EX). The Windows sibling already bounds
+# the wait (msvcrt LK_LOCK retries then raises OSError, handled at
+# native_host.py:1396), so parity means: retry within a ~10 s budget, then
+# raise OSError — never hang a native-host process forever behind a wedged
+# holder. Module-level constants so tests can shrink the budget.
+_STARTUP_LOCK_MAX_RETRIES = 400
+_STARTUP_LOCK_RETRY_DELAY_SEC = 0.025
 PID_WARMUP_GRACE_SEC = 120
 DEFAULT_BACKEND_PORT = 5000
 MIN_BACKEND_PORT = 1
@@ -211,10 +219,31 @@ def _startup_lock():
             except OSError:
                 pass
     else:
+        import errno as _errno
         import fcntl  # pylint: disable=import-error
 
         with STARTUP_LOCK_FILE.open("a+", encoding="utf-8") as lock_handle:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
+            # A-2 (DATA-4 twin): bounded LOCK_EX|LOCK_NB retries with OSError
+            # on budget exhaustion — same failure class the Windows LK_LOCK
+            # timeout already produces, so native_host's handler covers both.
+            for attempt in range(_STARTUP_LOCK_MAX_RETRIES):
+                try:
+                    fcntl.flock(  # type: ignore[attr-defined]
+                        lock_handle.fileno(),
+                        fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+                    )
+                    break
+                except OSError as fl_err:
+                    if getattr(fl_err, "errno", None) not in (
+                        _errno.EAGAIN,
+                        _errno.EWOULDBLOCK,
+                    ):
+                        raise
+                    if attempt == _STARTUP_LOCK_MAX_RETRIES - 1:
+                        raise OSError(
+                            _errno.EWOULDBLOCK, "startup lock busy"
+                        ) from fl_err
+                    time.sleep(_STARTUP_LOCK_RETRY_DELAY_SEC)
             try:
                 yield
             finally:

@@ -188,6 +188,12 @@
     const themeInput = document.getElementById("ai-theme-input");
     const chips = document.querySelectorAll(".ai-theme-chip");
 
+    // サーバー契約 (AIPortfolioGenerateRequest.theme max_length=120) に合わせ、
+    // 長すぎる入力が往復後の400になる前にクライアント側で打ち切る。
+    if (themeInput) {
+      themeInput.maxLength = 120;
+    }
+
     if (genBtn && themeInput) {
       genBtn.addEventListener("click", () => {
         const text = themeInput.value.trim();
@@ -227,22 +233,35 @@
     if (rebalanceBtn) {
       rebalanceBtn.addEventListener("click", () => {
         if (!currentAiPortfolio) return;
-        const theme = currentAiPortfolio.theme || activeAiPreset;
+        // 保存済み選択時に activeAiPreset は "custom" になるが、これはUI状態
+        // トークンであってテーマ名ではない。テーマ不明時は既定テーマへ落とす。
+        const theme =
+          currentAiPortfolio.theme ||
+          (AI_PORTFOLIO_PRESET_IDS.has(activeAiPreset)
+            ? activeAiPreset
+            : "tech");
         rebalanceAiPortfolio(theme);
       });
     }
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
-        if (!currentAiPortfolio) return;
-        saveAiPortfolio(currentAiPortfolio);
+        if (!currentAiPortfolio || saveBtn.disabled) return;
+        saveBtn.disabled = true;
+        void saveAiPortfolio(currentAiPortfolio).finally(() => {
+          saveBtn.disabled = false;
+        });
       });
     }
 
     if (copyBtn) {
       copyBtn.addEventListener("click", () => {
         if (!currentAiPortfolio || !currentAiPortfolio.items) return;
-        copyAiPortfolioToMy(currentAiPortfolio.items);
+        if (copyBtn.disabled) return;
+        copyBtn.disabled = true;
+        void copyAiPortfolioToMy(currentAiPortfolio.items).finally(() => {
+          copyBtn.disabled = false;
+        });
       });
     }
   }
@@ -277,6 +296,7 @@
       "aria-busy",
       savedAiPortfoliosLoading ? "true" : "false",
     );
+    container.removeAttribute("role");
 
     if (savedAiPortfoliosLoading && savedAiPortfolios.length === 0) {
       const loading = document.createElement("p");
@@ -310,6 +330,9 @@
       return;
     }
 
+    // 子に role="listitem" を付与するため、items 描画時のみコンテナ側も
+    // list セマンティクスを持たせる(Loading/エラー/空表示は list にしない)。
+    container.setAttribute("role", "list");
     savedAiPortfolios.forEach((portfolio) => {
       const id = String(portfolio.id || "");
       const item = document.createElement("div");
@@ -319,7 +342,12 @@
       const selectButton = document.createElement("button");
       selectButton.type = "button";
       selectButton.className = "ai-saved-portfolio-select";
-      selectButton.classList.toggle("active", currentAiPortfolio?.id === id);
+      // 比較は正規化した文字列ID同士で行う(数値IDの保存レコードでも
+      // アクティブ表示・削除ガードが機能するように)。
+      selectButton.classList.toggle(
+        "active",
+        String(currentAiPortfolio?.id ?? "") === id,
+      );
       selectButton.setAttribute(
         "aria-label",
         `${portfolio.title || portfolio.theme || "保存済みテーマ"} を開く`,
@@ -429,8 +457,9 @@
   function upsertSavedAiPortfolio(portfolio) {
     if (!isCustomSavedAiPortfolio(portfolio)) return;
     const next = { ...portfolio };
+    const nextId = String(next.id ?? "");
     const existingIndex = savedAiPortfolios.findIndex(
-      (item) => item.id === next.id,
+      (item) => String(item.id ?? "") === nextId,
     );
     if (existingIndex >= 0) {
       savedAiPortfolios.splice(existingIndex, 1, next);
@@ -442,7 +471,9 @@
   }
 
   function selectSavedAiPortfolio(portfolioId) {
-    const portfolio = savedAiPortfolios.find((item) => item.id === portfolioId);
+    const portfolio = savedAiPortfolios.find(
+      (item) => String(item.id ?? "") === String(portfolioId ?? ""),
+    );
     if (!portfolio) return;
 
     cancelAiPortfolioRequest();
@@ -462,15 +493,16 @@
   }
 
   async function deleteSavedAiPortfolio(portfolioId) {
+    const targetId = String(portfolioId ?? "");
     if (
-      !portfolioId ||
-      deletingSavedAiPortfolioIds.has(portfolioId) ||
-      !savedAiPortfolios.some((item) => item.id === portfolioId)
+      !targetId ||
+      deletingSavedAiPortfolioIds.has(targetId) ||
+      !savedAiPortfolios.some((item) => String(item.id ?? "") === targetId)
     ) {
       return;
     }
 
-    deletingSavedAiPortfolioIds.add(portfolioId);
+    deletingSavedAiPortfolioIds.add(targetId);
     renderSavedAiPortfolios();
     try {
       let resp = await csrfFetch("/api/ai-portfolio/custom", {
@@ -478,7 +510,7 @@
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ id: portfolioId }),
+        body: JSON.stringify({ id: targetId }),
       });
       if (resp.status === 405) {
         resp = await csrfFetch("/api/ai-portfolio/custom", {
@@ -486,7 +518,7 @@
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ id: portfolioId }),
+          body: JSON.stringify({ id: targetId }),
         });
       }
       const data = await resp.json().catch(() => ({}));
@@ -497,9 +529,9 @@
       }
 
       savedAiPortfolios = savedAiPortfolios.filter(
-        (item) => item.id !== portfolioId,
+        (item) => String(item.id ?? "") !== targetId,
       );
-      if (currentAiPortfolio?.id === portfolioId) {
+      if (String(currentAiPortfolio?.id ?? "") === targetId) {
         currentAiPortfolio = null;
         activeAiPreset = "tech";
         document.querySelectorAll(".ai-preset-pill").forEach((pill) => {
@@ -520,7 +552,7 @@
       setSavedAiPortfolioStatus("保存済みテーマの削除に失敗しました。");
       showAiPortfolioFailure("保存済みテーマの削除に失敗しました");
     } finally {
-      deletingSavedAiPortfolioIds.delete(portfolioId);
+      deletingSavedAiPortfolioIds.delete(targetId);
       renderSavedAiPortfolios();
     }
   }
@@ -610,6 +642,20 @@
           });
           if (!pollResp.ok) {
             const pollErrData = await pollResp.json().catch(() => ({}));
+            if (pollResp.status === 429) {
+              // レート制限: サーバー側の生成ジョブは継続中の可能性が高く、
+              // ここで失敗扱いにすると本来成功したはずの生成がエラー表示に
+              // なる。Retry-After(秒)を尊重して長めに待ち、再 polls 続行する。
+              const retryAfterSec = Number(
+                pollResp.headers?.get?.("Retry-After"),
+              );
+              const waitMs =
+                Number.isFinite(retryAfterSec) && retryAfterSec > 0
+                  ? Math.min(retryAfterSec * 1000, 10000)
+                  : 5000;
+              await delayWithAbort(waitMs, abortController.signal);
+              continue;
+            }
             throw new Error(
               getApiErrorMessage(
                 pollErrData,
@@ -627,9 +673,10 @@
           if (pollData && pollData.fetching) {
             const loadingText = document.querySelector(".ai-loading-text");
             if (loadingText && pollData.message) {
-              const sec = pollData.elapsed_sec
-                ? ` (${pollData.elapsed_sec}秒経過)`
-                : "";
+              const sec =
+                pollData.elapsed_sec != null
+                  ? ` (${pollData.elapsed_sec}秒経過)`
+                  : "";
               loadingText.textContent = `🤖 ${pollData.message}${sec}`;
             }
           }
@@ -646,7 +693,9 @@
         renderAiPortfolio(currentAiPortfolio);
         upsertSavedAiPortfolio(currentAiPortfolio);
       } else {
-        throw new Error(data.error || "Failed to generate AI portfolio");
+        throw new Error(
+          getApiErrorMessage(data, "AIポートフォリオの生成に失敗しました。"),
+        );
       }
     } catch (err) {
       if (
@@ -712,6 +761,19 @@
           });
           if (!pollResp.ok) {
             const pollErrData = await pollResp.json().catch(() => ({}));
+            if (pollResp.status === 429) {
+              // レート制限: ジョブ継続中の可能性が高いため Retry-After を
+              // 尊重して待ち、失敗扱いにせず再 polls 続行する(生成ループと同一)。
+              const retryAfterSec = Number(
+                pollResp.headers?.get?.("Retry-After"),
+              );
+              const waitMs =
+                Number.isFinite(retryAfterSec) && retryAfterSec > 0
+                  ? Math.min(retryAfterSec * 1000, 10000)
+                  : 5000;
+              await delayWithAbort(waitMs, abortController.signal);
+              continue;
+            }
             throw new Error(
               getApiErrorMessage(
                 pollErrData,
@@ -729,9 +791,10 @@
           if (pollData && pollData.fetching) {
             const loadingText = document.querySelector(".ai-loading-text");
             if (loadingText && pollData.message) {
-              const sec = pollData.elapsed_sec
-                ? ` (${pollData.elapsed_sec}秒経過)`
-                : "";
+              const sec =
+                pollData.elapsed_sec != null
+                  ? ` (${pollData.elapsed_sec}秒経過)`
+                  : "";
               loadingText.textContent = `🤖 ${pollData.message}${sec}`;
             }
           }
@@ -821,6 +884,15 @@
           targetNum <= 0
         ) {
           itemCopy.target_price = 100.0;
+        }
+        // バックエンドの連続バリデーションは 0 < weight_pct <= 100 を要求
+        // (schemas/ai_portfolio.py copy_bad_weight_range)。0%/不正値の1銘柄が
+        // バッチ全体を400にしないよう、クライアント側で正の既定値へ補正する。
+        const weightNum = Number(itemCopy.weight_pct);
+        if (!Number.isFinite(weightNum) || weightNum <= 0) {
+          itemCopy.weight_pct = 20.0;
+        } else if (weightNum > 100) {
+          itemCopy.weight_pct = 100.0;
         }
         return itemCopy;
       });
@@ -1041,8 +1113,10 @@
     const items = portfolio.items || [];
     items.forEach((item) => {
       const stock = findStockInState(item.symbol, item.market);
-      const allocJpy =
-        VIRTUAL_BASE_CAPITAL_JPY * ((item.weight_pct || 20) / 100);
+      // weight_pct は 0% が正当値(schema ge=0.0)。|| での既定値置換だと
+      // 0% 銘柄が 20% 扱いになるため、パーサ経由の nullish 既定を使う。
+      const itemWeightPct = toNumber(item.weight_pct);
+      const allocJpy = VIRTUAL_BASE_CAPITAL_JPY * ((itemWeightPct ?? 20) / 100);
       const changePct = toNumber(stock?.change_percent);
       if (changePct !== null) {
         simulatedTodayPlJpy += allocJpy * (changePct / 100);
@@ -1074,11 +1148,13 @@
     container.textContent = "";
 
     items.forEach((item) => {
+      // 現在値がstateに無い場合は捏造した擬似値(+0.50%等)ではなく
+      // null センチネルを使い、既存の null 分岐が "--"/ "--%" を表示する。
       const stock = findStockInState(item.symbol, item.market) || {
         symbol: item.symbol,
         name: item.symbol,
-        price: item.target_price || 100,
-        change_percent: 0.5,
+        price: null,
+        change_percent: null,
       };
 
       const card = document.createElement("div");
@@ -1341,7 +1417,9 @@
           datasets: [
             {
               data: dataValues,
-              backgroundColor: AI_CHART_COLORS.slice(0, items.length),
+              backgroundColor: items.map(
+                (_, i) => AI_CHART_COLORS[i % AI_CHART_COLORS.length],
+              ),
               borderWidth: 2,
               borderColor: "rgba(11, 16, 32, 0.9)",
               hoverOffset: 6,

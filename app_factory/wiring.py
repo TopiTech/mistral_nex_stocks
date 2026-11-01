@@ -143,8 +143,26 @@ def _configure_static_cache_buster(app: Flask) -> None:
 
 
 def _register_signal_handlers(app: Flask) -> None:
-    """Register OS signal handlers for graceful shutdown."""
+    """Register OS signal handlers for graceful shutdown.
+
+    Skipped when an external WSGI server owns the process signal handlers
+    (LIFECYCLE-2): ``create_app()`` runs at import time in every process, so
+    under gunicorn/uWSGI the custom handler would replace the server's own
+    SIGTERM/SIGINT handling and defeat its graceful shutdown (in-flight
+    request drain, arbiter handshake), dropping SSE streams abruptly. This
+    also keeps ``--preload`` masters intact, because the same ``sys.modules``
+    check skips registration there as well. The atexit cleanup in
+    ``app_factory.early`` still runs on ``sys.exit`` for every environment,
+    and the Werkzeug dev server (no gunicorn/uWSGI loaded) keeps the custom
+    handler, which is the one environment where it is actually needed.
+    """
     if _is_testing():
+        return
+    if "gunicorn" in sys.modules or "uwsgi" in sys.modules:
+        logger.debug(
+            "External WSGI server detected (gunicorn/uwsgi loaded); leaving "
+            "SIGINT/SIGTERM handlers to the server's graceful shutdown."
+        )
         return
 
     def _handle_shutdown_signal(signum, frame):

@@ -372,12 +372,12 @@
       while ((match = jpRegex.exec(text)) !== null) {
         const code = match[1];
         const hasTSuffix = match[0].toUpperCase().endsWith(".T");
-        // Ensure not part of a standard year or date or price like 2024, 2025, 2026, 1000
-        // Use a sliding window of plausible years so the rule does not go stale.
-        // If explicitly suffixed with .T (e.g. 2002.T), it is a TSE stock ticker, not a calendar year.
-        const yearVal = parseInt(code, 10);
-        const currentYear = new Date().getFullYear();
-        if (!hasTSuffix && yearVal >= 1990 && yearVal <= currentYear + 1) {
+        if (!hasTSuffix) {
+          // 素の4桁数字(価格・数量・ID等と同形)は年度窓の内外を問わず
+          // 株式文脈必須にする(FE-ext-8)。年度窓外(例: 1200/5678)が
+          // 無条件採用されると、価格だらけのページからジャンクなJP
+          // ティッカーが検出上位を占めていた。文脈 = 前後20文字の
+          // 株/コード/東証 等キーワード、または括弧付き表記。
           // Check surrounding context (approx +/-20 chars) for Japanese stock indicators
           // or bracket notations like (2002) / （2002） to allow valid tickers (e.g. 2001, 2002).
           const contextStart = Math.max(0, match.index - 20);
@@ -404,7 +404,7 @@
             );
 
           if (!hasStockContext) {
-            continue; // skip year numbers
+            continue; // skip bare 4-digit numbers without stock context
           }
         }
 
@@ -472,6 +472,11 @@
 
   // Runtime message listener
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // 同一拡張機能コンテキスト以外からの要求は無視する(ディフェンスイン
+    // ディープ。バックグラウンド側の sender チェックの鏡像)。
+    if (sender && sender.id !== chrome.runtime.id) {
+      return false;
+    }
     if (request && request.action === "detectTickers") {
       try {
         const data = detectTickers();
@@ -480,7 +485,9 @@
         console.error("Ticker detection error:", err);
         sendResponse({ ok: false, error: String(err) });
       }
-      return true;
+      // sendResponse は同期呼び出しのためチャネルは開いたままにしない。
+      return false;
     }
+    return false;
   });
 })();

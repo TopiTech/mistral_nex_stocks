@@ -37,9 +37,36 @@ def _get_safe_template_context() -> tuple[dict, dict]:
         safe_config = TemplateConfigSchema.model_validate(get_api_credential_state()).model_dump()
     except Exception as exc:
         current_app.logger.warning("Failed to validate app config schema: %s", exc)
+        # Historical builder fallback (pinned by
+        # tests/test_code_review_goal_fixes_2026.py::test_routes_pages_safe_template_context_error_boundary).
+        # Render paths must upgrade it via _template_config_for_render below.
         safe_config = {}
 
     return safe_symbols, safe_config
+
+
+def _template_config_for_render(safe_config: dict) -> dict:
+    """API-8: upgrade the degraded ``{}`` fallback to a typed contract.
+
+    On schema failure the context builder returns ``{}`` (pinned contract);
+    templates read ``app_config.*`` directly, so rendering that empty dict
+    makes /setup and /settings render "no API key configured" wizards even
+    when a key exists. This render-boundary helper supplies the minimum
+    template contract plus an additive ``config_error`` flag — booleans and
+    empty defaults only, no secrets can leak.
+    """
+    if safe_config:
+        return safe_config
+    fallback = TemplateConfigSchema(
+        has_mistral_api_key=False,
+        has_langsearch_api_key=False,
+        has_tavily_api_key=False,
+        has_alphavantage_api_key=False,
+        mistral_model="",
+        is_ai_technical_lines_eligible=False,
+    ).model_dump()
+    fallback["config_error"] = True
+    return fallback
 
 
 @pages_bp.route("/")
@@ -51,7 +78,7 @@ def setup():
         "setup.html",
         model_badge=get_model_badge(),
         default_symbols=safe_symbols,
-        app_config=safe_config,
+        app_config=_template_config_for_render(safe_config),
     )
 
 
@@ -63,7 +90,7 @@ def main_page():
         "index.html",
         model_badge=get_model_badge(),
         default_symbols=safe_symbols,
-        app_config=safe_config,
+        app_config=_template_config_for_render(safe_config),
     )
 
 
@@ -75,7 +102,7 @@ def heatmap_page():
         "heatmap.html",
         model_badge=get_model_badge(),
         default_symbols=safe_symbols,
-        app_config=safe_config,
+        app_config=_template_config_for_render(safe_config),
     )
 
 
@@ -87,7 +114,7 @@ def screener_page():
         "screener.html",
         model_badge=get_model_badge(),
         default_symbols=safe_symbols,
-        app_config=safe_config,
+        app_config=_template_config_for_render(safe_config),
     )
 
 
@@ -99,7 +126,7 @@ def settings_page():
         "settings.html",
         model_badge=get_model_badge(),
         default_symbols=safe_symbols,
-        app_config=safe_config,
+        app_config=_template_config_for_render(safe_config),
     )
 
 
@@ -111,5 +138,5 @@ def experimental_orbit_page():
         "experimental_orbit.html",
         model_badge=get_model_badge(),
         default_symbols=safe_symbols,
-        app_config=safe_config,
+        app_config=_template_config_for_render(safe_config),
     )

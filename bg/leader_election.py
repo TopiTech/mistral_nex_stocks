@@ -29,7 +29,12 @@ APP_DATA_DIR = config_store.APP_DATA_DIR
 _ATOMIC_LOCK_STALE_SEC: float = 60.0
 
 _LEADER_LOCK_FILE: Any = None
-_is_sync_leader: bool = True
+# LIFECYCLE-7: "follower until elected" — a process must not claim leadership
+# before the election loop has won the leader lock, otherwise every worker in
+# multi-process mode fetches as leader during the startup window (the exact
+# failure the leader lock exists to prevent). The election loop promotes within
+# milliseconds of thread start.
+_is_sync_leader: bool = False
 
 
 def _get_leader_lock_file() -> Any:
@@ -52,7 +57,21 @@ def _set_is_sync_leader(val: bool) -> None:
 
 
 def _pid_is_alive(pid: int) -> bool:
-    """Return True when a process with *pid* exists."""
+    """Return True when a process with *pid* exists.
+
+    LIFECYCLE-1: the fallback probe must never *signal* the process it checks.
+    On Windows, ``os.kill(pid, sig)`` with any signal other than
+    ``CTRL_C_EVENT``/``CTRL_BREAK_EVENT`` calls ``TerminateProcess`` (documented
+    CPython behavior), so ``os.kill(pid, 0)`` would terminate the lock owner —
+    possibly the current sync leader or a recycled PID owned by an innocent
+    process. psutil is therefore the only safe liveness probe on Windows; when
+    it cannot be imported there is no way to probe liveness without signaling,
+    so the PID is unverifiable and reported as not alive. The stale-reclaim
+    path may then recycle the lock file, but — unlike the old fallback — it
+    never signals the recorded owner. On POSIX, ``os.kill(pid, 0)`` is the
+    standard non-destructive existence probe (it delivers no signal) and is
+    kept unchanged.
+    """
     if pid <= 0:
         return False
     try:
@@ -61,11 +80,21 @@ def _pid_is_alive(pid: int) -> bool:
         return psutil.pid_exists(pid)
     except ImportError:
         pass
+    if os.name == "nt":
+        logger.warning(
+            "psutil unavailable: cannot verify pid %d liveness on Windows without "
+            "risking TerminateProcess via os.kill. Treating the process as not "
+            "alive so stale-lock reclaim proceeds without signaling the recorded "
+            "owner. Install psutil for multi-process leader election on Windows.",
+            pid,
+        )
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except OSError:
+        # EPERM: the process exists but is owned by another user.
         return True
     return True
 

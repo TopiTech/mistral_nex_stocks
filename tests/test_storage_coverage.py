@@ -210,7 +210,11 @@ class StorageCoverageTests(unittest.TestCase):
         tmp_file = target_file.with_suffix(".testtmp")
         lock_file = target_file.with_suffix(".lock")
 
-        fake_fcntl = SimpleNamespace(LOCK_EX=1, LOCK_UN=2, flock=lambda *_: None)
+        # LOCK_NB mirrors the real fcntl module: the bounded A-2/DATA-4 retry
+        # loop reads the flag before every flock call.
+        fake_fcntl = SimpleNamespace(
+            LOCK_EX=1, LOCK_UN=2, LOCK_NB=4, flock=lambda *_: None
+        )
         real_import = __import__("builtins").__import__
 
         def import_without_lock(name, *args, **kwargs):

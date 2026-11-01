@@ -239,6 +239,14 @@ async function addStockViaExtension(base, symbol, market) {
   let forceRefresh = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = await getOrFetchExtensionToken(forceRefresh);
+    if (!token) {
+      // トークン取得失敗(ネイティブホスト未導入/トークンアクション上限)を
+      // 空 Bearer で POST してバックエンド 403 に擬態させない(FE-ext-6)。
+      // 呼び出し側の catch がこの文言をユーザーに表示する。
+      throw new Error(
+        "拡張機能トークンを取得できません。ネイティブホストの状態を確認してください。",
+      );
+    }
     const res = await fetchWithTimeout(
       `${base}/api/stocks/add_ext`,
       {
@@ -599,8 +607,11 @@ async function updateBadge() {
       if (!res.ok) return;
       const data = await res.json();
       const n225 = data["N225"];
-      if (n225 && n225.percent !== null && n225.percent !== undefined) {
-        const pctValue = parseFloat(n225.percent);
+      // popup.js と同様に change_percent フォールバックを持たせる(経路により
+      // percent ではなく change_percent のみを持つ指数キャッシュがありうる)。
+      const pctRaw = n225 ? (n225.percent ?? n225.change_percent) : null;
+      if (pctRaw !== null && pctRaw !== undefined) {
+        const pctValue = parseFloat(pctRaw);
         if (!Number.isNaN(pctValue)) {
           const text =
             (pctValue >= 0 ? "+" : "") + Math.round(pctValue).toString() + "%";
@@ -747,10 +758,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.ok === false) {
             const rawError = String(data?.error || `HTTP ${res.status}`);
-            if (
+            // 現行バックエンドはトークン失敗を統一エラーエンベロープ
+            // (403 + details.reason)で返すため、安定フィールドでも判定する。
+            // 旧英語文言マッチは旧バックエンド互換として残す。
+            const isShutdownTokenError =
               rawError.includes("shutdown token is not configured") ||
-              rawError.includes("invalid or missing shutdown token")
-            ) {
+              rawError.includes("invalid or missing shutdown token") ||
+              (res.status === 403 &&
+                data?.details?.reason === "invalid shutdown request");
+            if (isShutdownTokenError) {
               return safeSendResponse({
                 ok: false,
                 error:

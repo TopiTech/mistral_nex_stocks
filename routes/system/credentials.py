@@ -26,7 +26,12 @@ from utils.networking import (
     require_trusted_or_admin,
 )
 from utils.stock_payload import error_response, ok_response
-from utils.text_utils import _parse_json_request, _parse_optional_json_request, _token_fingerprint
+from utils.text_utils import (
+    _parse_json_request,
+    _parse_optional_json_request,
+    _sanitize_error_message,
+    _token_fingerprint,
+)
 
 
 def _build_safe_credentials_response() -> dict[str, Any]:
@@ -423,18 +428,23 @@ def api_credentials_verify():
         base_url = data.get("openai_base_url") or data.get("base_url") or get_openai_base_url()
         res_dict = verify_openai_connection(base_url=base_url, api_key=openai_key)
         if not res_dict.get("ok"):
+            # API-9: never forward the raw service dict / unsanitized upstream
+            # text through the envelope. Route the message through the shared
+            # sanitizer and expose it via the standard details.reason channel
+            # (what static/js/setup.js and settings.js read); keep the legacy
+            # compat keys as additive extra_fields only.
+            fallback_msg = "OpenAI互換APIキーの検証に失敗しました。設定と接続を確認してください。"
+            sanitized_error = _sanitize_error_message(str(res_dict.get("error") or fallback_msg))
+            latency_ms = res_dict.get("latency_ms", 0)
             return error_response(
                 ErrorCode.INVALID_API_KEY,
                 400,
-                message=str(
-                    res_dict.get("error")
-                    or "OpenAI互換APIキーの検証に失敗しました。設定と接続を確認してください。"
-                ),
+                message=sanitized_error,
+                details={"reason": sanitized_error, "latency_ms": latency_ms},
                 extra_fields={
                     "code": "INVALID_API_KEY",
                     "valid": False,
-                    "latency_ms": res_dict.get("latency_ms", 0),
-                    "details": res_dict,
+                    "latency_ms": latency_ms,
                 },
             )
         return ok_response(res_dict)

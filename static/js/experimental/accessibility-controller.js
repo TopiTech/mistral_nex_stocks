@@ -145,7 +145,7 @@
       if (activeEl && typeof activeEl.closest === "function") {
         if (
           activeEl.closest(
-            'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="searchbox"], [role="listbox"], [role="option"], [contenteditable="true"]',
+            'button, a[href], input, textarea, select, canvas, [role="application"], [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="searchbox"], [role="listbox"], [role="option"], [contenteditable="true"]',
           )
         ) {
           // Single-character shortcuts (Space/Enter/arrows/d/c/m/h//) must not
@@ -467,6 +467,9 @@
       this.els.searchModal.removeAttribute("inert");
       if (this.els.searchInput) {
         this.els.searchInput.value = "";
+        // 結果リスト(リストボックス)が開くことを combobox 契約で告知する。
+        // onSearchInput("") がトップ候補を即描画するため、ここで展開済みに。
+        this.els.searchInput.setAttribute("aria-expanded", "true");
         this.els.searchInput.focus();
         if (typeof this.els.onSearchInput === "function") {
           this.els.onSearchInput("");
@@ -479,6 +482,9 @@
       this.els.searchModal.classList.add("hidden");
       this.els.searchModal.setAttribute("aria-hidden", "true");
       this.els.searchModal.setAttribute("inert", "");
+      if (this.els.searchInput) {
+        this.els.searchInput.setAttribute("aria-expanded", "false");
+      }
       this.restoreModalFocus();
     }
   }

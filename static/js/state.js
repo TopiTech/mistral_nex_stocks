@@ -300,6 +300,11 @@ class StateManager {
 }
 
 const state = new StateManager();
+// tradingview_manager.js / realtime_client.js はクロージャ経由でなく
+// window経由でstateを読むため、明示的にエクスポートする
+// (トップレベルconstは語境界グローバル-bindingでありwindowプロパティには
+// ならない。window.state は未代入のままだと dead reference になる)。
+window.state = state;
 
 // #region Registry & Cache
 const chartInstances = new WeakMap();

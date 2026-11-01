@@ -121,11 +121,24 @@
       if (!this.data.selectedSymbol || !map.has(this.data.selectedSymbol)) {
         if (validList.length > 0) {
           this.data.selectedSymbol = validList[0].symbol;
+          // 参照銘柄が入れ替わったので、前の銘柄用に計算された timeCursor を
+          // 引き継がない(setSelectedSymbol と同じ不変条件。放置すると
+          // 新銘柄の履歴に無関係なカーソル位置が適用される)。
+          if (this.data.timeCursor !== 0) {
+            this.data.timeCursor = 0;
+            this.notify("timeCursor", 0);
+          }
         }
       }
 
       this.notify("stocks", validList);
       this.notify("selectedSymbol", this.data.selectedSymbol);
+      // SCRUB 中(timeCursor > 0)は stocks/selectedSymbol 通知が中央カードを
+      // live 値で描き換えるため、最後にカーソル状態を再通知して時系列
+      // コントローラーに歴史値の再適用を行うさせる(FE-exp-4)。
+      if (this.data.timeCursor > 0) {
+        this.notify("timeCursor", this.data.timeCursor);
+      }
       this.syncUrl();
     }
 

@@ -67,6 +67,13 @@ logger = logging.getLogger(__name__)
 # H-1/H-2 improvement: runtime bootstrap for threads and config-less startup.
 _app_bootstrap_done = False
 _app_bootstrap_lock = threading.Lock()
+# LIFECYCLE-3: PID that performed the bootstrap. Runtime bootstrap state is
+# process-global, and fork-based servers (gunicorn --preload, uWSGI) can carry
+# the done flag across fork into a child whose background threads never
+# survived. A child whose PID differs from the recorded one treats the state
+# as not-bootstrapped and re-runs bootstrap. ``None`` means "set by a test or
+# pre-PID-tracking code" and is accepted as done for backward compatibility.
+_app_bootstrap_pid: int | None = None
 
 
 _schedule_news_warmup_impl = schedule_news_warmup

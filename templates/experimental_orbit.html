@@ -484,11 +484,17 @@ styles %}
           placeholder="銘柄コード・会社名・セクターで検索... (例: NVDA, AAPL, テクノロジー)"
           aria-label="銘柄コード・会社名・セクターで検索"
           autocomplete="off"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="false"
+          aria-controls="orbit-search-results"
         />
       </div>
       <div
         id="orbit-search-results"
         class="orbit-search-results scrollable-panel"
+        role="listbox"
+        aria-label="検索結果"
       ></div>
     </div>
   </div>

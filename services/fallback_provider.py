@@ -931,28 +931,27 @@ class MinkabuProvider(BaseFallbackProvider):
                 else client.get(url, impersonate="chrome120", timeout=6.0)
             )
             if resp.status_code == 200:
-                html = resp.text
-                m = re.search(r'class=["\']stock_price["\'][^>]*>\s*([0-9,]+\.?[0-9]*)', html)
-                if not m:
-                    m = re.search(r"([0-9,]+\.?[0-9]*)\s*円", html)
-                if m:
-                    price_str = m.group(1).replace(",", "").strip()
-                    price = float(price_str)
-                    if math.isfinite(price) and price > 0:
-                        # Previous close / OHLC are unknown from this page;
-                        # report None rather than the current price so the
-                        # fallback quote cannot fake a 0% change (see
-                        # YahooJPScraperProvider for the same rationale).
-                        return {
-                            "symbol": symbol,
-                            "regularMarketPrice": price,
-                            "regularMarketPreviousClose": None,
-                            "regularMarketVolume": 0,
-                            "regularMarketOpen": None,
-                            "regularMarketDayHigh": None,
-                            "regularMarketDayLow": None,
-                            "source": "minkabu",
-                        }
+                # SVC-10: shared label-anchored extractor replaces the bare
+                # "...円" fallback, which matched the first yen figure anywhere
+                # on the page (e.g. 手数料290円) and returned it as the price.
+                from services.realtime.utils import extract_minkabu_price
+
+                price = extract_minkabu_price(resp.text)
+                if price is not None:
+                    # Previous close / OHLC are unknown from this page;
+                    # report None rather than the current price so the
+                    # fallback quote cannot fake a 0% change (see
+                    # YahooJPScraperProvider for the same rationale).
+                    return {
+                        "symbol": symbol,
+                        "regularMarketPrice": price,
+                        "regularMarketPreviousClose": None,
+                        "regularMarketVolume": 0,
+                        "regularMarketOpen": None,
+                        "regularMarketDayHigh": None,
+                        "regularMarketDayLow": None,
+                        "source": "minkabu",
+                    }
             elif resp.status_code in (401, 402, 403, 429, 439):
                 _mark_yahoo_block(
                     resp.status_code,
@@ -963,6 +962,11 @@ class MinkabuProvider(BaseFallbackProvider):
         except Exception as exc:
             logger.debug("MinkabuProvider fallback failed for %s: %s", symbol, exc)
         return None
+
+
+# SVC-13: aggregate wall-clock budget for the sequential hop chain in
+# CompositeFallbackProvider.get_latest_quote (see the method docstring).
+_COMPOSITE_QUOTE_BUDGET_SEC = 15.0
 
 
 class CompositeFallbackProvider:
@@ -983,6 +987,16 @@ class CompositeFallbackProvider:
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         """Returns the latest quote using the best available fallback."""
+        # SVC-13: per-hop timeouts (10s / 6s) multiply across the sequential
+        # chain (worst case ~44s for a JP symbol on the caller's thread).
+        # Enforce an aggregate wall-clock budget: the first hop always runs,
+        # later hops are skipped once the budget is exhausted. Per-hop
+        # timeouts stay unchanged so an early hop still gets its full window.
+        deadline = time.monotonic() + _COMPOSITE_QUOTE_BUDGET_SEC
+
+        def _budget_remains() -> bool:
+            return time.monotonic() < deadline
+
         quote = self.alpha_vantage.get_latest_quote(symbol)
         if quote:
             quote.setdefault("source", "alphavantage")
@@ -1011,6 +1025,8 @@ class CompositeFallbackProvider:
                 "BTC",
             )
         ):
+            if not _budget_remains():
+                return None
             quote = self.nikkei225jp.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "nikkei225jp")
@@ -1020,6 +1036,8 @@ class CompositeFallbackProvider:
                     quote.get("regularMarketPrice", 0.0),
                 )
                 return quote
+            if not _budget_remains():
+                return None
             quote = self.yahoo_web.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "yahoous")
@@ -1035,6 +1053,8 @@ class CompositeFallbackProvider:
 
         if symbol.endswith(".T") or is_jp_stock_code(symbol):
             # 1. Yahoo JP Scraper
+            if not _budget_remains():
+                return None
             quote = self.yahoo_jp.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "yahoojp")
@@ -1045,6 +1065,8 @@ class CompositeFallbackProvider:
                 )
                 return quote
             # 2. Nikkei225JP ADR Scraper
+            if not _budget_remains():
+                return None
             quote = self.nikkei225jp.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "nikkei225jp_adr")
@@ -1055,6 +1077,8 @@ class CompositeFallbackProvider:
                 )
                 return quote
             # 3. Minkabu (lowest tier fallback)
+            if not _budget_remains():
+                return None
             quote = self.minkabu.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "minkabu")
@@ -1065,6 +1089,8 @@ class CompositeFallbackProvider:
                 )
                 return quote
         else:
+            if not _budget_remains():
+                return None
             quote = self.yahoo_web.get_latest_quote(symbol)
             if quote:
                 quote.setdefault("source", "yahoous")

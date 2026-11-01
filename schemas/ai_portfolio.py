@@ -299,7 +299,12 @@ class AIPortfolioCopyToMyRequest(BaseModel):
                     target_price = 100.0
                 else:
                     target_price = float(target_raw)
-                weight_pct = float(weight_raw or 0.0)
+                # API-1: only None means "absent" here. Falsy-coalescing
+                # (`weight_raw or 0.0`) swallowed "" (and 0) into 0.0, turning
+                # a numeric-type error into a range error; keep float("") and
+                # other non-numeric strings raising -> copy_bad_numeric while
+                # None/0 keep the historical range-error behavior.
+                weight_pct = 0.0 if weight_raw is None else float(weight_raw)
             except (TypeError, ValueError, OverflowError):
                 raise ValueError(f"copy_bad_numeric|{idx}") from None
             if (

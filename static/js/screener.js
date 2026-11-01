@@ -120,8 +120,16 @@
     // Search Input (Debounced)
     const searchEl = document.getElementById("screenerSearch");
     if (searchEl) {
+      // サーバー契約(ScreenerQueryRequest.q max_length=200)をクライアント側
+      // でも満たし、長すぎる入力が400で全結果をエラー表示にしないよう打ち切る。
+      const MAX_SEARCH_QUERY_LENGTH = 200;
       searchEl.addEventListener("input", (e) => {
-        searchQuery = e.target.value.trim();
+        let raw = e.target.value;
+        if (raw.length > MAX_SEARCH_QUERY_LENGTH) {
+          raw = raw.slice(0, MAX_SEARCH_QUERY_LENGTH);
+          e.target.value = raw;
+        }
+        searchQuery = raw.trim();
         triggerFetchDebounced();
       });
     }
@@ -400,7 +408,11 @@
         throw new Error(data?.error || "データの取得に失敗しました");
       }
 
-      if (countEl) countEl.textContent = data.total || 0;
+      if (countEl) {
+        // totalFiltered は上限で切られる前の真のマッチ数(totalは表示行数に
+        // 丸められる)。古いバックエンド互換のため total をフォールバックに残す。
+        countEl.textContent = data.totalFiltered ?? data.total ?? 0;
+      }
       renderTableRows(data.stocks || [], requestGeneration);
     } catch (err) {
       if (
@@ -424,14 +436,17 @@
   }
 
   function formatCurrency(val, market) {
+    // Number() は " "(空白文字列)や [] を 0 に変換してしまうため、
+    // 生値の形を先に検証してから数値化する。
+    const raw = typeof val === "string" ? val.trim() : val;
     if (
-      val == null ||
-      typeof val === "boolean" ||
-      val === "" ||
-      Number.isNaN(Number(val))
+      raw == null ||
+      raw === "" ||
+      typeof raw === "boolean" ||
+      Array.isArray(raw)
     )
       return "--";
-    const num = Number(val);
+    const num = Number(raw);
     if (!Number.isFinite(num)) return "--";
     if (market === "jp") {
       return `¥${Math.round(num).toLocaleString("ja-JP")}`;
@@ -568,8 +583,11 @@
       // Market Badge Cell
       const mktTd = document.createElement("td");
       const mktBadge = document.createElement("span");
-      mktBadge.className = `mkt-badge ${stock.market}`;
-      mktBadge.textContent = stock.market === "jp" ? "🇯🇵 JP" : "🇺🇸 US";
+      // ペイロードの market は us/jp のみを想定。想定外値でもクラス名に
+      // そのまま展開せず正規化する。
+      const normalizedMarket = stock.market === "jp" ? "jp" : "us";
+      mktBadge.className = `mkt-badge ${normalizedMarket}`;
+      mktBadge.textContent = normalizedMarket === "jp" ? "🇯🇵 JP" : "🇺🇸 US";
       mktTd.appendChild(mktBadge);
       tr.appendChild(mktTd);
 

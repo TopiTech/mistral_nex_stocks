@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import random
+import re
 import secrets
 import time
 from contextlib import nullcontext
@@ -706,6 +707,25 @@ def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
         return wait_before
 
 
+def _release_mistral_call_slot() -> None:
+    """Roll back an unused pacing reservation (SVC-02).
+
+    ``_acquire_mistral_call_slot`` advances ``mistral_last_call_ts`` before the
+    caller knows whether it can issue a request. When the caller aborts
+    (rate-limit cooldown above the wait cap, or shutdown) the reservation must
+    not stand, or recovery traffic waits behind a slot that never produces a
+    call. The rollback keeps at least ``mistral_next_allowed_ts`` (a real 429
+    cooldown is authoritative pacing) and never advances the timestamp; a later
+    caller that already reserved a slot keeps its reservation whenever it is
+    earlier than the rolled-back value.
+    """
+    with app_state.ai.mistral_cooldown_lock:
+        app_state.ai.mistral_last_call_ts = min(
+            app_state.ai.mistral_last_call_ts,
+            max(app_state.ai.mistral_next_allowed_ts, time.time()),
+        )
+
+
 def is_mistral_error(response: Any) -> bool:
     """Return True when a ``call_mistral_chat`` result is an error dict."""
     return isinstance(response, dict) and bool(response.get("error"))
@@ -901,7 +921,9 @@ def call_mistral_chat(
         wait_status = _wait_for_rate_limit_slot(wait_before)
         if wait_status == "shutdown":
             # Shutdown signalled while waiting for the rate-limit slot:
-            # abort instead of issuing a request during teardown.
+            # abort instead of issuing a request during teardown. The pacing
+            # reservation was never used, so roll it back (SVC-02).
+            _release_mistral_call_slot()
             return {
                 "error": {
                     "message": "AI service is shutting down",
@@ -909,6 +931,10 @@ def call_mistral_chat(
                 }
             }
         if wait_status == "rate_limited":
+            # Abort without issuing a request: roll the unused pacing
+            # reservation back so recovery traffic is not delayed by a
+            # phantom slot (SVC-02).
+            _release_mistral_call_slot()
             logger.warning(
                 "Mistral rate-limit cooldown exceeds %.1fs cap; returning retryable 429",
                 _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC,
@@ -1054,7 +1080,18 @@ def call_mistral_chat(
             if hasattr(response, "model_dump"):
                 data = response.model_dump()
             else:
-                data = {"choices": []}
+                # SVC-03: an SDK response without ``model_dump`` means the
+                # response schema drifted; fabricating an empty success dict
+                # would hide the failure from callers and caching logic.
+                logger.warning(
+                    "Mistral SDK response missing model_dump type=%s", type(response).__name__
+                )
+                return {
+                    "error": {
+                        "message": "Mistral SDK returned an unsupported response object",
+                        "status_code": 502,
+                    }
+                }
 
             # chat.parse / Pydantic response_format を使用した場合、parsed / content にパース済みオブジェクト(dict)を格納
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -1139,10 +1176,17 @@ def call_mistral_chat(
         retry_after_sec = _extract_mistral_wait_seconds(response_obj)
         err_payload = _extract_error_payload(exc)
 
-        # 400 Bad Request: reasoning_effort parameter rejected by model
+        # 400 Bad Request: reasoning_effort parameter rejected by model.
+        # SVC-04: anchor the text heuristic on a whole-word "400" — a loose
+        # substring match ("timed out after 1400 ms") must not classify a
+        # transient error as a reasoning-parameter rejection.
         err_text_all = (str(exc) + " " + json.dumps(err_payload or {}, ensure_ascii=False)).lower()
         is_reasoning_400 = (
-            (status_code == 400 or "400" in str(exc) or "bad request" in str(exc).lower())
+            (
+                status_code == 400
+                or re.search(r"\b400\b", str(exc)) is not None
+                or "bad request" in str(exc).lower()
+            )
             and effective_reasoning is not None
             and not _is_fallback
             and (
@@ -1279,6 +1323,17 @@ def call_mistral_chat_with_tools(
     appends the tool results with role='tool' and tool_call_id, and loops until
     the model yields a final text / structured response or exceeds max_tool_iterations.
     """
+    # SVC-05: a malformed ``messages`` payload is a caller bug that must fail
+    # fast; silently coercing it to an empty conversation makes the model
+    # answer unanchored and can burn the full tool-call budget on junk.
+    if not isinstance(messages, list) or not messages:
+        return {
+            "error": {
+                "message": "messages must be a non-empty list",
+                "status_code": 502,
+            }
+        }
+
     from mistral_compat import ToolMessage
     from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 
@@ -1355,7 +1410,9 @@ def call_mistral_chat_with_tools(
         return serialized
 
     active_tools = tools if tools is not None else MISTRAL_FINANCIAL_TOOLS
-    current_messages = list(messages) if isinstance(messages, list) else []
+    # SVC-05: messages is guaranteed to be a non-empty list by the guard above;
+    # no defensive coercion — a caller bug must not become an empty conversation.
+    current_messages = list(messages)
 
     for iteration in range(max_tool_iterations):
         # We don't cache intermediate tool-calling turns in response_cache
@@ -1660,10 +1717,16 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                     parsed_obj = json.loads(json_str)
             except Exception as payload_exc:
                 logger.warning(
-                    "Initial JSON extraction failed for technical lines error_type=%s. "
-                    "Attempting LLM repair...",
+                    "Initial JSON extraction failed for technical lines error_type=%s.",
                     type(payload_exc).__name__,
                 )
+                parsed_obj = None
+            # SVC-01: the LLM repair must also run when payload extraction
+            # returns empty (no exception raised) — not only when json.loads
+            # raises. A single post-check replaces the old except-clause call so
+            # both malformed-output classes reach the repair path exactly once.
+            if not parsed_obj:
+                logger.warning("Attempting LLM repair for technical lines payload.")
                 parsed_obj, _ = repair_technical_lines_json_with_llm(api_key, content)
 
         if not parsed_obj or not isinstance(parsed_obj, dict):
@@ -2053,6 +2116,9 @@ def stream_mistral_chat(
     # must produce a retryable error instead of holding this stream thread.
     wait_status = _wait_for_rate_limit_slot(wait_before)
     if wait_status != "ready":
+        # Abort without issuing a stream request: roll the unused pacing
+        # reservation back so recovery traffic is not delayed (SVC-02).
+        _release_mistral_call_slot()
         if circuit_probe_claimed:
             app_state.market.release_circuit_probe("mistral")
             circuit_probe_claimed = False
@@ -2171,12 +2237,17 @@ def stream_mistral_chat(
             retry_after_sec = _extract_mistral_wait_seconds(response_obj)
             err_payload = _extract_error_payload(exc)
 
-            # 400 Bad Request: reasoning_effort parameter rejected by model
+            # 400 Bad Request: reasoning_effort parameter rejected by model.
+            # SVC-04: anchor the text heuristic on a whole-word "400".
             err_text_all = (
                 str(exc) + " " + json.dumps(err_payload or {}, ensure_ascii=False)
             ).lower()
             is_reasoning_400 = (
-                (status_code == 400 or "400" in str(exc) or "bad request" in str(exc).lower())
+                (
+                    status_code == 400
+                    or re.search(r"\b400\b", str(exc)) is not None
+                    or "bad request" in str(exc).lower()
+                )
                 and effective_reasoning is not None
                 and not _is_fallback
                 and not full_parts

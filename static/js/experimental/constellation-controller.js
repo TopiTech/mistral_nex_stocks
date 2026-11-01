@@ -333,13 +333,19 @@
 
         const prompt = `以下の銘柄群の市場データに基づいて、相対的な強み・弱み・セクター内でのポジショニングを簡潔に比較分析してください。\n\n【対象銘柄データ】\n${dataSummary}\n\n投資助言ではなく、客観的な財務指標と市場パフォーマンスの違いに焦点を当てて200字程度でまとめてください。`;
 
-        const primaryStock = stockObjs[0] || {
-          symbol: symbols[0],
-          market: "us",
-        };
+        // primary の market は必ず stocks マップから解決する。接続リストは
+        // 市場スイッチ後も残存しうるため、解決できなければ "us" を誤って
+        // 送らずエラーにする(FE-exp-13: JP 銘柄を market:"us" で POST すると
+        // 400 または別市場のチャット履歴汚染になる)。
+        const primaryStock = stockObjs[0] || null;
+        if (!primaryStock || !primaryStock.market) {
+          throw new Error(
+            "比較対象銘柄の市場を特定できません。銘柄リストを更新して再試行してください。",
+          );
+        }
         const payload = {
           symbol: primaryStock.symbol,
-          market: primaryStock.market || "us",
+          market: primaryStock.market,
           message: prompt,
           // M-5: delegate to the single createRequestToken system; it throws
           // rather than fabricating a predictable Math.random()-based token.
@@ -403,9 +409,15 @@
 
           const disclaimer = document.createElement("div");
           disclaimer.className = "ai-disclaimer-note";
+          // /api/chat の disclaimer は {ja, en} ローカライズオブジェクトを
+          // 返すことがある(単一文字列のフォールバック付き)。オブジェクトを
+          // そのまま textContent へ入れると "[object Object]" 表示になる。
+          const rawDisclaimer = data.disclaimer;
           disclaimer.textContent =
-            data.disclaimer ||
-            "※ AIによる比較分析は客観的データに基づく情報提供のみを目的としており、特定の投資行動を推奨するものではありません。";
+            typeof rawDisclaimer === "string" && rawDisclaimer.trim()
+              ? rawDisclaimer
+              : (rawDisclaimer && (rawDisclaimer.ja || rawDisclaimer.en)) ||
+                "※ AIによる比較分析は客観的データに基づく情報提供のみを目的としており、特定の投資行動を推奨するものではありません。";
           resultCard.appendChild(disclaimer);
 
           aiResultContainer.appendChild(resultCard);

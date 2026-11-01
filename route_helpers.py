@@ -248,12 +248,21 @@ def _is_polling_token_inflight(token: str) -> bool:
     return True
 
 
-def _consume_polling_duplicate_locked(token_key: str, token: str, current_time: float) -> bool:
-    """Record one bounded polling duplicate while the rate-limit lock is held."""
+def _consume_polling_duplicate_locked(
+    token_key: str, token_inflight: bool, current_time: float
+) -> bool:
+    """Record one bounded polling duplicate while the rate-limit lock is held.
+
+    ``token_inflight`` must be resolved *before* acquiring ``_rate_limit_lock``
+    via ``_is_polling_token_inflight``: that check takes the chat/analyze/news
+    fetch locks and scans cache dicts, and nesting those mutexes inside the
+    global rate-limit lock inverts the lock order (deadlock risk) and
+    serializes all rate-limited traffic behind cache scans.
+    """
     seen = _rate_limit_store.get(token_key)
     if seen is None:
         return False
-    if _is_polling_token_inflight(token) and len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
+    if token_inflight and len(seen) < _RATE_LIMIT_MAX_TOKEN_POLLS:
         seen.append(current_time)
         return True
     return False
@@ -410,6 +419,10 @@ def rate_limit(
             # unlimited Mistral quota. After the budget is exhausted, further
             # requests with the token are counted normally and hit the 429.
             skip_handler = False
+            # API-3: the inflight/cache decision acquires the chat/analyze/news
+            # fetch locks; resolve it BEFORE the rate-limit critical section so
+            # those mutexes are never nested inside _rate_limit_lock.
+            token_inflight = False
             # A new token is registered only after its first request has passed
             # the endpoint quota below. Registering it before that check would
             # let a rejected token become a later polling-skip identity.
@@ -438,6 +451,7 @@ def rate_limit(
                         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
                         token_key = f"{remote_addr}:{endpoint}:token:{token_hash}"
                         distinct_key = f"{remote_addr}:{endpoint}:distinct"
+                        token_inflight = _is_polling_token_inflight(token)
                         with _rate_limit_lock:
                             if _trim_polling_token_locked(
                                 token_key,
@@ -446,7 +460,7 @@ def rate_limit(
                                 effective_window_seconds,
                             ):
                                 if _consume_polling_duplicate_locked(
-                                    token_key, token, current_time
+                                    token_key, token_inflight, current_time
                                 ):
                                     skip_handler = True
                             else:
@@ -497,7 +511,7 @@ def rate_limit(
                         effective_window_seconds,
                     ):
                         skip_handler = _consume_polling_duplicate_locked(
-                            token_key, token, current_time
+                            token_key, token_inflight, current_time
                         )
 
                 if not skip_handler:
@@ -536,13 +550,17 @@ def rate_limit(
                     ]
 
                     if len(_rate_limit_store[key]) >= effective_max_requests:
-                        retry_after = max(
-                            0,
-                            int(
-                                effective_window_seconds
-                                - (current_time - _rate_limit_store[key][0])
-                            ),
-                        )
+                        # API-2: guard the empty bucket before indexing [0] —
+                        # e.g. an injected max_requests <= 0 would otherwise
+                        # raise IndexError and surface as a 500 instead of 429.
+                        bucket = _rate_limit_store[key]
+                        if bucket:
+                            retry_after = max(
+                                0,
+                                int(effective_window_seconds - (current_time - bucket[0])),
+                            )
+                        else:
+                            retry_after = effective_window_seconds
                         resp, status_code = error_response(
                             ErrorCode.API_RATE_LIMITED,
                             status_code=429,
@@ -1118,9 +1136,20 @@ def _screener_query_error_from_validation(exc: ValidationError) -> tuple[Respons
                 status_code=400,
             )
         if "limit" in loc or "limit_must_be_integer" in msg:
+            # API-6: split range violations (greater_than_equal /
+            # less_than_equal from ge=1, le=500) from genuine type errors so
+            # out-of-range limits are not reported as "not an integer".
+            # pydantic's ErrorDetails.type is always a str (matches the
+            # un-coerced err.get("type", "") reads above/below in this
+            # function), so no str() wrapper here.
+            err_type = err.get("type", "")
+            if err_type in ("greater_than_equal", "less_than_equal"):
+                reason = "limit は1〜500の整数で指定してください"
+            else:
+                reason = "limit は整数で指定してください"
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": "limit は整数で指定してください", "fields": ["limit"]},
+                details={"reason": reason, "fields": ["limit"]},
                 status_code=400,
             )
     return error_response(

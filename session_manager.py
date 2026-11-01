@@ -5,10 +5,15 @@ Extracted from app_state.py to reduce module complexity.
 Manages yfinance sessions with user-agent rotation, curl_cffi impersonation,
 and rate-limit detection.
 
-2026-07 Rate-limit hardening:
-  - Fix 1: 401 exclusion window raised from 5s → 60s (was causing rapid re-attack loops).
+2026-07 Rate-limit hardening (as actually implemented — keep docs in sync):
+  - Fix 1 (superseded): the 401 path sets NO exclusion window today; a 401
+    rotates the UA and resets auth only (tests pin this, so a transient
+    Invalid Crumb never blocks all yfinance traffic). Non-401 blocks use
+    status-specific windows (403/439: 180 s, 402/429: 300 s).
   - Fix 2: curl_cffi impersonate values rotated alongside UA index for broader fingerprint diversity.
-  - Fix 3: _consecutive_401_count counter added; interval growth rate accelerates on streaks.
+  - Fix 3: _consecutive_401_count streak counter feeds the warning log and the
+    reset APIs only; adaptive-interval growth applies to 402/403/429/439, not
+    to 401 (pinned by tests/test_rate_limiting.py).
   - Fix 7: UA pool expanded from 5 → 10 entries (doubles time before cycling through all UAs).
   - crumb refresh: reset_yfinance_auth() clears yfinance internal cookie/crumb cache on 401/402/429/439.
 """
@@ -274,10 +279,14 @@ class YFinanceSessionManager:
     Manages yfinance HTTP sessions with UA rotation and browser fingerprint
     impersonation via curl_cffi. Singleton pattern.
 
-    Rate-limit hardening (2026-07):
-      - 401 exclusion window is now 60 s (was 5 s) to prevent rapid re-attack.
+    Rate-limit hardening (2026-07, as actually implemented):
+      - 401 sets NO exclusion window: it rotates the UA and resets auth only
+        (tests pin the no-window behavior; a transient Invalid Crumb must not
+        block all yfinance traffic).
       - 402/439 windows are 300 s / 180 s respectively (unchanged from intent).
-      - Consecutive-401 counter accelerates adaptive interval growth on streaks.
+      - The consecutive-401 counter is observability state (warning streak
+        log + reset APIs); adaptive-interval growth applies to
+        402/403/429/439 blocks, not to 401.
       - UA pool doubled (5 → 10); curl_cffi impersonate target rotates in sync.
       - crumb cache cleared on every 401 to force fresh Yahoo authentication.
     """

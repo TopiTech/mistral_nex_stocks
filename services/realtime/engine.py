@@ -406,16 +406,25 @@ class RealtimeMarketEngine:
                     client_pending.discard(pkey)
 
     def get_market_snapshot(self, client_id: str | None = None) -> dict[str, TickerPayload]:
-        """Return a copy of the current unified market snapshot."""
+        """Return a copy of the current unified market snapshot.
+
+        SVC-20: copy each per-symbol payload (matching ``get_market_deltas``)
+        so a consumer mutating a returned payload cannot corrupt the live
+        store shared by every SSE client.
+        """
         with self.store_lock:
             if client_id is not None and client_id in self._client_last_seen:
                 self._client_last_seen[client_id] = time.time()
-            return dict(self.market_store)
+            return {key: dict(value) for key, value in self.market_store.items()}
 
     def get_pts_snapshot(self) -> dict[str, TickerPayload]:
-        """Return a copy of the current PTS quote snapshot."""
+        """Return a copy of the current PTS quote snapshot.
+
+        SVC-20: per-symbol payloads are copied, same as
+        ``get_market_snapshot`` — snapshots must not alias the live store.
+        """
         with self.store_lock:
-            return dict(self.pts_store)
+            return {key: dict(value) for key, value in self.pts_store.items()}
 
     def get_market_deltas(self, client_id: str | None = None) -> dict[str, TickerPayload]:
         """Return symbols changed since the given client's last check."""

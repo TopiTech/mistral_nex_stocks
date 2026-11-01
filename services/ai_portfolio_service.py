@@ -675,6 +675,11 @@ def generate_ai_portfolio_by_theme(
     theme_or_preset_id: str, force_rebalance: bool = False, api_key: str | None = None
 ) -> dict[str, Any]:
     """Generate or retrieve an AI portfolio dynamically using Web Search & Mistral AI, saved to JSON database."""
+    # SVC-14: validate at the service boundary — non-str input (None/int/...)
+    # used to crash with a raw AttributeError instead of a typed error, unlike
+    # every other public entry of this module.
+    if not isinstance(theme_or_preset_id, str) or not theme_or_preset_id.strip():
+        raise ValueError("theme_or_preset_id must be a non-empty string")
     clean_id = theme_or_preset_id.strip()
     key = clean_id
 

@@ -64,6 +64,12 @@ USER_STOCKS_FILE = APP_DATA_DIR / "user_stocks.json"
 _CONFIG_LOCK = threading.RLock()
 _MASTER_KEY_LOCK = threading.Lock()
 
+# config_update_lock() のスレッド内再入深度 (DATA-2)。depth > 0 のスレッドは
+# ファイルロックを再取得せず直前の取得をそのまま再利用する。msvcrt/flock は
+# デスクリプタ単位の所有権のため、同一スレッド内での再取得は自己衝突する
+# (Windows では ~10 秒停滞後に RuntimeError、POSIX では ~15 秒)。
+_UPDATE_LOCK_STATE = threading.local()
+
 # プロセス内キャッシュ: load_config() はAIリクエスト等のホットパスから頻繁に呼ばれるため、
 # ファイルI/Oとロック取得を抑える。キャッシュはファイルのmtime+sizeでキーされ、
 # ファイルが変更/削除されると自動的に無効化される（save_config時は即時クリア）。

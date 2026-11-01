@@ -67,7 +67,9 @@ def _ensure_bootstrap_called():
     itself from the before_request chain at runtime. Modifying Flask's internal
     before_request_funcs during request processing is not thread-safe. Instead,
     the guard simply checks the ``_app_bootstrap_done`` flag on every request,
-    which is a fast O(1) read after the first bootstrap completes.
+    which is a fast O(1) read after the first bootstrap completes. The check is
+    fork-aware (LIFECYCLE-3): a done flag recorded by a different PID (e.g. a
+    gunicorn --preload master after fork) does not satisfy the guard.
     """
     # _env_bool は `patch.object(app, "_env_bool")` 対象のため app 経由で解決する。
     import app
@@ -76,7 +78,12 @@ def _ensure_bootstrap_called():
         "MNS_SKIP_BOOTSTRAP"
     ):
         return
-    if not app._app_bootstrap_done:
+    if not app._app_bootstrap_done or (
+        # LIFECYCLE-3: a done flag recorded by another PID (fork/preload) means
+        # this process has no live background threads; re-run bootstrap here.
+        app._app_bootstrap_pid is not None
+        and app._app_bootstrap_pid != os.getpid()
+    ):
         _proxy: Any = current_app
         app.bootstrap(cast(Flask, _proxy._get_current_object()))
     return

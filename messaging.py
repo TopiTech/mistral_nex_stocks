@@ -159,16 +159,35 @@ class MessageAnnouncer:
             try:
                 q_target.put_nowait(msg)
             except queue.Full:
+                # DATA-9 race window: the queue filled between the snapshot
+                # above and this put_nowait (another broadcaster or a
+                # concurrent announce). Unify with the backpressure path:
+                # terminate the listener with the None sentinel so the client
+                # reconnects and replays via Last-Event-ID. Quietly evicting
+                # one event here would leave a permanent hole in the stream
+                # (mode-1 consumers never heal without a reconnect).
+                with self.lock:
+                    try:
+                        self.listeners.remove(q_target)
+                    except ValueError:
+                        pass
+                    self.dropped_count += 1
                 try:
-                    q_target.get_nowait()
-                except queue.Empty:
-                    pass
-                try:
-                    q_target.put_nowait(msg)
+                    q_target.put_nowait(None)
                 except queue.Full:
-                    logger.warning(
-                        "SSE queue overflow persists: dropping latest message for one listener"
-                    )
+                    try:
+                        q_target.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        q_target.put_nowait(None)
+                    except queue.Full:
+                        logger.warning(
+                            "SSE queue overflow persists: dropping sentinel for one listener"
+                        )
+                logger.info(
+                    "SSE backpressure: dropped 1 listener mid-broadcast due to queue overflow"
+                )
 
     @contextmanager
     def listener_context(self, *, enforce_limit: bool = True):

@@ -79,12 +79,16 @@ function fallbackBackendBase() {
 
 let backendPort = DEFAULT_BACKEND_PORT;
 let currentBackendBase = fallbackBackendBase();
-
-chrome.storage.local.get(["backendPort"], (items) => {
-  if (items.backendPort) {
-    backendPort = normalizeBackendPort(items.backendPort);
-    currentBackendBase = fallbackBackendBase();
-  }
+// backendPort の storage.local 水和が完了するのを待つ共有 Promise。
+// ポップアップ起動直後のクリックで古い既定ポートへ遷移しないようにする(FE-ext-10)。
+const backendPortHydrated = new Promise((resolve) => {
+  chrome.storage.local.get(["backendPort"], (items) => {
+    if (items.backendPort) {
+      backendPort = normalizeBackendPort(items.backendPort);
+      currentBackendBase = fallbackBackendBase();
+    }
+    resolve();
+  });
 });
 
 async function send(action, payload) {
@@ -218,7 +222,9 @@ function renderStockItem(symbol, name, price, changePercent, market = "") {
   container.appendChild(valuesDiv);
 
   // Click on stock item -> open main app
-  const openStock = () => {
+  const openStock = async () => {
+    // ポート水和完了後に基点を解決し、起動直後の古い既定ポート遷移を防ぐ。
+    await backendPortHydrated;
     const base = currentBackendBase || fallbackBackendBase();
     const marketQuery = market ? `&market=${encodeURIComponent(market)}` : "";
     const url = `${base}/main?q=${encodeURIComponent(symbol)}${marketQuery}`;
@@ -508,6 +514,8 @@ function bindAsyncButton(id, handler) {
 }
 
 async function openAppPage(path = "/") {
+  // ポート水和を待ってからバックエンド基点を解決する(既定ポートへの誤遷移防止)。
+  await backendPortHydrated;
   const ctx = await send("getContext");
   const base = ctx?.health?.ok ? ctx.health.base : fallbackBackendBase();
   chrome.tabs.create({ url: `${base}${path}` });
@@ -645,6 +653,20 @@ async function loadDetectedTickers() {
     }
 
     const tabUrl = tab.url || tab.pendingUrl;
+    // activeTab グラントが無いタブ(サイドパネルを開いたまま別タブへ
+    // 切り替えた場合等)では tab.url/title が undefined。そのままでは
+    // 「ティッカー0件」と同文に見えるため、権限エラーと区別して表示する。
+    if (!tabUrl && !tab.title) {
+      if (currentGen !== detectorGeneration) return;
+      container.textContent = "";
+      const permDiv = document.createElement("div");
+      permDiv.className = "detector-empty";
+      permDiv.textContent =
+        "ページ内容へのアクセス権がありません。ツールバーの拡張機能アイコンから再度開いてください。";
+      container.appendChild(permDiv);
+      if (titleEl) setSafeText(titleEl, "アクティブページ");
+      return;
+    }
     if (titleEl)
       setSafeText(titleEl, tab.title || tabUrl || "アクティブページ");
 

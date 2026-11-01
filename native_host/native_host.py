@@ -1072,10 +1072,24 @@ def _is_caller_authorized_browser(ancestors: list[str] | None = None) -> bool:
     return False
 
 
+# LIFECYCLE-11: cached per-connection caller-ancestry verdict. ``None`` means
+# "not verified yet"; only successful authorizations are stored (see
+# ``_require_valid_extension_id``). ``_reset_caller_ancestry_cache`` exists for
+# per-test isolation in tests/conftest.py.
+_verified_caller_ancestors: list[str] | None = None
+
+
+def _reset_caller_ancestry_cache() -> None:
+    """Clear the cached caller-ancestry verdict (test isolation / reconnect)."""
+    global _verified_caller_ancestors
+    _verified_caller_ancestors = None
+
+
 def _require_valid_extension_id(req):
     """全 Native Messaging アクションで拡張機能IDを必須検証する。
     Chromeがコマンドライン引数として渡すオリジン(chrome-extension://ID/)とも照合する。
     """
+    global _verified_caller_ancestors
     raw_extension_id = req.get("extensionId")
     validated_id = _validate_extension_id(raw_extension_id)
 
@@ -1088,15 +1102,25 @@ def _require_valid_extension_id(req):
         send_message({"ok": False, "error": "Invalid extension ID"})
         return None
 
-    ancestors = _get_ancestor_process_names()
-    if not _is_caller_authorized_browser(ancestors):
-        logger.error(
-            "Native message rejected because caller process is not an authorized browser: ancestors=%s action=%s",
-            ancestors[:3],
-            req.get("action"),
-        )
-        send_message({"ok": False, "error": "Unauthorized parent process"})
-        return None
+    # LIFECYCLE-11: process ancestry is a per-connection invariant (the browser
+    # spawned this host; the chain cannot change while the connection lives), so
+    # the successful verdict is cached after the first verification. Re-walking
+    # the tree per message can spawn PowerShell for Authenticode checks
+    # (100-300 ms) inside the synchronous read loop, adding steady latency to
+    # heartbeats. Only *authorized* verdicts are cached; any failure keeps
+    # re-evaluating per message so the fail-closed behavior is unchanged.
+    ancestors = _verified_caller_ancestors
+    if ancestors is None:
+        ancestors = _get_ancestor_process_names()
+        if not _is_caller_authorized_browser(ancestors):
+            logger.error(
+                "Native message rejected because caller process is not an authorized browser: ancestors=%s action=%s",
+                ancestors[:3],
+                req.get("action"),
+            )
+            send_message({"ok": False, "error": "Unauthorized parent process"})
+            return None
+        _verified_caller_ancestors = list(ancestors)
 
     # Chrome passes the extension origin as the first argument: chrome-extension://[id]/
     # (Edge also uses chrome-extension:// per Microsoft docs). Validate that the

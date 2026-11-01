@@ -427,19 +427,29 @@ def start_background_worker() -> None:
             app_state.execution.shutdown_event.wait(60.0)
             if app_state.execution.shutdown_event.is_set():
                 break
-            dead_threads = [
-                t for t in app_state.execution.get_background_threads() if not t.is_alive()
-            ]
-            if dead_threads:
-                logger.warning(
-                    "Watchdog detected %d dead thread(s): %s",
-                    len(dead_threads),
-                    ", ".join(t.name for t in dead_threads),
+            # LIFECYCLE-5: isolate every watchdog iteration like the peer loops
+            # (``wrapped_loop``, ``bg_interpolate_loop``). A single exception
+            # from the engine-restart check or the mirror lookup must not kill
+            # the supervision thread; the next tick continues instead. Crashed
+            # background loops themselves are already revived by ``wrapped_loop``
+            # (exponential-backoff restart, see above), so supervision only has
+            # to survive to keep calling the realtime-engine watchdog.
+            try:
+                dead_threads = [
+                    t for t in app_state.execution.get_background_threads() if not t.is_alive()
+                ]
+                if dead_threads:
+                    logger.warning(
+                        "Watchdog detected %d dead thread(s): %s",
+                        len(dead_threads),
+                        ", ".join(t.name for t in dead_threads),
+                    )
+                watchdog_fn = _get_app_bg_attr(
+                    "_watchdog_restart_dead_realtime_engine", _watchdog_restart_dead_realtime_engine
                 )
-            watchdog_fn = _get_app_bg_attr(
-                "_watchdog_restart_dead_realtime_engine", _watchdog_restart_dead_realtime_engine
-            )
-            watchdog_fn()
+                watchdog_fn()
+            except Exception:
+                logger.exception("Watchdog iteration failed; supervision continues")
 
     watchdog_running = any(
         getattr(existing, _BG_LOOP_MARKER_ATTR, None) == "Watchdog" and existing.is_alive()

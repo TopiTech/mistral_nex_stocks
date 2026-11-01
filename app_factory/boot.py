@@ -40,8 +40,14 @@ def bootstrap(app: Flask) -> None:
     import app as app_module
 
     with app_module._app_bootstrap_lock:
-        if app_module._app_bootstrap_done:
+        if app_module._app_bootstrap_done and (
+            app_module._app_bootstrap_pid is None
+            or app_module._app_bootstrap_pid == os.getpid()
+        ):
             return
+        # LIFECYCLE-3: a done flag recorded by a *different* PID (e.g. a
+        # gunicorn --preload master after fork) does not count: background
+        # threads do not survive fork, so this process re-runs bootstrap.
 
         # H-6: Fail closed when remote API access is enabled without an admin token.
         # MNS_ALLOW_REMOTE_API expands the credentials / local-request surface; without
@@ -144,6 +150,8 @@ def bootstrap(app: Flask) -> None:
                         _executor_name,
                     )
 
-        # Mark complete only after successful core init + thread start.
+        # Mark complete only after successful core init + thread start. The
+        # recording PID makes the flag fork-aware (LIFECYCLE-3).
         app_module._app_bootstrap_done = True
+        app_module._app_bootstrap_pid = os.getpid()
         app_state.bootstrap_ready.set()

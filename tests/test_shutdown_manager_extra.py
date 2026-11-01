@@ -279,6 +279,25 @@ class ShutdownManagerExtraTests(unittest.TestCase):
         self.assertTrue(token)
         self.assertTrue(self.mgr.token_file.exists())
 
+    def test_commit_shutdown_token_returns_bool_and_propagates(self):
+        """commit_shutdown_token returns True on success and False on marker failure."""
+        self.mgr.get_or_create_shutdown_token()
+        self.assertTrue(self.mgr.commit_shutdown_token())
+        self.assertTrue(self.mgr.used_marker.exists())
+
+        with patch.object(self.mgr, "_persist_used_marker", return_value=False):
+            self.assertFalse(self.mgr.commit_shutdown_token())
+
+    def test_app_state_commit_shutdown_token_delegation(self):
+        """app_state.commit_shutdown_token propagates boolean result from manager."""
+        from app_state import app_state
+
+        with patch.object(app_state.shutdown_manager, "commit_shutdown_token", return_value=True):
+            self.assertTrue(app_state.commit_shutdown_token())
+
+        with patch.object(app_state.shutdown_manager, "commit_shutdown_token", return_value=False):
+            self.assertFalse(app_state.commit_shutdown_token())
+
 
 if __name__ == "__main__":
     unittest.main()

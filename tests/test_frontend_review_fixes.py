@@ -508,3 +508,64 @@ def test_settings_tabpanels_accessibility_and_hidden_attributes():
     assert 'p.setAttribute("hidden", "");' in activate_tab_body
     assert 'p.setAttribute("tabindex", "0");' in activate_tab_body
     assert 'p.removeAttribute("tabindex");' in activate_tab_body
+
+def test_eventsource_wrapped_listener_exception_handling():
+    """Custom listeners throwing exceptions must not crash EventSource dispatch or leak unhandled errors."""
+    client_source = _read("static/js/api_client.ts")
+    assert "wrappedListener: EventListener" in client_source
+    assert "try {" in client_source
+    assert '_log.error("Unhandled error in EventSource custom listener:", err);' in client_source
+
+    node = shutil.which("node")
+    if node is None:
+        return
+
+    script = r"""
+    const vm = require("vm");
+    let loggedError = null;
+    let heartbeatReset = false;
+    let listenerCalled = false;
+
+    // Simulate APIClient context
+    const ctx = {
+      thisObj: {
+        lastEventId: 0,
+        _resetHeartbeatTimer: () => { heartbeatReset = true; },
+      },
+      _log: {
+        error: (msg, err) => { loggedError = { msg, err }; },
+      },
+      listener: () => {
+        listenerCalled = true;
+        throw new Error("UI listener crashed!");
+      },
+      event: { lastEventId: "42" },
+    };
+
+    const code = `
+      const wrappedListener = (event) => {
+        if (event && event.lastEventId) {
+          thisObj.lastEventId = Number(event.lastEventId) || 0;
+        }
+        thisObj._resetHeartbeatTimer();
+        try {
+          if (typeof listener === "function") {
+            listener(event);
+          }
+        } catch (err) {
+          _log.error("Unhandled error in EventSource custom listener:", err);
+        }
+      };
+      wrappedListener(event);
+    `;
+
+    vm.runInNewContext(code, ctx);
+    if (!heartbeatReset) throw new Error("heartbeat was not reset");
+    if (!listenerCalled) throw new Error("listener was not called");
+    if (!loggedError || loggedError.err.message !== "UI listener crashed!") {
+      throw new Error("listener error was not safely caught and logged");
+    }
+    """
+    proc = subprocess.run([node, "-e", script], capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, f"Node script failed: {proc.stderr}"
+

@@ -539,3 +539,45 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
         self.assertIn('<context type="market_data">', last_msg["content"])
         self.assertIn("AAPL_CONTEXT", last_msg["content"])
 
+    def test_api_chat_closes_db_on_timeout_fetching_path(self):
+        """Request thread must close chat_history DB connection when returning fetching: True on timeout."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        block_event = threading.Event()
+        real_executor = ThreadPoolExecutor(max_workers=1)
+        original_executor = app_state.execution.executor
+        app_state.execution.executor = real_executor
+
+        original_close = app_state.ai.chat_history.close
+        mock_close = MagicMock()
+        app_state.ai.chat_history.close = mock_close
+
+        try:
+            with (
+                patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"),
+                patch("routes.api_analysis.CHAT_PREPARE_WAIT_SEC", 0.01),
+                patch(
+                    "routes.api_analysis._call_mistral_chat_with_retry",
+                    side_effect=lambda *a, **k: (block_event.wait(timeout=5), "Done")[1],
+                ),
+            ):
+                response = self.client.post(
+                    "/api/chat",
+                    json={
+                        "market": "us",
+                        "symbol": "AAPL_TIMEOUT",
+                        "message": "Timeout test",
+                        "request_token": "timeout-token-001",
+                    },
+                    environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                )
+                self.assertEqual(response.status_code, 200)
+                data = json.loads(response.data)
+                self.assertTrue(data.get("fetching"))
+                mock_close.assert_called()
+        finally:
+            block_event.set()
+            app_state.ai.chat_history.close = original_close
+            app_state.execution.executor = original_executor
+            real_executor.shutdown(wait=False)
+

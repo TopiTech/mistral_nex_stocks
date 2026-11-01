@@ -242,11 +242,14 @@ class ShutdownTokenManager:
 
             return secrets.compare_digest(self.shutdown_token, token)
 
-    def commit_shutdown_token(self) -> None:
+    def commit_shutdown_token(self) -> bool:
         """Mark the shutdown token as consumed after a validated operation succeeds."""
         with self._lock:
-            self._persist_used_marker()
+            if not self._persist_used_marker():
+                self.logger.error("Failed to persist shutdown token consumption")
+                return False
             self.shutdown_token_used = True
+            return True
 
     def rotate_shutdown_token(self):
         import secrets

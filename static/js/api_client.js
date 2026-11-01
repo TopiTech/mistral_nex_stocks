@@ -303,10 +303,17 @@ class APIClient {
               this.lastEventId = Number(event.lastEventId) || 0;
             }
             this._resetHeartbeatTimer(onError);
-            if (typeof listener === "function") {
-              listener.call(eventSource, event);
-            } else if (typeof listener.handleEvent === "function") {
-              listener.handleEvent(event);
+            try {
+              if (typeof listener === "function") {
+                listener.call(eventSource, event);
+              } else if (typeof listener.handleEvent === "function") {
+                listener.handleEvent(event);
+              }
+            } catch (err) {
+              _log.error(
+                "Unhandled error in EventSource custom listener:",
+                err,
+              );
             }
           };
           if (typeof listener === "object" || typeof listener === "function") {

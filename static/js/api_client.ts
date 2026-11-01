@@ -422,10 +422,14 @@ class APIClient {
                 Number((event as MessageEvent).lastEventId) || 0;
             }
             this._resetHeartbeatTimer(onError);
-            if (typeof listener === "function") {
-              listener.call(eventSource, event as MessageEvent);
-            } else if (typeof listener.handleEvent === "function") {
-              listener.handleEvent(event);
+            try {
+              if (typeof listener === "function") {
+                listener.call(eventSource, event as MessageEvent);
+              } else if (typeof listener.handleEvent === "function") {
+                listener.handleEvent(event);
+              }
+            } catch (err: unknown) {
+              _log.error("Unhandled error in EventSource custom listener:", err);
             }
           };
           if (typeof listener === "object" || typeof listener === "function") {

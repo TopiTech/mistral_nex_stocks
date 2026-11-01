@@ -230,7 +230,6 @@ def api_shutdown():
         time.sleep(0.3)
         _terminate_current_process(logger)
 
-    shutdown_thread = threading.Thread(target=shutdown_server)
-    shutdown_thread.daemon = True
+    shutdown_thread = threading.Thread(target=shutdown_server, daemon=True)
     shutdown_thread.start()
     return ok_response({"message": "Shutting down..."})

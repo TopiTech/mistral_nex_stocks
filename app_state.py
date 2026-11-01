@@ -449,8 +449,8 @@ class AppState:
     def validate_shutdown_token(self, token: str) -> bool:
         return self.shutdown_manager.validate_shutdown_token(token)
 
-    def commit_shutdown_token(self) -> None:
-        self.shutdown_manager.commit_shutdown_token()
+    def commit_shutdown_token(self) -> bool:
+        return self.shutdown_manager.commit_shutdown_token()
 
     def rotate_shutdown_token(self):
         self.shutdown_manager.rotate_shutdown_token()

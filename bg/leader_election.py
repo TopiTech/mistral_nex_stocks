@@ -224,8 +224,9 @@ def _try_acquire_leader_lock() -> bool:
                     lock_path.touch(exist_ok=True)
                     lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
                     opened_here = True
-                fd = lock_f.fileno()
+                acquired = False
                 try:
+                    fd = lock_f.fileno()
                     lock_f.seek(0)
                     msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                     lock_f.seek(0)
@@ -233,15 +234,18 @@ def _try_acquire_leader_lock() -> bool:
                     lock_f.write(str(pid))
                     lock_f.flush()
                     _set_leader_lock_file(lock_f)
+                    acquired = True
                     return True
                 except OSError:
-                    try:
-                        lock_f.close()
-                    except OSError:
-                        pass
-                    if not opened_here:
-                        _set_leader_lock_file(None)
                     return False
+                finally:
+                    if not acquired:
+                        try:
+                            lock_f.close()
+                        except OSError:
+                            pass
+                        if not opened_here:
+                            _set_leader_lock_file(None)
             return _try_acquire_atomic_lock(lock_path, pid)
         else:  # Unix
             if fcntl is not None:
@@ -251,6 +255,7 @@ def _try_acquire_leader_lock() -> bool:
                     lock_path.touch(exist_ok=True)
                     lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
                     opened_here = True
+                acquired = False
                 try:
                     fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
                     lock_f.seek(0)
@@ -258,15 +263,18 @@ def _try_acquire_leader_lock() -> bool:
                     lock_f.write(str(pid))
                     lock_f.flush()
                     _set_leader_lock_file(lock_f)
+                    acquired = True
                     return True
                 except OSError:
-                    try:
-                        lock_f.close()
-                    except OSError:
-                        pass
-                    if not opened_here:
-                        _set_leader_lock_file(None)
                     return False
+                finally:
+                    if not acquired:
+                        try:
+                            lock_f.close()
+                        except OSError:
+                            pass
+                        if not opened_here:
+                            _set_leader_lock_file(None)
             return _try_acquire_atomic_lock(lock_path, pid)
     except (OSError, ValueError) as exc:
         logger.debug("Failed to acquire sync leader lock: %s", exc)

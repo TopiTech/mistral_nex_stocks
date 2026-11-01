@@ -1548,7 +1548,14 @@ def test_generate_ai_portfolio_concurrent_same_theme_single_save(tmp_path):
 
             t2 = threading.Thread(target=worker)
             t2.start()
-            _time.sleep(0.2)  # let t2 reach the 'already in progress' wait path
+            # Give t2 deterministic time to observe the inflight slot before release
+            deadline2 = _time.monotonic() + 5.0
+            while _time.monotonic() < deadline2:
+                with aps._AI_GEN_LOCK:
+                    if "並行テーマ" in aps._AI_GEN_INFLIGHT:
+                        _time.sleep(0.05)
+                        break
+                _time.sleep(0.01)
             release_generation.set()
             t1.join(timeout=10)
             t2.join(timeout=10)
@@ -2026,12 +2033,14 @@ def test_generate_ai_portfolio_concurrent_failure_fallback_self_generation(tmp_p
     from services import ai_portfolio_service as aps
 
     test_storage = tmp_path / "ai_portfolios_fallback.json"
+    first_acquired = threading.Event()
     release_first = threading.Event()
     results: dict[str, object] = {}
     errors: list[Exception] = []
 
     def failing_first_generation():
         aps._acquire_ai_generation_slot("並行フォールバックテーマ")
+        first_acquired.set()
         release_first.wait(timeout=10)
         aps._release_ai_generation_slot("並行フォールバックテーマ")
 
@@ -2079,11 +2088,17 @@ def test_generate_ai_portfolio_concurrent_failure_fallback_self_generation(tmp_p
         ):
             t_first = threading.Thread(target=failing_first_generation)
             t_first.start()
-            _time.sleep(0.1)
+            assert first_acquired.wait(timeout=5.0), "failing_first_generation failed to acquire slot"
 
             t_waiter = threading.Thread(target=waiter_generation)
             t_waiter.start()
-            _time.sleep(0.2)
+            deadline = _time.monotonic() + 5.0
+            while _time.monotonic() < deadline:
+                with aps._AI_GEN_LOCK:
+                    if "並行フォールバックテーマ" in aps._AI_GEN_INFLIGHT:
+                        _time.sleep(0.05)
+                        break
+                _time.sleep(0.01)
 
             release_first.set()
             t_first.join(timeout=10)

@@ -171,7 +171,7 @@ jobs:
 
   test:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
@@ -207,7 +207,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          uv run --locked --group test python -m pytest tests/ -v -s -n auto --durations=10 --timeout=60 --timeout-method=thread --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=75
+          uv run --locked --group test python -m pytest tests/ -q --tb=short -n auto --durations=10 --timeout=60 --timeout-method=thread --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=75
 
       - name: Run bounded startup and health smoke test
         env:

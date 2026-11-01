@@ -22,16 +22,21 @@ def test_metrics_executor_stats_reports_depth():
     queued (reads the real ThreadPoolExecutor ``_work_queue``; the previous
     version never called the helper and only checked local arithmetic)."""
     import threading
-    import time
 
     ex = ExecutionState()
     gate = threading.Event()
+    started = threading.Event()
+
+    def blocking_task() -> None:
+        started.set()
+        gate.wait()
+
     try:
         # sync_refresh_executor has a single worker, so a second task stays
         # queued while the first blocks on the gate.
-        ex.sync_refresh_executor.submit(gate.wait)
+        ex.sync_refresh_executor.submit(blocking_task)
+        assert started.wait(timeout=5.0), "blocking task failed to start"
         ex.sync_refresh_executor.submit(lambda: None)
-        time.sleep(0.2)
         stats = ex.executor_stats(ex.sync_refresh_executor)
         assert stats["max_queue_size"] == ex.sync_refresh_executor._max_queue_size
         assert stats["pending"] >= 1, f"pending should reflect the queued task, got {stats}"

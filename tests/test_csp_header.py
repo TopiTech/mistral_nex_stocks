@@ -70,6 +70,20 @@ class CSPHeaderTest(unittest.TestCase):
         self.assertIn("https://s3.tradingview.com", frame_src)
         self.assertIn("https://www.tradingview-widget.com", frame_src)
 
+    def test_csp_connect_src_allows_jsdelivr_for_sourcemaps(self):
+        """Source maps and fetch requests for jsdelivr assets (Chart.js etc) must be allowed."""
+        rv = self.client.get("/api/health")
+        csp = rv.headers.get("Content-Security-Policy") or rv.headers.get(
+            "Content-Security-Policy-Report-Only"
+        )
+        self.assertIsNotNone(csp)
+        assert csp is not None
+        connect_src_match = re.search(r"connect-src\s+([^;]+)", csp)
+        self.assertIsNotNone(connect_src_match)
+        assert connect_src_match is not None
+        connect_src = connect_src_match.group(1)
+        self.assertIn("https://cdn.jsdelivr.net", connect_src)
+
     def test_csp_report_only_mode(self):
         import os
         from unittest.mock import patch

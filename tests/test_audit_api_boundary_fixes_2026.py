@@ -13,6 +13,7 @@ Verifies:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -123,7 +124,13 @@ class TestDependencyAuditAndDocConsistency:
         req_lint = (ROOT_DIR / "requirements-lint.txt").read_text(encoding="utf-8")
         assert "pylint==4.0.9" in req_lint
 
+    @pytest.mark.network
     def test_pip_audit_cleanliness(self) -> None:
+        if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+            pytest.skip(
+                "pip-audit cleanliness is exercised in the dedicated security-scan CI job; "
+                "skipped in unit test matrix to prevent network flakiness"
+            )
         venv_pip_audit = (
             ROOT_DIR
             / ".venv"

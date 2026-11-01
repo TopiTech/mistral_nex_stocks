@@ -96,7 +96,7 @@ def init_security(app: Flask) -> CSRFProtect:
     # (paired with the `Reporting-Endpoints` response header). Until `report-to`
     # gains broader browser support, include both directives so that older
     # browsers fall back to `report-uri` while modern ones use `report-to`.
-    _connect_src = "connect-src 'self' https://*.tradingview.com wss://*.tradingview.com"
+    _connect_src = "connect-src 'self' https://*.tradingview.com wss://*.tradingview.com https://cdn.jsdelivr.net"
     if not _is_prod_env:
         _connect_src += " http://localhost:* http://127.0.0.1:*"
 

@@ -2078,18 +2078,56 @@ async function chatPollingReply(payload) {
   return data.reply || "応答を取得できませんでした";
 }
 
-async function sendChat(wrapper) {
-  if (!wrapper || typeof wrapper.querySelector !== "function") return;
-  const input = wrapper.querySelector(".chat-input");
+async function sendChat(wrapper, inputEl = null) {
+  const targetWrapper =
+    wrapper ||
+    (typeof currentDrawerActiveWrapper !== "undefined"
+      ? currentDrawerActiveWrapper
+      : null);
+  if (!targetWrapper && !inputEl) return;
+
+  let input = inputEl;
+  if (!input) {
+    if (targetWrapper && typeof targetWrapper.querySelector === "function") {
+      input = targetWrapper.querySelector(".chat-input");
+    }
+    if (!input) {
+      const drawerAi = document.getElementById("drawerTabAiContent");
+      input = drawerAi?.querySelector(".chat-input");
+    }
+    if (!input) {
+      input = document.querySelector("#stock-detail-drawer .chat-input");
+    }
+  }
   if (!input) return;
-  const sendBtn = wrapper.querySelector(".chat-send-btn");
-  const log = wrapper.querySelector(".chat-log");
-  const stockKey = wrapper.dataset?.stockKey;
+
+  const chatSection =
+    input.closest(".chat-section") || input.parentElement?.parentElement;
+  const sendBtn =
+    chatSection?.querySelector(".chat-send-btn") ||
+    targetWrapper?.querySelector?.(".chat-send-btn");
+  const log =
+    chatSection?.querySelector(".chat-log") ||
+    targetWrapper?.querySelector?.(".chat-log");
+  const stockKey =
+    targetWrapper?.dataset?.stockKey ||
+    targetWrapper?.__stockData?.symbol ||
+    "";
 
   if (input.disabled || sendBtn?.disabled) return;
 
   const msg = input.value.trim();
-  if (!msg || !HAS_MISTRAL_API_KEY) return;
+  if (!msg) return;
+
+  if (!HAS_MISTRAL_API_KEY) {
+    if (typeof showToast === "function") {
+      showToast(
+        "❌ APIキーが未設定です。設定画面で登録してください。",
+        "#ff7d7d",
+      );
+    }
+    return;
+  }
 
   input.disabled = true;
   if (sendBtn) sendBtn.disabled = true;

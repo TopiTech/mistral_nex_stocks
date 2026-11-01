@@ -1271,7 +1271,10 @@ function createStockCard(stock, marketContext) {
   setupBtn(".chat-toggle-btn", () => {
     openAiDrawer(stock.symbol, stock.name, stock.market);
   });
-  setupBtn(".chat-send-btn", () => sendChat(wrapper));
+  setupBtn(".chat-send-btn", (e) => {
+    const input = e?.currentTarget?.parentElement?.querySelector(".chat-input");
+    sendChat(wrapper, input);
+  });
   setupBtn(".pf-edit-btn", () => openPortfolioModal(stockKey));
   setupBtn(".alert-edit-btn", () => openAlertModal(stockKey));
 
@@ -1279,7 +1282,7 @@ function createStockCard(stock, marketContext) {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter") {
       e.preventDefault();
-      sendChat(wrapper);
+      sendChat(wrapper, e.currentTarget);
     }
   });
   detail
@@ -2736,6 +2739,16 @@ async function sendAiDrawerMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
   if (inputEl.disabled) return;
+
+  if (typeof HAS_MISTRAL_API_KEY !== "undefined" && !HAS_MISTRAL_API_KEY) {
+    if (typeof showToast === "function") {
+      showToast(
+        "❌ APIキーが未設定です。設定画面で登録してください。",
+        "#ff7d7d",
+      );
+    }
+    return;
+  }
   const generation = ++aiDrawerSendGeneration;
 
   inputEl.disabled = true;

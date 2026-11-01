@@ -445,8 +445,8 @@ def api_stocks_stream() -> Any:
                         "ok": False,
                         "error": "stream error",
                         "error_flag": True,
-                        "code": str(ErrorCode.INTERNAL_ERROR),
-                        "error_code": int(ErrorCode.INTERNAL_ERROR),
+                        "code": str(ErrorCode.INTERNAL_SERVER_ERROR),
+                        "error_code": int(ErrorCode.INTERNAL_SERVER_ERROR),
                         "message": "stream error",
                         "details": {"reason": "stream error"},
                     }
@@ -468,8 +468,8 @@ def api_stocks_stream() -> Any:
                         "ok": False,
                         "error": "stream error",
                         "error_flag": True,
-                        "code": str(ErrorCode.INTERNAL_ERROR),
-                        "error_code": int(ErrorCode.INTERNAL_ERROR),
+                        "code": str(ErrorCode.INTERNAL_SERVER_ERROR),
+                        "error_code": int(ErrorCode.INTERNAL_SERVER_ERROR),
                         "message": "stream error",
                         "details": {"reason": "stream error"},
                     }

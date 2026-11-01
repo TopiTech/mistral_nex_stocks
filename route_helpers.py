@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from functools import wraps
 from typing import Any, cast
 
-from flask import Flask, Response, current_app, g, request
+from flask import Flask, Response, current_app, g, has_app_context, request
 from pydantic import ValidationError
 
 from app_state import app_state
@@ -2198,6 +2198,9 @@ def _submit_in_app_context(executor, job_fn, app=None):
         _proxy: Any = current_app
         app = cast(Flask, _proxy._get_current_object())
 
+    # Capture request_id from calling thread context (if present)
+    req_id = getattr(g, "request_id", None) if has_app_context() else None
+
     work_queue = getattr(executor, "_work_queue", None)
     if work_queue is not None:
         try:
@@ -2211,6 +2214,8 @@ def _submit_in_app_context(executor, job_fn, app=None):
 
     def _runner():
         with app.app_context():
+            if req_id is not None:
+                g.request_id = req_id
             try:
                 job_fn()
             finally:

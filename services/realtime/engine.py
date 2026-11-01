@@ -219,6 +219,72 @@ class RealtimeMarketEngine:
         registration: tuple[str, str, object, int] | None = None,
     ) -> None:
         symbol = payload["symbol"]
+        is_jp = symbol.endswith((".T", ".t")) or symbol.isdigit()
+        decimals = 2 if is_jp else 4
+
+        raw_price = payload.get("price")
+        if (
+            raw_price is not None
+            and isinstance(raw_price, (int, float))
+            and not is_bool_like(raw_price)
+            and math.isfinite(raw_price)
+            and raw_price > 0
+        ):
+            payload["price"] = round(float(raw_price), decimals)
+
+        raw_ch = payload.get("change")
+        raw_chp = payload.get("change_percent")
+
+        has_ch = (
+            raw_ch is not None
+            and isinstance(raw_ch, (int, float))
+            and not is_bool_like(raw_ch)
+            and math.isfinite(raw_ch)
+        )
+        has_chp = (
+            raw_chp is not None
+            and isinstance(raw_chp, (int, float))
+            and not is_bool_like(raw_chp)
+            and math.isfinite(raw_chp)
+        )
+
+        prev_close = _get_yfinance_previous_close(symbol)
+        if prev_close and prev_close > 0:
+            if "previous_close" not in payload:
+                payload["previous_close"] = prev_close
+            try:
+                from app_state import app_state
+
+                if hasattr(app_state, "market") and app_state.market is not None:
+                    app_state.market.update_previous_close_cache(symbol, prev_close)
+            except Exception as exc:
+                logger.debug("Failed updating previous_close cache for %s: %s", symbol, exc)
+
+            if (
+                raw_price is not None
+                and isinstance(raw_price, (int, float))
+                and not is_bool_like(raw_price)
+                and math.isfinite(raw_price)
+                and raw_price > 0
+                and (not has_ch or (raw_ch == 0.0 and abs(float(raw_price) - prev_close) > 1e-4))
+            ):
+                calc_change = float(raw_price) - prev_close
+                payload["change"] = round(calc_change, decimals)
+                if not has_chp or raw_chp == 0.0:
+                    payload["change_percent"] = round((calc_change / prev_close) * 100, 2)
+                has_ch = True
+                has_chp = True
+
+        if has_ch and "change" in payload:
+            ch_val = payload["change"]
+            if isinstance(ch_val, (int, float)) and not is_bool_like(ch_val) and math.isfinite(ch_val):
+                payload["change"] = round(float(ch_val), decimals)
+
+        if has_chp and "change_percent" in payload:
+            chp_val = payload["change_percent"]
+            if isinstance(chp_val, (int, float)) and not is_bool_like(chp_val) and math.isfinite(chp_val):
+                payload["change_percent"] = round(float(chp_val), 2)
+
         with self.store_lock:
             if registration is not None and not self._registration_is_current_locked(registration):
                 return
@@ -470,7 +536,7 @@ class RealtimeMarketEngine:
                 pending = self._dirty_symbols
             if not prev_store:
                 for sym, current in self.market_store.items():
-                    deltas[sym] = current
+                    deltas[sym] = dict(current)
                     prev_store[sym] = dict(current)
                 pending.clear()
             else:
@@ -487,7 +553,7 @@ class RealtimeMarketEngine:
                         or prev.get("change_percent") != cur.get("change_percent")
                         or prev.get("volume") != cur.get("volume")
                     ):
-                        deltas[sym] = cur
+                        deltas[sym] = dict(cur)
                         prev_store[sym] = dict(cur)
                     pending.discard(sym)
         if deltas:
@@ -516,7 +582,7 @@ class RealtimeMarketEngine:
                 pending = self._dirty_pts_symbols
             if not prev_store:
                 for sym, current in self.pts_store.items():
-                    deltas[sym] = current
+                    deltas[sym] = dict(current)
                     prev_store[sym] = dict(current)
                 pending.clear()
             else:
@@ -531,9 +597,11 @@ class RealtimeMarketEngine:
                         or prev.get("price") != cur.get("price")
                         or prev.get("volume") != cur.get("volume")
                         or prev.get("change") != cur.get("change")
+                        or prev.get("change_percent") != cur.get("change_percent")
+                        or prev.get("pts_time") != cur.get("pts_time")
                         or prev.get("pts_trading") != cur.get("pts_trading")
                     ):
-                        deltas[sym] = cur
+                        deltas[sym] = dict(cur)
                         prev_store[sym] = dict(cur)
                     pending.discard(sym)
         if deltas:

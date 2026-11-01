@@ -425,12 +425,32 @@ def api_stocks_stream() -> Any:
                 current_app.logger.warning(
                     "SSE listener limit exceeded concurrently id=%s: %s", request_id, exc
                 )
-                err_data = json.dumps({"error": "too many SSE connections"})
+                err_data = json.dumps(
+                    {
+                        "ok": False,
+                        "error": "too many SSE connections",
+                        "error_flag": True,
+                        "code": str(ErrorCode.TOO_MANY_REQUESTS),
+                        "error_code": int(ErrorCode.TOO_MANY_REQUESTS),
+                        "message": "too many SSE connections",
+                        "details": {"reason": "too many SSE connections"},
+                    }
+                )
                 yield f"event: error\ndata: {err_data}\n\n"
                 return
             current_app.logger.exception("SSE stream error id=%s", request_id)
             try:
-                err_data = json.dumps({"error": "stream error"})
+                err_data = json.dumps(
+                    {
+                        "ok": False,
+                        "error": "stream error",
+                        "error_flag": True,
+                        "code": str(ErrorCode.INTERNAL_ERROR),
+                        "error_code": int(ErrorCode.INTERNAL_ERROR),
+                        "message": "stream error",
+                        "details": {"reason": "stream error"},
+                    }
+                )
                 yield f"event: error\ndata: {err_data}\n\n"
             except Exception:
                 pass
@@ -443,7 +463,17 @@ def api_stocks_stream() -> Any:
                 return
             current_app.logger.exception("SSE stream error id=%s", request_id)
             try:
-                err_data = json.dumps({"error": "stream error"})
+                err_data = json.dumps(
+                    {
+                        "ok": False,
+                        "error": "stream error",
+                        "error_flag": True,
+                        "code": str(ErrorCode.INTERNAL_ERROR),
+                        "error_code": int(ErrorCode.INTERNAL_ERROR),
+                        "message": "stream error",
+                        "details": {"reason": "stream error"},
+                    }
+                )
                 yield f"event: error\ndata: {err_data}\n\n"
             except Exception:
                 pass

@@ -2109,9 +2109,11 @@ async function sendChat(wrapper, inputEl = null) {
   const log =
     chatSection?.querySelector(".chat-log") ||
     targetWrapper?.querySelector?.(".chat-log");
+  const drawerEl = document.getElementById("stock-detail-drawer");
   const stockKey =
     targetWrapper?.dataset?.stockKey ||
     targetWrapper?.__stockData?.symbol ||
+    drawerEl?.dataset?.stockKey ||
     "";
 
   if (input.disabled || sendBtn?.disabled) return;
@@ -2153,9 +2155,30 @@ async function sendChat(wrapper, inputEl = null) {
   log.appendChild(aiDiv);
   ensureChatDisclaimer(log);
 
+  let resolvedSymbol = stock?.symbol || "";
+  let resolvedMarket = stock?.market || "";
+
+  if (!resolvedSymbol && stockKey) {
+    if (stockKey.includes(":")) {
+      const colonIdx = stockKey.indexOf(":");
+      resolvedMarket = stockKey.substring(0, colonIdx);
+      resolvedSymbol = stockKey.substring(colonIdx + 1);
+    } else {
+      resolvedSymbol = stockKey;
+    }
+  }
+
+  if (!resolvedMarket) {
+    const isJp =
+      resolvedSymbol.endsWith(".T") ||
+      resolvedSymbol.endsWith(".t") ||
+      /^\d{4}$/.test(resolvedSymbol);
+    resolvedMarket = isJp ? "jp" : "us";
+  }
+
   const payload = {
-    symbol: stock?.symbol || stockKey,
-    market: stock?.market || "us",
+    symbol: resolvedSymbol,
+    market: resolvedMarket,
     message: msg,
     request_token: createRequestToken(),
   };

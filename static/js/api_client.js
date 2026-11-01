@@ -400,6 +400,7 @@ class APIClient {
   closeSSE() {
     this._lastSSEParams = null;
     this.isVisibilityPaused = false;
+    this.sseReconnectAttempt = 0;
     this._stopSleepWatchdog();
     this._teardownSSE();
   }

@@ -154,6 +154,7 @@ project-includes = [
     "app_factory",
     "app_bg.py",
     "bg",
+    "config",
     "config_store.py",
     "config_utils.py",
     "constants.py",

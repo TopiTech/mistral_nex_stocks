@@ -967,6 +967,20 @@ if (
       historyPrefetchJobTimers.forEach((timerId) => clearTimeout(timerId));
       historyPrefetchJobTimers = [];
     }
+    if (
+      typeof _chartPrefPersistTimer !== "undefined" &&
+      _chartPrefPersistTimer
+    ) {
+      clearTimeout(_chartPrefPersistTimer);
+      _chartPrefPersistTimer = null;
+    }
+    if (
+      typeof _stockColorsPersistTimer !== "undefined" &&
+      _stockColorsPersistTimer
+    ) {
+      clearTimeout(_stockColorsPersistTimer);
+      _stockColorsPersistTimer = null;
+    }
     _flushChartPrefsToStorage();
     _flushStockColors();
   });

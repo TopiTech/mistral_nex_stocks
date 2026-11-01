@@ -1031,14 +1031,16 @@ function connectSSE(overrideMode) {
  * @param {Object} data - SSE payload with stocks.us, stocks.jp, stocks.idx
  */
 function updateStocksFromSseData(data) {
+  if (!data) return;
   const isInitialSnapshot = data.stream_event === "initial_snapshot";
+  const stocks = data.stocks || {};
   // SSE diff で _removed として届いた銘柄は、state 更新後に DOM カードを
   // 明示的に破棄する（差分更新パスは state に残る銘柄しか走査しないため、
   // この処理が無いと削除済みカードが画面に残留する）。
   const removedEntries = [];
   if (data.stream_event === "diff") {
     ["us", "jp", "idx"].forEach((market) => {
-      (data.stocks[market] || []).forEach((s) => {
+      (stocks[market] || []).forEach((s) => {
         if (s && s._removed && s.symbol) {
           removedEntries.push({ market, symbol: s.symbol });
         }
@@ -1046,19 +1048,19 @@ function updateStocksFromSseData(data) {
     });
   }
   const incomingData = {
-    us: (data.stocks.us || []).map((s) => ({
+    us: (stocks.us || []).map((s) => ({
       ...s,
       market: "us",
       __live_update: !isInitialSnapshot,
     })),
-    jp: (data.stocks.jp || []).map((s) => ({
+    jp: (stocks.jp || []).map((s) => ({
       ...s,
       market: "jp",
       __live_update: !isInitialSnapshot,
     })),
   };
-  if (data.stocks.idx) {
-    incomingData.idx = data.stocks.idx.map((s) => ({
+  if (stocks.idx) {
+    incomingData.idx = stocks.idx.map((s) => ({
       ...s,
       market: "idx",
       __live_update: !isInitialSnapshot,

@@ -14,7 +14,8 @@
 (function () {
   "use strict";
 
-  function isJpSymbol(symbol) {
+  function isJpSymbol(symbol, market) {
+    if (market === "jp") return true;
     if (typeof symbol !== "string") return false;
     const upper = symbol.toUpperCase();
     if (upper.endsWith(".T")) return true;
@@ -25,8 +26,8 @@
     return /^[0-9][A-Z0-9]{3}$/.test(code);
   }
 
-  function roundChange(value, symbol) {
-    const decimals = isJpSymbol(symbol) ? 2 : 4;
+  function roundChange(value, symbol, market) {
+    const decimals = isJpSymbol(symbol, market) ? 2 : 4;
     const factor = 10 ** decimals;
     let rounded = Math.round((value + Number.EPSILON) * factor) / factor;
     if (Object.is(rounded, -0)) rounded = 0;
@@ -163,6 +164,7 @@
           // 1. Sync delta with global window.state.stocks & compute change from yfinance previous_close
           let yfPrevClose = null;
           let foundStock = null;
+          let foundMarket = null;
           if (
             data.previous_close != null &&
             typeof data.previous_close === "number" &&
@@ -184,6 +186,7 @@
                 );
                 if (sItem) {
                   foundStock = sItem;
+                  foundMarket = sItem.market || m;
                   // Resolve yfinance previous close from stock object
                   if (!yfPrevClose) {
                     if (
@@ -213,7 +216,8 @@
                     Number.isFinite(data.price)
                   ) {
                     const diff = data.price - yfPrevClose;
-                    const newChange = roundChange(diff, symbol);
+                    const itemMarket = sItem.market || m;
+                    const newChange = roundChange(diff, symbol, itemMarket);
                     const newPct = roundPercent((diff / yfPrevClose) * 100);
                     data.change = newChange;
                     data.change_percent = newPct;
@@ -231,6 +235,10 @@
             });
           }
 
+          const effectiveMarket =
+            data.market ||
+            (foundStock ? foundStock.market || foundMarket : null);
+
           // If not resolved from state, check if delta had calculated change/pct
           if (
             data.change == null &&
@@ -240,13 +248,13 @@
             Number.isFinite(data.price)
           ) {
             const diff = data.price - yfPrevClose;
-            data.change = roundChange(diff, symbol);
+            data.change = roundChange(diff, symbol, effectiveMarket);
             data.change_percent = roundPercent((diff / yfPrevClose) * 100);
             data.previous_close = yfPrevClose;
           }
 
           if (typeof data.change === "number" && Number.isFinite(data.change)) {
-            data.change = roundChange(data.change, symbol);
+            data.change = roundChange(data.change, symbol, effectiveMarket);
           }
           if (
             typeof data.change_percent === "number" &&

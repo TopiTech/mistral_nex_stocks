@@ -263,3 +263,4 @@ def test_pyproject_includes_app_factory_and_config():
 
     pyrefly_includes = config.get("tool", {}).get("pyrefly", {}).get("project-includes", [])
     assert "app_factory" in pyrefly_includes
+    assert "config" in pyrefly_includes

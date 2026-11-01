@@ -413,7 +413,9 @@ def _update_indices_data(
     }
     _safety_net_budget = 2
     for key, sym in critical_indices.items():
-        if key not in new_header_data or new_header_data[key].get("price") == "--":
+        entry = new_header_data.get(key)
+        critical_price = entry.get("price") if isinstance(entry, dict) else None
+        if key not in new_header_data or critical_price in (None, "", "--"):
             if app_state.market.is_yf_rate_limited():
                 continue
             if _safety_net_budget <= 0:

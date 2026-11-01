@@ -128,7 +128,7 @@ def _json_safe(value: Any) -> Any:
         numeric = float(value)
         return numeric if math.isfinite(numeric) else None
     if isinstance(value, dict):
-        return {k: _json_safe(v) for k, v in value.items()}
+        return {str(k) if not isinstance(k, str) else k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     if hasattr(value, "tolist"):

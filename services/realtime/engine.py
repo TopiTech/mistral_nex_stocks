@@ -126,10 +126,16 @@ class RealtimeMarketEngine:
     ) -> None:
         if registration is not None and not self._registration_is_current(registration):
             return
+        market_hint = registration[0] if registration is not None else payload.get("market")
         symbol = payload["symbol"]
         upper_symbol = symbol.upper() if isinstance(symbol, str) else ""
         bare_code = upper_symbol.removesuffix(".T")
-        is_jpy = upper_symbol.endswith(".T") or is_jp_stock_code(bare_code)
+        is_jpy = (
+            market_hint == "jp"
+            or payload.get("market") == "jp"
+            or upper_symbol.endswith(".T")
+            or is_jp_stock_code(bare_code)
+        )
         decimals = 2 if is_jpy else 4
         price = payload.get("price")
         if (

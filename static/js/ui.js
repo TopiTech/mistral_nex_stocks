@@ -261,12 +261,13 @@ async function ensureStockDetails(wrapper) {
       showErrorBanner(errMsg);
     }
   } catch (e) {
-    clearTimeout(timeoutId);
     if (!isCurrentRequest()) return;
     const isTimeout = e.name === "AbortError";
     const statusText = isTimeout ? "タイムアウト" : "取得失敗";
     showErrorBanner(statusText);
     logger.warn("Details fetch error:", e);
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 function renderFavorites() {

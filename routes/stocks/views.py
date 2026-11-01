@@ -10,7 +10,7 @@ import queue
 import time
 from typing import Any
 
-from flask import Blueprint, Response, current_app, g, jsonify, request
+from flask import Blueprint, Response, current_app, g, request
 
 from app_state import app_state
 from constants import (
@@ -627,9 +627,8 @@ def api_heatmap() -> Any:
 
     cached_present, cached = _get_cached_value_if_present(cache_key, CACHE_DURATION_HEATMAP)
     if cached_present and cached:
-        if isinstance(cached, dict) and "ok" not in cached:
-            cached = {"ok": True, "success": True, **cached}
-        return jsonify(cached)
+        payload = cached if isinstance(cached, dict) else {"data": cached}
+        return ok_response(payload)
 
     disk_cached = None
     try:
@@ -675,16 +674,10 @@ def api_heatmap() -> Any:
             logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
 
     if disk_cached and isinstance(disk_cached, dict) and disk_cached.get("stocks"):
-        if "ok" not in disk_cached:
-            disk_cached = {"ok": True, "success": True, **disk_cached}
-        return jsonify(disk_cached)
+        return ok_response(disk_cached)
 
-    return jsonify(
-        {
-            "ok": True,
-            "success": True,
-            "stocks": [],
-            "fetching": True,
-            "message": "ヒートマップデータを取得中です。しばらくしてから再読み込みしてください。",
-        }
+    return ok_response(
+        stocks=[],
+        fetching=True,
+        message="ヒートマップデータを取得中です。しばらくしてから再読み込みしてください。",
     )

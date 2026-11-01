@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import math
+import numbers
 import os
 import random
 import re
@@ -1306,6 +1307,40 @@ def call_mistral_chat(
         raise
 
 
+def _json_safe_tool_value(value: Any) -> Any:
+    """Make provider/tool data valid JSON before it enters the LLM prompt."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        return bool(value)
+    if hasattr(value, "tolist") and callable(value.tolist):
+        try:
+            return _json_safe_tool_value(value.tolist())
+        except Exception:
+            pass
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        try:
+            return _json_safe_tool_value(value.to_dict())
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return {str(key): _json_safe_tool_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_tool_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe_tool_value(item) for item in sorted(value, key=str)]
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        val_f = float(value)
+        return val_f if math.isfinite(val_f) else None
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False)
+        return value
+    except (TypeError, ValueError):
+        return str(value)[:2_000]
+
+
 def call_mistral_chat_with_tools(
     api_key: str,
     messages: list[Any],
@@ -1378,23 +1413,6 @@ def call_mistral_chat_with_tools(
     def _tool_loop_error(message: str) -> dict[str, Any]:
         return {"error": {"message": message, "status_code": 502}}
 
-    def _json_safe_tool_value(value: Any) -> Any:
-        """Make provider/tool data valid JSON before it enters the LLM prompt."""
-        if isinstance(value, float):
-            return value if math.isfinite(value) else None
-        if isinstance(value, dict):
-            return {str(key): _json_safe_tool_value(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [_json_safe_tool_value(item) for item in value]
-        if isinstance(value, (set, frozenset)):
-            return [_json_safe_tool_value(item) for item in sorted(value, key=str)]
-        if value is None or isinstance(value, (str, int, bool)):
-            return value
-        try:
-            json.dumps(value, ensure_ascii=False, allow_nan=False)
-            return value
-        except (TypeError, ValueError):
-            return str(value)[:2_000]
 
     def _serialize_tool_result(value: Any) -> str:
         try:

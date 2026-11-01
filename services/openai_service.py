@@ -15,6 +15,8 @@ import copy
 import hashlib
 import json
 import logging
+import math
+import numbers
 import re
 import time
 from datetime import UTC, datetime
@@ -1216,6 +1218,40 @@ def _gen_token() -> str:
     return secrets.token_hex(4)
 
 
+def _json_safe_tool_value(value: Any) -> Any:
+    """Make provider/tool data valid JSON before it enters the LLM prompt."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        return bool(value)
+    if hasattr(value, "tolist") and callable(value.tolist):
+        try:
+            return _json_safe_tool_value(value.tolist())
+        except Exception:
+            pass
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        try:
+            return _json_safe_tool_value(value.to_dict())
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return {str(k): _json_safe_tool_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_tool_value(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe_tool_value(v) for v in sorted(value, key=str)]
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        val_f = float(value)
+        return val_f if math.isfinite(val_f) else None
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False)
+        return value
+    except (TypeError, ValueError):
+        return str(value)[:2_000]
+
+
 def call_openai_chat_with_tools(
     api_key: str,
     messages: list[Any],
@@ -1229,7 +1265,6 @@ def call_openai_chat_with_tools(
 ) -> dict[str, Any]:
     """Execute OpenAI Chat Completion with autonomous tool calling agent loop."""
     import concurrent.futures
-    import math
 
     _proxy: Any = current_app
     flask_app: Any = _proxy._get_current_object() if has_app_context() else None
@@ -1250,22 +1285,6 @@ def call_openai_chat_with_tools(
     if not isinstance(messages, list) or not messages:
         return _tool_loop_error("messages must be a non-empty list")
 
-    def _json_safe_tool_value(value: Any) -> Any:
-        if isinstance(value, float):
-            return value if math.isfinite(value) else None
-        if isinstance(value, dict):
-            return {str(k): _json_safe_tool_value(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [_json_safe_tool_value(v) for v in value]
-        if isinstance(value, (set, frozenset)):
-            return [_json_safe_tool_value(v) for v in sorted(value, key=str)]
-        if value is None or isinstance(value, (str, int, bool)):
-            return value
-        try:
-            json.dumps(value, ensure_ascii=False, allow_nan=False)
-            return value
-        except (TypeError, ValueError):
-            return str(value)[:2_000]
 
     def _serialize_tool_result(value: Any) -> str:
         try:

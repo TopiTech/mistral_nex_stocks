@@ -218,8 +218,18 @@ class RealtimeMarketEngine:
         *,
         registration: tuple[str, str, object, int] | None = None,
     ) -> None:
+        if registration is not None and not self._registration_is_current(registration):
+            return
+        market_hint = registration[0] if registration is not None else payload.get("market")
         symbol = payload["symbol"]
-        is_jp = symbol.endswith((".T", ".t")) or symbol.isdigit()
+        upper_symbol = symbol.upper() if isinstance(symbol, str) else ""
+        bare_code = upper_symbol.removesuffix(".T")
+        is_jp = (
+            market_hint == "jp"
+            or payload.get("market") == "jp"
+            or upper_symbol.endswith(".T")
+            or is_jp_stock_code(bare_code)
+        )
         decimals = 2 if is_jp else 4
 
         raw_price = payload.get("price")
@@ -848,13 +858,19 @@ class RealtimeMarketEngine:
                 and thread.is_alive()
             ):
                 tracker = self._pts_fetch_tracker()
-                if tracker is None or tracker.is_set():
+                if tracker is not None and not tracker.is_set():
+                    # Active fetch in-flight: wait for bounded drain.
+                    drained = self._drain_pts_fetch()
+                    if thread.is_alive():
+                        # Give thread time to exit its loop once fetch completed (or 2.0s grace on timeout).
+                        thread.join(timeout=5.0 if drained else 2.0)
+                else:
                     # Idle worker: sleeps abort promptly on running=False.
                     thread.join(timeout=5.0)
-                if thread.is_alive() and not self._drain_pts_fetch():
-                    # Still fetching after the bounded drain: final grace
-                    # for a just-finished fetch, then report explicitly.
-                    thread.join(timeout=2.0)
+                    if thread.is_alive() and not self._drain_pts_fetch():
+                        # Still fetching after the bounded drain: final grace
+                        # for a just-finished fetch, then report explicitly.
+                        thread.join(timeout=2.0)
             if self.pts_thread is not None and not self.pts_thread.is_alive():
                 self.pts_thread = None
             self.tv_client.stop()

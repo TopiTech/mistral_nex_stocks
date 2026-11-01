@@ -296,6 +296,23 @@ function formatStockChangeMetrics(stock) {
   let ariaPrefix = "変動なし";
   let changeText = "--";
   let pctText = "--%";
+  // Market-aware display precision must live inside this function: the
+  // regression harness extracts this function alone via regex, so a
+  // top-level helper would be undefined in that context.
+  const _isJpForChange = (() => {
+    if (stock?.market === "jp") return true;
+    const symbol = stock?.symbol;
+    if (typeof symbol !== "string") return false;
+    const upper = symbol.toUpperCase();
+    if (upper.endsWith(".T")) return true;
+    const bare = upper.includes(":")
+      ? upper.slice(upper.lastIndexOf(":") + 1)
+      : upper;
+    const code = bare.endsWith(".T") ? bare.slice(0, -2) : bare;
+    return /^[0-9][A-Z0-9]{3}$/.test(code);
+  })();
+  const changeDecimals = _isJpForChange ? 2 : 4;
+  const changeFactor = 10 ** changeDecimals;
 
   const changeNum =
     typeof stock?.change === "number"
@@ -305,7 +322,8 @@ function formatStockChangeMetrics(stock) {
         : NaN;
 
   if (Number.isFinite(changeNum)) {
-    let rawChange = Math.round((changeNum + Number.EPSILON) * 100) / 100;
+    let rawChange =
+      Math.round((changeNum + Number.EPSILON) * changeFactor) / changeFactor;
     if (Object.is(rawChange, -0)) rawChange = 0;
     changeText = String(rawChange);
     if (rawChange > 0) {

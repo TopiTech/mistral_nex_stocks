@@ -14,6 +14,31 @@
 (function () {
   "use strict";
 
+  function isJpSymbol(symbol) {
+    if (typeof symbol !== "string") return false;
+    const upper = symbol.toUpperCase();
+    if (upper.endsWith(".T")) return true;
+    const bare = upper.includes(":")
+      ? upper.slice(upper.lastIndexOf(":") + 1)
+      : upper;
+    const code = bare.endsWith(".T") ? bare.slice(0, -2) : bare;
+    return /^[0-9][A-Z0-9]{3}$/.test(code);
+  }
+
+  function roundChange(value, symbol) {
+    const decimals = isJpSymbol(symbol) ? 2 : 4;
+    const factor = 10 ** decimals;
+    let rounded = Math.round((value + Number.EPSILON) * factor) / factor;
+    if (Object.is(rounded, -0)) rounded = 0;
+    return rounded;
+  }
+
+  function roundPercent(value) {
+    let rounded = Math.round((value + Number.EPSILON) * 100) / 100;
+    if (Object.is(rounded, -0)) rounded = 0;
+    return rounded;
+  }
+
   class RealtimeStockClient {
     constructor() {
       // Previous prices are per-card UI state, not a symbol registry. They are
@@ -188,14 +213,8 @@
                     Number.isFinite(data.price)
                   ) {
                     const diff = data.price - yfPrevClose;
-                    let newChange =
-                      Math.round((diff + Number.EPSILON) * 100) / 100;
-                    if (Object.is(newChange, -0)) newChange = 0;
-                    let newPct =
-                      Math.round(
-                        ((diff / yfPrevClose) * 100 + Number.EPSILON) * 100,
-                      ) / 100;
-                    if (Object.is(newPct, -0)) newPct = 0;
+                    const newChange = roundChange(diff, symbol);
+                    const newPct = roundPercent((diff / yfPrevClose) * 100);
                     data.change = newChange;
                     data.change_percent = newPct;
                     data.previous_close = yfPrevClose;
@@ -221,30 +240,19 @@
             Number.isFinite(data.price)
           ) {
             const diff = data.price - yfPrevClose;
-            let newChange = Math.round((diff + Number.EPSILON) * 100) / 100;
-            if (Object.is(newChange, -0)) newChange = 0;
-            let newPct =
-              Math.round(((diff / yfPrevClose) * 100 + Number.EPSILON) * 100) /
-              100;
-            if (Object.is(newPct, -0)) newPct = 0;
-            data.change = newChange;
-            data.change_percent = newPct;
+            data.change = roundChange(diff, symbol);
+            data.change_percent = roundPercent((diff / yfPrevClose) * 100);
             data.previous_close = yfPrevClose;
           }
 
           if (typeof data.change === "number" && Number.isFinite(data.change)) {
-            let rc = Math.round((data.change + Number.EPSILON) * 100) / 100;
-            if (Object.is(rc, -0)) rc = 0;
-            data.change = rc;
+            data.change = roundChange(data.change, symbol);
           }
           if (
             typeof data.change_percent === "number" &&
             Number.isFinite(data.change_percent)
           ) {
-            let rp =
-              Math.round((data.change_percent + Number.EPSILON) * 100) / 100;
-            if (Object.is(rp, -0)) rp = 0;
-            data.change_percent = rp;
+            data.change_percent = roundPercent(data.change_percent);
           }
 
           // 2. Stock card wrappers

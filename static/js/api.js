@@ -1155,7 +1155,6 @@ let _loadIndicesInterval = null;
 
 async function loadIndicesLoop() {
   stopLoadIndicesLoop();
-  if (_loadIndicesInterval) return;
   const fetchIndices = async () => {
     try {
       const { data } = await apiFetch("/api/indices", {}, { showToast: false });

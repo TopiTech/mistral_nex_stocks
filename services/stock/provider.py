@@ -31,7 +31,11 @@ from services.stock.errors import (
 from services.stock.retry import with_yfinance_retry
 from services.stock.sanitize import _finite_float, sanitize_fundamental_dict
 from session_manager import register_auth_reset_listener
-from utils.caching import history_short_cache_key
+from utils.caching import (
+    history_frame_disk_key,
+    history_short_cache_key,
+    legacy_history_frame_disk_key,
+)
 from utils.normalization import is_jp_stock_code, normalize_history_frame
 from utils.tradingview_mapper import get_ticker_exchange, resolve_exchange_prefix
 
@@ -216,6 +220,7 @@ class YFinanceProvider(BaseStockProvider):
         # performs no network I/O, so an open circuit or a 429 window must not
         # turn a known-good cached frame into an empty result. The gates still
         # protect the network fetch below, which is where they are meaningful.
+        interval = interval or "1d"
         cache_key = history_short_cache_key(symbol, period, interval)
         try:
             with m_state.yfinance_short_cache_lock:
@@ -233,23 +238,22 @@ class YFinanceProvider(BaseStockProvider):
         except (AttributeError, KeyError, RuntimeError):
             cached_hist = None
 
-        disk_key = f"hist_df_{symbol}_{period}"
         if m_state.is_circuit_open("yfinance_history", symbol=circuit_key):
             logger.info("stock-history circuit open symbol=%s", circuit_key)
-            disk_hist = self._load_history_from_disk_cache(disk_key)
+            disk_hist = self._load_history_disk_fallback(symbol, period, interval)
             if disk_hist is not None and not disk_hist.empty:
                 return disk_hist
             return pd.DataFrame()
         if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
-            disk_hist = self._load_history_from_disk_cache(disk_key)
+            disk_hist = self._load_history_disk_fallback(symbol, period, interval)
             if disk_hist is not None and not disk_hist.empty:
                 return disk_hist
             return pd.DataFrame()
 
         t = self.get_ticker(symbol)
         if not t:
-            disk_hist = self._load_history_from_disk_cache(disk_key)
+            disk_hist = self._load_history_disk_fallback(symbol, period, interval)
             if disk_hist is not None and not disk_hist.empty:
                 return disk_hist
             return pd.DataFrame()
@@ -370,9 +374,29 @@ class YFinanceProvider(BaseStockProvider):
             logger.debug("Failed to derive quote from history for %s: %s", symbol, exc)
             return None
 
+    def _load_history_disk_fallback(
+        self, symbol: str, period: str, interval: str
+    ) -> pd.DataFrame | None:
+        """Load a disk-cached frame produced for the exact requested interval.
+
+        Legacy entries written before the interval became part of the key are
+        valid daily bars only, so they are consulted exclusively when the
+        caller asked for ``1d``.  Serving them for an intraday request would
+        return daily candles while the payload still reported the intraday
+        interval.
+        """
+        frame = self._load_history_from_disk_cache(
+            history_frame_disk_key(symbol, period, interval)
+        )
+        if (frame is None or frame.empty) and interval == "1d":
+            frame = self._load_history_from_disk_cache(
+                legacy_history_frame_disk_key(symbol, period)
+            )
+        return frame
+
     def _fetch_single_history(self, symbol: str, period: str, m_state: Any) -> pd.DataFrame:
         """単一銘柄の履歴を yfinance から取得し、キャッシュを更新する"""
-        disk_key = f"hist_df_{symbol}_{period}"
+        disk_key = history_frame_disk_key(symbol, period, "1d")
         try:
             df = self.get_history(symbol, period=period)
             if df is not None and not df.empty:
@@ -397,7 +421,7 @@ class YFinanceProvider(BaseStockProvider):
             TimeoutError,
         ) as exc:
             logger.warning("Failed to fetch history for %s: %s", symbol, exc)
-        cached = self._load_history_from_disk_cache(disk_key)
+        cached = self._load_history_disk_fallback(symbol, period, "1d")
         if cached is not None and not cached.empty:
             return cached
         return pd.DataFrame()
@@ -609,8 +633,7 @@ class YFinanceProvider(BaseStockProvider):
             )
             cached_dfs = []
             for sym in symbols:
-                disk_key = f"hist_df_{sym}_{period}"
-                cached = self._load_history_from_disk_cache(disk_key)
+                cached = self._load_history_disk_fallback(sym, period, "1d")
                 if cached is not None and not cached.empty:
                     df_col = cached.copy()
                     df_col.columns = pd.MultiIndex.from_product([df_col.columns, [sym]])
@@ -697,7 +720,7 @@ class YFinanceProvider(BaseStockProvider):
                                 hist_by_symbol[sym] = sym_df
                                 # Cache it
                                 cache_key = history_short_cache_key(sym, period, "1d")
-                                disk_key = f"hist_df_{sym}_{period}"
+                                disk_key = history_frame_disk_key(sym, period, "1d")
                                 with m_state.yfinance_short_cache_lock:
                                     m_state.yfinance_short_cache[cache_key] = sym_df.copy()
                                 try:
@@ -768,8 +791,7 @@ class YFinanceProvider(BaseStockProvider):
             # Fallback to disk cache for any symbols that still failed network fetch
             for sym in cache_miss_symbols:
                 if sym not in hist_by_symbol:
-                    disk_key = f"hist_df_{sym}_{period}"
-                    cached_disk = self._load_history_from_disk_cache(disk_key)
+                    cached_disk = self._load_history_disk_fallback(sym, period, "1d")
                     if cached_disk is not None:
                         hist_by_symbol[sym] = cached_disk
 

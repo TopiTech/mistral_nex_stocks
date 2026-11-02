@@ -598,7 +598,7 @@ class TestAPI7WatchlistRollbackTOCTOU:
                     "shares": 123,
                     "avg_price": 5.0,
                 }
-            raise RuntimeError("disk full")
+            raise UserStocksPersistError("disk full")
 
         with patch(
             "routes.stocks.ai_portfolio.save_user_stocks",
@@ -622,7 +622,7 @@ class TestAPI7WatchlistRollbackTOCTOU:
         }
         with patch(
             "routes.stocks.ai_portfolio.save_user_stocks",
-            side_effect=RuntimeError("disk full"),
+            side_effect=UserStocksPersistError("disk full"),
         ):
             resp = client.post("/api/ai-portfolio/copy-to-my", json=payload, headers=ORIGIN)
         assert resp.status_code == 503

@@ -97,6 +97,28 @@ def history_short_payload_cache_key(symbol: str, period: str, interval: str = "a
     return f"history_short_payload_{symbol}_{period}_{interval}"
 
 
+def history_frame_disk_key(symbol: str, period: str, interval: str = "1d") -> str:
+    """Canonical disk-cache key for a raw OHLCV history frame.
+
+    Every dimension of the upstream query must be part of the key.  The
+    previous key (``hist_df_{symbol}_{period}``) described only two of the
+    three, so a fallback read for ``interval="5m"`` could return a daily frame
+    written by the sync path (which always fetches ``1d``) while the response
+    still reported the requested interval.
+    """
+    return f"hist_df_{symbol}_{period}_{interval}"
+
+
+def legacy_history_frame_disk_key(symbol: str, period: str) -> str:
+    """Pre-interval disk-cache key, kept readable for daily data only.
+
+    Entries written by older builds carry no interval; they are
+    indistinguishable from a daily fetch, so only a daily request may fall
+    back to them (and they are never written again).
+    """
+    return f"hist_df_{symbol}_{period}"
+
+
 def sanitize_cache_key(key):
     """キャッシュキーを安全にサニタイズし、長いキーの衝突も防ぐ。
 

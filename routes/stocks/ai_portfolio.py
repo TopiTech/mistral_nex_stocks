@@ -60,6 +60,7 @@ from utils.stock_payload import (
     get_current_usdjpy_rate,
     ok_response,
 )
+from utils.storage import UserStocksPersistError
 from utils.text_utils import _parse_json_request
 
 logger = logging.getLogger(__name__)
@@ -827,7 +828,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
     if added_count > 0:
         try:
             save_user_stocks()
-        except Exception as exc:
+        except UserStocksPersistError as exc:
             logger.warning("save_user_stocks during copy-to-my: %s", exc)
             with app_state.market.user_stocks_lock:
                 # API-7: conditional rollback — only remove entries this

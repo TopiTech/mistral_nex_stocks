@@ -287,6 +287,8 @@ def api_generate_ai_portfolio() -> Any:
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_result_cache.pop(inflight_key, None)
             return _ai_portfolio_error_response(cached_err, g)
         if cached_result is not None:
             return ok_response({"portfolio": cached_result})
@@ -328,12 +330,11 @@ def api_generate_ai_portfolio() -> Any:
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
-                    if result_holder["error"] is None and result_holder["result"] is not None:
-                        ai_portfolio_result_cache[inflight_key] = (
-                            time.time(),
-                            result_holder["result"],
-                            None,
-                        )
+                    ai_portfolio_result_cache[inflight_key] = (
+                        time.time(),
+                        result_holder["result"],
+                        result_holder["error"],
+                    )
                 result_holder["done"].set()
 
         try:
@@ -374,6 +375,8 @@ def api_generate_ai_portfolio() -> Any:
         })
 
     if result_holder["error"] is not None:
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.pop(inflight_key, None)
         return _ai_portfolio_error_response(result_holder["error"], g)
 
     return ok_response({"portfolio": result_holder["result"]})
@@ -456,12 +459,12 @@ def api_rebalance_ai_portfolio() -> Any:
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
+                    ai_portfolio_result_cache[inflight_key] = (
+                        time.time(),
+                        result_holder["result"],
+                        result_holder["error"],
+                    )
                     if result_holder["error"] is None and result_holder["result"] is not None:
-                        ai_portfolio_result_cache[inflight_key] = (
-                            time.time(),
-                            result_holder["result"],
-                            None,
-                        )
                         generate_key = f"generate:{conversation_scope}:{theme}"
                         ai_portfolio_result_cache[generate_key] = (
                             time.time(),

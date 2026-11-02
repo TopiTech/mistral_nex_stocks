@@ -1033,10 +1033,13 @@ def _chat_error_response(
         payload["request_token"] = operation_token
 
     exc_str = _sanitize_error_message(str(exc or ""))
+    req_id = getattr(flask_g, "request_id", "-")
+    err_type = type(exc).__name__
+
     if "認証" in exc_str or "401" in exc_str:
         current_app.logger.warning(
             "api_chat auth error id=%s error=%s",
-            getattr(flask_g, "request_id", "-"),
+            req_id,
             exc_str,
         )
         msg = (
@@ -1051,8 +1054,8 @@ def _chat_error_response(
     ):
         current_app.logger.error(
             "api_chat network error id=%s error_type=%s: %s",
-            getattr(flask_g, "request_id", "-"),
-            type(exc).__name__,
+            req_id,
+            err_type,
             exc_str,
         )
         msg = "AIサービスに接続できませんでした。ネットワーク環境またはAPI接続先を確認してください。"
@@ -1060,8 +1063,8 @@ def _chat_error_response(
     elif isinstance(exc, (httpx.TimeoutException, requests.Timeout)):
         current_app.logger.error(
             "api_chat timeout error id=%s error_type=%s: %s",
-            getattr(flask_g, "request_id", "-"),
-            type(exc).__name__,
+            req_id,
+            err_type,
             exc_str,
         )
         msg = "AIサービス呼び出しがタイムアウトしました。モデルの応答に時間がかかっています。しばらく待ってから再試行してください。"
@@ -1069,8 +1072,8 @@ def _chat_error_response(
     elif isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
             "api_chat processing error id=%s error_type=%s: %s",
-            getattr(flask_g, "request_id", "-"),
-            type(exc).__name__,
+            req_id,
+            err_type,
             exc_str,
         )
         msg = "入力データが不正です"
@@ -1078,8 +1081,8 @@ def _chat_error_response(
     else:
         current_app.logger.error(
             "api_chat system error id=%s error_type=%s: %s",
-            getattr(flask_g, "request_id", "-"),
-            type(exc).__name__,
+            req_id,
+            err_type,
             exc_str,
         )
         msg = (
@@ -1093,8 +1096,9 @@ def _chat_error_response(
     payload["error"] = msg
     payload["message"] = msg
     payload["code"] = status_code
-    payload["request_id"] = getattr(flask_g, "request_id", "-")
+    payload["request_id"] = req_id
     payload["error_code"] = f"ERR_CHAT_{status_code}"
+    payload["details"] = {"reason": msg, "error_type": err_type}
     return jsonify(payload), status_code
 
 

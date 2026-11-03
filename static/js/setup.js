@@ -93,6 +93,87 @@ function applyPreset(name) {
   }
 }
 
+async function verifyMistralSetup() {
+  const btn = getEl("verifyMistralSetupBtn");
+  const statusEl = getEl("mistralSetupVerifyStatus");
+  const key = (getEl("apiKey")?.value || "").trim();
+  const apiMode = getApiMode();
+  const agentId = (getEl("agentId")?.value || "").trim();
+
+  if (!key) {
+    if (statusEl) {
+      statusEl.textContent = "Mistral APIキーを入力してください";
+      statusEl.className = "verify-status error";
+    }
+    return;
+  }
+
+  if (apiMode === "agents" && !agentId) {
+    if (statusEl) {
+      statusEl.textContent = "Agents API使用時はAgent IDを入力してください";
+      statusEl.className = "verify-status error";
+    }
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "テスト中...";
+  }
+  if (statusEl) {
+    statusEl.textContent = "接続確認中...";
+    statusEl.className = "verify-status";
+  }
+
+  try {
+    const res = await csrfFetch("/api/credentials/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_provider: "mistral",
+        api_key: key,
+        mistral_api_mode: apiMode,
+        mistral_agent_id: agentId,
+      }),
+      signal: getOrCreateSetupAbortController().signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && (data.ok || data.success)) {
+      const latency =
+        typeof data.latency_ms === "number" ? data.latency_ms : "-";
+      const modelCount =
+        typeof data.model_count === "number"
+          ? data.model_count
+          : data.models?.length || 0;
+      if (statusEl) {
+        statusEl.textContent = `接続成功 (${latency}ms)！利用可能モデル: ${modelCount}件`;
+        statusEl.className = "verify-status success";
+      }
+    } else {
+      const err =
+        data.details?.reason ||
+        data.error ||
+        data.message ||
+        "接続に失敗しました";
+      if (statusEl) {
+        statusEl.textContent = `エラー: ${err}`;
+        statusEl.className = "verify-status error";
+      }
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    if (statusEl) {
+      statusEl.textContent = `エラー: ${err.message || "通信エラー"}`;
+      statusEl.className = "verify-status error";
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "接続テスト";
+    }
+  }
+}
+
 async function verifyOpenaiSetup() {
   const btn = getEl("verifyOpenaiSetupBtn");
   const statusEl = getEl("openaiSetupVerifyStatus");
@@ -516,6 +597,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".preset-pill-btn").forEach((btn) => {
     btn.addEventListener("click", () => applyPreset(btn.dataset.preset));
   });
+
+  // Test Mistral connection button
+  getEl("verifyMistralSetupBtn")?.addEventListener("click", verifyMistralSetup);
 
   // Test OpenAI connection button
   getEl("verifyOpenaiSetupBtn")?.addEventListener("click", verifyOpenaiSetup);

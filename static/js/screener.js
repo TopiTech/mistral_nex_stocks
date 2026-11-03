@@ -650,6 +650,8 @@
       );
       addBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
+        if (addBtn.dataset.inFlight === "true") return;
+        addBtn.dataset.inFlight = "true";
         addBtn.disabled = true;
         addBtn.textContent = "追加中...";
         try {
@@ -691,6 +693,11 @@
             addBtn.textContent = "再試行";
             addBtn.title = reason;
             addBtn.disabled = false;
+            setTimeout(() => {
+              if (!addBtn.classList.contains("added")) {
+                addBtn.textContent = "➕ 追加";
+              }
+            }, 2500);
             if (typeof showToast === "function") {
               showToast(reason, "#ff5555");
             }
@@ -698,9 +705,16 @@
         } catch (_err) {
           addBtn.textContent = "エラー";
           addBtn.disabled = false;
+          setTimeout(() => {
+            if (!addBtn.classList.contains("added")) {
+              addBtn.textContent = "➕ 追加";
+            }
+          }, 2500);
           if (typeof showToast === "function") {
             showToast("通信エラーが発生しました", "#ff5555");
           }
+        } finally {
+          delete addBtn.dataset.inFlight;
         }
       });
 

@@ -483,14 +483,22 @@ async function refresh() {
   return ctx;
 }
 
-async function withBusy(btn, fn) {
+async function withBusy(btn, fn, busyText = null) {
   const prev = btn.textContent;
   btn.disabled = true;
+  if (busyText) {
+    btn.textContent = busyText;
+  }
   try {
     return await fn();
   } finally {
     btn.disabled = false;
     btn.textContent = prev;
+    try {
+      await refresh();
+    } catch (_) {
+      // 復旧時のrefreshエラーは呼び出し元の結果を上書きしないよう抑制
+    }
   }
 }
 
@@ -544,22 +552,30 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAsyncButton("refreshBtn", () => withBusy($("refreshBtn"), refresh));
 
   bindAsyncButton("startBtn", () =>
-    withBusy($("startBtn"), async () => {
-      const res = await send("startBackend");
-      if (!res?.ok) throw new Error(res?.error || "起動に失敗しました");
-      await waitForBackendReady();
-      await refresh();
-    }),
+    withBusy(
+      $("startBtn"),
+      async () => {
+        setSafeText(healthMeta, "バックエンド起動中... (最大30秒)");
+        const res = await send("startBackend");
+        if (!res?.ok) throw new Error(res?.error || "起動に失敗しました");
+        await waitForBackendReady();
+      },
+      "⏳ 起動中...",
+    ),
   );
 
   bindAsyncButton("stopBtn", () =>
-    withBusy($("stopBtn"), async () => {
-      stopStockPolling();
-      const res = await send("stopBackend");
-      if (!res?.ok) throw new Error(res?.error || "停止に失敗しました");
-      await new Promise((r) => setTimeout(r, 1000));
-      await refresh();
-    }),
+    withBusy(
+      $("stopBtn"),
+      async () => {
+        setSafeText(healthMeta, "バックエンド停止中...");
+        stopStockPolling();
+        const res = await send("stopBackend");
+        if (!res?.ok) throw new Error(res?.error || "停止に失敗しました");
+        await new Promise((r) => setTimeout(r, 1000));
+      },
+      "⏳ 停止中...",
+    ),
   );
 
   $("openMainBtn")?.addEventListener("click", () => openAppPage("/main"));
@@ -785,13 +801,31 @@ async function loadDetectedTickers() {
           if (response?.ok) {
             addBtn.textContent = "✓ 追加済";
             addBtn.className = "mini-add-btn success";
+            addBtn.title = "";
           } else {
+            const errorMsg = response?.error || "銘柄の追加に失敗しました";
+            handleUIError(errorMsg);
+            addBtn.title = errorMsg;
             addBtn.textContent = "失敗";
             addBtn.disabled = false;
+            setTimeout(() => {
+              if (addBtn.textContent !== "✓ 追加済") {
+                addBtn.textContent = "➕ 追加";
+              }
+            }, 2500);
           }
-        } catch (_e) {
+        } catch (err) {
+          const errorMsg =
+            err?.message || String(err || "銘柄の追加中にエラーが発生しました");
+          handleUIError(err);
+          addBtn.title = errorMsg;
           addBtn.textContent = "エラー";
           addBtn.disabled = false;
+          setTimeout(() => {
+            if (addBtn.textContent !== "✓ 追加済") {
+              addBtn.textContent = "➕ 追加";
+            }
+          }, 2500);
         }
       });
 

@@ -462,3 +462,7 @@ button:focus-visible {
   padding: 4px 6px;
   border-radius: 4px;
 }
+
+.mt-8 {
+  margin-top: 8px;
+}

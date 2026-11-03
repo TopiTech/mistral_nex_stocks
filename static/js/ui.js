@@ -949,6 +949,8 @@ function buildDetailPanel(
       `chip-btn ${isOn ? "active" : ""}`,
       ind.label,
     );
+    btn.type = "button";
+    btn.setAttribute("aria-pressed", String(isOn));
     btn.dataset.ind = ind.key;
     indGroup.appendChild(btn);
   });
@@ -3868,6 +3870,12 @@ function openFullscreenChart(wrapper) {
           const inv = getChartPref(stockKey, "interval", "auto");
           refreshStockChart(targetWrapper, p, inv);
           setTimeout(() => {
+            if (
+              modal.classList.contains("hidden") ||
+              modal.dataset.stockKey !== stockKey
+            ) {
+              return;
+            }
             const prefetch = getFreshPrefetchedHistory(stockKey, p, inv);
             if (prefetch) {
               drawChart(
@@ -3964,6 +3972,12 @@ function openFullscreenChart(wrapper) {
         });
       } else {
         refreshStockChart(targetWrapper, period, interval).then(() => {
+          if (
+            modal.classList.contains("hidden") ||
+            modal.dataset.stockKey !== stockKey
+          ) {
+            return;
+          }
           const fresh = getFreshPrefetchedHistory(stockKey, period, interval);
           if (fresh) {
             drawChart(targetWrapper, fresh.formattedData, fresh.ohlcData, {

@@ -449,7 +449,7 @@ def api_credentials_verify():
             )
         return ok_response(res_dict)
 
-    api_key = data.get("mistral_api_key")
+    api_key = data.get("mistral_api_key") or data.get("api_key")
     if not api_key:
         from credential_manager import get_mistral_api_key
 

@@ -795,6 +795,13 @@ function openPortfolioModal(stockKey) {
       const payload = await res.json().catch(() => ({}));
       if (res.ok && !payload.error) {
         showToast("✅ ポートフォリオを更新しました", "#7dffb0");
+        if (Array.isArray(payload?.warnings) && payload.warnings.length > 0) {
+          payload.warnings.forEach((w) => {
+            if (typeof w === "string" && w.trim()) {
+              showToast(`⚠️ ${w.trim()}`, "#ffd166");
+            }
+          });
+        }
         closeModal("portfolioModal");
         // Immediately update local state so portfolio data is not lost
         // when fetchInitialStocks() receives stripped data from GET /api/stocks.
@@ -808,7 +815,12 @@ function openPortfolioModal(stockKey) {
               shares: sharesParsed.value,
               avg_price: avgPriceParsed.value,
             };
-            if (fxRateParsed.value !== null) {
+            const isNonUsMarket =
+              market === "JP" ||
+              market === "jp" ||
+              market === "idx" ||
+              market === "IDX";
+            if (!isNonUsMarket && fxRateParsed.value !== null) {
               updated.avg_fx_rate = fxRateParsed.value;
             } else {
               delete updated.avg_fx_rate;
@@ -824,7 +836,11 @@ function openPortfolioModal(stockKey) {
           : "";
         const msg =
           detailReason ||
-          (payload.error ? String(payload.error) : "更新に失敗しました");
+          (payload?.error
+            ? String(payload.error)
+            : payload?.message
+              ? String(payload.message)
+              : "更新に失敗しました");
         showToast(`❌ ${msg}`, "#ff7d7d");
       }
     } catch (_e) {

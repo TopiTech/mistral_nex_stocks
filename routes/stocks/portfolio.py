@@ -228,13 +228,17 @@ def api_update_portfolio() -> Any:
             status_code=503,
         )
     invalidate_stock_caches(symbol)
+    persisted_fx_rate: float | None = None
+    raw_fx = val.get("avg_fx_rate") if isinstance(val, dict) else None
+    if isinstance(raw_fx, (int, float)):
+        persisted_fx_rate = float(raw_fx)
     ensure_stock_placeholder_in_caches(
         symbol,
         _stock_display_name(symbol, market),
         market,
         shares=shares,
         avg_price=avg_price,
-        avg_fx_rate=avg_fx_rate,
+        avg_fx_rate=persisted_fx_rate,
     )
 
     _invalidate_sse_payload_cache()

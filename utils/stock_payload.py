@@ -116,22 +116,24 @@ def clear_yfinance_short_cache_key(key: str) -> None:
 
 def _get_stock_container(market: str | None):
     """Return the mutable user-stock container for a normalized market."""
-    if market == "us":
+    norm = market.lower() if isinstance(market, str) else None
+    if norm == "us":
         return app_state.market.user_us
-    if market == "jp":
+    if norm == "jp":
         return app_state.market.user_jp
-    if market == "idx":
+    if norm == "idx":
         return app_state.market.user_idx
     return None
 
 
 def _default_stock_names(market: str) -> dict[str, str]:
     """Return default stock name mappings for a market."""
-    if market == "us":
+    norm = market.lower() if isinstance(market, str) else ""
+    if norm == "us":
         return DEFAULT_US
-    if market == "jp":
+    if norm == "jp":
         return DEFAULT_JP
-    if market == "idx":
+    if norm == "idx":
         return DEFAULT_IDX
     return {}
 
@@ -399,7 +401,8 @@ def _extract_portfolio_fields(name_or_dict, market: str | None = None):
                 avg_fx_rate = val if math.isfinite(val) and val > 0 else None
             except (TypeError, ValueError, OverflowError):
                 avg_fx_rate = None
-    if market in ("jp", "idx") or (market is not None and market != "us"):
+    norm_market = market.lower() if isinstance(market, str) else None
+    if norm_market in ("jp", "idx") or (norm_market is not None and norm_market != "us"):
         avg_fx_rate = None
     return name, shares, avg_price, avg_fx_rate
 

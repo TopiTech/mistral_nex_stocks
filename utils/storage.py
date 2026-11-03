@@ -12,12 +12,13 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import config_store
 from app_state import app_state
 from constants import DEFAULT_USDJPY_RATE
 from crypto_utils import _is_windows, protect_data, unprotect_data
-from utils.normalization import normalize_symbol_for_market
+from utils.normalization import is_bool_like, normalize_symbol_for_market
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,33 @@ _USER_STOCKS_READ_FAILED = object()
 # shrink the budget.
 _STORAGE_FCNTL_LOCK_MAX_RETRIES = 100
 _STORAGE_FCNTL_LOCK_RETRY_DELAY_SEC = 0.025
+
+
+def _coerce_positive_fx_rate(value: Any) -> float:
+    """Return a finite positive USD/JPY rate or the documented default.
+
+    ``bool`` is rejected explicitly: ``float(True)`` is ``1.0``, which would
+    silently value every USD holding at 1 JPY/USD when a corrupted store
+    contains ``true``. NaN/Inf and non-positive values are equally unusable.
+    """
+    if value is None or is_bool_like(value):
+        return DEFAULT_USDJPY_RATE
+    try:
+        rate = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_USDJPY_RATE
+    return rate if math.isfinite(rate) and rate > 0.0 else DEFAULT_USDJPY_RATE
+
+
+def _coerce_fx_rate_timestamp(value: Any) -> float:
+    """Return a finite positive timestamp, or 0.0 for missing/invalid input."""
+    if value is None or is_bool_like(value):
+        return 0.0
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return timestamp if math.isfinite(timestamp) and timestamp > 0.0 else 0.0
 
 
 def _normalize_jp_holding_keys(holdings: dict) -> dict:
@@ -342,20 +370,12 @@ def load_user_stocks(force=False):
             app_state.market.user_idx = idx
             snapshot_us_keys = list(us.keys())
             snapshot_jp_keys = list(jp.keys())
-            try:
-                loaded_rate = float(data.get("last_usdjpy_rate", DEFAULT_USDJPY_RATE))
-                app_state.market.last_usdjpy_rate = (
-                    loaded_rate if math.isfinite(loaded_rate) and loaded_rate > 0.0 else DEFAULT_USDJPY_RATE
-                )
-            except (ValueError, TypeError):
-                app_state.market.last_usdjpy_rate = DEFAULT_USDJPY_RATE
-            try:
-                rate_ts = float(data.get("last_usdjpy_rate_ts", 0.0))
-                app_state.market.last_usdjpy_rate_ts = (
-                    rate_ts if math.isfinite(rate_ts) and rate_ts > 0.0 else 0.0
-                )
-            except (ValueError, TypeError):
-                app_state.market.last_usdjpy_rate_ts = 0.0
+            app_state.market.last_usdjpy_rate = _coerce_positive_fx_rate(
+                data.get("last_usdjpy_rate")
+            )
+            app_state.market.last_usdjpy_rate_ts = _coerce_fx_rate_timestamp(
+                data.get("last_usdjpy_rate_ts")
+            )
             app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
         # register_symbols acquires yahoojp_scraper.lock which can deadlock
         # against _pts_worker_loop's yahoojp_scraper.lock -> user_stocks_lock
@@ -651,18 +671,12 @@ def save_user_stocks():
                 app_state.market.user_idx.clear()
                 app_state.market.user_idx.update(normalized_idx)
 
-                try:
-                    rate_ts = float(getattr(app_state.market, "last_usdjpy_rate_ts", 0.0))
-                except (TypeError, ValueError):
-                    rate_ts = 0.0
-                if not math.isfinite(rate_ts) or rate_ts <= 0.0:
-                    rate_ts = 0.0
-                try:
-                    rate_val = float(getattr(app_state.market, "last_usdjpy_rate", DEFAULT_USDJPY_RATE))
-                    if not math.isfinite(rate_val) or rate_val <= 0.0:
-                        rate_val = DEFAULT_USDJPY_RATE
-                except (TypeError, ValueError):
-                    rate_val = DEFAULT_USDJPY_RATE
+                rate_ts = _coerce_fx_rate_timestamp(
+                    getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
+                )
+                rate_val = _coerce_positive_fx_rate(
+                    getattr(app_state.market, "last_usdjpy_rate", DEFAULT_USDJPY_RATE)
+                )
                 data = {
                     "us": copy.deepcopy(app_state.market.user_us),
                     "jp": copy.deepcopy(app_state.market.user_jp),

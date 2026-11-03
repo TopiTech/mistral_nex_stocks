@@ -866,3 +866,115 @@ Verified:
 | tsc / eslint / Prettier / verify-generated | `npm run build` | exit 0; generated artifact in sync |
 | npm audit | `npm audit --audit-level=high` | exit 0; High/Critical 0 (4 moderate dev-only) |
 | whitespace | `git diff --check` | exit 0 |
+
+---
+
+## 14. 2026-11-03 full-tree review — correctness and JSON safety
+
+Scope: whole project (UI, routes, services, data/DB, shared modules/config,
+API boundary, tests, CI). Baseline before any change: 3,799 tests, 0
+failures, 3 skipped; ruff, flake8, mypy, pyrefly (linux + win32), pylint
+`--errors-only`, bandit, tsc, eslint, Prettier and verify-generated clean.
+Four root-cause defects were found and fixed; 12 regression cases added.
+
+### UI-1 — `getStockByKey()` returned pre-update objects — **FIXED**
+
+- **Where:** `static/js/state.js` (`StateManager.updateStocks`,
+  `_stockKeyIndex`, `getStockByKey`).
+- **Symptom:** after `state.updateStocks(...)` replaced the stock arrays
+  (initial load, `/api/stocks/portfolio/snapshot`, SSE update), a key that
+  already existed in `_stockKeyIndex` kept resolving to the old object. The
+  portfolio modal therefore read the pre-snapshot row (0 shares, no FX) and
+  saving could write that stale state back over the real holdings; detail
+  views could show stale quotes.
+- **Root cause:** the O(1) lookup index cached object references and was only
+  rebuilt on a missing key. Replacing the arrays never invalidated it.
+- **Fix:** `updateStocks()` clears the index after installing the new arrays;
+  the next lookup rebuilds it lazily. No caller contract change.
+- **Regression test:** `tests/test_frontend_state_index_invalidation.py` runs
+  the real `state.js` in Node, resolves a key, replaces the object via
+  `updateStocks`, and asserts the lookup returns the new shares/FX rather than
+  the old object.
+
+### CACHE-2 — non-finite `stored_at` made freshness inconsistent — **FIXED**
+
+- **Where:** `utils/disk_cache.py` (`StockDiskCache.get`, `has`).
+- **Symptom:** with `stored_at: NaN`, `get()` treated the entry as fresh
+  forever (`age > ttl` is False for NaN) while `has()` reported it absent
+  (`age <= ttl` is also False). `Inf`/`-Inf` and far-future timestamps had the
+  same class of failure; a future timestamp produced a negative age and kept
+  an otherwise stale entry alive.
+- **Root cause:** freshness arithmetic trusted the embedded timestamp without
+  validating that it was finite or not ahead of the local clock; `get` and
+  `has` each re-implemented the rule.
+- **Fix:** one `_entry_age_seconds()` helper used by both reads. A finite
+  non-future `stored_at` remains authoritative; NaN/Inf/future values fall
+  back to the file mtime. Freshness is non-negative and finite by
+  construction.
+- **Regression tests:** `tests/test_disk_cache_stored_at_finiteness.py` covers
+  NaN/±Inf agreement, a future timestamp with an old mtime, and the normal
+  finite-timestamp path.
+
+### DATA-6 — boolean/non-finite USD/JPY metadata was accepted — **FIXED**
+
+- **Where:** `utils/storage.py` (`load_user_stocks`, `save_user_stocks`).
+- **Symptom:** a corrupted `user_stocks.json` with
+  `"last_usdjpy_rate": true` loaded as `1.0` (because `float(True) == 1.0`),
+  silently valuing every USD holding at 1 JPY/USD; a boolean timestamp became
+  1970-01-01. NaN/Inf were already rejected, booleans were not.
+- **Root cause:** the load and save paths each converted the raw value with
+  bare `float()`, so type validation was lost at both boundaries.
+- **Fix:** `_coerce_positive_fx_rate()` and `_coerce_fx_rate_timestamp()` are
+  the single coercion rule for both directions. They reject booleans,
+  non-finite values, and non-positive rates/timestamps, returning the
+  documented defaults (`DEFAULT_USDJPY_RATE`, `0.0`).
+- **Regression tests:** `tests/test_storage_fx_rate_scalar_guards.py` drives
+  the real load path with boolean/NaN/Inf metadata and the real save path with
+  boolean runtime state, asserting the persisted defaults.
+
+### DATA-7 — derived market cap could serialize as `Infinity` — **FIXED**
+
+- **Where:** `services/market_data_service.py` (`_build_market_row`,
+  `build_heatmap_payload`).
+- **Symptom:** `shares_outstanding * price` overflows to `Infinity` when both
+  inputs are large but finite. Flask's `jsonify` permits NaN/Infinity by
+  default, so `/api/screener` and `/api/heatmap` could emit non-standard
+  `Infinity`, which strict browser `JSON.parse` rejects. The heatmap also
+  included such a row instead of omitting an unrepresentable cap.
+- **Root cause:** the two inputs were individually validated but their derived
+  product was not; the two construction sites duplicated the unguarded math.
+- **Fix:** `_finite_non_negative()` is applied to the derived cap at both
+  sites. An overflowing value becomes `0.0`; the heatmap's existing
+  `market_cap <= 0` rule then omits the row, while the screener keeps a finite
+  `0.0`.
+- **Regression tests:** `tests/test_market_data_finite_market_cap.py` feeds
+  `1e308 * 10`, asserts a finite screener value, asserts heatmap omission, and
+  serializes both payloads with `allow_nan=False`.
+
+### Cross-cutting sweep
+
+- `stored_at` is read only in `utils/disk_cache.py`; both readers now share the
+  helper.
+- All `last_usdjpy_rate` write sites were checked: `bg/sync/process.py` already
+  rejects bool/non-finite/non-positive values before assignment, and
+  `routes/stocks/ai_portfolio.py` validates before publishing the resolved
+  rate. Storage was the only boundary that accepted a boolean.
+- Derived `shares * price` / `shares_outstanding * price` sites are limited to
+  the two fixed market-data functions.
+- `updateStocks` is the only mutator of `state.stocks`; the other JS cache
+  (`stockHashMap`) stores render signatures, not object references, so it does
+  not need invalidation.
+
+### Final verification on the cleaned tree
+
+| Check | Command | Result |
+|---|---|---|
+| pytest | `.venv/Scripts/python.exe -m pytest tests/ -q` | 3,811 test cases, 0 failures, 0 errors, 3 skipped; exit 0 |
+| ruff | `python -m ruff check . --line-length=100` | All checks passed |
+| flake8 | `python -m flake8 . --count --select=E9,F63,F7,F82` | 0 |
+| mypy | `python -m mypy` | Success: no issues found in 125 source files |
+| pyrefly | `python -m pyrefly check` / `--python-platform win32` | 0 errors (both) |
+| pylint | `python -m pylint --errors-only --disable=import-error <CI targets>` | exit 0, no output |
+| bandit | `python -m bandit --configfile pyproject.toml -r . --severity-level medium` | Medium 0, High 0 |
+| tsc / eslint / Prettier / verify-generated | `npm run build` | exit 0; generated artifact in sync |
+| whitespace | `git diff --check` | exit 0 |

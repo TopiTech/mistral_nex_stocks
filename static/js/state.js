@@ -278,6 +278,12 @@ class StateManager {
    */
   updateStocks(data) {
     this.stocks = data;
+    // The O(1) lookup index caches object references. Replacing the arrays
+    // (initial load, portfolio snapshot, SSE update) must invalidate it,
+    // otherwise getStockByKey() keeps returning the pre-update object and
+    // callers read stale holdings (e.g. the portfolio modal saving 0 shares
+    // and clearing a stored avg_fx_rate). Rebuilt lazily on the next lookup.
+    _stockKeyIndex.clear();
   }
 
   /**

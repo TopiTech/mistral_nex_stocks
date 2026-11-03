@@ -9,6 +9,7 @@ fallback logic inline.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from app_state import app_state
@@ -84,6 +85,17 @@ def _first_not_none(*values: Any) -> Any:
     return None
 
 
+def _finite_non_negative(value: float) -> float:
+    """Clamp a derived metric to a finite, non-negative JSON-safe value.
+
+    Multiplying two individually finite inputs (shares x price) can overflow to
+    ``inf``. Flask's ``jsonify`` allows NaN/Infinity by default, so an
+    unclamped product would put non-standard ``Infinity`` into an API response
+    that the browser's strict ``JSON.parse`` rejects.
+    """
+    return value if math.isfinite(value) and value >= 0.0 else 0.0
+
+
 def _build_market_row(
     symbol: str,
     market: str,
@@ -103,7 +115,7 @@ def _build_market_row(
         normalize_optional_number(source.get("shares_outstanding")),
     )
     shares_cap = (
-        (shares_outstanding * price)
+        _finite_non_negative(shares_outstanding * price)
         if shares_outstanding is not None and shares_outstanding > 0 and price > 0
         else 0.0
     )
@@ -111,7 +123,7 @@ def _build_market_row(
         normalize_optional_number(source.get("market_cap")),
         normalize_optional_number(source.get("marketCap")),
     )
-    market_cap = mkt_cap_val if mkt_cap_val is not None else shares_cap
+    market_cap = _finite_non_negative(mkt_cap_val if mkt_cap_val is not None else shares_cap)
 
     vol_val = normalize_optional_number(source.get("volume"), allow_zero=True)
     volume = vol_val if vol_val is not None else 0.0
@@ -190,12 +202,16 @@ def build_heatmap_payload(
         # value and differs by orders of magnitude, so a symbol with neither a
         # reported cap nor shares outstanding is omitted rather than sized
         # with a dimensionally different number.
-        shares_cap = (shares * price) if (shares is not None and shares > 0 and price > 0) else 0.0
+        shares_cap = (
+            _finite_non_negative(shares * price)
+            if (shares is not None and shares > 0 and price > 0)
+            else 0.0
+        )
         mkt_cap_val = _first_not_none(
             normalize_optional_number(item.get("market_cap")),
             normalize_optional_number(item.get("marketCap")),
         )
-        market_cap = mkt_cap_val if mkt_cap_val is not None else shares_cap
+        market_cap = _finite_non_negative(mkt_cap_val if mkt_cap_val is not None else shares_cap)
         if market_cap <= 0:
             continue
 

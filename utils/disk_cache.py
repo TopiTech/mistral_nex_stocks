@@ -19,6 +19,7 @@ serialises concurrent reads/writes even across threads and processes.
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -71,6 +72,29 @@ def is_disk_cache_degraded(within_sec: float = _DEGRADED_RETRY_AFTER_SEC) -> boo
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         logger.debug("is_disk_cache_degraded check failed: %s", exc)
         return False
+
+
+def _entry_age_seconds(data: Any, path: Path, now: float | None = None) -> float:
+    """Return a finite, non-negative age for a cache entry.
+
+    ``stored_at`` is authoritative when it is a finite timestamp. A corrupted
+    value (NaN/Inf) or a timestamp ahead of the local clock (which would make
+    ``age`` negative and keep the entry fresh forever) falls back to the file
+    mtime. ``get()`` and ``has()`` must agree on freshness, so both use this
+    single rule.
+    """
+    current = time.time() if now is None else now
+    stored_at = data.get("stored_at") if isinstance(data, dict) else None
+    if isinstance(stored_at, (int, float)) and not isinstance(stored_at, bool):
+        try:
+            stored_ts = float(stored_at)
+        except (TypeError, ValueError, OverflowError):
+            stored_ts = None
+        if stored_ts is not None and math.isfinite(stored_ts):
+            age = current - stored_ts
+            if math.isfinite(age) and age >= 0.0:
+                return age
+    return max(0.0, current - path.stat().st_mtime)
 
 
 def _read_stale_payload(path):
@@ -351,11 +375,7 @@ class StockDiskCache:
                     # extraction) reset mtimes, which would make stale entries
                     # look fresh (or fresh entries look expired) — exactly
                     # what the ``stored_at`` field exists to prevent.
-                    stored_at = data.get("stored_at")
-                    if isinstance(stored_at, (int, float)) and not isinstance(stored_at, bool):
-                        age = time.time() - float(stored_at)
-                    else:
-                        age = time.time() - path.stat().st_mtime
+                    age = _entry_age_seconds(data, path)
                     if not ignore_ttl and age > effective_ttl:
                         path.unlink(missing_ok=True)
                         return None
@@ -425,12 +445,7 @@ class StockDiskCache:
                     data = json.loads(path.read_text(encoding="utf-8"))
                     if not isinstance(data, dict):
                         return False
-                    stored_at = data.get("stored_at")
-                    if isinstance(stored_at, (int, float)) and not isinstance(stored_at, bool):
-                        age = time.time() - float(stored_at)
-                    else:
-                        age = time.time() - path.stat().st_mtime
-                    return age <= effective_ttl
+                    return _entry_age_seconds(data, path) <= effective_ttl
                 except (OSError, ValueError, TypeError, AttributeError):
                     return False
         except DiskCacheLockTimeout as exc:

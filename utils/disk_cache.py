@@ -94,7 +94,11 @@ def _entry_age_seconds(data: Any, path: Path, now: float | None = None) -> float
             age = current - stored_ts
             if math.isfinite(age) and age >= 0.0:
                 return age
-    return max(0.0, current - path.stat().st_mtime)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return max(0.0, current - mtime)
 
 
 def _read_stale_payload(path):

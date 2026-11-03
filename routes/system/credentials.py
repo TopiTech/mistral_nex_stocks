@@ -456,10 +456,12 @@ def api_credentials_verify():
         api_key = get_mistral_api_key()
 
     if not api_key or not isinstance(api_key, str) or not api_key.strip():
+        missing_msg = "Mistral APIキーが指定されていません。"
         return error_response(
             ErrorCode.INVALID_API_KEY,
             400,
-            message="Mistral APIキーが指定されていません。",
+            message=missing_msg,
+            details={"reason": missing_msg},
             extra_fields={"code": "INVALID_API_KEY", "valid": False},
         )
 
@@ -492,18 +494,22 @@ def api_credentials_verify():
             if not isinstance(agent_id, str) or not agent_id.strip():
                 agent_id = get_agent_id()
             if not agent_id:
+                agent_err_msg = "Agent IDが指定されていません。"
                 return error_response(
                     ErrorCode.MISSING_REQUIRED_FIELD,
                     400,
-                    message="Agent IDが指定されていません。",
+                    message=agent_err_msg,
+                    details={"reason": agent_err_msg},
                     extra_fields={"code": "MISSING_REQUIRED_FIELD", "valid": False},
                 )
             beta_api = getattr(client, "beta", None)
             if not beta_api or not hasattr(beta_api, "agents"):
+                sdk_err_msg = "Agents APIが現在のSDKでサポートされていません。"
                 return error_response(
                     ErrorCode.INVALID_API_KEY,
                     400,
-                    message="Agents APIが現在のSDKでサポートされていません。",
+                    message=sdk_err_msg,
+                    details={"reason": sdk_err_msg},
                     extra_fields={"code": "INVALID_API_KEY", "valid": False},
                 )
             agent = beta_api.agents.get(agent_id=agent_id.strip())
@@ -561,12 +567,14 @@ def api_credentials_verify():
         current_app.logger.warning(
             "Mistral API key verification failed error_type=%s", type(exc).__name__
         )
+        fail_msg = "APIキーの検証に失敗しました。設定と接続を確認してください。"
         return error_response(
             ErrorCode.INVALID_API_KEY,
             400,
             # Provider exceptions can contain request URLs, account
             # metadata, or credentials. Return a stable,
             # user-actionable message without recording that text.
-            message="APIキーの検証に失敗しました。設定と接続を確認してください。",
+            message=fail_msg,
+            details={"reason": fail_msg, "latency_ms": latency_ms},
             extra_fields={"code": "INVALID_API_KEY", "valid": False, "latency_ms": latency_ms},
         )

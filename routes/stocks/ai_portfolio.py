@@ -589,7 +589,7 @@ def api_save_ai_portfolio() -> Any:
     with ai_portfolio_fetch_lock:
         keys_to_pop = [
             k
-            for k in ai_portfolio_result_cache
+            for k in list(ai_portfolio_result_cache)
             if (target_id and f":{target_id}" in k) or (target_theme and f":{target_theme}" in k)
         ]
         for k in keys_to_pop:
@@ -664,7 +664,7 @@ def api_delete_ai_portfolio() -> Any:
     with ai_portfolio_fetch_lock:
         keys_to_pop = [
             k
-            for k in ai_portfolio_result_cache
+            for k in list(ai_portfolio_result_cache)
             if f":{portfolio_id}" in k or (deleted_theme and f":{deleted_theme}" in k)
         ]
         for k in keys_to_pop:
@@ -755,7 +755,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
 
         if is_stale:
             stale_warning = (
-                "ドル円為替レートの更新日時が古いか確認できません（デフォルトレート 1ドル=150.0円 を適用しました）。"
+                f"ドル円為替レートの更新日時が古いか確認できません（デフォルトレート 1ドル={resolved_usdjpy_rate:.1f}円 を適用しました）。"
                 "最新データでの再計算をお勧めします。"
             )
 

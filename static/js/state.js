@@ -143,7 +143,7 @@ class StateManager {
     const old = this._stocks;
     if (old !== val) {
       this._stocks = val;
-      _rebuildStockKeyIndex();
+      _invalidateStockKeyIndex();
       this._notify("stocks", val, old);
     }
   }
@@ -283,7 +283,7 @@ class StateManager {
     // otherwise getStockByKey() keeps returning the pre-update object and
     // callers read stale holdings (e.g. the portfolio modal saving 0 shares
     // and clearing a stored avg_fx_rate). Rebuilt lazily on the next lookup.
-    _stockKeyIndex.clear();
+    _invalidateStockKeyIndex();
   }
 
   /**
@@ -560,6 +560,7 @@ const makeDomSafeKey = (stockKey) =>
 
 // O(1) stock lookup index: stockKey -> stock object
 const _stockKeyIndex = new Map();
+let _stockKeyIndexDirty = true;
 
 function _rebuildStockKeyIndex() {
   _stockKeyIndex.clear();
@@ -571,11 +572,18 @@ function _rebuildStockKeyIndex() {
       _stockKeyIndex.set(key, stock);
     }
   }
+  _stockKeyIndexDirty = false;
+}
+
+function _invalidateStockKeyIndex() {
+  _stockKeyIndexDirty = true;
+  _stockKeyIndex.clear();
 }
 
 function getStockByKey(stockKey) {
-  if (_stockKeyIndex.has(stockKey)) return _stockKeyIndex.get(stockKey);
-  _rebuildStockKeyIndex();
+  if (_stockKeyIndexDirty) {
+    _rebuildStockKeyIndex();
+  }
   return _stockKeyIndex.get(stockKey) || null;
 }
 

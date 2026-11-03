@@ -964,6 +964,7 @@ function buildDetailPanel(
       `control-btn ${getChartPref(stockKey, "period", "3mo") === p ? "active" : ""}`,
       p.toUpperCase(),
     );
+    btn.type = "button";
     btn.dataset.period = p;
     btn.setAttribute(
       "aria-pressed",
@@ -992,6 +993,7 @@ function buildDetailPanel(
       `control-btn ${currentInterval === item.id ? "active" : ""}`,
       item.label,
     );
+    btn.type = "button";
     btn.dataset.interval = item.id;
     btn.setAttribute("aria-pressed", String(currentInterval === item.id));
     intervalGroup.appendChild(btn);

@@ -169,7 +169,11 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
     """キャッシュ取得かつスタンペード防止"""
     safe_key = sanitize_cache_key(key)
 
-    cached_value = None
+    # Single lookup per critical section: ``key in cache`` followed by
+    # ``cache[key]`` evaluates TTL expiry twice, so an entry that expires
+    # between the two operations raises KeyError even though the lock is held.
+    # See ``_get_cached_value_if_present`` below for the same single-lookup rule.
+    cached_value: Any = None
     cache_hit = False
     with global_cache.cache_lock:
         if duration not in global_cache.caches:
@@ -177,8 +181,15 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
                 maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
             )
         cache_bucket = global_cache.caches[duration]
-        if safe_key in cache_bucket:
-            cached_value = cache_bucket[safe_key]
+        sentinel = object()
+        try:
+            candidate = cache_bucket[safe_key]
+        except KeyError:
+            # TTLCache raises KeyError for an entry that expired after the
+            # bucket was resolved. Treat it as a normal miss and fetch below.
+            candidate = sentinel
+        if candidate is not sentinel:
+            cached_value = candidate
             try:
                 cache_hit = valid_func is None or bool(valid_func(cached_value))
             except Exception as exc:  # pragma: no cover - defensive for caller validators
@@ -217,8 +228,13 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
         signaled = ev.wait(timeout=10)
         with global_cache.cache_lock:
             cache = global_cache.caches.get(duration)
-            if cache is not None and safe_key in cache:
-                return cache[safe_key]
+            if cache is not None:
+                try:
+                    return cache[safe_key]
+                except KeyError:
+                    # The entry expired while this caller waited for the
+                    # fetcher; fall through to the no-data result.
+                    pass
         # Timed out and cache still empty: return the CACHE_FETCHING sentinel
         # (not None) so callers can distinguish "fetch in progress" from
         # "no data". If the event was signaled by the fetcher and the cache is
@@ -246,8 +262,11 @@ def peek_cached(key, duration=CACHE_DURATION):
     safe_key = sanitize_cache_key(key)
     with global_cache.cache_lock:
         cache = global_cache.caches.get(duration)
-        if cache is not None and safe_key in cache:
-            return cache[safe_key]
+        if cache is not None:
+            try:
+                return cache[safe_key]
+            except KeyError:
+                return None
     return None
 
 
@@ -309,7 +328,10 @@ def _get_cached_value(key, duration, default=None):
         cache = global_cache.caches.get(duration)
         if cache is None:
             return default
-        return cache.get(safe, default)
+        try:
+            return cache[safe]
+        except KeyError:
+            return default
 
 
 def _get_cached_value_if_present(key, duration, default=None) -> tuple[bool, Any]:
@@ -321,20 +343,22 @@ def _get_cached_value_if_present(key, duration, default=None) -> tuple[bool, Any
     though the caller already committed to using it — which turns a cache hit
     into a duplicate background fetch.
 
-    The lookup itself is a single ``TTLCache.get`` so membership and value
-    come from the same expiry evaluation. ``present`` distinguishes a missing
-    key from a stored value that equals ``default`` (e.g. ``None``).
+    The lookup itself is a single item access (``cache[key]``) so membership
+    and value come from the same expiry evaluation. ``present`` distinguishes a
+    missing key from a stored value that equals ``default`` (e.g. ``None``).
     """
     safe = sanitize_cache_key(key)
     with global_cache.cache_lock:
         cache = global_cache.caches.get(duration)
         if cache is None:
             return False, default
-        sentinel = object()
-        value = cache.get(safe, sentinel)
-        if value is sentinel:
+        try:
+            # Single lookup: cachetools' ``get``/``in`` helpers re-evaluate
+            # expiry, so a value can expire between their membership test and
+            # the value lookup and raise KeyError from ``get`` itself.
+            return True, cache[safe]
+        except KeyError:
             return False, default
-        return True, value
 
 
 def get_cached_context_with_negative_cache(

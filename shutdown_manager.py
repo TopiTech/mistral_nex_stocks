@@ -243,8 +243,19 @@ class ShutdownTokenManager:
             return secrets.compare_digest(self.shutdown_token, token)
 
     def commit_shutdown_token(self) -> bool:
-        """Mark the shutdown token as consumed after a validated operation succeeds."""
+        """Mark the shutdown token as consumed after a validated operation succeeds.
+
+        The token is single-use: a second commit (including one racing another
+        caller that already validated the same token) must fail closed instead
+        of reporting success and rewriting the marker.
+        """
         with self._lock:
+            if not self.shutdown_token:
+                self.logger.warning("No shutdown token configured")
+                return False
+            if self.shutdown_token_used:
+                self.logger.warning("Shutdown token already used")
+                return False
             if not self._persist_used_marker():
                 self.logger.error("Failed to persist shutdown token consumption")
                 return False

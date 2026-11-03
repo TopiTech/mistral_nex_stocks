@@ -1,4 +1,4 @@
-/* global showToast, fetchInitialStocks, loadPortfolioSnapshot, state, Chart, csrfFetch */
+/* global showToast, fetchInitialStocks, loadPortfolioSnapshot, state, Chart, csrfFetch, createRequestToken */
 
 (function () {
   "use strict";
@@ -604,12 +604,21 @@
     const { requestGeneration, abortController } = beginAiPortfolioRequest();
     showLoadingState(true);
     try {
+      // One operation token for the initial request and every poll. The server
+      // treats repeated tokens as polls of the same job, so a long generation
+      // cannot exhaust /api/ai-portfolio/generate's per-minute quota. Created
+      // inside the try so a Web Crypto failure is reported by the normal error
+      // path instead of escaping as an unhandled rejection.
+      const requestToken = createRequestToken();
       const resp = await csrfFetch("/api/ai-portfolio/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ theme: presetOrTheme }),
+        body: JSON.stringify({
+          theme: presetOrTheme,
+          request_token: requestToken,
+        }),
         signal: abortController.signal,
       });
 
@@ -637,7 +646,10 @@
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ theme: presetOrTheme }),
+            body: JSON.stringify({
+              theme: presetOrTheme,
+              request_token: requestToken,
+            }),
             signal: abortController.signal,
           });
           if (!pollResp.ok) {
@@ -723,12 +735,15 @@
     const { requestGeneration, abortController } = beginAiPortfolioRequest();
     showLoadingState(true);
     try {
+      // Same contract as generate: one token identifies this rebalance operation
+      // across all of its polls (and a Web Crypto failure is catchable here).
+      const requestToken = createRequestToken();
       const resp = await csrfFetch("/api/ai-portfolio/rebalance", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ theme: theme }),
+        body: JSON.stringify({ theme: theme, request_token: requestToken }),
         signal: abortController.signal,
       });
 
@@ -756,7 +771,7 @@
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ theme: theme }),
+            body: JSON.stringify({ theme: theme, request_token: requestToken }),
             signal: abortController.signal,
           });
           if (!pollResp.ok) {

@@ -81,6 +81,14 @@ class AIPortfolioGenerateRequest(BaseModel):
     """
 
     theme: str = Field(..., min_length=1, max_length=120, description="Investment theme or focus")
+    request_token: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9_-]{16,128}$",
+        description=(
+            "Client operation token. Repeated polls of one operation reuse it so "
+            "they are not charged against the endpoint rate limit."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -111,6 +119,14 @@ class AIPortfolioRebalanceRequest(BaseModel):
     """
 
     theme: str = Field(default="tech", max_length=120, description="Investment theme to rebalance")
+    request_token: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9_-]{16,128}$",
+        description=(
+            "Client operation token. Repeated polls of one operation reuse it so "
+            "they are not charged against the endpoint rate limit."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

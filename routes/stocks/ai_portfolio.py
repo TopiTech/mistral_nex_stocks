@@ -255,8 +255,14 @@ def api_get_ai_portfolios() -> Any:
     )
 
 
+# Polling a long-running generation must not be charged as new work: the UI
+# re-POSTs the same operation every few seconds, which would otherwise exhaust
+# this budget (20/min) while the job is still running and surface a 429 before
+# the generation finishes. ``skip_polling_duplicates`` recognises repeated
+# ``request_token`` values as polls of one operation (the same mechanism used by
+# /api/chat and /api/analyze-v2).
 @ai_portfolio_bp.route("/api/ai-portfolio/generate", methods=["POST"])
-@rate_limit(max_requests=20, window_seconds=60)
+@rate_limit(max_requests=20, window_seconds=60, skip_polling_duplicates=True)
 def api_generate_ai_portfolio() -> Any:
     """テーマに基づいてAIポートフォリオを生成"""
     ok, reason = require_trusted_or_admin(request)
@@ -383,7 +389,7 @@ def api_generate_ai_portfolio() -> Any:
 
 
 @ai_portfolio_bp.route("/api/ai-portfolio/rebalance", methods=["POST"])
-@rate_limit(max_requests=20, window_seconds=60)
+@rate_limit(max_requests=20, window_seconds=60, skip_polling_duplicates=True)
 def api_rebalance_ai_portfolio() -> Any:
     """指定されたAIポートフォリオのリバランス（再評価）を実行"""
     ok, reason = require_trusted_or_admin(request)

@@ -288,6 +288,25 @@ class ShutdownManagerExtraTests(unittest.TestCase):
         with patch.object(self.mgr, "_persist_used_marker", return_value=False):
             self.assertFalse(self.mgr.commit_shutdown_token())
 
+    def test_commit_is_rejected_after_first_commit(self):
+        """A single-use shutdown token cannot be committed twice."""
+        token = self.mgr.get_or_create_shutdown_token()
+        self.assertTrue(self.mgr.validate_shutdown_token(token))
+        self.assertTrue(self.mgr.commit_shutdown_token())
+        self.assertTrue(self.mgr.used_marker.exists())
+
+        with patch.object(self.mgr.logger, "warning") as mock_warn:
+            self.assertFalse(self.mgr.commit_shutdown_token())
+        mock_warn.assert_called()
+        self.assertFalse(self.mgr.validate_shutdown_token(token))
+
+    def test_commit_without_token_is_rejected(self):
+        """commit_shutdown_token fails closed before any token was generated."""
+        with patch.object(self.mgr.logger, "warning") as mock_warn:
+            self.assertFalse(self.mgr.commit_shutdown_token())
+        mock_warn.assert_called()
+        self.assertFalse(self.mgr.used_marker.exists())
+
     def test_app_state_commit_shutdown_token_delegation(self):
         """app_state.commit_shutdown_token propagates boolean result from manager."""
         from app_state import app_state

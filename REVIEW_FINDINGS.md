@@ -591,3 +591,278 @@ under `tests/` remain. No temporary git worktree remains.
 | npm audit | `npm audit --audit-level=high` | `found 0 vulnerabilities` |
 | startup smoke | `MNS_SKIP_BOOTSTRAP=0 python tests/startup_smoke_runner.py` | exit 0 (health 200, bootstrap ready, threads joined) |
 | whitespace | `git diff --check` | exit 0 |
+
+---
+
+## 12. 2026-11-03 follow-up review
+
+Full-tree re-review after the previous campaign: UI, routes, services, data
+layer, shared modules, config, tests, and CI. Baseline before any change:
+3,832 passed / 3 skipped; ruff, flake8, mypy, pyrefly (linux + win32), pylint
+`--errors-only`, bandit, tsc, eslint, Prettier, and verify-generated were all
+clean.
+
+### API-8 — AI-portfolio polling was charged as new work — **FIXED**
+
+- **Where:** `routes/stocks/ai_portfolio.py` (generate/rebalance rate-limit
+decorators), `schemas/ai_portfolio.py` (request contracts), and
+`static/js/ai_portfolio.js` (poll loop).
+- **Symptom:** the UI re-POSTs generate/rebalance every 1–3 s while the
+background job runs (up to 30 attempts). Every poll consumed the endpoint's
+20 req/min budget, so the 21st poll in a window returned HTTP 429 even though
+the job was healthy. The client handled 429 by waiting on `Retry-After` and
+continuing, which burned poll attempts and could surface a timeout for a job
+that eventually succeeded. The default loopback multiplier (10x) masks this in
+the default local setup; it reproduces with `MNS_LOCAL_RATE_LIMIT_MULTIPLE=1`,
+which is a supported setting.
+- **Root cause:** these two endpoints were the only AI/async-polled endpoints
+that did not use the existing polling-duplicate exemption, and the client had
+no stable operation identity to send. `/api/chat` and `/api/analyze-v2` already
+solve this with `skip_polling_duplicates=True` plus a `request_token`.
+- **Fix:** both decorators use `skip_polling_duplicates=True`; both request
+schemas accept an optional bounded `request_token`; the UI creates one token
+per operation and reuses it for the initial request and every poll. Token
+creation happens inside the existing `try` block so a Web Crypto failure takes
+the normal error path instead of escaping as an unhandled rejection. The
+per-token skip budget (120/window) and the distinct-token budget remain in
+force, so the exemption is bounded and cannot create an unbounded job loop.
+- **Regression tests:** `tests/test_ai_portfolio_polling_rate_limit.py`.
+25 same-token polls of generate and of rebalance all return 200; 21 distinct
+tokens still yield 429 on the 21st; the token bucket is scoped to the endpoint;
+the client emits one token across all four request bodies (initial + poll for
+each operation).
+- **Sweep:** `/api/chat`, `/api/analyze-v2`, and `/api/news` already use the
+same mechanism (chat/analyze send a token); `/api/heatmap`, `/api/stocks`,
+`/api/indices`, and `/api/stock-history` poll below their budgets and do not
+start billable work per poll. No other endpoint repeats this defect.
+
+### Verification on the changed tree
+
+| Check | Command | Result |
+|---|---|---|
+| pytest | `.venv/Scripts/python.exe -m pytest -q` | 3,837 tests, 0 failures, 0 errors, 3 skipped |
+| ruff | `python -m ruff check . --line-length=100` | All checks passed |
+| flake8 | `python -m flake8 . --count --select=E9,F63,F7,F82` | 0 |
+| mypy | `python -m mypy` | Success: no issues found in 125 source files |
+| pyrefly | `python -m pyrefly check` / `--python-platform win32` | 0 errors (both) |
+| pylint | `python -m pylint --errors-only --disable=import-error <CI targets>` | exit 0, no output |
+| bandit | `python -m bandit --configfile pyproject.toml -r . --severity-level medium` | Medium 0, High 0 |
+| tsc / eslint / Prettier / verify-generated | `npm run build` | exit 0; generated artifact in sync |
+| whitespace | `git diff --check` | exit 0 |
+
+---
+
+## 13. 2026-11-03 additional-area audit
+
+Scope: the remaining areas requested after §12 (data layer, bg/async,
+services/utils, chrome_extension/native_host, config/security defaults, API
+boundary). Baseline on the tree after API-8: 3,837 tests / 0 failures /
+3 skipped. This pass adds 7 regression tests and 2 fixes. Result: **CACHE-1 and
+SEC-1 FIXED; 0 open defects in the reviewed areas.**
+
+### 13.1 DB / data layer — no new defect
+
+Inspected: `utils/chat_history.py` (connection lifecycle, transactions, atomic
+turn/message operations), `config/io.py`, `config/atomic_write.py`,
+`config/locks.py`, `config/corruption.py`, `config/master_key.py`, and
+`shutdown_manager.py` (token files).
+
+Verified:
+
+- `SQLiteChatHistoryStore` uses a thread-local connection, `BEGIN` around
+  multi-statement mutations, bounded busy/locked retries on `record_turn`,
+  `append_message_if_not_duplicate` and `pop_last_user_message_if_matches`, and
+  closes connections on teardown/`close_all()`; SQL values are bound, never
+  interpolated.
+- `config_update_lock()` is thread-reentrant via `threading.local` and acquires
+  the cross-process file lock before `_CONFIG_LOCK`; the write path writes a
+  restricted temp file, fsyncs, then atomically replaces; corrupt configs are
+  backed up sanitized and saving over them fails closed.
+- `get_or_create_master_key()` refuses to overwrite an undecryptable key entry.
+- Shutdown-token writes use `O_EXCL` temp files, `0o600`, fsync and atomic
+  replace; consumption persists the used marker before returning success.
+
+Candidates considered and excluded (not defects / intentional):
+
+- `init_db()` swallowing an initialization failure and leaving the flag false:
+  the operation is retried on the next call and routes surface the failure;
+  converting it to a hard crash would reduce availability without improving
+  data integrity.
+- `_rotate_corrupt_backups()` matching `config.json.corrupt.*.bak`: the runtime
+  configuration file is `config.json`; it is not used with a renamed test
+  config, so this is not a production defect.
+- `save_config()` retrying OS errors 5 times: bounded, and `RuntimeError` lock
+  exhaustion fails fast; intentional for Windows sharing violations.
+
+### 13.2 Background / async — no new defect
+
+Inspected: `bg/sync/control.py`, `bg/sync/process.py`, `app_bg.py`,
+`execution_state.py`, `utils/threading.py`, `app_factory/boot.py`,
+`app_factory/early.py`, `shutdown_manager.py`.
+
+Verified:
+
+- Sync runs are serialized by `is_syncing` (RLock) plus a generation counter;
+  stale generations cannot publish results, and `first_sync_completed_at` is
+  updated only on success.
+- `schedule_sync_all_stocks_now()` and the bootstrap path handle duplicate
+  submissions with `sync_scheduled`/`sync_pending`; the sync worker clears state
+  in `finally`.
+- `DaemonThreadPoolExecutor` releases its capacity semaphore in the done
+  callback, including cancelled/failed submissions; `ExecutionState.shutdown()`
+  is idempotent and rejects new work after shutdown.
+- Bootstrap is fail-closed, PID/fork-aware, initializes the token/caches/stocks
+  before marking `bootstrap_ready`, and retries once on executor backpressure.
+- In the reviewed paths, daemon threads are the intended last-resort behavior at
+  process exit; worker/executor shutdown is bounded and generation-guarded.
+
+Candidate excluded: the sync facade's module-level `_sync_start_time` copy is a
+compatibility shim; the authoritative state is the generation + `is_syncing`
+fields, so this is not a correctness defect.
+
+### 13.3 services / utils — **CACHE-1 FIXED**
+
+Inspected: `utils/caching.py`, `utils/market_utils.py`, `utils/networking.py`,
+`utils/env_helpers.py`, `utils/validators.py`, `utils/http_utils.py`,
+`market_state.py`, `session_manager.py`, `services/realtime/engine.py`,
+`services/realtime_engine.py`, and the `routes/stocks/stream.py` call paths.
+
+Verified:
+
+- All long-lived caches are `TTLCache` with `maxsize` (negative symbols, previous
+  close, volume, circuit states, invalid-symbol streaks, history caches); the
+  bucket map is keyed by a bounded set of TTLs, and `fetch_events` entries are
+  removed in `finally`.
+- Circuit breakers use one lock, OPEN→HALF_OPEN only after the window, and a
+  single-probe claim; `release_circuit_probe()` clears a stuck probe flag.
+- Market holiday/weekend/session logic uses `zoneinfo`, treats session ends as
+  exclusive, and covers JP substitute/citizen holidays and NYSE observed days.
+- `parse_retry_after()` rejects non-finite values and clamps to 24h; rounding
+  paths reject bools/NaN/inf before formatting.
+
+**CACHE-1 (FIXED)** — `get_cached()` and the other cache readers performed a
+membership test and then a second value lookup (`key in cache` + `cache[key]`,
+or `cache.get()`), and `cachetools` evaluates TTL expiry in both operations. If
+an entry expires between them, the second lookup raises `KeyError` even while
+`global_cache.cache_lock` is held. This is a time-based race, not a locking one;
+the same anti-pattern existed in `peek_cached()`, `_get_cached_value()` and
+`_get_cached_value_if_present()`. Fix: every read is now a single
+expiry-evaluating `cache[key]` with `KeyError` handled as a cache miss/default.
+This is the root-cause fix (one lookup per decision), not a retry or a broad
+exception swallow; `get_cached`'s stampede/single-flight semantics are unchanged.
+Regression tests: `tests/test_cache_ttl_expiry_race.py` (5 tests: fast path,
+wait-for-fetcher path, `peek_cached`, `_get_cached_value`,
+`_get_cached_value_if_present`), using a deterministic TTLCache double whose
+entry expires between the legacy membership check and the value read.
+
+### 13.4 chrome_extension / native_host — no new defect
+
+Inspected: `native_host/native_host.py`, `native_host/start_backend.py`,
+`native_host/com.mistral_nex_stocks.host.json`, `chrome_extension/background.js`,
+`chrome_extension/content.js`, `chrome_extension/manifest.json`.
+
+Verified:
+
+- Framing: 4-byte little-endian length, fragmentation-safe reads, 1 MiB message
+  cap, bounded drain for oversized frames, `SKIP_FRAME` only after a complete
+  frame, `FATAL_FRAME` on truncation/desync; stdout is redirected so stray
+  prints cannot corrupt the protocol; sends are serialized.
+- Authorization: action allow-list, 32-char extension-ID validation against the
+  manifest, process-origin argv binding, and a browser ancestor check; failures
+  fail closed. Token-disclosing actions have a separate 3/30s budget and are
+  refused when the backend is unhealthy; the general IPC limit is 10/1s.
+- Lifecycle: startup is serialized by a cross-process lock, health responses are
+  validated (`app`/`ready`), PID/port files are written atomically, stale PIDs
+  are rejected/removed, and failed spawns are reaped.
+- UI contract: fetch timeouts/aborts are cleaned up, stock symbols are validated
+  on both sides, native messages always carry `extensionId`, and token refresh is
+  single-flight.
+
+Candidates excluded: per-message ancestry/Authenticode verification under
+`chrome.runtime.sendNativeMessage` is a deliberate security cost (each message
+starts a short-lived host); POSIX ancestry is defense-in-depth on top of the
+manifest origin allow-list (argv can be spoofed locally, but the origin/ID checks
+remain). Neither is a correctness or data-integrity defect.
+
+### 13.5 config / security defaults — no new defect
+
+Inspected: `security_config.py`, `app_factory/wiring.py`, `app_factory/factory.py`,
+`app_factory/boot.py`, `app_factory/hooks.py`, `utils/networking.py`.
+
+Verified:
+
+- Production (`MNS_PROD` or remote+proxy) requires `FLASK_SECRET_KEY` and
+  `MNS_MASTER_KEY`; remote mode additionally requires `MNS_PROXY_FIX=1`, a
+  >=32-char `MNS_ADMIN_TOKEN`, and a proxy hop count >=1.
+- `RawRemoteAddressMiddleware` wraps `ProxyFix`, so `RAW_REMOTE_ADDR` is the true
+  peer; direct-listener requests presenting `X-Forwarded-For` are rejected.
+- Session cookies are HttpOnly/SameSite=Strict, Secure+Partitioned in production
+  or with `MNS_COOKIE_SECURE=1`; CSP uses nonces/strict-dynamic with no
+  `unsafe-inline` scripts; HSTS/force_https are production-only; the 2 MiB body
+  limit is raised only for the chart-image route before CSRF parsing.
+- CSRF exemptions are limited to CSP report, shutdown and the extension Bearer
+  endpoint, each with its own credential check.
+
+No new defect; the defaults fail closed and the documented localhost exceptions
+are explicit.
+
+### 13.6 API boundary — no new defect
+
+Inspected: `routes/system/credentials.py`, `routes/system/shutdown.py`,
+`routes/system/observe.py`, `routes/stocks/stream.py`, `schemas/ai_portfolio.py`,
+`static/js/ai_portfolio.js`, plus the §12 sweep.
+
+Verified:
+
+- Protected endpoints use the shared `require_trusted_or_admin` /
+  `require_sse_auth` gates, constant-time admin-token comparisons, and typed
+  `error_response` envelopes; partial credential deletion returns 500 with the
+  failed keys rather than a false success.
+- Shutdown re-checks loopback, raw peer, origin and a one-time token before
+  consuming; SSE tickets are session-bound, single-use and TTL-bound, and the
+  listener reservation is released in both `finally` and `close`.
+- API-8 remains the only boundary contract defect fixed in this campaign; no
+  further poll/rate-limit or schema/JS mismatch was found.
+
+### 13.7 SEC-1 — shutdown token two-phase commit could be consumed twice — FIXED
+
+- **Where:** `shutdown_manager.py::ShutdownTokenManager.commit_shutdown_token`.
+- **Symptom:** two callers that both validated the same token before either
+  committed could both call `commit_shutdown_token()` and both receive `True`;
+  the second call rewrote the used marker. This violates the single-use contract
+  of the shutdown token. `consume_shutdown_token()` already rejected reuse.
+- **Root cause:** the commit path persisted the marker and set the flag without
+  checking the existing `shutdown_token` / `shutdown_token_used` state under the
+  manager lock.
+- **Fix:** both guards are now checked inside `self._lock` before persisting;
+  missing/used tokens fail closed with a warning and no marker write.
+- **Regression tests:** `tests/test_shutdown_manager_extra.py`
+  (`test_commit_is_rejected_after_first_commit`,
+  `test_commit_without_token_is_rejected`).
+
+### 13.8 Cross-cutting sweep
+
+- Searched all `key in <TTLCache>` / `.get()` read patterns: the remaining hits
+  are membership-only checks or already use a single lookup; CACHE-1 covered the
+  read helpers in `utils/caching.py`.
+- Searched `commit_shutdown_token` call sites: only the `app_state` delegation and
+  tests; the fix has no caller contract change (still returns `bool`).
+- Checked `is_yfinance_rate_limited` uses: `routes/system/observe.py` reads the
+  boolean instance field (not the `is_yf_rate_limited()` method), so the metrics
+  expression is correct; `services/stock/retry.py` resets both the flag and the
+  session-manager window.
+
+### 13.9 Verification on the changed tree
+
+| Check | Command | Result |
+|---|---|---|
+| pytest | `.venv/Scripts/python.exe -m pytest -q --junitxml=...` | 3,844 tests, 0 failures, 0 errors, 3 skipped; exit 0 |
+| ruff | `python -m ruff check . --line-length=100` | All checks passed |
+| flake8 | `python -m flake8 . --count --select=E9,F63,F7,F82` | 0 |
+| mypy | `python -m mypy` | Success: no issues found in 125 source files |
+| pyrefly | `python -m pyrefly check` / `--python-platform win32` | 0 errors (both) |
+| pylint | `python -m pylint --errors-only --disable=import-error <CI targets>` | exit 0, no output |
+| bandit | `python -m bandit --configfile pyproject.toml -r . --severity-level medium` | Medium 0, High 0 |
+| tsc / eslint / Prettier / verify-generated | `npm run build` | exit 0; generated artifact in sync |
+| npm audit | `npm audit --audit-level=high` | exit 0; High/Critical 0 (4 moderate dev-only) |
+| whitespace | `git diff --check` | exit 0 |

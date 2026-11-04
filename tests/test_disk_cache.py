@@ -268,7 +268,7 @@ class TestStockDiskCache(unittest.TestCase):
     def test_corrupt_json_returns_none(self):
         self.cache.set("good", "data")
         path = self.cache._entry_path("good")
-        with open(str(path), "w") as f:
+        with open(str(path), "w", encoding="utf-8") as f:
             f.write("{corrupt json!!")
         self.assertIsNone(self.cache.get("good"))
 

@@ -3,6 +3,7 @@
 
 import logging
 import queue
+import re
 from typing import Any
 
 import trend_sources as ts
@@ -454,7 +455,7 @@ def _get_market_trending_titles(
     if isinstance(cached, list):
         return cached
     if isinstance(cached, str) and cached.strip():
-        return [t.strip() for t in cached.split("、") if t.strip()]
+        return [t.strip() for t in re.split(r"[\n,、]+", cached) if t.strip()]
 
     logger.info(
         "Market trending cache miss, building synchronously: market=%s strategy=%s",

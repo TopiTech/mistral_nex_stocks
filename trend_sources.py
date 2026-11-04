@@ -381,7 +381,7 @@ def _collect_google_trends_rss_items(market: str = "us", limit: int = 10) -> lis
                     metadata=metadata,
                 )
             )
-    except (requests.RequestException, ValueError, AttributeError) as exc:
+    except (requests.RequestException, ValueError, AttributeError, RuntimeError) as exc:
         logger.warning("Google Trends RSS collection failed (%s): %s", market_key, exc)
     return dedupe_items(items)[:limit]
 
@@ -578,7 +578,7 @@ def collect_rss_items(
                         metadata={"feed_url": feed_url},
                     )
                 )
-        except (requests.RequestException, ValueError) as exc:
+        except (requests.RequestException, ValueError, AttributeError, RuntimeError) as exc:
             logger.debug("RSS fetch failed (%s): %s", feed_url, exc)
     return dedupe_items(items)
 

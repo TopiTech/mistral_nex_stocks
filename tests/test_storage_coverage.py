@@ -197,7 +197,7 @@ class StorageCoverageTests(unittest.TestCase):
             )
         # File should exist (either locked or unlocked fallback)
         self.assertTrue(os.path.exists(test_file))
-        with open(test_file) as f:
+        with open(test_file, encoding="utf-8") as f:
             data = json.load(f)
         self.assertTrue(data["test"])
 

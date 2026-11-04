@@ -380,11 +380,14 @@ class NewsService:
         def _is_valid_news_bundle(bundle):
             if not isinstance(bundle, dict):
                 return False
+            has_content = False
             for k in ("us", "jp", "trends"):
-                v = bundle.get(k)
-                if not v or "解析中..." in v or "解析エラー" in v:
+                v = str(bundle.get(k) or "")
+                if "解析中..." in v or "解析エラー" in v:
                     return False
-            return True
+                if v.strip():
+                    has_content = True
+            return has_content
 
         # Do not ask the LLM to fabricate a summary when every external news
         # provider returned empty/failed: generating from an empty "<データなし>"

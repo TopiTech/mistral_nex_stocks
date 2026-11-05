@@ -109,7 +109,7 @@ markupsafe==3.0.3
     #   jinja2
     #   werkzeug
     #   wtforms
-mistralai==2.10.0
+mistralai==3.7.0
     # via mistral-nex-stocks
 more-itertools==11.2.1
     # via

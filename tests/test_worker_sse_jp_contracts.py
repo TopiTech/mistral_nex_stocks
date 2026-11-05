@@ -75,6 +75,27 @@ def test_gunicorn_threads_follow_sse_limit_and_reject_unsafe_override(monkeypatc
         config.on_starting(SimpleNamespace(num_workers=1, cfg=SimpleNamespace(threads=12)))
 
 
+def test_gunicorn_threads_env_override_and_cli_priority(monkeypatch):
+    """MNS_GUNICORN_THREADS overrides threads default, and CLI --threads takes precedence."""
+    monkeypatch.setenv("MNS_MAX_SSE_LISTENERS", "10")
+    # required_threads is 16
+    monkeypatch.setenv("MNS_GUNICORN_THREADS", "25")
+    config = _load_gunicorn_config()
+
+    assert config.required_threads == 16
+    assert config.threads == 25
+
+    # Safe execution with configured threads matching env
+    config.on_starting(SimpleNamespace(num_workers=1, cfg=SimpleNamespace(threads=25)))
+
+    # CLI override --threads 30 takes precedence and succeeds
+    config.on_starting(SimpleNamespace(num_workers=1, cfg=SimpleNamespace(threads=30)))
+
+    # Reject if CLI override sets threads below required
+    with pytest.raises(SystemExit):
+        config.on_starting(SimpleNamespace(num_workers=1, cfg=SimpleNamespace(threads=15)))
+
+
 def test_sse_limiter_is_global_and_reservations_are_idempotent():
     with patch("messaging.MAX_SSE_LISTENERS", 2):
         limiter = SseListenerLimiter()

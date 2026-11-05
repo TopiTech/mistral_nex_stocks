@@ -1003,5 +1003,7 @@ function getAiProviderLabel(variant = "full") {
 window.getAppAiProvider = getAppAiProvider;
 window.isOpenAiCompatibleProvider = isOpenAiCompatibleProvider;
 window.getAiProviderLabel = getAiProviderLabel;
+window.FAST_FETCH_TIMEOUT_MS = FAST_FETCH_TIMEOUT_MS;
+window.DEFAULT_FETCH_TIMEOUT_MS = DEFAULT_FETCH_TIMEOUT_MS;
 
 // #endregion AI Provider Helpers

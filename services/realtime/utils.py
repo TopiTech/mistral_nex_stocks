@@ -202,16 +202,20 @@ def extract_minkabu_price(html: str) -> float | None:
     """
     if not html:
         return None
-    match = _MINKABU_PRICE_CLASS_RE.search(html)
-    if match:
-        token = match.group(1)
-    else:
-        labelled = _MINKABU_PRICE_LABEL_RE.search(html)
-        if not labelled:
-            return None
-        token = labelled.group(2)
-    price = _parse_quote_number(token)
-    return price if price > 0 else None
+    try:
+        match = _MINKABU_PRICE_CLASS_RE.search(html)
+        if match:
+            token = match.group(1)
+        else:
+            labelled = _MINKABU_PRICE_LABEL_RE.search(html)
+            if not labelled:
+                return None
+            token = labelled.group(2)
+        price = _parse_quote_number(token)
+        return price if price > 0 else None
+    except Exception as exc:
+        logger.warning("[Minkabu Scraper] Failed parsing Minkabu HTML: %s", exc)
+        return None
 
 
 SCRAPER_BLOCK_STATUS_CODES = (401, 402, 403, 429, 439)
@@ -501,97 +505,111 @@ _NEXT_DATA_SCRIPT_RE = re.compile(
 
 def _extract_pts_price_data(html: str) -> str | None:
     """Extract the balanced JSON object region of ``ptsPriceData`` from a Yahoo JP page."""
-    for marker in _PTS_PRICE_DATA_MARKERS:
-        for m in marker.finditer(html):
-            start = m.end() - 1
-            depth = 0
-            for i in range(start, len(html)):
-                ch = html[i]
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        return html[start : i + 1]
+    if not html:
+        return None
+    try:
+        for marker in _PTS_PRICE_DATA_MARKERS:
+            for m in marker.finditer(html):
+                start = m.end() - 1
+                depth = 0
+                for i in range(start, len(html)):
+                    ch = html[i]
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            return html[start : i + 1]
+    except Exception as exc:
+        logger.warning("[Yahoo JP Scraper] Failed extracting ptsPriceData: %s", exc)
     return None
 
 
 def _extract_pts_fields(segment: str) -> dict[str, str]:
     """Extract ``ptsPriceData`` field values from a raw segment."""
-    unescaped = segment.replace('\\"', '"')
+    if not segment:
+        return {}
     try:
-        data = json.loads(unescaped)
-    except (ValueError, TypeError):
-        data = None
-    if isinstance(data, dict):
-        fields: dict[str, str] = {}
-        for key, val in data.items():
-            if isinstance(val, dict):
-                for sub in ("value", "raw", "fmt"):
-                    if val.get(sub) is not None:
-                        val = val[sub]
-                        break
-            if is_bool_like(val):
-                fields[str(key)] = "true" if bool(val) else "false"
-            elif isinstance(val, (str, int, float)):
-                fields[str(key)] = str(val)
-        if fields:
-            return fields
-    fields = dict(re.findall(r'"([a-zA-Z]+)":"([^"]*)"', unescaped))
-    for m in re.finditer(r'"([a-zA-Z]+)"\s*:\s*\{\s*"value"\s*:\s*"([^"]*)"', unescaped):
-        fields.setdefault(m.group(1), m.group(2))
-    return fields
+        unescaped = segment.replace('\\"', '"')
+        try:
+            data = json.loads(unescaped)
+        except (ValueError, TypeError):
+            data = None
+        if isinstance(data, dict):
+            fields: dict[str, str] = {}
+            for key, val in data.items():
+                if isinstance(val, dict):
+                    for sub in ("value", "raw", "fmt"):
+                        if val.get(sub) is not None:
+                            val = val[sub]
+                            break
+                if is_bool_like(val):
+                    fields[str(key)] = "true" if bool(val) else "false"
+                elif isinstance(val, (str, int, float)):
+                    fields[str(key)] = str(val)
+            if fields:
+                return fields
+        fields = dict(re.findall(r'"([a-zA-Z]+)":"([^"]*)"', unescaped))
+        for m in re.finditer(r'"([a-zA-Z]+)"\s*:\s*\{\s*"value"\s*:\s*"([^"]*)"', unescaped):
+            fields.setdefault(m.group(1), m.group(2))
+        return fields
+    except Exception as exc:
+        logger.warning("[Yahoo JP Scraper] Failed extracting PTS fields: %s", exc)
+        return {}
 
 
 def _extract_next_data_quotes(html: str) -> dict[str, str] | None:
     """Parse quote fields from the page's ``__NEXT_DATA__`` JSON blob."""
-    m = _NEXT_DATA_SCRIPT_RE.search(html)
-    if not m:
+    if not html:
         return None
     try:
+        m = _NEXT_DATA_SCRIPT_RE.search(html)
+        if not m:
+            return None
         import html as html_mod
 
         raw = html_mod.unescape(m.group(1))
         data = json.loads(raw)
-    except (ValueError, TypeError):
-        return None
 
-    def _find_quote(node: Any, depth: int = 0) -> dict[str, Any] | None:
-        if depth > 8 or not isinstance(node, dict):
+        def _find_quote(node: Any, depth: int = 0) -> dict[str, Any] | None:
+            if depth > 8 or not isinstance(node, dict):
+                return None
+            price_obj = node.get("price")
+            if isinstance(price_obj, dict) and "value" in price_obj:
+                return node
+            for value in node.values():
+                if isinstance(value, dict):
+                    found = _find_quote(value, depth + 1)
+                    if found:
+                        return found
             return None
-        price_obj = node.get("price")
-        if isinstance(price_obj, dict) and "value" in price_obj:
-            return node
-        for value in node.values():
-            if isinstance(value, dict):
-                found = _find_quote(value, depth + 1)
-                if found:
-                    return found
-        return None
 
-    quote_node = _find_quote(data)
-    if not quote_node:
-        return None
+        quote_node = _find_quote(data)
+        if not quote_node:
+            return None
 
-    def _num(field: str) -> str | None:
-        obj = quote_node.get(field)
-        if isinstance(obj, dict):
-            val = obj.get("value")
+        def _num(field: str) -> str | None:
+            obj = quote_node.get(field)
+            if isinstance(obj, dict):
+                val = obj.get("value")
+                if val is not None:
+                    return str(val)
+                for candidate in ("raw", "fmt"):
+                    if candidate in obj and obj[candidate] is not None:
+                        return str(obj[candidate])
+            return None
+
+        result: dict[str, str] = {}
+        for field in _ESCAPED_QUOTE_FIELDS:
+            val = _num(field)
             if val is not None:
-                return str(val)
-            for candidate in ("raw", "fmt"):
-                if candidate in obj and obj[candidate] is not None:
-                    return str(obj[candidate])
+                result[field] = val
+        if "price" in result:
+            return result
         return None
-
-    result: dict[str, str] = {}
-    for field in _ESCAPED_QUOTE_FIELDS:
-        val = _num(field)
-        if val is not None:
-            result[field] = val
-    if "price" in result:
-        return result
-    return None
+    except Exception as exc:
+        logger.warning("[Yahoo JP Scraper] Failed extracting __NEXT_DATA__ quotes: %s", exc)
+        return None
 
 
 def is_jp_market_open(now: datetime | None = None) -> bool:
@@ -600,5 +618,12 @@ def is_jp_market_open(now: datetime | None = None) -> bool:
         now = datetime.now(JST)
     if now.weekday() >= 5:
         return False
+    try:
+        from utils.market_utils import is_jp_market_holiday
+
+        if is_jp_market_holiday(now.date()):
+            return False
+    except Exception:  # nosec B110
+        pass
     t = now.time()
     return (JP_MORNING_START <= t < JP_MORNING_END) or (JP_AFTERNOON_START <= t < JP_AFTERNOON_END)

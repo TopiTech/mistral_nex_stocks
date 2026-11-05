@@ -1699,101 +1699,106 @@ def _credentials_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
     Mistral key reports ``INVALID_API_KEY`` while every other malformed key
     reports ``UNSAFE_INPUT``.
     """
-    errors = exc.errors()
-    markers = [
-        str(candidate.get("msg", "")).split(",")[-1].strip() for candidate in errors
-    ]
-    # The schema raises the first failure only, so at most one marker is
-    # present. Match markers exactly: several names share a suffix
-    # (``openai_model_not_string`` contains ``model_not_string``).
-    first = markers[0] if markers else ""
-    kind, _, field = first.partition("|")
-    if kind == "cred_not_string":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"fields": [field], "reason": "APIキーは文字列で指定してください"},
-            status_code=400,
-        )
-    if kind == "cred_bad_key":
-        code, min_length = _CREDENTIALS_KEY_SPECS.get(field, (ErrorCode.UNSAFE_INPUT, 0))
-        return error_response(
-            code,
-            details={"fields": [field], "min_length": min_length},
-        )
-    if first == "prompt_not_string":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "custom_ai_promptは文字列で指定してください"},
-            status_code=400,
-        )
-    if first == "prompt_too_long":
-        return error_response(
-            ErrorCode.UNSAFE_INPUT,
-            details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
-        )
-    if first == "mode_invalid":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "mistral_api_modeは chat または agents を指定してください"},
-            status_code=400,
-        )
-    if first == "agent_not_string":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "mistral_agent_idは文字列で指定してください"},
-            status_code=400,
-        )
-    if first == "agent_bad_format":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"fields": ["mistral_agent_id"], "reason": "Agent IDの形式が不正です"},
-            status_code=400,
-        )
-    if first == "preview_not_bool":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "preview_modeは真偽値で指定してください"},
-            status_code=400,
-        )
-    if first == "model_not_string":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "mistral_modelは有効な文字列で指定してください"},
-            status_code=400,
-        )
-    if first == "provider_invalid":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "ai_providerは mistral または openai_compatible を指定してください"},
-            status_code=400,
-        )
-    if first == "url_not_string":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "openai_base_urlは文字列で指定してください"},
-            status_code=400,
-        )
-    if first == "url_bad_scheme":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={
-                "fields": ["openai_base_url"],
-                "reason": "URLは http:// または https:// で始まっている必要があります",
-            },
-            status_code=400,
-        )
-    if first == "openai_model_not_string":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "openai_modelは文字列で指定してください"},
-            status_code=400,
-        )
-    if first == "openai_emb_model_not_string":
-        return error_response(
-            ErrorCode.INVALID_INPUT,
-            details={"reason": "openai_embeddings_modelは文字列で指定してください"},
-            status_code=400,
-        )
+    try:
+        errors = exc.errors()
+        markers = [
+            str(candidate.get("msg", "")).split(",")[-1].strip()
+            for candidate in errors
+            if isinstance(candidate, dict)
+        ]
+        # The schema raises the first failure only, so at most one marker is
+        # present. Match markers exactly: several names share a suffix
+        # (``openai_model_not_string`` contains ``model_not_string``).
+        first = markers[0] if markers else ""
+        kind, _, field = first.partition("|")
+        if kind == "cred_not_string":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"fields": [field], "reason": "APIキーは文字列で指定してください"},
+                status_code=400,
+            )
+        if kind == "cred_bad_key":
+            code, min_length = _CREDENTIALS_KEY_SPECS.get(field, (ErrorCode.UNSAFE_INPUT, 0))
+            return error_response(
+                code,
+                details={"fields": [field], "min_length": min_length},
+            )
+        if first == "prompt_not_string":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "custom_ai_promptは文字列で指定してください"},
+                status_code=400,
+            )
+        if first == "prompt_too_long":
+            return error_response(
+                ErrorCode.UNSAFE_INPUT,
+                details={"reason": "カスタムプロンプトは5000文字以内で入力してください"},
+            )
+        if first == "mode_invalid":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "mistral_api_modeは chat または agents を指定してください"},
+                status_code=400,
+            )
+        if first == "agent_not_string":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "mistral_agent_idは文字列で指定してください"},
+                status_code=400,
+            )
+        if first == "agent_bad_format":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"fields": ["mistral_agent_id"], "reason": "Agent IDの形式が不正です"},
+                status_code=400,
+            )
+        if first == "preview_not_bool":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "preview_modeは真偽値で指定してください"},
+                status_code=400,
+            )
+        if first == "model_not_string":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "mistral_modelは有効な文字列で指定してください"},
+                status_code=400,
+            )
+        if first == "provider_invalid":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "ai_providerは mistral または openai_compatible を指定してください"},
+                status_code=400,
+            )
+        if first == "url_not_string":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "openai_base_urlは文字列で指定してください"},
+                status_code=400,
+            )
+        if first == "url_bad_scheme":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "fields": ["openai_base_url"],
+                    "reason": "URLは http:// または https:// で始まっている必要があります",
+                },
+                status_code=400,
+            )
+        if first == "openai_model_not_string":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "openai_modelは文字列で指定してください"},
+                status_code=400,
+            )
+        if first == "openai_emb_model_not_string":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "openai_embeddings_modelは文字列で指定してください"},
+                status_code=400,
+            )
+    except Exception as err:
+        logger.warning("Failed mapping validation error for credentials: %s", err)
     return error_response(ErrorCode.MALFORMED_INPUT)
 
 

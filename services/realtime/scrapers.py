@@ -186,16 +186,22 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
     @staticmethod
     def _number_after_label(html: str, label: str, signed: bool = False) -> float | None:
         """Extract the first number after *label* within a 400-char window."""
-        idx = html.find(label)
-        if idx < 0:
+        if not html:
             return None
-        window = html[idx : idx + 400]
-        pattern = r"([+-]?[0-9][0-9,]*\.?[0-9]*)" if signed else r"([0-9][0-9,]*\.?[0-9]*)"
-        m = re.search(pattern, window)
-        if not m:
+        try:
+            idx = html.find(label)
+            if idx < 0:
+                return None
+            window = html[idx : idx + 400]
+            pattern = r"([+-]?[0-9][0-9,]*\.?[0-9]*)" if signed else r"([0-9][0-9,]*\.?[0-9]*)"
+            m = re.search(pattern, window)
+            if not m:
+                return None
+            num = _parse_quote_number(m.group(1))
+            return num if math.isfinite(num) else None
+        except Exception as exc:
+            logger.warning("[SBI Scraper] Failed extracting number after label %s: %s", label, exc)
             return None
-        num = _parse_quote_number(m.group(1))
-        return num if math.isfinite(num) else None
 
     def fetch_quote(self, symbol: str) -> TickerPayload | None:
         """Fetch the regular session quote for *symbol* from SBI."""
@@ -554,26 +560,31 @@ class MinkabuScraper(_BaseFallbackScraper):
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
-                html = resp.text
-                # SVC-17: shared label-anchored extractor — the bare
-                # "...円" fallback matched unrelated figures (手数料290円)
-                # and streamed them as live quotes.
-                price = extract_minkabu_price(html)
-                if price is not None:
-                    payload: TickerPayload = {
-                        "symbol": symbol,
-                        "price": price,
-                        "change": 0.0,
-                        "change_percent": 0.0,
-                        "source": "minkabu",
-                        "updated_at": time.time(),
-                    }
-                    logger.debug("[Minkabu Scraper] Quote for %s: price=%.2f", symbol, price)
-                    self._record_fetch_success(symbol)
-                    return payload
+                try:
+                    html = resp.text
+                except Exception as exc:
+                    logger.warning("[Minkabu Scraper] Failed reading HTML for %s: %s", symbol, exc)
+                    html = ""
+                if html:
+                    # SVC-17: shared label-anchored extractor — the bare
+                    # "...円" fallback matched unrelated figures (手数料290円)
+                    # and streamed them as live quotes.
+                    price = extract_minkabu_price(html)
+                    if price is not None:
+                        payload: TickerPayload = {
+                            "symbol": symbol,
+                            "price": price,
+                            "change": 0.0,
+                            "change_percent": 0.0,
+                            "source": "minkabu",
+                            "updated_at": time.time(),
+                        }
+                        logger.debug("[Minkabu Scraper] Quote for %s: price=%.2f", symbol, price)
+                        self._record_fetch_success(symbol)
+                        return payload
             self._record_fetch_failure(symbol)
         except Exception as exc:
-            logger.debug("[Minkabu Scraper] Failed fetch for %s: %s", symbol, exc)
+            logger.warning("[Minkabu Scraper] Failed fetch for %s: %s", symbol, exc)
             self._record_fetch_failure(symbol)
         return None
 
@@ -782,13 +793,19 @@ class YahooJPRealtimeScraper:
 
     @staticmethod
     def _extract_quote_field(html: str, field: str) -> str | None:
-        res = _ESCAPED_QUOTE_RES.get(field)
-        if res is not None:
-            m = res.search(html)
-            if m:
-                return m.group(1)
-        m = re.search(r'"' + field + r'":\s*"?([^",\s}]+)"?', html)
-        return m.group(1) if m else None
+        if not html:
+            return None
+        try:
+            res = _ESCAPED_QUOTE_RES.get(field)
+            if res is not None:
+                m = res.search(html)
+                if m:
+                    return m.group(1)
+            m = re.search(r'"' + field + r'":\s*"?([^",\s}]+)"?', html)
+            return m.group(1) if m else None
+        except Exception as exc:
+            logger.warning("[Yahoo JP Scraper] Failed extracting quote field %s: %s", field, exc)
+            return None
 
     def _is_startup_ready(self, force_check: bool = False) -> bool:
         try:
@@ -841,60 +858,63 @@ class YahooJPRealtimeScraper:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                price_el = soup.select_one(".si_i1_2 span.kabuka") or soup.select_one("span.kabuka")
-                if price_el:
-                    price_clean = re.sub(r"[^\d.]", "", price_el.text)
-                    price = float(price_clean) if price_clean else 0.0
-                    if price > 0:
-                        change = 0.0
-                        pct = 0.0
-                        dl_el = soup.select_one("dl.si_i1_dl1")
-                        if dl_el:
-                            dds = dl_el.find_all("dd")
-                            if len(dds) >= 1:
-                                c_clean = re.sub(
-                                    r"[^\d.\-+]",
-                                    "",
-                                    dds[0]
-                                    .text.replace("▲", "-")
-                                    .replace("▼", "-")
-                                    .replace("+", ""),
-                                )
-                                try:
-                                    change = float(c_clean)
-                                except ValueError:
-                                    pass
-                            if len(dds) >= 2:
-                                p_clean = re.sub(
-                                    r"[^\d.\-+]",
-                                    "",
-                                    dds[1]
-                                    .text.replace("▲", "-")
-                                    .replace("▼", "-")
-                                    .replace("+", ""),
-                                )
-                                try:
-                                    pct = float(p_clean)
-                                except ValueError:
-                                    pass
-                        res_payload: TickerPayload = {
-                            "symbol": f"{clean_code}.T",
-                            "price": price,
-                            "change": change,
-                            "change_percent": pct,
-                            "source": "kabutan",
-                            "updated_at": time.time(),
-                        }
-                        logger.debug(
-                            "[Kabutan Scraper] Quote success for %s.T: price=%.2f, change=%.2f, pct=%.2f%%",
-                            clean_code,
-                            price,
-                            change,
-                            pct,
-                        )
-                        self._record_fetch_success(symbol)
-                        return res_payload
+                try:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    price_el = soup.select_one(".si_i1_2 span.kabuka") or soup.select_one("span.kabuka")
+                    if price_el:
+                        price_clean = re.sub(r"[^\d.]", "", price_el.text)
+                        price = float(price_clean) if price_clean else 0.0
+                        if price > 0:
+                            change = 0.0
+                            pct = 0.0
+                            dl_el = soup.select_one("dl.si_i1_dl1")
+                            if dl_el:
+                                dds = dl_el.find_all("dd")
+                                if len(dds) >= 1:
+                                    c_clean = re.sub(
+                                        r"[^\d.\-+]",
+                                        "",
+                                        dds[0]
+                                        .text.replace("▲", "-")
+                                        .replace("▼", "-")
+                                        .replace("+", ""),
+                                    )
+                                    try:
+                                        change = float(c_clean)
+                                    except ValueError:
+                                        pass
+                                if len(dds) >= 2:
+                                    p_clean = re.sub(
+                                        r"[^\d.\-+]",
+                                        "",
+                                        dds[1]
+                                        .text.replace("▲", "-")
+                                        .replace("▼", "-")
+                                        .replace("+", ""),
+                                    )
+                                    try:
+                                        pct = float(p_clean)
+                                    except ValueError:
+                                        pass
+                            res_payload: TickerPayload = {
+                                "symbol": f"{clean_code}.T",
+                                "price": price,
+                                "change": change,
+                                "change_percent": pct,
+                                "source": "kabutan",
+                                "updated_at": time.time(),
+                            }
+                            logger.debug(
+                                "[Kabutan Scraper] Quote success for %s.T: price=%.2f, change=%.2f, pct=%.2f%%",
+                                clean_code,
+                                price,
+                                change,
+                                pct,
+                            )
+                            self._record_fetch_success(symbol)
+                            return res_payload
+                except Exception as exc:
+                    logger.warning("[Kabutan Scraper] HTML parsing error for %s: %s", symbol, exc)
         except Exception as e:
             logger.debug("[Kabutan Scraper] Fetch error for %s: %s", symbol, e)
         return None
@@ -910,30 +930,33 @@ class YahooJPRealtimeScraper:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                pts_box = soup.select_one(".si_i1_3")
-                if pts_box:
-                    pts_val_el = pts_box.select_one(".kabuka2")
-                    if pts_val_el:
-                        pts_clean = re.sub(r"[^\d.]", "", pts_val_el.text)
-                        if pts_clean:
-                            price = float(pts_clean)
-                            if price > 0:
-                                pts_time_el = pts_box.select_one(".kabuka3")
-                                pts_time = pts_time_el.text.strip() if pts_time_el else ""
-                                res_payload: TickerPayload = {
-                                    "symbol": f"{clean_code}.T",
-                                    "price": price,
-                                    "change": 0.0,
-                                    "change_percent": 0.0,
-                                    "source": "kabutan_pts",
-                                    "pts": True,
-                                    "pts_trading": True,
-                                    "pts_time": pts_time,
-                                    "updated_at": time.time(),
-                                }
-                                self._record_fetch_success(symbol, kind="pts")
-                                return res_payload
+                try:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    pts_box = soup.select_one(".si_i1_3")
+                    if pts_box:
+                        pts_val_el = pts_box.select_one(".kabuka2")
+                        if pts_val_el:
+                            pts_clean = re.sub(r"[^\d.]", "", pts_val_el.text)
+                            if pts_clean:
+                                price = float(pts_clean)
+                                if price > 0:
+                                    pts_time_el = pts_box.select_one(".kabuka3")
+                                    pts_time = pts_time_el.text.strip() if pts_time_el else ""
+                                    res_payload: TickerPayload = {
+                                        "symbol": f"{clean_code}.T",
+                                        "price": price,
+                                        "change": 0.0,
+                                        "change_percent": 0.0,
+                                        "source": "kabutan_pts",
+                                        "pts": True,
+                                        "pts_trading": True,
+                                        "pts_time": pts_time,
+                                        "updated_at": time.time(),
+                                    }
+                                    self._record_fetch_success(symbol, kind="pts")
+                                    return res_payload
+                except Exception as exc:
+                    logger.warning("[Kabutan PTS Scraper] HTML parsing error for %s: %s", symbol, exc)
         except Exception as e:
             logger.debug("[Kabutan PTS Scraper] Fetch error for %s: %s", symbol, e)
         return None
@@ -954,44 +977,52 @@ class YahooJPRealtimeScraper:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
-                html = resp.text
-                next_data = None
-                price_str = self._extract_quote_field(html, "price")
-                if price_str is None:
-                    next_data = _extract_next_data_quotes(html)
-                    if next_data:
-                        price_str = next_data.get("price")
+                try:
+                    html = resp.text
+                except Exception as exc:
+                    logger.warning("[Yahoo JP Scraper] Failed reading HTML for %s: %s", symbol, exc)
+                    html = ""
+                if html:
+                    try:
+                        next_data = None
+                        price_str = self._extract_quote_field(html, "price")
+                        if price_str is None:
+                            next_data = _extract_next_data_quotes(html)
+                            if next_data:
+                                price_str = next_data.get("price")
+                                if price_str is not None:
+                                    logger.debug(
+                                        "[Yahoo JP Scraper] Quote parsed from __NEXT_DATA__ for %s",
+                                        symbol,
+                                    )
                         if price_str is not None:
-                            logger.debug(
-                                "[Yahoo JP Scraper] Quote parsed from __NEXT_DATA__ for %s",
-                                symbol,
-                            )
-                if price_str is not None:
-                    price = _parse_quote_number(price_str)
-                    if price > 0:
-                        change = _parse_quote_number(self._extract_quote_field(html, "priceChange"))
-                        change_pct_str = self._extract_quote_field(html, "priceChangeRate")
-                        if change_pct_str is None:
-                            change_pct_str = self._extract_quote_field(html, "priceChangePercent")
-                        # Volume is strictly sourced from yfinance, not from scrapers
-                        res_payload = {
-                            "symbol": f"{clean_code}.T",
-                            "price": price,
-                            "change": change,
-                            "change_percent": _parse_quote_number(change_pct_str),
-                            "source": "yahoojp",
-                            "updated_at": time.time(),
-                        }
-                        logger.debug(
-                            "[Yahoo JP Scraper] Scrape success for %s.T: price=%.2f, change=%.2f (source=yahoojp)",
-                            clean_code,
-                            price,
-                            change,
-                        )
-                        self._record_fetch_success(symbol)
-                        return res_payload
-                else:
-                    logger.debug("[Yahoo JP Scraper] No price found on page for %s", symbol)
+                            price = _parse_quote_number(price_str)
+                            if price > 0:
+                                change = _parse_quote_number(self._extract_quote_field(html, "priceChange"))
+                                change_pct_str = self._extract_quote_field(html, "priceChangeRate")
+                                if change_pct_str is None:
+                                    change_pct_str = self._extract_quote_field(html, "priceChangePercent")
+                                # Volume is strictly sourced from yfinance, not from scrapers
+                                res_payload = {
+                                    "symbol": f"{clean_code}.T",
+                                    "price": price,
+                                    "change": change,
+                                    "change_percent": _parse_quote_number(change_pct_str),
+                                    "source": "yahoojp",
+                                    "updated_at": time.time(),
+                                }
+                                logger.debug(
+                                    "[Yahoo JP Scraper] Scrape success for %s.T: price=%.2f, change=%.2f (source=yahoojp)",
+                                    clean_code,
+                                    price,
+                                    change,
+                                )
+                                self._record_fetch_success(symbol)
+                                return res_payload
+                        else:
+                            logger.debug("[Yahoo JP Scraper] No price found on page for %s", symbol)
+                    except Exception as exc:
+                        logger.warning("[Yahoo JP Scraper] HTML parsing error for %s: %s", symbol, exc)
             else:
                 logger.debug(
                     "[Yahoo JP Scraper] Non-200 response (%s) for %s", resp.status_code, symbol
@@ -1018,36 +1049,44 @@ class YahooJPRealtimeScraper:
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
 
             if resp.status_code == 200:
-                html = resp.text
-                segment = _extract_pts_price_data(html)
-                if segment:
-                    fields = _extract_pts_fields(segment)
-                    price = _parse_quote_number(fields.get("price"))
-                    if price > 0:
-                        flag_match = _PTS_TRADING_FLAG_RE.search(
-                            html
-                        ) or _PTS_TRADING_FLAG_UNESCAPED_RE.search(html)
-                        payload = {
-                            "symbol": f"{clean_code}.T",
-                            "price": price,
-                            "change": _parse_quote_number(fields.get("changePrice")),
-                            "change_percent": _parse_quote_number(fields.get("changeRate")),
-                            "volume": max(0, int(_parse_quote_number(fields.get("volume")))),
-                            "source": "yahoojp_pts",
-                            "pts": True,
-                            "pts_trading": bool(flag_match and flag_match.group(1) == "true"),
-                            "pts_time": fields.get("priceTime") or "",
-                            "updated_at": time.time(),
-                        }
-                        logger.debug(
-                            "[Yahoo JP Scraper] PTS quote for %s.T: price=%.2f (source=yahoojp_pts)",
-                            clean_code,
-                            price,
-                        )
-                        self._record_fetch_success(symbol, kind="pts")
-                        return payload
-                else:
-                    logger.debug("[Yahoo JP Scraper] No PTS data on page for %s", symbol)
+                try:
+                    html = resp.text
+                except Exception as exc:
+                    logger.warning("[Yahoo JP Scraper] Failed reading PTS HTML for %s: %s", symbol, exc)
+                    html = ""
+                if html:
+                    try:
+                        segment = _extract_pts_price_data(html)
+                        if segment:
+                            fields = _extract_pts_fields(segment)
+                            price = _parse_quote_number(fields.get("price"))
+                            if price > 0:
+                                flag_match = _PTS_TRADING_FLAG_RE.search(
+                                    html
+                                ) or _PTS_TRADING_FLAG_UNESCAPED_RE.search(html)
+                                payload = {
+                                    "symbol": f"{clean_code}.T",
+                                    "price": price,
+                                    "change": _parse_quote_number(fields.get("changePrice")),
+                                    "change_percent": _parse_quote_number(fields.get("changeRate")),
+                                    "volume": max(0, int(_parse_quote_number(fields.get("volume")))),
+                                    "source": "yahoojp_pts",
+                                    "pts": True,
+                                    "pts_trading": bool(flag_match and flag_match.group(1) == "true"),
+                                    "pts_time": fields.get("priceTime") or "",
+                                    "updated_at": time.time(),
+                                }
+                                logger.debug(
+                                    "[Yahoo JP Scraper] PTS quote for %s.T: price=%.2f (source=yahoojp_pts)",
+                                    clean_code,
+                                    price,
+                                )
+                                self._record_fetch_success(symbol, kind="pts")
+                                return payload
+                        else:
+                            logger.debug("[Yahoo JP Scraper] No PTS data on page for %s", symbol)
+                    except Exception as exc:
+                        logger.warning("[Yahoo JP Scraper] PTS HTML parsing error for %s: %s", symbol, exc)
             else:
                 logger.debug(
                     "[Yahoo JP Scraper] PTS non-200 response (%s) for %s", resp.status_code, symbol
@@ -1067,7 +1106,11 @@ class YahooJPRealtimeScraper:
         never remove the symbol from polling: that silently disabled every
         fallback source as well.
         """
-        payload = self.fetch_jp_symbol(symbol) if use_primary else None
+        try:
+            payload = self.fetch_jp_symbol(symbol) if use_primary else None
+        except Exception as exc:
+            logger.warning("[Yahoo JP Scraper] fetch_jp_symbol raised for %s: %s", symbol, exc)
+            payload = None
         if not payload:
             for fb in self._all_fallback_providers():
                 try:
@@ -1080,7 +1123,7 @@ class YahooJPRealtimeScraper:
                         break
                 except Exception as exc:
                     lbl = getattr(fb, "_SCRAPER_LABEL", type(fb).__name__)
-                    logger.debug("Fallback %s failed for %s: %s", lbl, symbol, exc)
+                    logger.warning("Fallback %s failed for %s: %s", lbl, symbol, exc)
         return payload
 
     def _active_symbols(self, symbols: Iterable[str], kind: str = "regular") -> list[str]:

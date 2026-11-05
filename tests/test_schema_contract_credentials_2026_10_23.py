@@ -475,3 +475,31 @@ def test_schema_normalizes_programmatic_input():
     assert req.mistral_api_mode == "chat"
     assert req.preview_mode is False
     assert req.openai_api_key is None
+
+
+def test_credentials_error_from_validation_fallback_on_unexpected_exception():
+    """Unexpected exceptions or malformed markers inside validation error mapping return MALFORMED_INPUT."""
+    from unittest.mock import MagicMock
+
+    from route_helpers import _credentials_error_from_validation
+
+    with app.app_context():
+        mock_exc = MagicMock()
+        # 1. errors() raises unexpected Exception
+        mock_exc.errors.side_effect = RuntimeError("Pydantic errors() broken")
+        resp, status = _credentials_error_from_validation(mock_exc)
+        assert status == 400
+        assert resp.get_json()["code"] == str(ErrorCode.MALFORMED_INPUT.value)
+
+        # 2. errors() returns unparseable objects
+        mock_exc.errors.side_effect = None
+        mock_exc.errors.return_value = ["non-dict-error", None, 123]
+        resp, status = _credentials_error_from_validation(mock_exc)
+        assert status == 400
+        assert resp.get_json()["code"] == str(ErrorCode.MALFORMED_INPUT.value)
+
+        # 3. errors() returns unknown marker
+        mock_exc.errors.return_value = [{"msg": "Value error, unexpected_custom_marker"}]
+        resp, status = _credentials_error_from_validation(mock_exc)
+        assert status == 400
+        assert resp.get_json()["code"] == str(ErrorCode.MALFORMED_INPUT.value)

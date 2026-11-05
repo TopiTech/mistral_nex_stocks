@@ -432,6 +432,13 @@ async function resetAllStocks() {
 function logout() {
   if (!confirm("APIキーを削除してログアウトしますか？")) return;
 
+  const logoutBtn = document.getElementById("logout-btn");
+  const originalText = logoutBtn ? logoutBtn.textContent : "";
+  if (logoutBtn) {
+    logoutBtn.disabled = true;
+    logoutBtn.textContent = "ログアウト中...";
+  }
+
   // Clear browser storage immediately to ensure it's always removed
   clearLegacyApiKeyStorage();
 
@@ -462,6 +469,10 @@ function logout() {
     })
     .catch((error) => {
       logger.error("Server-side logout failed:", error);
+      if (logoutBtn) {
+        logoutBtn.disabled = false;
+        logoutBtn.textContent = originalText;
+      }
       showToast(
         `ログアウトに失敗しました: ${error.message || "不明なエラー"}。一部の認証情報が端末に残っている可能性があります。`,
         "#ff7d7d",

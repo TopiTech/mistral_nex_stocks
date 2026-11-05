@@ -53,7 +53,8 @@ worker_class = "gthread"
 sse_listener_limit = _env_int("MNS_MAX_SSE_LISTENERS", 64, 1, 1000)
 sse_non_stream_thread_reserve = 6
 required_threads = sse_listener_limit + sse_non_stream_thread_reserve
-threads = required_threads
+# Priority: CLI --threads (handled by Gunicorn if supplied) > MNS_GUNICORN_THREADS > required_threads.
+threads = _env_int("MNS_GUNICORN_THREADS", required_threads, 1, 1000)
 
 # ---------------------------------------------------------------------------
 # Network
@@ -104,9 +105,9 @@ def on_starting(server):
         )
         sys.exit(1)
 
-    # Gunicorn command-line flags can override this file's ``threads`` value.
-    # Reject an override that would let accepted SSE connections consume all
-    # gthread workers and starve ordinary API calls.
+    # Gunicorn command-line flags or MNS_GUNICORN_THREADS can override this
+    # file's ``threads`` value. Reject an override that would let accepted SSE
+    # connections consume all gthread workers and starve ordinary API calls.
     configured_threads = None
     try:
         # Real Gunicorn exposes ``server.cfg.threads``.  Access is guarded so
@@ -122,7 +123,7 @@ def on_starting(server):
             "FATAL: Gunicorn thread count is too low for the configured SSE limit "
             f"(threads={configured_threads}, MNS_MAX_SSE_LISTENERS={sse_listener_limit}, "
             f"required>={required_threads}).\n"
-            "Increase --threads or lower MNS_MAX_SSE_LISTENERS; reserve request threads "
+            "Increase --threads or MNS_GUNICORN_THREADS, or lower MNS_MAX_SSE_LISTENERS; reserve request threads "
             "must remain available alongside SSE connections.\n"
         )
         sys.exit(1)

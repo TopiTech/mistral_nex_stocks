@@ -524,7 +524,9 @@ def api_add_stock_ext() -> Any:
         if _stock_is_default_or_user(symbol, market) or any(
             alias in container for alias in _stored_symbol_aliases(symbol, market)
         ):
-            return ok_response({"message": f"{symbol} already exists in {market}"})
+            return ok_response(
+                {"message": f"{symbol} already exists in {market}", "already_exists": True}
+            )
         if not _watchlist_has_capacity(market):
             return _watchlist_capacity_error(market)
         container[symbol] = name

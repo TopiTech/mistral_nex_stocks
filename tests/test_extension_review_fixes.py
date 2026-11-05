@@ -369,7 +369,9 @@ def test_add_ext_does_not_duplicate_legacy_numeric_jp_symbol():
             )
 
         assert response.status_code == 200
-        assert response.get_json()["message"] == "1234.T already exists in jp"
+        payload = response.get_json()
+        assert payload["message"] == "1234.T already exists in jp"
+        assert payload.get("already_exists") is True
         assert app_state.market.user_jp == {"1234": "Legacy Tokyo Stock"}
     finally:
         app_state.market.user_jp = {}

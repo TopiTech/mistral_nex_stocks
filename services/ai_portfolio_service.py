@@ -914,24 +914,6 @@ def generate_ai_portfolio_by_theme(
                     parsed_result["title"] = preset_config["title"]
                     parsed_result["description"] = preset_config["description"]
 
-                # Normalize weights to 100%
-                items = parsed_result.get("items", [])
-                raw_weights = []
-                for it in items:
-                    try:
-                        w = float(it.get("weight_pct", 0) or 0.0)
-                        raw_weights.append(w if (math.isfinite(w) and w >= 0.0) else 0.0)
-                    except (TypeError, ValueError):
-                        raw_weights.append(0.0)
-                total_w = sum(raw_weights)
-                if total_w <= 0.0 and items:
-                    equal_w = round(100.0 / len(items), 1)
-                    for it in items:
-                        it["weight_pct"] = equal_w
-                elif total_w > 0.0:
-                    for it, w in zip(items, raw_weights, strict=True):
-                        it["weight_pct"] = round((w / total_w) * 100.0, 1)
-
                 # Mark the portfolio as AI-generated (distinct from the fallback path).
                 parsed_result["generated_by"] = "ai"
 

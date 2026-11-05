@@ -30,6 +30,7 @@ from routes.stocks.common import (
     resolve_stocks_for_response,
     save_user_stocks,
 )
+from utils.normalization import is_bool_like
 from utils.stock_payload import (
     _default_stock_names,
     _get_stock_container,
@@ -230,7 +231,7 @@ def api_update_portfolio() -> Any:
     invalidate_stock_caches(symbol)
     persisted_fx_rate: float | None = None
     raw_fx = val.get("avg_fx_rate") if isinstance(val, dict) else None
-    if isinstance(raw_fx, (int, float)):
+    if isinstance(raw_fx, (int, float)) and not is_bool_like(raw_fx):
         persisted_fx_rate = float(raw_fx)
     ensure_stock_placeholder_in_caches(
         symbol,

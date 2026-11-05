@@ -1031,6 +1031,7 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                             cur_vol = r_copy.get("volume")
                             if (
                                 cur_vol is None
+                                or is_bool_like(cur_vol)
                                 or not isinstance(cur_vol, (int, float))
                                 or cur_vol <= 0
                             ):
@@ -1040,18 +1041,26 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                             if rt_info.get("source"):
                                 r_copy["source"] = rt_info["source"]
                             if include_portfolio and r_copy.get("shares"):
-                                try:
-                                    sh = float(r_copy.get("shares") or 0.0)
-                                    ap = float(r_copy.get("avg_price") or 0.0)
-                                    afx = r_copy.get("avg_fx_rate")
-                                    cur = str(r_copy.get("currency") or "JPY")
-                                    p_val, p_pl = _build_portfolio_metrics(
-                                        sh, ap, afx, cur, float(rt_info["price"])
-                                    )
-                                    r_copy["portfolio_value"] = p_val
-                                    r_copy["portfolio_pl"] = p_pl
-                                except (TypeError, ValueError, OverflowError):
-                                    pass
+                                raw_shares = r_copy.get("shares")
+                                if raw_shares is not None and not is_bool_like(raw_shares):
+                                    try:
+                                        sh = float(raw_shares)
+                                        raw_ap = r_copy.get("avg_price")
+                                        ap = 0.0 if is_bool_like(raw_ap) else float(raw_ap or 0.0)
+                                        raw_afx = r_copy.get("avg_fx_rate")
+                                        afx = (
+                                            float(raw_afx)
+                                            if (raw_afx is not None and not is_bool_like(raw_afx))
+                                            else None
+                                        )
+                                        cur = str(r_copy.get("currency") or "JPY")
+                                        p_val, p_pl = _build_portfolio_metrics(
+                                            sh, ap, afx, cur, float(rt_info["price"])
+                                        )
+                                        r_copy["portfolio_value"] = p_val
+                                        r_copy["portfolio_pl"] = p_pl
+                                    except (TypeError, ValueError, OverflowError):
+                                        pass
                         m_rows.append(r_copy)
                     resolved[m_key] = m_rows
 

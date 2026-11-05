@@ -801,7 +801,7 @@ class YahooJPRealtimeScraper:
                 m = res.search(html)
                 if m:
                     return m.group(1)
-            m = re.search(r'"' + field + r'":\s*"?([^",\s}]+)"?', html)
+            m = re.search(r'"' + field + r'":\s*"?([^",\s{}]+)"?', html)
             return m.group(1) if m else None
         except Exception as exc:
             logger.warning("[Yahoo JP Scraper] Failed extracting quote field %s: %s", field, exc)
@@ -986,22 +986,37 @@ class YahooJPRealtimeScraper:
                     try:
                         next_data = None
                         price_str = self._extract_quote_field(html, "price")
-                        if price_str is None:
+                        price = _parse_quote_number(price_str) if price_str else 0.0
+                        if price <= 0:
                             next_data = _extract_next_data_quotes(html)
                             if next_data:
                                 price_str = next_data.get("price")
-                                if price_str is not None:
+                                price = _parse_quote_number(price_str) if price_str else 0.0
+                                if price > 0:
                                     logger.debug(
                                         "[Yahoo JP Scraper] Quote parsed from __NEXT_DATA__ for %s",
                                         symbol,
                                     )
-                        if price_str is not None:
-                            price = _parse_quote_number(price_str)
-                            if price > 0:
-                                change = _parse_quote_number(self._extract_quote_field(html, "priceChange"))
+                        if price > 0:
+                                change_str = self._extract_quote_field(html, "priceChange")
+                                if change_str is None:
+                                    if next_data is None:
+                                        next_data = _extract_next_data_quotes(html)
+                                    if next_data:
+                                        change_str = next_data.get("priceChange")
+                                change = _parse_quote_number(change_str)
+
                                 change_pct_str = self._extract_quote_field(html, "priceChangeRate")
                                 if change_pct_str is None:
                                     change_pct_str = self._extract_quote_field(html, "priceChangePercent")
+                                if change_pct_str is None:
+                                    if next_data is None:
+                                        next_data = _extract_next_data_quotes(html)
+                                    if next_data:
+                                        change_pct_str = (
+                                            next_data.get("priceChangeRate")
+                                            or next_data.get("priceChangePercent")
+                                        )
                                 # Volume is strictly sourced from yfinance, not from scrapers
                                 res_payload = {
                                     "symbol": f"{clean_code}.T",

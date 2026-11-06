@@ -97,7 +97,7 @@ ignore = [
 "tests/*" = ["SIM117"]  # Allow nested with statements in test mock contexts
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 strict_equality = true
 warn_unused_configs = true

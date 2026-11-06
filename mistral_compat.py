@@ -17,7 +17,7 @@ Exports:
 import importlib.metadata
 import logging
 from importlib.metadata import PackageNotFoundError
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ except ImportError:
                         resp = httpx.Response(
                             503, request=httpx.Request("POST", "https://api.mistral.ai/fallback")
                         )
-                        return SDKError("mistralai SDK is not installed", resp)
+                        return SDKError("mistralai SDK is not installed", cast(Any, resp))
                     except Exception:  # pragma: no cover
                         try:
                             return SDKError("mistralai SDK is not installed", None)  # type: ignore[call-arg,arg-type]

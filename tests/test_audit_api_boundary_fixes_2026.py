@@ -120,9 +120,9 @@ class TestDependencyAuditAndDocConsistency:
 
     def test_pylint_pinned_versions(self) -> None:
         pyproject = (ROOT_DIR / "pyproject.toml").read_text(encoding="utf-8")
-        assert '"pylint==4.0.9"' in pyproject
+        assert '"pylint==4.1.3"' in pyproject
         req_lint = (ROOT_DIR / "requirements-lint.txt").read_text(encoding="utf-8")
-        assert "pylint==4.0.9" in req_lint
+        assert "pylint==4.1.3" in req_lint
 
     @pytest.mark.network
     def test_pip_audit_cleanliness(self) -> None:

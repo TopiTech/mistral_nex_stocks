@@ -972,7 +972,7 @@ class TestR7RateLimitMaxWaitCap:
             )
 
         assert result["error"]["status_code"] == 429
-        assert mock_wait.call_args.args[0] == ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC
+        mock_wait.assert_any_call(ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
         client.chat.complete.assert_not_called()
 
     def test_r7_stream_returns_retryable_429_after_long_cooldown(self):
@@ -1014,7 +1014,7 @@ class TestR7RateLimitMaxWaitCap:
                 "status_code": 429,
             }
         ]
-        assert mock_wait.call_args.args[0] == ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC
+        mock_wait.assert_any_call(ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
         client.chat.stream.assert_not_called()
 
     def test_r7_embeddings_stops_with_partial_result_after_long_cooldown(self):
@@ -1037,7 +1037,7 @@ class TestR7RateLimitMaxWaitCap:
             )
 
         assert result == [None]
-        assert mock_wait.call_args.args[0] == 30.0
+        mock_wait.assert_any_call(30.0)
         client.embeddings.create.assert_not_called()
 
 

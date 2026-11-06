@@ -128,9 +128,12 @@ class APIClient {
    */
   _openWithResolvedUrl(params) {
     const { onMessage, onError, options } = params;
-    const urlOrPromise = options.urlProvider
-      ? options.urlProvider()
-      : Promise.resolve(params.url);
+    let urlOrPromise;
+    try {
+      urlOrPromise = options.urlProvider ? options.urlProvider() : params.url;
+    } catch (err) {
+      urlOrPromise = Promise.reject(err);
+    }
     Promise.resolve(urlOrPromise)
       .then((resolvedUrl) => {
         // Abort if closeSSE()/mode-switch happened while the URL was being

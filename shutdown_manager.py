@@ -41,7 +41,15 @@ def _write_atomic_restricted(path, content: str) -> None:
                 tmp.chmod(0o600)
             except OSError:
                 pass
-        os.replace(tmp, path)
+        for attempt in range(4):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if platform.system().lower() == "windows" and attempt < 3:
+                    time.sleep(0.015 * (attempt + 1))
+                    continue
+                raise
         if platform.system().lower() != "windows":
             try:
                 path.chmod(0o600)

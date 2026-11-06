@@ -117,7 +117,7 @@ def build_popular_symbol_items_dispatch(
 
 def _json_safe(value: Any) -> Any:
     """Recursively replace non-finite floats (NaN/±Inf) and pandas NA/NaT with None,
-    and convert numpy/scalar types to standard Python types for strict JSON serialization."""
+    convert temporal and numpy/scalar types to standard Python types for strict JSON serialization."""
     if isinstance(value, bool):
         return value
     if type(value).__name__ in ("bool_", "bool"):
@@ -127,15 +127,22 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, numbers.Real):
         numeric = float(value)
         return numeric if math.isfinite(numeric) else None
+    if isinstance(value, (str, type(None))):
+        return value
     if isinstance(value, dict):
         return {str(k) if not isinstance(k, str) else k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     if isinstance(value, (set, frozenset)):
         return [_json_safe(v) for v in sorted(value, key=str)]
-    if hasattr(value, "tolist"):
+    if hasattr(value, "tolist") and callable(value.tolist):
         try:
             return [_json_safe(v) for v in value.tolist()]
+        except Exception:
+            pass
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        try:
+            return _json_safe(value.to_dict())
         except Exception:
             pass
     try:
@@ -145,7 +152,16 @@ def _json_safe(value: Any) -> Any:
             return None
     except Exception:
         pass
-    return value
+    if hasattr(value, "isoformat") and callable(value.isoformat):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False)
+        return value
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _parse_last_event_id() -> int:

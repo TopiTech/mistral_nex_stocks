@@ -266,18 +266,74 @@ def _write_saved_ai_portfolios(
     temp_path = AI_PORTFOLIO_STORAGE_FILE.with_name(
         f".{AI_PORTFOLIO_STORAGE_FILE.name}.{uuid.uuid4().hex}.tmp"
     )
+    old_umask = None
     try:
-        with open(temp_path, "x", encoding="utf-8") as file_obj:
-            json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
-            file_obj.flush()
-            os.fsync(file_obj.fileno())
+        if _is_windows():
+            with open(temp_path, "w", encoding="utf-8") as file_obj:
+                json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
+                file_obj.flush()
+                try:
+                    os.fsync(file_obj.fileno())
+                except OSError:
+                    pass
+        else:
+            old_umask = os.umask(0o077)
+            try:
+                fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as file_obj:
+                        json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
+                        file_obj.flush()
+                        try:
+                            os.fsync(file_obj.fileno())
+                        except OSError:
+                            pass
+                except Exception:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
+            finally:
+                if old_umask is not None:
+                    os.umask(old_umask)
+                    old_umask = None
+
         if not _is_windows():
-            os.chmod(temp_path, 0o600)
-        os.replace(temp_path, AI_PORTFOLIO_STORAGE_FILE)
+            try:
+                os.chmod(temp_path, 0o600)
+            except OSError:
+                pass
+
+        for attempt in range(4):
+            try:
+                os.replace(temp_path, AI_PORTFOLIO_STORAGE_FILE)
+                break
+            except PermissionError:
+                if _is_windows() and attempt < 3:
+                    time.sleep(0.015 * (attempt + 1))
+                    continue
+                raise
+
+        if not _is_windows():
+            try:
+                os.chmod(AI_PORTFOLIO_STORAGE_FILE, 0o600)
+            except OSError:
+                pass
+            o_dir = getattr(os, "O_DIRECTORY", None)
+            if o_dir is not None:
+                try:
+                    dir_fd = os.open(str(AI_PORTFOLIO_STORAGE_FILE.parent), o_dir)
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                except OSError:
+                    pass
     finally:
         try:
-            temp_path.unlink()
-        except FileNotFoundError:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
             pass
 
 
@@ -313,8 +369,26 @@ def _load_saved_ai_portfolios_strict(*, master_key: str | None = None) -> list[d
     if not AI_PORTFOLIO_STORAGE_FILE.exists():
         return []
     try:
-        with open(AI_PORTFOLIO_STORAGE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = None
+        for attempt in range(4):
+            try:
+                with open(AI_PORTFOLIO_STORAGE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                break
+            except PermissionError:
+                if _is_windows() and attempt < 3:
+                    time.sleep(0.015 * (attempt + 1))
+                    continue
+                raise
+            except FileNotFoundError:
+                if attempt < 3:
+                    time.sleep(0.015 * (attempt + 1))
+                    if not AI_PORTFOLIO_STORAGE_FILE.exists():
+                        return []
+                    continue
+                raise
+        if data is None:
+            return []
         if isinstance(data, list):
             # Legacy plaintext database (pre-encryption) - read compatibility.
             return [sanitize_ai_portfolio(item) for item in data if isinstance(item, dict)]

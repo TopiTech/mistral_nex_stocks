@@ -634,6 +634,7 @@
         const maxAttempts = 30;
         let attempt = 0;
         let finished = false;
+        let transientErrors = 0;
         while (attempt < maxAttempts) {
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           attempt += 1;
@@ -641,17 +642,31 @@
           await delayWithAbort(backoff, abortController.signal);
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
-          const pollResp = await csrfFetch("/api/ai-portfolio/generate", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              theme: presetOrTheme,
-              request_token: requestToken,
-            }),
-            signal: abortController.signal,
-          });
+          let pollResp;
+          try {
+            pollResp = await csrfFetch("/api/ai-portfolio/generate", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                theme: presetOrTheme,
+                request_token: requestToken,
+              }),
+              signal: abortController.signal,
+            });
+          } catch (fetchErr) {
+            if (fetchErr?.name === "AbortError") throw fetchErr;
+            if (transientErrors < 3) {
+              transientErrors += 1;
+              await delayWithAbort(
+                1500 * transientErrors,
+                abortController.signal,
+              );
+              continue;
+            }
+            throw fetchErr;
+          }
           if (!pollResp.ok) {
             const pollErrData = await pollResp.json().catch(() => ({}));
             if (pollResp.status === 429) {
@@ -668,6 +683,19 @@
               await delayWithAbort(waitMs, abortController.signal);
               continue;
             }
+            if (
+              (pollResp.status === 502 ||
+                pollResp.status === 503 ||
+                pollResp.status === 504) &&
+              transientErrors < 3
+            ) {
+              transientErrors += 1;
+              await delayWithAbort(
+                1500 * transientErrors,
+                abortController.signal,
+              );
+              continue;
+            }
             throw new Error(
               getApiErrorMessage(
                 pollErrData,
@@ -675,6 +703,7 @@
               ),
             );
           }
+          transientErrors = 0;
           const pollData = await pollResp.json().catch(() => ({}));
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           if (pollData && !pollData.fetching) {
@@ -759,6 +788,7 @@
         const maxAttempts = 30;
         let attempt = 0;
         let finished = false;
+        let transientErrors = 0;
         while (attempt < maxAttempts) {
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           attempt += 1;
@@ -766,14 +796,31 @@
           await delayWithAbort(backoff, abortController.signal);
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
 
-          const pollResp = await csrfFetch("/api/ai-portfolio/rebalance", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ theme: theme, request_token: requestToken }),
-            signal: abortController.signal,
-          });
+          let pollResp;
+          try {
+            pollResp = await csrfFetch("/api/ai-portfolio/rebalance", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                theme: theme,
+                request_token: requestToken,
+              }),
+              signal: abortController.signal,
+            });
+          } catch (fetchErr) {
+            if (fetchErr?.name === "AbortError") throw fetchErr;
+            if (transientErrors < 3) {
+              transientErrors += 1;
+              await delayWithAbort(
+                1500 * transientErrors,
+                abortController.signal,
+              );
+              continue;
+            }
+            throw fetchErr;
+          }
           if (!pollResp.ok) {
             const pollErrData = await pollResp.json().catch(() => ({}));
             if (pollResp.status === 429) {
@@ -789,6 +836,19 @@
               await delayWithAbort(waitMs, abortController.signal);
               continue;
             }
+            if (
+              (pollResp.status === 502 ||
+                pollResp.status === 503 ||
+                pollResp.status === 504) &&
+              transientErrors < 3
+            ) {
+              transientErrors += 1;
+              await delayWithAbort(
+                1500 * transientErrors,
+                abortController.signal,
+              );
+              continue;
+            }
             throw new Error(
               getApiErrorMessage(
                 pollErrData,
@@ -796,6 +856,7 @@
               ),
             );
           }
+          transientErrors = 0;
           const pollData = await pollResp.json().catch(() => ({}));
           if (!isCurrentAiPortfolioRequest(requestGeneration)) return;
           if (pollData && !pollData.fetching) {

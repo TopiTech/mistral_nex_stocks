@@ -924,9 +924,36 @@
       );
       if (totalWeight > 100) {
         const scale = 100 / totalWeight;
+        const scaledItems = [];
         for (const it of sanitizedItems) {
           if (it && Number.isFinite(Number(it.weight_pct))) {
-            it.weight_pct = Math.round(Number(it.weight_pct) * scale * 10) / 10;
+            // Backend requires 0 < weight_pct, so a tiny holding must never
+            // round down to 0%.
+            it.weight_pct = Math.max(
+              0.1,
+              Math.round(Number(it.weight_pct) * scale * 10) / 10,
+            );
+            scaledItems.push(it);
+          }
+        }
+        // Rounding each weight independently can push the total back over the
+        // 100% limit (e.g. 19 items at 6% -> 5.3% each = 100.7%), and the
+        // backend rejects totals above 100.5%. Reconcile the rounding excess
+        // against the largest weights, never taking an item below 0.1%.
+        let excess =
+          Math.round(
+            (scaledItems.reduce((sum, it) => sum + it.weight_pct, 0) - 100) *
+              10,
+          ) / 10;
+        if (excess > 0) {
+          scaledItems.sort((a, b) => b.weight_pct - a.weight_pct);
+          for (const it of scaledItems) {
+            if (excess <= 0) break;
+            const reducible = Math.round((it.weight_pct - 0.1) * 10) / 10;
+            if (reducible <= 0) continue;
+            const cut = Math.min(reducible, excess);
+            it.weight_pct = Math.round((it.weight_pct - cut) * 10) / 10;
+            excess = Math.round((excess - cut) * 10) / 10;
           }
         }
       }

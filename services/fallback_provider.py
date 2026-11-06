@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 
 from credential_manager import get_alphavantage_api_key
 from utils.http_utils import parse_retry_after
+from utils.normalization import _finite_number, is_bool_like
 
 BeautifulSoup: Any
 try:
@@ -147,17 +148,17 @@ class AlphaVantageProvider(BaseFallbackProvider):
                 return None
 
             def _to_float(val: Any, default: float = 0.0) -> float:
-                try:
-                    num = float(val)
-                    return num if math.isfinite(num) else default
-                except (ValueError, TypeError):
-                    return default
+                num = _finite_number(val)
+                return num if num is not None else default
 
             def _to_int(val: Any, default: int = 0) -> int:
                 try:
-                    return int(float(val))
+                    if is_bool_like(val):
+                        return default
+                    num = float(val)
                 except (ValueError, TypeError):
                     return default
+                return int(num) if math.isfinite(num) else default
 
             price = _to_float(quote["05. price"])
 
@@ -231,12 +232,10 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             )
         if not m_price:
             return None
-        try:
-            p_val = float(m_price.group(1).replace(",", "").strip())
-        except (ValueError, TypeError):
+        parsed = _finite_number(m_price.group(1).replace(",", "").strip())
+        if parsed is None or parsed <= 0:
             return None
-        if p_val <= 0:
-            return None
+        p_val = parsed
         return {
             "symbol": symbol,
             "regularMarketPrice": p_val,
@@ -371,19 +370,38 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                 return val
 
             price = _extract_fmt("regularMarketPrice")
-            if price is None:
+            if price is None or _finite_number(price) is None:
                 return None
 
+            def _quote_float(field: str, default: float) -> float:
+                raw = _extract_fmt(field)
+                num = _finite_number(raw) if raw is not None else None
+                return num if num is not None else default
+
+            def _quote_int(field: str, default: int = 0) -> int:
+                raw = _extract_fmt(field)
+                if raw is None or is_bool_like(raw):
+                    return default
+                try:
+                    num = float(raw)
+                except (ValueError, TypeError):
+                    return default
+                if not math.isfinite(num) or num < 0:
+                    return default
+                return int(num)
+
+            price_finite = _finite_number(price)
+            if price_finite is None:
+                return None
+            price_val = price_finite
             return {
                 "symbol": symbol,
-                "regularMarketPrice": float(price),
-                "regularMarketPreviousClose": float(
-                    _extract_fmt("regularMarketPreviousClose") or price
-                ),
-                "regularMarketVolume": int(_extract_fmt("regularMarketVolume") or 0),
-                "regularMarketOpen": float(_extract_fmt("regularMarketOpen") or price),
-                "regularMarketDayHigh": float(_extract_fmt("regularMarketDayHigh") or price),
-                "regularMarketDayLow": float(_extract_fmt("regularMarketDayLow") or price),
+                "regularMarketPrice": price_val,
+                "regularMarketPreviousClose": _quote_float("regularMarketPreviousClose", price_val),
+                "regularMarketVolume": _quote_int("regularMarketVolume", 0),
+                "regularMarketOpen": _quote_float("regularMarketOpen", price_val),
+                "regularMarketDayHigh": _quote_float("regularMarketDayHigh", price_val),
+                "regularMarketDayLow": _quote_float("regularMarketDayLow", price_val),
             }
         except Exception as exc:
             logger.debug("Yahoo HTML scraper failed for %s: %s", symbol, exc)

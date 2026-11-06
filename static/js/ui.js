@@ -169,7 +169,11 @@ async function ensureStockDetails(wrapper) {
   const market = wrapper.dataset.market || "us";
 
   const controller = requestController;
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 15000);
 
   const showErrorBanner = (text) => {
     // Reset fields to failure placeholder
@@ -262,9 +266,14 @@ async function ensureStockDetails(wrapper) {
     }
   } catch (e) {
     if (!isCurrentRequest()) return;
-    const isTimeout = e.name === "AbortError";
-    const statusText = isTimeout ? "タイムアウト" : "取得失敗";
-    showErrorBanner(statusText);
+    const reason = e?.details?.reason || e?.data?.details?.reason || "";
+    if (timedOut) {
+      showErrorBanner(reason ? `タイムアウト（${reason}）` : "タイムアウト");
+    } else if (e.name === "AbortError") {
+      showErrorBanner(reason || "取得失敗");
+    } else {
+      showErrorBanner(reason || (e?.message ? String(e.message) : "取得失敗"));
+    }
     logger.warn("Details fetch error:", e);
   } finally {
     clearTimeout(timeoutId);
@@ -3481,6 +3490,12 @@ async function triggerAiTechnicalLines(wrapper) {
   const stock = targetWrapper.__stockData || getStockByKey(stockKey);
   if (!stock) return;
 
+  targetWrapper.__aiTechnicalLinesController?.abort();
+  const linesController = new AbortController();
+  targetWrapper.__aiTechnicalLinesController = linesController;
+  const isCurrentLinesRequest = () =>
+    targetWrapper.__aiTechnicalLinesController === linesController;
+
   const btns = targetWrapper.querySelectorAll(".ai-tech-lines-btn");
   const fsBtn = document.getElementById("fs-ai-tech-lines-btn");
   const allBtns = [...Array.from(btns), fsBtn].filter(Boolean);
@@ -3523,9 +3538,12 @@ async function triggerAiTechnicalLines(wrapper) {
         period: period,
         history_data: historyData,
       }),
+      signal: linesController.signal,
     });
 
+    if (!isCurrentLinesRequest()) return;
     const data = await res.json().catch(() => ({}));
+    if (!isCurrentLinesRequest()) return;
     if (!res.ok || !data?.ok) {
       if (data?.model_restricted || data?.details?.model_restricted) {
         const isOpenAi =
@@ -3576,8 +3594,14 @@ async function triggerAiTechnicalLines(wrapper) {
       }
     }
   } catch (err) {
+    if (!isCurrentLinesRequest()) return;
+    if (err?.name === "AbortError") return;
     logger.error("AI Technical Lines error:", err);
-    showToast("通信エラーが発生しました。", "error");
+    const reason = err?.details?.reason || err?.data?.details?.reason || "";
+    showToast(
+      reason ? `通信エラー（${reason}）` : "通信エラーが発生しました。",
+      "error",
+    );
   } finally {
     hideAiTechnicalLoading(chartContainer);
     hideAiTechnicalLoading(fsCanvasWrapper);

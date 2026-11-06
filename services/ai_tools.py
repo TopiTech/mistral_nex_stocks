@@ -13,7 +13,13 @@ import logging
 import math
 from typing import Any
 
-from utils.normalization import is_jp_stock_code, is_valid_symbol, normalize_symbol
+from utils.normalization import (
+    _finite_number,
+    is_bool_like,
+    is_jp_stock_code,
+    is_valid_symbol,
+    normalize_symbol,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -325,8 +331,8 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                             p_val = (
                                 p_val or fast.get("last_price") or fast.get("regular_market_price")
                             )
-                        if p_val is not None:
-                            price = float(p_val)
+                        if p_val is not None and not is_bool_like(p_val):
+                            price = _finite_number(p_val)
                     if price is None:
                         # SVC-12: mirror _tool_calculate_technical_levels —
                         # every network-bound ticker.history call must hold
@@ -380,11 +386,13 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                             else None
                         )
                     )
-                    if price is not None and prev_close and float(prev_close) > 0:
-                        if change is None:
-                            change = round(price - float(prev_close), 4)
-                        if change_pct is None:
-                            change_pct = round((change / float(prev_close)) * 100, 2)
+                    if prev_close is not None and not is_bool_like(prev_close):
+                        prev_f = _finite_number(prev_close)
+                        if price is not None and prev_f is not None and prev_f > 0:
+                            if change is None:
+                                change = round(price - prev_f, 4)
+                            if change_pct is None:
+                                change_pct = round((change / prev_f) * 100, 2)
             except Exception:
                 pass
 

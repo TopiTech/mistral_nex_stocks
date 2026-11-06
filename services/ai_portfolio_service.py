@@ -125,10 +125,15 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             weight_raw = it.get("weight_pct")
             if is_bool_like(weight_raw):
                 continue
-            try:
-                weight_pct = float(weight_raw or 0.0)
-            except (TypeError, ValueError):
+            if weight_raw is None:
+                weight_pct = 0.0
+            elif isinstance(weight_raw, str) and not weight_raw.strip():
                 continue
+            else:
+                try:
+                    weight_pct = float(weight_raw)
+                except (TypeError, ValueError):
+                    continue
             if not math.isfinite(weight_pct) or not (0.0 <= weight_pct <= 100.0):
                 continue
             target_price: float | None = None

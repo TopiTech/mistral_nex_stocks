@@ -291,12 +291,25 @@ def init_logging(app) -> None:
     error_log_file = log_dir / "error.log"
 
     # --- Main rotating handler (all levels) ---
-    rotating_handler = RotatingFileHandler(
-        str(log_file),
-        maxBytes=5 * 1024 * 1024,  # 5MB
-        backupCount=3,
-        encoding="utf-8",
-    )
+    # Log content is sanitized, but the files themselves live next to
+    # secrets-adjacent runtime state; create them 0o600 like the config /
+    # user_stocks / DB files so other local users cannot read them.
+    _old_umask = os.umask(0o077)
+    try:
+        rotating_handler = RotatingFileHandler(
+            str(log_file),
+            maxBytes=5 * 1024 * 1024,  # 5MB
+            backupCount=3,
+            encoding="utf-8",
+        )
+        error_handler = RotatingFileHandler(
+            str(error_log_file),
+            maxBytes=2 * 1024 * 1024,  # 2MB
+            backupCount=5,
+            encoding="utf-8",
+        )
+    finally:
+        os.umask(_old_umask)
     rotating_handler.setLevel(LOG_LEVEL)
     # Pass the configured level so DEBUG records survive when LOG_LEVEL=DEBUG;
     # with the default (INFO) the filter still drops all DEBUG output.
@@ -307,12 +320,6 @@ def init_logging(app) -> None:
     logging.getLogger().addHandler(rotating_handler)
 
     # --- Dedicated error log (ERROR and above) ---
-    error_handler = RotatingFileHandler(
-        str(error_log_file),
-        maxBytes=2 * 1024 * 1024,  # 2MB
-        backupCount=5,
-        encoding="utf-8",
-    )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(_log_formatter)
     logging.getLogger().addHandler(error_handler)

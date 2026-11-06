@@ -326,7 +326,12 @@
           container.textContent = "";
           const errDiv = document.createElement("div");
           errDiv.className = "news-empty";
-          errDiv.textContent = "ニュースの取得に失敗しました。";
+          errDiv.textContent = `ニュースの取得に失敗しました（${
+            err?.details?.reason ||
+            err?.data?.details?.reason ||
+            err?.message ||
+            "通信に失敗しました"
+          }）。`;
           container.appendChild(errDiv);
         }
       }
@@ -540,6 +545,9 @@
           throw new Error(data.error || "AIの応答を構造化できませんでした");
         }
 
+        if (this._abortController?.signal.aborted) {
+          return;
+        }
         this.renderAiAnalysisResult(data);
       } catch (err) {
         if (err.name !== "AbortError") {
@@ -547,7 +555,12 @@
             container.textContent = "";
             const errDiv = document.createElement("div");
             errDiv.className = "ai-error-banner";
-            errDiv.textContent = `❌ AI分析エラー: ${err.message || "分析に失敗しました"}`;
+            const reason =
+              err?.details?.reason ||
+              err?.data?.details?.reason ||
+              err?.message ||
+              "分析に失敗しました";
+            errDiv.textContent = `❌ AI分析エラー: ${reason}`;
             container.appendChild(errDiv);
           }
         }

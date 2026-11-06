@@ -315,7 +315,16 @@ class StockDiskCache:
         try:
             for entry in self._cache_dir.glob("*.json"):
                 try:
-                    age = now - entry.stat().st_mtime
+                    # Judge freshness by the same _entry_age_seconds rule that
+                    # get()/has() use, so cleanup cannot disagree with reads
+                    # after a restore/copy resets the file mtime.
+                    data = None
+                    try:
+                        with entry.open("r", encoding="utf-8") as fh:
+                            data = json.load(fh)
+                    except (OSError, ValueError, TypeError):
+                        data = None
+                    age = _entry_age_seconds(data, entry, now)
                     if age > max_ttl:
                         entry.unlink()
                         removed += 1

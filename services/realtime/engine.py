@@ -34,7 +34,7 @@ from services.realtime.utils import (
     _tv_purge_key_variants,
     is_pts_session,
 )
-from utils.normalization import is_bool_like, is_jp_stock_code
+from utils.normalization import _finite_number, is_bool_like, is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -187,21 +187,17 @@ class RealtimeMarketEngine:
                 payload.pop("volume", None)
 
             inc_vol = payload.get("volume")
-            try:
-                inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
-            except (ValueError, TypeError):
-                inc_vol_f = 0.0
+            inc_vol_f = _finite_number(inc_vol)
+            inc_vol_f = inc_vol_f if inc_vol_f is not None else 0.0
 
             if inc_vol_f > 0:
-                payload["volume"] = inc_vol
+                payload["volume"] = int(inc_vol_f)
             else:
                 ex_vol = existing.get("volume") if existing else None
-                try:
-                    ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
-                except (ValueError, TypeError):
-                    ex_vol_f = 0.0
+                ex_vol_f = _finite_number(ex_vol)
+                ex_vol_f = ex_vol_f if ex_vol_f is not None else 0.0
                 if ex_vol_f > 0:
-                    payload["volume"] = ex_vol
+                    payload["volume"] = int(ex_vol_f)
                 else:
                     yf_vol = _get_yfinance_volume(symbol)
                     if yf_vol is not None and yf_vol > 0:
@@ -304,21 +300,17 @@ class RealtimeMarketEngine:
                 payload.pop("volume", None)
 
             inc_vol = payload.get("volume")
-            try:
-                inc_vol_f = float(inc_vol) if inc_vol is not None else 0.0
-            except (ValueError, TypeError):
-                inc_vol_f = 0.0
+            inc_vol_f = _finite_number(inc_vol)
+            inc_vol_f = inc_vol_f if inc_vol_f is not None else 0.0
 
             if inc_vol_f > 0:
-                payload["volume"] = inc_vol
+                payload["volume"] = int(inc_vol_f)
             else:
                 ex_vol = existing.get("volume") if existing else None
-                try:
-                    ex_vol_f = float(ex_vol) if ex_vol is not None else 0.0
-                except (ValueError, TypeError):
-                    ex_vol_f = 0.0
+                ex_vol_f = _finite_number(ex_vol)
+                ex_vol_f = ex_vol_f if ex_vol_f is not None else 0.0
                 if ex_vol_f > 0:
-                    payload["volume"] = ex_vol
+                    payload["volume"] = int(ex_vol_f)
                 else:
                     yf_vol = _get_yfinance_volume(symbol)
                     if yf_vol is not None and yf_vol > 0:

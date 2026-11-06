@@ -19,6 +19,7 @@ from services.realtime.utils import (
     _interruptible_sleep,
     websocket,
 )
+from utils.normalization import _finite_number, is_bool_like
 
 logger = logging.getLogger(__name__)
 
@@ -211,36 +212,24 @@ class TradingViewWSClient:
                     volume = prev_quote.get("volume", 0)
 
                     if "lp" in values and values["lp"] is not None:
-                        try:
-                            p_val = float(values["lp"])
-                            if math.isfinite(p_val) and p_val > 0:
-                                price = p_val
-                        except (TypeError, ValueError):
-                            pass
+                        p_val = _finite_number(values["lp"])
+                        if p_val is not None and p_val > 0:
+                            price = p_val
 
                     if "ch" in values and values["ch"] is not None:
-                        try:
-                            c_val = float(values["ch"])
-                            if math.isfinite(c_val):
-                                change = c_val
-                        except (TypeError, ValueError):
-                            pass
+                        c_val = _finite_number(values["ch"])
+                        if c_val is not None:
+                            change = c_val
 
                     if "chp" in values and values["chp"] is not None:
-                        try:
-                            cp_val = float(values["chp"])
-                            if math.isfinite(cp_val):
-                                change_percent = cp_val
-                        except (TypeError, ValueError):
-                            pass
+                        cp_val = _finite_number(values["chp"])
+                        if cp_val is not None:
+                            change_percent = cp_val
 
                     if "volume" in values and values["volume"] is not None:
-                        try:
-                            v_val = int(float(values["volume"]))
-                            if v_val >= 0:
-                                volume = v_val
-                        except (TypeError, ValueError):
-                            pass
+                        v_raw = None if is_bool_like(values["volume"]) else _finite_number(values["volume"])
+                        if v_raw is not None and v_raw >= 0:
+                            volume = int(v_raw)
 
                     if price is None or not math.isfinite(price) or price <= 0:
                         continue

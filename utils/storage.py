@@ -204,8 +204,20 @@ def _locked_read_user_stocks(lock_file: Path):
             try:
                 # [R4] msvcrt.LK_RLCK acts as an exclusive lock on Windows, similar to LK_LOCK.
                 # Shared reads are inherently blocked by other readers on Windows.
-                msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
-                locked = True
+                # Bounded non-blocking retry so a wedged peer cannot stall
+                # readers forever; exhaustion returns the read-failed sentinel
+                # and the caller falls back to an unlocked read.
+                for _attempt in range(20):
+                    try:
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                        locked = True
+                        break
+                    except OSError:
+                        if _attempt == 19:
+                            break
+                        time.sleep(0.05 * (_attempt + 1))
+                if not locked:
+                    raise OSError("user_stocks read lock busy")
 
                 # [R1] Ensure file size checks and writes are done after acquiring the lock to prevent race conditions.
                 if os.fstat(fd).st_size < 1:
@@ -235,8 +247,25 @@ def _locked_read_user_stocks(lock_file: Path):
             lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
             locked = False
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_SH)  # type: ignore[attr-defined]
-                locked = True
+                # Bounded non-blocking shared lock (see Windows branch).
+                import errno as _errno
+
+                for _attempt in range(20):
+                    try:
+                        fcntl.flock(lock_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                        locked = True
+                        break
+                    except OSError as _err:
+                        if getattr(_err, "errno", None) not in (
+                            _errno.EAGAIN,
+                            _errno.EWOULDBLOCK,
+                        ):
+                            raise
+                        if _attempt == 19:
+                            break
+                        time.sleep(0.05 * (_attempt + 1))
+                if not locked:
+                    raise OSError("user_stocks read lock busy")
                 with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
                     return json.load(f)
             finally:

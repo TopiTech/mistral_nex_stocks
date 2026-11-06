@@ -506,7 +506,12 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       if (err.name !== "AbortError" && isCurrentRequest()) {
         console.error("[Observatory] Load error:", err);
-        showError("市場データの取得に失敗しました。接続を確認してください。");
+        const reason =
+          err?.details?.reason ||
+          err?.data?.details?.reason ||
+          err?.message ||
+          "接続を確認してください。";
+        showError(`市場データの取得に失敗しました（${reason}）`);
       }
     }
   }

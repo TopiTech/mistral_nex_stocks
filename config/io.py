@@ -165,8 +165,21 @@ def load_config() -> dict[str, Any]:
                             os.lseek(fd, 0, os.SEEK_SET)
 
                         # LK_RLCK is a retry-based exclusive lock on Windows (Windows CRT does not support shared locks)
-                        msvcrt.locking(fd, msvcrt.LK_RLCK, 1)  # type: ignore[attr-defined]
-                        locked = True
+                        # Use a bounded non-blocking retry so a wedged peer
+                        # cannot stall readers forever; on exhaustion fall
+                        # through to the unlocked-read fallback below.
+                        locked = False
+                        for _attempt in range(20):
+                            try:
+                                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                                locked = True
+                                break
+                            except OSError:
+                                if _attempt == 19:
+                                    break
+                                time.sleep(0.05 * (_attempt + 1))
+                        if not locked:
+                            raise OSError("config read lock busy")
                         with open(config_store.CONFIG_FILE, "r", encoding="utf-8") as f:
                             data = json.load(f)
                             # Key the cache from the handle we just read so the
@@ -200,8 +213,29 @@ def load_config() -> dict[str, Any]:
                     lock_fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
                     locked = False
                     try:
-                        fcntl.flock(lock_fd, fcntl.LOCK_SH)  # type: ignore[attr-defined]
-                        locked = True
+                        # Bounded non-blocking shared lock: a wedged peer
+                        # holding the writer lock must not stall readers
+                        # forever; on exhaustion fall through to the
+                        # unlocked-read fallback below.
+                        import errno as _errno
+
+                        locked = False
+                        for _attempt in range(20):
+                            try:
+                                fcntl.flock(lock_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                                locked = True
+                                break
+                            except OSError as _err:
+                                if getattr(_err, "errno", None) not in (
+                                    _errno.EAGAIN,
+                                    _errno.EWOULDBLOCK,
+                                ):
+                                    raise
+                                if _attempt == 19:
+                                    break
+                                time.sleep(0.05 * (_attempt + 1))
+                        if not locked:
+                            raise OSError("config read lock busy")
                         with open(config_store.CONFIG_FILE, "r", encoding="utf-8") as f:
                             data = json.load(f)
                             # See the Windows branch: fstat the handle we read.

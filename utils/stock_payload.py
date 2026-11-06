@@ -410,7 +410,11 @@ def _extract_portfolio_fields(name_or_dict, market: str | None = None):
 def _compute_price_metrics(hist, symbol, info=None):
     """Extract price, change, and percentage from history DataFrame and info dict."""
     try:
+        if is_bool_like(hist["Close"].iloc[-1]):
+            raise TypeError("bool close")
         price = float(hist["Close"].iloc[-1])
+        if not math.isfinite(price):
+            raise ValueError("non-finite close")
     except (KeyError, IndexError, TypeError, ValueError, OverflowError):
         logger.warning("Stock %s: close price cannot be converted to a finite number", symbol)
         return None, None, None, None
@@ -419,7 +423,7 @@ def _compute_price_metrics(hist, symbol, info=None):
         raw_prev = info.get("previousClose")
         if raw_prev is None:
             raw_prev = info.get("regularMarketPreviousClose")
-        if raw_prev is not None:
+        if raw_prev is not None and not is_bool_like(raw_prev):
             try:
                 p_val = float(raw_prev)
                 if math.isfinite(p_val) and p_val > 0:
@@ -431,7 +435,11 @@ def _compute_price_metrics(hist, symbol, info=None):
             prev = price
         else:
             try:
+                if is_bool_like(hist["Close"].iloc[-2]):
+                    raise TypeError("bool previous close")
                 prev = float(hist["Close"].iloc[-2])
+                if not math.isfinite(prev):
+                    raise ValueError("non-finite previous close")
             except (KeyError, IndexError, TypeError, ValueError, OverflowError):
                 logger.warning("Stock %s: previous close cannot be converted", symbol)
                 return None, None, None, None

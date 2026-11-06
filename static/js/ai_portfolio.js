@@ -911,6 +911,25 @@
         }
         return itemCopy;
       });
+      // 補正(0%/不正値→20%)で合計が100%を超える場合がある(6銘柄以上で顕著)。
+      // バックエンドは合計>100%(許容100.5%)を400で拒否するため、超過分を
+      // 最大の銘柄から比例縮小して合計<=100に収める。
+      const totalWeight = sanitizedItems.reduce(
+        (sum, it) =>
+          sum +
+          (it && Number.isFinite(Number(it.weight_pct))
+            ? Number(it.weight_pct)
+            : 0),
+        0,
+      );
+      if (totalWeight > 100) {
+        const scale = 100 / totalWeight;
+        for (const it of sanitizedItems) {
+          if (it && Number.isFinite(Number(it.weight_pct))) {
+            it.weight_pct = Math.round(Number(it.weight_pct) * scale * 10) / 10;
+          }
+        }
+      }
       const resp = await csrfFetch("/api/ai-portfolio/copy-to-my", {
         method: "POST",
         headers: {

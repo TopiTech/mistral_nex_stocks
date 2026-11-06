@@ -397,7 +397,23 @@
         ) {
           console.warn("[TemporalController] History fetch error:", err);
           // 取得失敗を「LIVE 表示」に見えさせない(FE-exp-10)。
-          this.showHistoryError();
+          const reason =
+            err?.details?.reason ||
+            err?.data?.details?.reason ||
+            err?.message ||
+            "";
+          if (this.els.timeDisplay) {
+            this.els.timeDisplay.textContent = reason
+              ? `履歴取得に失敗しました（${reason}）`
+              : "履歴取得に失敗しました";
+          }
+          if (this.els.timeBadge) {
+            this.els.timeBadge.textContent = "ERROR";
+            this.els.timeBadge.className = "time-badge scrubbed";
+          }
+          if (this.els.timeSlider) {
+            this.els.timeSlider.disabled = true;
+          }
         }
       } finally {
         if (this.inFlightRequests.get(cacheKey) === controller) {

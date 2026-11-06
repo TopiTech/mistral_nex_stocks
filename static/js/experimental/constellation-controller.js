@@ -431,7 +431,12 @@
           aiResultContainer.textContent = "";
           const errDiv = document.createElement("div");
           errDiv.className = "ai-error-banner";
-          errDiv.textContent = `❌ 比較分析エラー: ${err.message || "通信に失敗しました"}`;
+          const reason =
+            err?.details?.reason ||
+            err?.data?.details?.reason ||
+            err?.message ||
+            "通信に失敗しました";
+          errDiv.textContent = `❌ 比較分析エラー: ${reason}`;
           aiResultContainer.appendChild(errDiv);
         }
       } finally {

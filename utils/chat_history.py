@@ -901,17 +901,34 @@ class SQLiteChatHistoryStore:
             raise KeyError(key)
 
     def pop(self, key: str, *args: Any) -> Any:
-        """Remove *key* and return its messages, or *default* if not found."""
+        """Remove *key* and return its messages, or *default* if not found.
+
+        Reads and deletes inside a single transaction so a concurrent
+        mutation between the two steps cannot surface a spurious KeyError
+        or delete a newer session's messages (mirrors the single-transaction
+        form used by record_turn / append_message_if_not_duplicate).
+        """
         if len(args) > 1:
             raise TypeError(f"pop expected at most 2 arguments, got {1 + len(args)}")
-        try:
-            val = self[key]
-            del self[key]
+
+        def _pop(conn, cursor):
+            val = self._read_messages(cursor, key)
+            cursor.execute("DELETE FROM chat_sessions WHERE session_id = ?", (key,))
+            if cursor.rowcount <= 0:
+                raise KeyError(key)
             return val
+
+        try:
+            return self._execute_in_transaction(_pop)
         except KeyError:
             if args:
                 return args[0]
             raise
+        except (sqlite3.Error, OSError, ValueError) as e:
+            logger.error("Failed to pop chat history for session %s: %s", key, e)
+            if args:
+                return args[0]
+            raise KeyError(key) from e
 
     def clear(self) -> None:
         def _clear(conn, cursor):

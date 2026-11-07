@@ -12,12 +12,16 @@ Exports:
     SystemMessage      - Helper that returns {"role": "system", "content": content}
     UserMessage        - Helper that returns {"role": "user", "content": content}
     AssistantMessage   - Helper that returns {"role": "assistant", "content": content}
+    mistral_agents     - Mistral Agents SDK module (mistralai.agents)
+    HAS_AGENTS_SDK     - True if mistralai-agents is installed
+    load_sdk_agent     - Helper to load an agent via mistralai-agents
 """
 
 import importlib.metadata
 import logging
 from importlib.metadata import PackageNotFoundError
 from typing import Any, cast
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -146,18 +150,14 @@ except ImportError:
                 def create(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 
-            class _AgentsFallback(
-                _BaseFallback
-            ):  # pragma: no cover - exercised only without SDK
+            class _AgentsFallback(_BaseFallback):  # pragma: no cover - exercised only without SDK
                 def complete(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 
                 def stream(self, *args: Any, **kwargs: Any) -> Any:
                     raise self._sdk_err()
 
-            class _BetaFallback(
-                _BaseFallback
-            ):  # pragma: no cover - exercised only without SDK
+            class _BetaFallback(_BaseFallback):  # pragma: no cover - exercised only without SDK
                 class _BetaAgents:
                     def __init__(self, err_fn: Any) -> None:
                         self._err_fn = err_fn
@@ -260,3 +260,39 @@ def ToolMessage(content: str, tool_call_id: str, name: str | None = None) -> dic
     if name:
         msg["name"] = name
     return msg
+
+
+# --------------------------------------------------------------------------
+# Mistral Agents SDK (mistralai-agents) integration layer
+# --------------------------------------------------------------------------
+try:
+    import mistralai.agents as mistral_agents
+
+    HAS_AGENTS_SDK = True
+except ImportError:
+    try:
+        from mistralai import agents as mistral_agents  # type: ignore
+
+        HAS_AGENTS_SDK = True
+    except ImportError:
+        mistral_agents = None  # type: ignore
+        HAS_AGENTS_SDK = False
+
+
+def load_sdk_agent(agent_id_or_name: str, api_key: str | None = None) -> Any:
+    """Load an Agent handle using the Mistral Agents SDK (mistralai-agents).
+
+    Accepts both deployed agent UUIDs (agent_id) and human-readable names (agent_name).
+    """
+    if mistral_agents is None:
+        raise SDKError("mistralai-agents SDK is not installed")
+
+    target = (agent_id_or_name or "").strip()
+    if not target:
+        raise SDKError("agent_id_or_name must not be empty")
+
+    try:
+        parsed_uuid = UUID(target)
+        return mistral_agents.Agent.load_from(agent_id=str(parsed_uuid), api_key=api_key)
+    except (ValueError, AttributeError):
+        return mistral_agents.Agent.load_from(agent_name=target, api_key=api_key)

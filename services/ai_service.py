@@ -1,3 +1,5 @@
+import asyncio
+import concurrent.futures
 import copy
 import hashlib
 import json
@@ -5,6 +7,7 @@ import logging
 import math
 import numbers
 import os
+import queue
 import random
 import re
 import secrets
@@ -39,7 +42,15 @@ from credential_manager import (
     is_openai_provider,
     is_preview_api_key,
 )
-from mistral_compat import BackoffStrategy, MistralError, RetryConfig, SDKError
+from mistral_compat import (
+    HAS_AGENTS_SDK,
+    BackoffStrategy,
+    MistralError,
+    RetryConfig,
+    SDKError,
+    load_sdk_agent,
+    mistral_agents,
+)
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.text_utils import _token_fingerprint
 from utils.validators import extract_chat_content, extract_json_payload
@@ -388,6 +399,51 @@ def _resolve_agents_target() -> tuple[bool, str]:
     if not is_agents_mode():
         return False, ""
     return True, get_agent_id()
+
+
+def _format_messages_for_sdk_agent(messages: list[dict[str, Any]]) -> str:
+    """Format messages into a single prompt content string for the Agents SDK."""
+    if not messages:
+        return ""
+    if len(messages) == 1:
+        return str(messages[0].get("content", ""))
+    parts = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        c = msg.get("content", "")
+        if role == "system":
+            parts.append(f"[Instruction]: {c}")
+        elif role == "user":
+            parts.append(f"[User]: {c}")
+        elif role == "assistant":
+            parts.append(f"[Assistant]: {c}")
+        else:
+            parts.append(f"[{role}]: {c}")
+    return "\n\n".join(parts)
+
+
+def _run_coro_sync(coro: Any, timeout_sec: float | None = None) -> Any:
+    """Run an async coroutine synchronously, isolated from any running event loop in caller thread."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        return asyncio.run(asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        def _runner():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                task = asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
+                return new_loop.run_until_complete(task)
+            finally:
+                new_loop.close()
+
+        future = executor.submit(_runner)
+        return future.result(timeout=timeout_sec)
 
 
 def _get_mistral_model_name():
@@ -987,44 +1043,107 @@ def call_mistral_chat(
                 _token_fingerprint(api_key),
             )
 
-            kwargs: dict[str, Any] = {
-                "messages": messages,
-                "max_tokens": token_limit,
-                "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
-                # Delegate transient retries (5xx / connection blips) to the SDK
-                # (B-1); the app-level 429 cooldown below stays authoritative for
-                # rate-limit backoff so the two layers do not fight each other.
-                "retries": _build_mistral_retry_config(),
-            }
-            if use_agents:
-                # Agents API: model/temperature/reasoning are defined on the
-                # agent in Mistral Console and cannot be sent per request.
-                kwargs["agent_id"] = agent_id
-            else:
-                kwargs["model"] = model
-                if _supports_reasoning_effort(model) and effective_reasoning is not None:
-                    kwargs["reasoning_effort"] = effective_reasoning
-                if temperature is not None:
-                    kwargs["temperature"] = temperature
-            if tools:
-                kwargs["tools"] = tools
-            if tool_choice:
-                kwargs["tool_choice"] = tool_choice
+            if use_agents and HAS_AGENTS_SDK and mistral_agents is not None:
+                # Mistral Agents SDK (mistralai-agents) execution
+                agent = load_sdk_agent(agent_id, api_key=api_key)
+                prompt_content = _format_messages_for_sdk_agent(messages)
+                run_kwargs: dict[str, Any] = {}
+                if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                    run_kwargs["output_type"] = response_format
 
-            # Structured Outputs: Pydanticモデルが渡された場合は chat.parse を使用
-            # (Agents API には parse が無いため json_schema -> json_object で代替)
-            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                if not use_agents:
-                    try:
-                        response = client.chat.parse(
-                            **kwargs,
-                            response_format=response_format,
-                        )
-                    except Exception as parse_err:
-                        logger.info(
-                            "Mistral SDK chat.parse encountered an error type=%s; falling back to chat.complete.",
-                            type(parse_err).__name__,
-                        )
+                result = _run_coro_sync(
+                    agent.run(prompt_content, **run_kwargs),
+                    timeout_sec=MISTRAL_API_TIMEOUT_SEC,
+                )
+
+                text_content = ""
+                output_obj = getattr(result, "output", None)
+                if output_obj is not None:
+                    if isinstance(output_obj, BaseModel):
+                        text_content = json.dumps(output_obj.model_dump(), ensure_ascii=False)
+                    elif isinstance(output_obj, dict):
+                        text_content = json.dumps(output_obj, ensure_ascii=False)
+                    else:
+                        text_content = str(output_obj)
+                else:
+                    text_content = getattr(result, "text", "") or ""
+
+                stop_reason = getattr(result, "stop_reason", "stop") or "stop"
+                response = {
+                    "id": f"agent-{agent_id}-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": f"agent:{agent_id}",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": text_content,
+                            },
+                            "finish_reason": stop_reason,
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                }
+                if output_obj is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                    parsed_val = output_obj.model_dump() if hasattr(output_obj, "model_dump") else output_obj
+                    response["choices"][0]["message"]["parsed"] = parsed_val
+            else:
+                kwargs: dict[str, Any] = {
+                    "messages": messages,
+                    "max_tokens": token_limit,
+                    "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
+                    "retries": _build_mistral_retry_config(),
+                }
+                if use_agents:
+                    kwargs["agent_id"] = agent_id
+                else:
+                    kwargs["model"] = model
+                    if _supports_reasoning_effort(model) and effective_reasoning is not None:
+                        kwargs["reasoning_effort"] = effective_reasoning
+                    if temperature is not None:
+                        kwargs["temperature"] = temperature
+                if tools:
+                    kwargs["tools"] = tools
+                if tool_choice:
+                    kwargs["tool_choice"] = tool_choice
+
+                # Structured Outputs: Pydanticモデルが渡された場合は chat.parse を使用
+                if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                    if not use_agents:
+                        try:
+                            response = client.chat.parse(
+                                **kwargs,
+                                response_format=response_format,
+                            )
+                        except Exception as parse_err:
+                            logger.info(
+                                "Mistral SDK chat.parse encountered an error type=%s; falling back to chat.complete.",
+                                type(parse_err).__name__,
+                            )
+                            try:
+                                kwargs["response_format"] = {
+                                    "type": "json_schema",
+                                    "json_schema": {
+                                        "name": response_format.__name__,
+                                        "schema": response_format.model_json_schema(),
+                                        "strict": True,
+                                    },
+                                }
+                                response = client.chat.complete(**kwargs)
+                            except Exception as schema_err:
+                                logger.debug(
+                                    "json_schema complete fallback failed type=%s; using json_object",
+                                    type(schema_err).__name__,
+                                )
+                                kwargs["response_format"] = {"type": "json_object"}
+                                response = client.chat.complete(**kwargs)
+                    else:
                         try:
                             kwargs["response_format"] = {
                                 "type": "json_schema",
@@ -1034,39 +1153,21 @@ def call_mistral_chat(
                                     "strict": True,
                                 },
                             }
-                            response = client.chat.complete(**kwargs)
+                            response = client.agents.complete(**kwargs)
                         except Exception as schema_err:
                             logger.debug(
-                                "json_schema complete fallback failed type=%s; using json_object",
+                                "agents json_schema call failed type=%s; using json_object",
                                 type(schema_err).__name__,
                             )
                             kwargs["response_format"] = {"type": "json_object"}
-                            response = client.chat.complete(**kwargs)
+                            response = client.agents.complete(**kwargs)
                 else:
-                    try:
-                        kwargs["response_format"] = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": response_format.__name__,
-                                "schema": response_format.model_json_schema(),
-                                "strict": True,
-                            },
-                        }
+                    if response_format:
+                        kwargs["response_format"] = response_format
+                    if use_agents:
                         response = client.agents.complete(**kwargs)
-                    except Exception as schema_err:
-                        logger.debug(
-                            "agents json_schema call failed type=%s; using json_object",
-                            type(schema_err).__name__,
-                        )
-                        kwargs["response_format"] = {"type": "json_object"}
-                        response = client.agents.complete(**kwargs)
-            else:
-                if response_format:
-                    kwargs["response_format"] = response_format
-                if use_agents:
-                    response = client.agents.complete(**kwargs)
-                else:
-                    response = client.chat.complete(**kwargs)
+                    else:
+                        response = client.chat.complete(**kwargs)
 
             # 成功報告
             app_state.market.report_circuit_result("mistral", success=True)
@@ -1078,7 +1179,9 @@ def call_mistral_chat(
                 )
 
             # レスポンスの辞書化
-            if hasattr(response, "model_dump"):
+            if isinstance(response, dict):
+                data = response
+            elif hasattr(response, "model_dump"):
                 data = response.model_dump()
             else:
                 # SVC-03: an SDK response without ``model_dump`` means the
@@ -2192,7 +2295,87 @@ def stream_mistral_chat(
         sdk_stream = None
         try:
             last_usage: dict[str, Any] | None = None
-            if use_agents:
+            if use_agents and HAS_AGENTS_SDK and mistral_agents is not None:
+                agent = load_sdk_agent(agent_id, api_key=api_key)
+                prompt_content = _format_messages_for_sdk_agent(messages)
+
+                event_queue: queue.Queue[Any] = queue.Queue()
+                stop_sentinel = object()
+
+                def on_event(event: Any) -> None:
+                    if isinstance(event, mistral_agents.TextDelta) if mistral_agents else False:
+                        t = getattr(event, "text", "")
+                        if t:
+                            event_queue.put({"type": "delta", "text": t})
+                    elif getattr(event, "text", None):
+                        event_queue.put({"type": "delta", "text": event.text})
+
+                def _stream_worker():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        res = new_loop.run_until_complete(
+                            agent.run(prompt_content, on_event=on_event)
+                        )
+                        event_queue.put({"type": "done", "result": res})
+                    except Exception as e:
+                        event_queue.put({"type": "error", "exception": e})
+                    finally:
+                        event_queue.put(stop_sentinel)
+                        new_loop.close()
+
+                import threading
+                stream_thread = threading.Thread(target=_stream_worker, daemon=True)
+                stream_thread.start()
+
+                try:
+                    while True:
+                        item = event_queue.get(timeout=MISTRAL_API_TIMEOUT_SEC)
+                        if item is stop_sentinel:
+                            break
+                        if isinstance(item, dict):
+                            item_type = item.get("type")
+                            if item_type == "delta":
+                                d_text = item.get("text", "")
+                                if d_text:
+                                    full_parts.append(d_text)
+                                    yield {"type": "delta", "text": d_text}
+                            elif item_type == "error":
+                                err_obj = item.get("exception")
+                                logger.error("Agent SDK stream error: %s", err_obj)
+                                yield {
+                                    "type": "error",
+                                    "message": str(err_obj) if err_obj else "Agent stream error",
+                                    "status_code": 500,
+                                }
+                                return
+                            elif item_type == "done":
+                                res = item.get("result")
+                                if not full_parts and res:
+                                    res_text = getattr(res, "text", "") or ""
+                                    if res_text:
+                                        full_parts.append(res_text)
+                                        yield {"type": "delta", "text": res_text}
+                except queue.Empty:
+                    logger.warning("Agent SDK stream timed out waiting for events")
+                    yield {
+                        "type": "error",
+                        "message": "Agent stream timed out",
+                        "status_code": 504,
+                    }
+                    return
+
+                app_state.market.report_circuit_result("mistral", success=True)
+                circuit_probe_claimed = False
+                app_state.ai.reset_mistral_streak()
+                with app_state.ai.mistral_cooldown_lock:
+                    app_state.ai.mistral_last_call_ts = max(
+                        app_state.ai.mistral_last_call_ts, time.time()
+                    )
+                full_text = "".join(full_parts)
+                yield {"type": "done", "text": full_text}
+                return
+            elif use_agents:
                 sdk_stream = client.agents.stream(**kwargs)
             else:
                 sdk_stream = client.chat.stream(**kwargs)

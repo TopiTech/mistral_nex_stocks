@@ -1,10 +1,10 @@
-"""Tests for Mistral Agents API support and keyless Preview Mode.
+"""Tests for Mistral Agents API / Agents SDK support and keyless Preview Mode.
 
 Verifies:
-  1. Setting up Mistral Agents API mode with an agent_id.
-  2. Disallowing model selection updates when in Agents API mode.
+  1. Setting up Mistral Agents mode with an agent_id.
+  2. Disallowing model selection updates when in Agents mode.
   3. Verification endpoint behavior for preview and agents mode.
-  4. Routing chat completion and streaming to client.agents.complete/stream in agents mode.
+  4. Routing chat completion and streaming to Agents SDK (agent.run) in agents mode.
   5. Enabling preview mode without API key.
   6. Preview mode generating valid sample responses without network calls.
   7. Clearing credentials resets preview mode and agent settings.
@@ -159,11 +159,11 @@ def test_agents_mode_requires_agent_id(client):
     assert data["ok"] is False
 
 
-@patch("mistral_compat.Mistral")
-def test_agents_api_completion_routing(mock_mistral_cls):
-    """Test call_mistral_chat routes to client.agents.complete when in agents mode."""
-    mock_instance = MagicMock()
-    mock_mistral_cls.return_value = mock_instance
+@patch("services.ai_service.load_sdk_agent")
+def test_agents_api_completion_routing(mock_load_agent):
+    """Test call_mistral_chat routes to agent.run in Agents SDK mode."""
+    mock_agent = MagicMock()
+    mock_load_agent.return_value = mock_agent
 
     save_api_credentials(
         mistral_api_key="01234567890123456789012345678901",
@@ -171,11 +171,14 @@ def test_agents_api_completion_routing(mock_mistral_cls):
         agent_id="ag_sample_test",
     )
 
-    mock_resp = MagicMock()
-    mock_resp.model_dump.return_value = {
-        "choices": [{"message": {"content": "Agent response text"}}]
-    }
-    mock_instance.agents.complete.return_value = mock_resp
+    async def _mock_run(*args, **kwargs):
+        res = MagicMock()
+        res.text = "Agent response text"
+        res.output = None
+        res.stop_reason = "stop"
+        return res
+
+    mock_agent.run = MagicMock(side_effect=_mock_run)
 
     res = call_mistral_chat(
         api_key="01234567890123456789012345678901",
@@ -183,11 +186,50 @@ def test_agents_api_completion_routing(mock_mistral_cls):
         use_cache=False,
     )
     assert res["choices"][0]["message"]["content"] == "Agent response text"
+    mock_load_agent.assert_called_once_with(
+        "ag_sample_test", api_key="01234567890123456789012345678901"
+    )
+    mock_agent.run.assert_called_once()
 
-    mock_instance.agents.complete.assert_called_once()
-    kwargs = mock_instance.agents.complete.call_args[1]
-    assert kwargs.get("agent_id") == "ag_sample_test"
-    assert "model" not in kwargs
+
+@patch("services.ai_service.load_sdk_agent")
+def test_agents_api_streaming_routing(mock_load_agent):
+    """Test stream_mistral_chat receives streaming events via Agents SDK."""
+    mock_agent = MagicMock()
+    mock_load_agent.return_value = mock_agent
+
+    save_api_credentials(
+        mistral_api_key="01234567890123456789012345678901",
+        api_mode="agents",
+        agent_id="ag_stream_test",
+    )
+
+    async def _mock_run(*args, **kwargs):
+        on_event = kwargs.get("on_event")
+        if on_event:
+            delta1 = MagicMock()
+            delta1.text = "Hello "
+            on_event(delta1)
+            delta2 = MagicMock()
+            delta2.text = "World!"
+            on_event(delta2)
+        res = MagicMock()
+        res.text = "Hello World!"
+        return res
+
+    mock_agent.run = MagicMock(side_effect=_mock_run)
+
+    events = list(
+        stream_mistral_chat(
+            api_key="01234567890123456789012345678901",
+            messages=[{"role": "user", "content": "こんにちは"}],
+        )
+    )
+    deltas = [e["text"] for e in events if e.get("type") == "delta"]
+    assert deltas == ["Hello ", "World!"]
+    done_event = next((e for e in events if e.get("type") == "done"), None)
+    assert done_event is not None
+    assert done_event["text"] == "Hello World!"
 
 
 def test_preview_mode_verify(client):
@@ -205,19 +247,17 @@ def test_preview_mode_verify(client):
 
 
 def test_agents_api_verify_beta_get(client):
-    """Test verification endpoint in Agents API mode calls beta.agents.get."""
+    """Test verification endpoint in Agents API mode calls load_sdk_agent."""
     save_api_credentials(
         mistral_api_key="01234567890123456789012345678901",
         api_mode="agents",
         agent_id="ag_valid_test_id",
     )
-    mock_client = MagicMock()
     mock_agent = MagicMock()
     mock_agent.name = "Test Financial Agent"
     mock_agent.model = "mistral-large-latest"
-    mock_client.beta.agents.get.return_value = mock_agent
 
-    with patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client):
+    with patch("routes.system.credentials.load_sdk_agent", return_value=mock_agent) as mock_load:
         res = client.post(
             "/api/credentials/verify",
             json={
@@ -235,11 +275,13 @@ def test_agents_api_verify_beta_get(client):
         assert data["agent_name"] == "Test Financial Agent"
         assert data["agent_model"] == "mistral-large-latest"
         assert data["tier_name"] == "Agents API"
-        mock_client.beta.agents.get.assert_called_once_with(agent_id="ag_valid_test_id")
+        mock_load.assert_called_once_with(
+            "ag_valid_test_id", api_key="01234567890123456789012345678901"
+        )
 
 
 def test_agents_api_verify_unsupported_sdk(client):
-    """Test verification endpoint in Agents API mode handles SDK lacking beta.agents."""
+    """Test verification endpoint in Agents API mode handles environment lacking Agents SDK."""
     save_api_credentials(
         mistral_api_key="01234567890123456789012345678901",
         api_mode="agents",
@@ -247,7 +289,11 @@ def test_agents_api_verify_unsupported_sdk(client):
     )
     mock_client = MagicMock(spec=[])  # no beta attribute
 
-    with patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client):
+    with (
+        patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client),
+        patch("mistral_compat.HAS_AGENTS_SDK", False),
+        patch("mistral_compat.mistral_agents", None),
+    ):
         res = client.post(
             "/api/credentials/verify",
             json={
@@ -263,11 +309,11 @@ def test_agents_api_verify_unsupported_sdk(client):
         assert "サポートされていません" in data["error"]
 
 
-@patch("mistral_compat.Mistral")
-def test_agents_api_structured_output_json_schema(mock_mistral_cls):
-    """Test structured Pydantic models with Agents API uses json_schema complete."""
-    mock_instance = MagicMock()
-    mock_mistral_cls.return_value = mock_instance
+@patch("services.ai_service.load_sdk_agent")
+def test_agents_api_structured_output_json_schema(mock_load_agent):
+    """Test structured Pydantic models with Agents SDK passes output_type and extracts output."""
+    mock_agent = MagicMock()
+    mock_load_agent.return_value = mock_agent
 
     save_api_credentials(
         mistral_api_key="01234567890123456789012345678901",
@@ -275,17 +321,27 @@ def test_agents_api_structured_output_json_schema(mock_mistral_cls):
         agent_id="ag_sample_structured",
     )
 
-    mock_resp = MagicMock()
-    mock_resp.model_dump.return_value = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"recommendation": "買い", "sentiment": "強気", "target_price_3m": 200, "upside_3m": "+10%", "confidence": "高", "analysis_summary": "良好", "key_catalysts": [], "risk_factors": [], "technical_analysis": "", "fundamental_analysis": "", "latest_news_impact": ""}'
-                }
-            }
-        ]
-    }
-    mock_instance.agents.complete.return_value = mock_resp
+    async def _mock_run(*args, **kwargs):
+        res = MagicMock()
+        sample_output = StockAnalysis(
+            recommendation="買い",
+            sentiment="強気",
+            target_price_3m=200,
+            upside_3m="+10%",
+            confidence="高",
+            analysis_summary="良好",
+            key_catalysts=[],
+            risk_factors=[],
+            technical_analysis="",
+            fundamental_analysis="",
+            latest_news_impact="",
+        )
+        res.text = sample_output.model_dump_json()
+        res.output = sample_output
+        res.stop_reason = "stop"
+        return res
+
+    mock_agent.run = MagicMock(side_effect=_mock_run)
 
     res = call_mistral_chat(
         api_key="01234567890123456789012345678901",
@@ -293,21 +349,24 @@ def test_agents_api_structured_output_json_schema(mock_mistral_cls):
         response_format=StockAnalysis,
         use_cache=False,
     )
-    mock_instance.agents.complete.assert_called_once()
-    kwargs = mock_instance.agents.complete.call_args[1]
-    assert kwargs.get("agent_id") == "ag_sample_structured"
-    assert "response_format" in kwargs
-    rf = kwargs["response_format"]
-    assert rf["type"] == "json_schema"
-    assert rf["json_schema"]["name"] == "StockAnalysis"
+    mock_load_agent.assert_called_once_with(
+        "ag_sample_structured", api_key="01234567890123456789012345678901"
+    )
+    mock_agent.run.assert_called_once()
+    kwargs = mock_agent.run.call_args[1]
+    assert kwargs.get("output_type") == StockAnalysis
     assert isinstance(res, dict)
+    assert res["choices"][0]["message"]["content"]["recommendation"] == "買い"
 
 
 def test_mistral_compat_fallback_shape():
-    """Verify Mistral client and fallback interfaces expose agents and beta attributes."""
+    """Verify Mistral client and fallback interfaces expose agents, beta, and Agents SDK attributes."""
     import mistral_compat
 
     assert hasattr(mistral_compat, "Mistral")
+    assert hasattr(mistral_compat, "load_sdk_agent")
+    assert hasattr(mistral_compat, "HAS_AGENTS_SDK")
+    assert hasattr(mistral_compat, "mistral_agents")
     client = mistral_compat.Mistral(api_key="test_key")
     assert hasattr(client, "agents")
     assert hasattr(client, "beta")

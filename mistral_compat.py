@@ -285,11 +285,11 @@ def load_sdk_agent(agent_id_or_name: str, api_key: str | None = None) -> Any:
     Accepts both deployed agent UUIDs (agent_id) and human-readable names (agent_name).
     """
     if mistral_agents is None:
-        raise SDKError("mistralai-agents SDK is not installed")
+        raise RuntimeError("mistralai-agents SDK is not installed")
 
     target = (agent_id_or_name or "").strip()
     if not target:
-        raise SDKError("agent_id_or_name must not be empty")
+        raise ValueError("agent_id_or_name must not be empty")
 
     try:
         parsed_uuid = UUID(target)

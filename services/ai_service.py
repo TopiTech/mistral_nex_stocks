@@ -1043,6 +1043,7 @@ def call_mistral_chat(
                 _token_fingerprint(api_key),
             )
 
+            response: Any
             if use_agents and HAS_AGENTS_SDK and mistral_agents is not None:
                 # Mistral Agents SDK (mistralai-agents) execution
                 agent = load_sdk_agent(agent_id, api_key=api_key)
@@ -1069,7 +1070,7 @@ def call_mistral_chat(
                     text_content = getattr(result, "text", "") or ""
 
                 stop_reason = getattr(result, "stop_reason", "stop") or "stop"
-                response = {
+                agent_response: dict[str, Any] = {
                     "id": f"agent-{agent_id}-{int(time.time())}",
                     "object": "chat.completion",
                     "created": int(time.time()),
@@ -1092,7 +1093,8 @@ def call_mistral_chat(
                 }
                 if output_obj is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
                     parsed_val = output_obj.model_dump() if hasattr(output_obj, "model_dump") else output_obj
-                    response["choices"][0]["message"]["parsed"] = parsed_val
+                    agent_response["choices"][0]["message"]["parsed"] = parsed_val
+                response = agent_response
             else:
                 kwargs: dict[str, Any] = {
                     "messages": messages,
@@ -1179,10 +1181,11 @@ def call_mistral_chat(
                 )
 
             # レスポンスの辞書化
+            data: dict[str, Any]
             if isinstance(response, dict):
-                data = response
+                data = cast(dict[str, Any], response)
             elif hasattr(response, "model_dump"):
-                data = response.model_dump()
+                data = cast(dict[str, Any], response.model_dump())
             else:
                 # SVC-03: an SDK response without ``model_dump`` means the
                 # response schema drifted; fabricating an empty success dict
@@ -1200,7 +1203,8 @@ def call_mistral_chat(
             # chat.parse / Pydantic response_format を使用した場合、parsed / content にパース済みオブジェクト(dict)を格納
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 try:
-                    choice = response.choices[0] if getattr(response, "choices", None) else None
+                    raw_choices = getattr(response, "choices", None)
+                    choice = raw_choices[0] if raw_choices else None
                     msg_obj = getattr(choice, "message", None) if choice else None
                     parsed_obj = getattr(msg_obj, "parsed", None) if msg_obj else None
                     if isinstance(parsed_obj, BaseModel):

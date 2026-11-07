@@ -16,7 +16,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -296,8 +296,13 @@ def test_issue04_api_credentials_verify_backend_endpoint():
     assert data.get("preview") is True
     assert data.get("valid") is True
 
-    # 3. Agents mode without agentId returns 400 MISSING_REQUIRED_FIELD
-    with patch("credential_manager.get_agent_id", return_value=""):
+    # 3. Agents SDK mode without agentId is valid and verifies API key
+    mock_client = MagicMock()
+    mock_client.models.list.return_value = MagicMock(data=[MagicMock(id="mistral-small-latest")])
+    with (
+        patch("credential_manager.get_agent_id", return_value=""),
+        patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client),
+    ):
         resp = client.post(
             "/api/credentials/verify",
             json={
@@ -308,9 +313,10 @@ def test_issue04_api_credentials_verify_backend_endpoint():
             },
             headers=headers,
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
         data = resp.get_json()
-        assert data.get("code") == "MISSING_REQUIRED_FIELD"
+        assert data.get("valid") is True
+        assert data.get("mode") == "agents"
 
 
 # ===========================================================================

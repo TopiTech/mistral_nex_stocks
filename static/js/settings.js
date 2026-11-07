@@ -557,7 +557,8 @@ document.addEventListener("DOMContentLoaded", () => {
     container.textContent = "";
 
     const isAgentsMode =
-      meta.apiMode === "agents" || meta.modelSelectable === false;
+      (meta.apiMode === "agents" && Boolean(meta.agentId)) ||
+      meta.modelSelectable === false;
     const isPreview = !!meta.previewMode;
 
     if (isAgentsMode) {

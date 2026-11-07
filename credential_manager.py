@@ -618,8 +618,8 @@ def get_api_credential_state() -> dict[str, Any]:
         "api_mode": get_api_mode(),
         "agent_id": get_agent_id(),
         "preview_mode": is_preview_mode(),
-        # Agents API: the model is fixed by the agent in Mistral Console.
-        "model_selectable": True if is_openai else (not is_agents_mode()),
+        # Agents API: model is fixed only if a specific deployed agent_id is configured.
+        "model_selectable": True if is_openai else (not bool(get_agent_id())),
         "mistral_model": model_name,
         "is_ai_technical_lines_eligible": True if is_openai else is_medium_or_large_model(model_name),
         "is_free_tier_model": False if is_openai else is_free_tier_model(model_name),
@@ -670,7 +670,7 @@ def get_model_badge():
         m = get_openai_model()
         return f"[Beta] {m}"
     if is_agents_mode():
-        return "Agents API"
+        return "Agents API" if get_agent_id() else "Agents SDK"
     if is_preview_mode():
         return "Preview"
     model_name = get_model_name()

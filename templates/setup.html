@@ -83,30 +83,23 @@
             <span class="api-mode-card">
               <strong>Agents API</strong>
               <small
-                >Mistralコンソールで作成したAgentを使用。モデルはAgent側で固定されます。</small
+                >Agents SDK（mistralai-agents）による自律型エージェント実行。Agent ID不要。</small
               >
             </span>
           </label>
         </div>
       </div>
       <div class="input-group" id="agentIdGroup" hidden>
-        <label for="agentId">Agent ID（Agents API使用時は必須）</label>
+        <label for="agentId">Agent ID（任意: デプロイ済みAgent連携時のみ）</label>
         <input
           id="agentId"
           type="text"
-          placeholder="ag_xxxxxxxxxxxxxxxx"
+          placeholder="任意（省略時はAgents SDKローカル自律実行）"
           autocomplete="off"
           spellcheck="false"
         />
         <p class="agent-id-note">
-          Agent IDとモデルは
-          <a
-            href="https://console.mistral.ai/build/agents"
-            target="_blank"
-            rel="noopener"
-            >Mistral AI Console</a
-          >
-          で事前に設定してください。アプリ側ではモデルを変更できません。
+          Agents SDKではAgent IDの指定は不要です。Mistral Consoleで作成した特定Agentを使用したい場合のみ入力してください。
         </p>
       </div>
       <div class="input-group">

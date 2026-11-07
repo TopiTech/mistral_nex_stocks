@@ -143,8 +143,8 @@ def test_agents_mode_blocks_model_selection(client):
     )
 
 
-def test_agents_mode_requires_agent_id(client):
-    """Test that switching to agents mode without agent_id is rejected."""
+def test_agents_mode_does_not_require_agent_id(client):
+    """Test that switching to agents mode without agent_id is accepted (Agents SDK)."""
     res = client.post(
         "/api/credentials",
         json={
@@ -154,9 +154,16 @@ def test_agents_mode_requires_agent_id(client):
         },
         headers={"Origin": "http://localhost:5000"},
     )
-    assert res.status_code == 400
+    assert res.status_code == 200
     data = res.get_json()
-    assert data["ok"] is False
+    assert data["ok"] is True
+    assert data["api_mode"] == "agents"
+    assert data["agent_id"] == ""
+    assert data["model_selectable"] is True
+    assert len(data["available_models"]) > 0
+    assert is_agents_mode() is True
+    assert get_agent_id() == ""
+    assert get_model_badge() == "Agents SDK"
 
 
 @patch("services.ai_service.load_sdk_agent")
@@ -278,6 +285,34 @@ def test_agents_api_verify_beta_get(client):
         mock_load.assert_called_once_with(
             "ag_valid_test_id", api_key="01234567890123456789012345678901"
         )
+
+
+def test_agents_api_verify_without_agent_id(client):
+    """Test verification endpoint in Agents API mode succeeds without agent_id."""
+    save_api_credentials(
+        mistral_api_key="01234567890123456789012345678901",
+        api_mode="agents",
+        agent_id="",
+    )
+    mock_client = MagicMock()
+    mock_client.models.list.return_value = MagicMock(data=[MagicMock(id="mistral-small-latest")])
+
+    with patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client):
+        res = client.post(
+            "/api/credentials/verify",
+            json={
+                "mistral_api_key": "01234567890123456789012345678901",
+                "mistral_api_mode": "agents",
+                "mistral_agent_id": "",
+            },
+            headers={"Origin": "http://localhost:5000"},
+        )
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data["ok"] is True
+        assert data["valid"] is True
+        assert data["mode"] == "agents"
+        assert data["tier_name"] == "Agents SDK"
 
 
 def test_agents_api_verify_unsupported_sdk(client):

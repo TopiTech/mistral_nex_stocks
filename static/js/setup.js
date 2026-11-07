@@ -108,14 +108,6 @@ async function verifyMistralSetup() {
     return;
   }
 
-  if (apiMode === "agents" && !agentId) {
-    if (statusEl) {
-      statusEl.textContent = "Agents API使用時はAgent IDを入力してください";
-      statusEl.className = "verify-status error";
-    }
-    return;
-  }
-
   if (btn) {
     btn.disabled = true;
     btn.textContent = "テスト中...";
@@ -479,11 +471,6 @@ async function saveKey() {
         `Mistral APIキーは${MIN_KEY_LENGTHS.mistral}文字以上である必要があります（現在${key.length}文字）`,
       );
       keyInput.focus();
-      return;
-    }
-    if (apiMode === "agents" && !agentId) {
-      setErrorMessage("Agents APIを使用するにはAgent IDを入力してください");
-      agentInput?.focus();
       return;
     }
 

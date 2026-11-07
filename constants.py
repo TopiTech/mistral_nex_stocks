@@ -84,12 +84,21 @@ MISTRAL_FREE_TIER_MODELS = frozenset(
         "mistral-small-2603",
         "mistral-small-4",
         "mistral-small-latest",
+        "mistral-small-2501",
+        "mistral-small-2409",
         "ministral-8b-latest",
+        "ministral-8b-2410",
         "ministral-3b-latest",
+        "ministral-3b-2410",
         "ministral-14b-latest",
         "codestral-latest",
+        "codestral-2501",
         "codestral-2508",
+        "codestral-2405",
         "devstral-2512",
+        "pixtral-12b-2409",
+        "mistral-moderation-latest",
+        "mistral-moderation-2411",
     }
 )
 
@@ -99,9 +108,11 @@ MISTRAL_PAID_TIER_MODELS = frozenset(
         "mistral-medium-3.5",
         "mistral-medium-latest",
         "mistral-large-2512",
+        "mistral-large-2411",
         "mistral-large-3",
         "mistral-large-latest",
         "pixtral-large-latest",
+        "pixtral-large-2411",
     }
 )
 

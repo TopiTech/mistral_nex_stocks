@@ -367,9 +367,11 @@ def test_bad_model_shape_beats_bad_provider(client):
 # ---------------------------------------------------------------------------
 
 
-def test_agents_mode_requires_agent_id(client):
+def test_agents_mode_does_not_require_agent_id(client):
     mode_patch, agent_patch = _mock_server_state()
-    with mode_patch, agent_patch:
+    with mode_patch, agent_patch, patch(
+        "routes.api_system.save_api_credentials"
+    ) as mock_save:
         resp = _post(
             client,
             {
@@ -378,20 +380,17 @@ def test_agents_mode_requires_agent_id(client):
                 "mistral_agent_id": "",
             },
         )
-    assert resp.status_code == 400
-    body = _error(resp)
-    assert body["error_code"] == int(ErrorCode.INVALID_INPUT)
-    assert body["details"] == {
-        "fields": ["mistral_agent_id"],
-        "reason": "Agents APIを使用するにはAgent IDが必要です",
-    }
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert mock_save.call_args[1]["api_mode"] == "agents"
+    assert mock_save.call_args[1]["agent_id"] == ""
 
 
 def test_agents_mode_blocks_model_selection(client):
-    mode_patch, agent_patch = _mock_server_state()
-    with mode_patch, agent_patch, patch(
-        "credential_manager.get_api_mode", return_value="agents"
-    ):
+    mode_patch = patch("credential_manager.get_api_mode", return_value="agents")
+    agent_patch = patch("credential_manager.get_agent_id", return_value="ag_sample_agent_12345")
+    with mode_patch, agent_patch:
         resp = _post(client, {"mistral_model": "mistral-small-2603"})
     assert resp.status_code == 400
     assert "Agents APIではモデルはMistral側のコンソールで指定するため" in (

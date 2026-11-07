@@ -279,17 +279,34 @@ except ImportError:
         HAS_AGENTS_SDK = False
 
 
-def load_sdk_agent(agent_id_or_name: str, api_key: str | None = None) -> Any:
-    """Load an Agent handle using the Mistral Agents SDK (mistralai-agents).
+def load_sdk_agent(
+    agent_id_or_name: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    instructions: str | None = None,
+) -> Any:
+    """Load or instantiate an Agent handle using the Mistral Agents SDK (mistralai-agents).
 
-    Accepts both deployed agent UUIDs (agent_id) and human-readable names (agent_name).
+    - If ``agent_id_or_name`` is provided and non-empty, connects to a deployed agent
+      via ``Agent.load_from(...)`` (accepts deployed agent UUID or name).
+    - If ``agent_id_or_name`` is omitted or empty, instantiates a local autonomous
+      ``Agent(model=..., instructions=...)`` handle, removing the need for a deployed Agent ID.
     """
     if mistral_agents is None:
         raise RuntimeError("mistralai-agents SDK is not installed")
 
     target = (agent_id_or_name or "").strip()
     if not target:
-        raise ValueError("agent_id_or_name must not be empty")
+        import os
+        from constants import DEFAULT_MISTRAL_MODEL
+
+        if api_key:
+            os.environ.setdefault("MISTRAL_API_KEY", api_key)
+        chosen_model = (model or "").strip() or DEFAULT_MISTRAL_MODEL
+        return mistral_agents.Agent(
+            model=chosen_model,
+            instructions=instructions,
+        )
 
     try:
         parsed_uuid = UUID(target)

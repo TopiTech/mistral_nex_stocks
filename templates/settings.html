@@ -432,25 +432,18 @@
               class="filter-label"
               style="display: block; margin-bottom: 4px"
             >
-              Agent ID (Agents API用)
+              Agent ID (任意: デプロイ済みAgent連携時のみ)
             </label>
             <input
               type="text"
               id="agent-id-settings-input"
-              placeholder="ag_xxxxxxxxxxxxxxxx"
+              placeholder="任意（省略時はAgents SDKローカル自律実行）"
               class="setup-input"
               autocomplete="off"
               spellcheck="false"
             />
             <div class="note" style="margin-top: 4px; margin-bottom: 0">
-              ※モデルや推論設定は
-              <a
-                href="https://console.mistral.ai/build/agents"
-                target="_blank"
-                rel="noopener"
-                >Mistral AI Console</a
-              >
-              で設定した内容が適用されます。
+              ※Agents SDKでは入力不要です。Mistral Consoleで作成した特定Agentに固定したい場合のみ指定してください。
             </div>
           </div>
 

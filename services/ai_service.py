@@ -933,25 +933,21 @@ def call_mistral_chat(
         )
 
     use_agents, agent_id = _resolve_agents_target()
-    if use_agents and not agent_id:
-        return {
-            "error": {
-                "message": "Agents API が選択されていますが Agent ID が未設定です",
-                "status_code": 400,
-            }
-        }
     if use_agents:
-        model = f"agent:{agent_id}"
+        if agent_id:
+            model = f"agent:{agent_id}"
+            effective_reasoning = None
+        else:
+            model = _model_override if _model_override else _get_mistral_model_name()
+            effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
     else:
         model = _model_override if _model_override else _get_mistral_model_name()
+        effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
     if not api_key or not isinstance(api_key, str):
         return {"error": {"message": "Mistral API key is missing or invalid"}}
 
     token_limit = _clamp_max_tokens(max_tokens)
     min_interval_sec = MISTRAL_MIN_INTERVAL_SEC
-
-    # Reasoning effort resolution (not applicable to the Agents API)
-    effective_reasoning = None if use_agents else _resolve_reasoning_effort(model, reasoning_effort)
 
     credential_scope = hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest()
     cache_key = (
@@ -1057,7 +1053,10 @@ def call_mistral_chat(
             response: Any
             if use_agents and HAS_AGENTS_SDK and mistral_agents is not None:
                 # Mistral Agents SDK (mistralai-agents) execution
-                agent = load_sdk_agent(agent_id, api_key=api_key)
+                if agent_id:
+                    agent = load_sdk_agent(agent_id, api_key=api_key)
+                else:
+                    agent = load_sdk_agent(api_key=api_key, model=model)
                 prompt_content = _format_messages_for_sdk_agent(messages)
                 run_kwargs: dict[str, Any] = {}
                 if isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -1082,10 +1081,10 @@ def call_mistral_chat(
 
                 stop_reason = getattr(result, "stop_reason", "stop") or "stop"
                 agent_response: dict[str, Any] = {
-                    "id": f"agent-{agent_id}-{int(time.time())}",
+                    "id": f"agent-{agent_id or 'sdk'}-{int(time.time())}",
                     "object": "chat.completion",
                     "created": int(time.time()),
-                    "model": f"agent:{agent_id}",
+                    "model": f"agent:{agent_id}" if agent_id else f"agent-sdk:{model}",
                     "choices": [
                         {
                             "index": 0,
@@ -2203,16 +2202,13 @@ def stream_mistral_chat(
         return
 
     use_agents, agent_id = _resolve_agents_target()
-    if use_agents and not agent_id:
-        yield {
-            "type": "error",
-            "message": "Agents API が選択されていますが Agent ID が未設定です",
-            "status_code": 400,
-        }
-        return
     if use_agents:
-        model = f"agent:{agent_id}"
-        effective_reasoning = None
+        if agent_id:
+            model = f"agent:{agent_id}"
+            effective_reasoning = None
+        else:
+            model = _model_override if _model_override else _get_mistral_model_name()
+            effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
     else:
         model = _model_override if _model_override else _get_mistral_model_name()
         effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
@@ -2317,7 +2313,10 @@ def stream_mistral_chat(
         try:
             last_usage: dict[str, Any] | None = None
             if use_agents and HAS_AGENTS_SDK and mistral_agents is not None:
-                agent = load_sdk_agent(agent_id, api_key=api_key)
+                if agent_id:
+                    agent = load_sdk_agent(agent_id, api_key=api_key)
+                else:
+                    agent = load_sdk_agent(api_key=api_key, model=model)
                 prompt_content = _format_messages_for_sdk_agent(messages)
 
                 event_queue: queue.Queue[Any] = queue.Queue()

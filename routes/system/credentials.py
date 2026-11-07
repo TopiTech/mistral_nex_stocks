@@ -78,8 +78,10 @@ def _build_safe_credentials_response() -> dict[str, Any]:
     from config_utils import get_model_catalog, resolve_model_target
     from credential_manager import get_model_badge
 
-    # Agents API: the model is fixed in Mistral Console -> no selectable models.
-    state["available_models"] = [] if state.get("api_mode") == "agents" else get_model_catalog()
+    # Agents API / SDK: if an agent_id is set, the remote agent fixes the model; otherwise models are selectable.
+    state["available_models"] = (
+        [] if (state.get("api_mode") == "agents" and state.get("agent_id")) else get_model_catalog()
+    )
     state["model_badge"] = get_model_badge()
     configured_model_str = str(state.get("mistral_model") or "")
     resolved_info = resolve_model_target(configured_model_str)
@@ -93,7 +95,11 @@ def _build_safe_credentials_response() -> dict[str, Any]:
         state["model_label"] = f"OpenAI互換 (Beta): {cur_openai_model}"
         state["model_badge"] = f"[Beta] {cur_openai_model}"
     elif state.get("api_mode") == "agents":
-        state["model_label"] = "Agents API (モデルはMistralコンソールで指定)"
+        if state.get("agent_id"):
+            state["model_label"] = f"Agents API (ID: {state.get('agent_id')})"
+        else:
+            cur_label = state.get("model_label") or "Mistral Small 4"
+            state["model_label"] = f"Agents SDK ({cur_label})"
     elif state.get("preview_mode"):
         state["model_label"] = "プレビューモード"
     return state
@@ -259,29 +265,15 @@ def api_credentials():
 
         effective_api_mode = target_api_mode or get_api_mode()
         effective_agent_id = target_agent_id if target_agent_id is not None else get_agent_id()
-        if (
-            effective_api_mode == "agents"
-            and (target_api_mode == "agents" or target_agent_id is not None)
-            and not effective_agent_id
-            and not target_preview
-        ):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "fields": ["mistral_agent_id"],
-                    "reason": "Agents APIを使用するにはAgent IDが必要です",
-                },
-                status_code=400,
-            )
-
-        # Agents API: the model is selected in Mistral Console, so the app must
-        # not allow (or silently store) a model choice.
-        if effective_api_mode == "agents" and data.get("mistral_model") is not None:
+        # Agents API / SDK: Agent ID is optional (Agents SDK runs local autonomous
+        # agents by default). If an explicit remote agent_id is configured, the model
+        # is fixed in Mistral Console, disallowing model changes.
+        if effective_api_mode == "agents" and effective_agent_id and data.get("mistral_model") is not None:
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={
                     "fields": ["mistral_model"],
-                    "reason": "Agents APIではモデルはMistral側のコンソールで指定するため、アプリ側では変更できません",
+                    "reason": "Agents APIではモデルはMistral側のコンソールで指定するため、デプロイ済みAgent ID指定時はアプリ側では変更できません",
                 },
                 status_code=400,
             )
@@ -494,15 +486,34 @@ def api_credentials_verify():
             agent_id = data.get("mistral_agent_id")
             if not isinstance(agent_id, str) or not agent_id.strip():
                 agent_id = get_agent_id()
+
             if not agent_id:
-                agent_err_msg = "Agent IDが指定されていません。"
-                return error_response(
-                    ErrorCode.MISSING_REQUIRED_FIELD,
-                    400,
-                    message=agent_err_msg,
-                    details={"reason": agent_err_msg},
-                    extra_fields={"code": "MISSING_REQUIRED_FIELD", "valid": False},
+                # Agents SDK (mistralai-agents) verification (no deployed agent_id required)
+                if not HAS_AGENTS_SDK or mistral_agents is None:
+                    sdk_err_msg = "Agents SDK (mistralai-agents) がインストールされていません。"
+                    return error_response(
+                        ErrorCode.INVALID_API_KEY,
+                        400,
+                        message=sdk_err_msg,
+                        details={"reason": sdk_err_msg},
+                        extra_fields={"code": "INVALID_API_KEY", "valid": False},
+                    )
+                models_response = client.models.list()
+                latency_ms = int((time.time() - start_ts) * 1000)
+                raw_list = getattr(models_response, "data", []) or []
+                return ok_response(
+                    {
+                        "valid": True,
+                        "mode": "agents",
+                        "agent_name": "Agents SDK Local",
+                        "agent_model": "SDK Configured Model",
+                        "tier_name": "Agents SDK",
+                        "model_count": len(raw_list),
+                        "latency_ms": latency_ms,
+                        "message": f"Agents SDK 接続成功 (応答: {latency_ms}ms)",
+                    }
                 )
+
             agent = None
             beta_api = getattr(client, "beta", None)
             from unittest.mock import Mock

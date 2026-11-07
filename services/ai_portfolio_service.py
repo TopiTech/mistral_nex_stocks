@@ -95,7 +95,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     inject markup that is rendered later.
     """
     clean: dict[str, Any] = {}
-    for key in ("theme", "title", "description", "risk_level", "expected_return", "commentary"):
+    for key in ("theme", "title", "description", "risk_level", "expected_return", "commentary", "fallback_warning"):
         val = portfolio.get(key)
         if isinstance(val, str):
             clean[key] = _strip_html_tags(val.strip())[:_MAX_TEXT_LEN]

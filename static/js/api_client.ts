@@ -79,6 +79,7 @@ class APIClient {
   watchdogInterval: number;
   watchdogTimer: Interval | null;
   isVisibilityPaused: boolean;
+  isConnecting: boolean;
   private _lastSSEParams: SSEParams | null;
   private _visibilityTimeout: Timer | null;
   visibilityTimeout: number;
@@ -102,6 +103,7 @@ class APIClient {
     this.watchdogInterval = mergedConfig.watchdogInterval;
     this.watchdogTimer = null;
     this.isVisibilityPaused = false;
+    this.isConnecting = false;
     this._lastSSEParams = null;
     this._visibilityTimeout = null;
     this.visibilityTimeout = mergedConfig.visibilityTimeout;
@@ -114,7 +116,7 @@ class APIClient {
   private _setupEventListeners(): void {
     this._visibilityHandler = () => {
       if (document.hidden) {
-        if (this.currentEventSource || this.ssePendingReconnectTimeout) {
+        if (this.currentEventSource || this.ssePendingReconnectTimeout || this.isConnecting) {
           _log.info("Page hidden: Setting deferred pause timer for SSE");
           if (this._visibilityTimeout) clearTimeout(this._visibilityTimeout);
           this._visibilityTimeout = setTimeout(() => {
@@ -203,6 +205,7 @@ class APIClient {
    */
   private _openWithResolvedUrl(params: SSEParams): void {
     const { onMessage, onError, options } = params;
+    this.isConnecting = true;
     let urlOrPromise: string | Promise<string | null> | null;
     try {
       urlOrPromise = options.urlProvider
@@ -217,6 +220,10 @@ class APIClient {
         // resolved (e.g. the ticket POST was still in flight): opening now
         // would create a stale EventSource that is never cleaned up.
         if (this._lastSSEParams !== params) return;
+        if (this.isVisibilityPaused) {
+          _log.info("SSE: URL resolved while visibility paused, deferring connection");
+          return;
+        }
         if (!resolvedUrl) {
           _log.warn("SSE: Resolved stream URL is empty");
           try {
@@ -238,6 +245,9 @@ class APIClient {
           _log.error("SSE: onError callback threw an exception", cbErr);
         }
         this._handleReconnect(onError);
+      })
+      .finally(() => {
+        this.isConnecting = false;
       });
   }
 
@@ -411,7 +421,7 @@ class APIClient {
           options?: boolean | EventListenerOptions,
         ) => void
       ).bind(eventSource);
-      const listenerMap = new WeakMap<object, (event: Event) => void>();
+      const listenerMap = new WeakMap<object, Map<string, Array<EventListener>>>();
 
       type EventSourceListener =
         | ((this: EventSource, event: MessageEvent) => void)
@@ -455,7 +465,17 @@ class APIClient {
             }
           };
           if (typeof listener === "object" || typeof listener === "function") {
-            listenerMap.set(listener, wrappedListener);
+            let typeMap = listenerMap.get(listener);
+            if (!typeMap) {
+              typeMap = new Map();
+              listenerMap.set(listener, typeMap);
+            }
+            let wrappers = typeMap.get(type);
+            if (!wrappers) {
+              wrappers = [];
+              typeMap.set(type, wrappers);
+            }
+            wrappers.push(wrappedListener);
           }
           return origAddEventListener(
             type,
@@ -473,11 +493,14 @@ class APIClient {
         listener: EventSourceListener | null,
         eventListenerOptions?: boolean | EventListenerOptions,
       ): void => {
-        const target =
-          (listener &&
-            (typeof listener === "object" || typeof listener === "function") &&
-            listenerMap.get(listener)) ||
-          listener;
+        let target: EventSourceListener | EventListener | null = listener;
+        if (listener && (typeof listener === "object" || typeof listener === "function")) {
+          const typeMap = listenerMap.get(listener);
+          const wrappers = typeMap?.get(type);
+          if (wrappers && wrappers.length > 0) {
+            target = wrappers.pop()!;
+          }
+        }
         if (target) {
           return origRemoveEventListener(type, target, eventListenerOptions);
         }

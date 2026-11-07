@@ -2187,3 +2187,21 @@ def test_ai_portfolio_error_response_handles_portfolio_storage_error():
         payload = resp.get_json()
         assert payload["ok"] is False
         assert payload["error_code"] == int(ErrorCode.API_SERVICE_ERROR)
+
+
+def test_sanitize_ai_portfolio_retains_fallback_warning():
+    """Verify ISSUE-02: sanitize_ai_portfolio retains and sanitizes fallback_warning."""
+    from services.ai_portfolio_service import sanitize_ai_portfolio
+
+    raw = {
+        "title": "Tech Growth",
+        "description": "Tech stocks",
+        "fallback_warning": "<b>AIの再生成に失敗したため、以前保存したポートフォリオを表示しています。</b>",
+        "items": [
+            {"symbol": "AAPL", "market": "us", "weight_pct": 50.0},
+            {"symbol": "MSFT", "market": "us", "weight_pct": 50.0},
+        ],
+    }
+    sanitized = sanitize_ai_portfolio(raw)
+    assert "fallback_warning" in sanitized
+    assert sanitized["fallback_warning"] == "AIの再生成に失敗したため、以前保存したポートフォリオを表示しています。"

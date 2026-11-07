@@ -576,10 +576,9 @@
         .replace(/>/g, "\\u003e")
         .replace(/&/g, "\\u0026");
 
-      const nonce =
-        document.querySelector("script[nonce]")?.getAttribute("nonce") || "";
+      const nonce = document.querySelector("script[nonce]")?.nonce || "";
       if (nonce) {
-        script.setAttribute("nonce", nonce);
+        script.nonce = nonce;
       }
 
       script.onerror = () => {
@@ -846,10 +845,8 @@
           tvScript.id = "tv-script-js";
           tvScript.src = "https://s3.tradingview.com/tv.js";
           tvScript.async = true;
-          const nonce =
-            document.querySelector("script[nonce]")?.getAttribute("nonce") ||
-            "";
-          if (nonce) tvScript.setAttribute("nonce", nonce);
+          const nonce = document.querySelector("script[nonce]")?.nonce || "";
+          if (nonce) tvScript.nonce = nonce;
           tvScript.onload = mountWidget;
           document.head.appendChild(tvScript);
         } else {

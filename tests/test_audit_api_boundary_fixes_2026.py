@@ -50,7 +50,11 @@ class TestChatErrorResponseEnvelope:
             (Exception("API認証エラー"), 401, "API認証エラー"),
             (requests.ConnectionError("接続失敗"), 503, "AIサービスに接続できませんでした"),
             (httpx.ConnectError("Connection refused"), 503, "AIサービスに接続できませんでした"),
-            (httpx.TimeoutException("Read timed out"), 504, "AIサービス呼び出しがタイムアウトしました"),
+            (
+                httpx.TimeoutException("Read timed out"),
+                504,
+                "AIサービス呼び出しがタイムアウトしました",
+            ),
             (requests.Timeout("Request timeout"), 504, "AIサービス呼び出しがタイムアウトしました"),
             (RuntimeError("想定外の内部障害"), 500, "チャット処理に失敗しました"),
         ],
@@ -131,26 +135,35 @@ class TestDependencyAuditAndDocConsistency:
                 "pip-audit cleanliness is exercised in the dedicated security-scan CI job; "
                 "skipped in unit test matrix to prevent network flakiness"
             )
-        venv_pip_audit = (
-            ROOT_DIR
-            / ".venv"
-            / ("Scripts" if sys.platform == "win32" else "bin")
-            / ("pip-audit.exe" if sys.platform == "win32" else "pip-audit")
-        )
-        if venv_pip_audit.exists():
-            pip_audit = str(venv_pip_audit)
-        else:
-            pip_audit = shutil.which("pip-audit")
+        uv_bin = shutil.which("uv")
+        env = dict(os.environ)
+        env["PIPAPI_PYTHON_LOCATION"] = sys.executable
 
-        if pip_audit is None:
-            pytest.skip("pip-audit executable not found in PATH or virtualenv")
+        if uv_bin:
+            cmd = [uv_bin, "run", "--locked", "--group", "security", "pip-audit", "--strict"]
+        else:
+            venv_pip_audit = (
+                ROOT_DIR
+                / ".venv"
+                / ("Scripts" if sys.platform == "win32" else "bin")
+                / ("pip-audit.exe" if sys.platform == "win32" else "pip-audit")
+            )
+            if venv_pip_audit.exists():
+                pip_audit = str(venv_pip_audit)
+            else:
+                pip_audit = shutil.which("pip-audit")
+
+            if pip_audit is None:
+                pytest.skip("pip-audit executable not found in PATH or virtualenv")
+            cmd = [pip_audit, "--strict"]
 
         res = subprocess.run(
-            [pip_audit, "--strict"],
+            cmd,
             cwd=ROOT_DIR,
             capture_output=True,
             text=True,
             check=False,
+            env=env,
         )
         combined_output = f"{res.stdout}\n{res.stderr}"
         assert res.returncode == 0, f"pip-audit --strict failed:\n{combined_output}"

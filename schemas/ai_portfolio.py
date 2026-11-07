@@ -378,6 +378,7 @@ class AIPortfolioResponseSchema(BaseModel):
     risk_level: str = Field(default="中リスク", min_length=1, max_length=500)
     expected_return: str = Field(default="8-12%", min_length=1, max_length=500)
     commentary: str = Field(default="", max_length=500)
+    fallback_warning: str | None = Field(default=None, max_length=500)
     items: list[AIPortfolioItemSchema] = Field(min_length=1, max_length=20)
 
 

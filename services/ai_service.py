@@ -440,7 +440,18 @@ def _run_coro_sync(coro: Any, timeout_sec: float | None = None) -> Any:
                 task = asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
                 return new_loop.run_until_complete(task)
             finally:
-                new_loop.close()
+                try:
+                    pending = asyncio.all_tasks(new_loop)
+                    for t in pending:
+                        t.cancel()
+                    if pending:
+                        new_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    new_loop.run_until_complete(new_loop.shutdown_asyncgens())
+                except Exception:
+                    pass
+                finally:
+                    asyncio.set_event_loop(None)
+                    new_loop.close()
 
         future = executor.submit(_runner)
         return future.result(timeout=timeout_sec)
@@ -1173,6 +1184,7 @@ def call_mistral_chat(
 
             # 成功報告
             app_state.market.report_circuit_result("mistral", success=True)
+            circuit_probe_claimed = False
             app_state.ai.reset_mistral_streak()
 
             with app_state.ai.mistral_cooldown_lock:
@@ -1411,7 +1423,12 @@ def call_mistral_chat(
         # feature until restart. Release the probe and re-raise.
         if circuit_probe_claimed:
             app_state.market.release_circuit_probe("mistral")
+            circuit_probe_claimed = False
         raise
+    finally:
+        if circuit_probe_claimed:
+            app_state.market.release_circuit_probe("mistral")
+            circuit_probe_claimed = False
 
 
 def _json_safe_tool_value(value: Any) -> Any:

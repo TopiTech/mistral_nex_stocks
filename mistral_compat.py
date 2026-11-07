@@ -298,6 +298,7 @@ def load_sdk_agent(
     target = (agent_id_or_name or "").strip()
     if not target:
         import os
+
         from constants import DEFAULT_MISTRAL_MODEL
 
         if api_key:

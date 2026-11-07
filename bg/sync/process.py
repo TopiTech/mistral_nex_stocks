@@ -393,7 +393,15 @@ def _update_indices_data(
             new_header_data[h_key] = {
                 "price": item.get("price"),
                 "change": item.get("change"),
-                "percent": item.get("change_percent") or item.get("percent"),
+                # M23 (2026-11-07 review): a legitimate rounded 0.0 percent is
+                # falsy — the `or` fallback coerced it to None and the header
+                # showed "--%" while the change column showed 0.00 until the
+                # value drifted off zero.
+                "percent": (
+                    item.get("change_percent")
+                    if item.get("change_percent") is not None
+                    else item.get("percent")
+                ),
                 "open": item.get("open"),
                 "high": item.get("high"),
                 "low": item.get("low"),

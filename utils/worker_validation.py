@@ -38,6 +38,7 @@ def worker_validation_enabled(environ: Mapping[str, str] | None = None) -> bool:
         "0",
         "false",
         "no",
+        "off",
     )
 
 

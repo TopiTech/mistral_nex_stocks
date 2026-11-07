@@ -554,21 +554,10 @@ def call_openai_chat(
         }
 
     circuit_probe_claimed = False
-    circuit_state = app_state.market.get_circuit_state("openai_compatible")
-    if circuit_state.get("status") == "HALF_OPEN":
-        if not app_state.market.try_claim_circuit_probe("openai_compatible"):
-            logger.warning(
-                "OpenAI-compatible circuit recovery probe already in progress. Skipping API call."
-            )
-            return {
-                "error": {
-                    "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
-                    "status_code": 503,
-                    "provider": "openai_compatible",
-                }
-            }
-        circuit_probe_claimed = True
-
+    # M7 (2026-11-07 review): the HALF_OPEN probe is claiming only once the
+    # call semaphore below is held — claiming before the semaphore made the
+    # probe block for (slots x timeout) without a request, 503ing every
+    # other AI call with a "probe in progress" that never reached the wire.
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 
@@ -655,6 +644,25 @@ def call_openai_chat(
     client: Any = None
     try:
         with app_state.ai.openai_call_semaphore:
+            # M7: probe claimed only after the call slot is held (see note at
+            # the claim site removal above).
+            circuit_state = app_state.market.get_circuit_state("openai_compatible")
+            if circuit_state.get("status") == "HALF_OPEN":
+                if not app_state.market.try_claim_circuit_probe("openai_compatible"):
+                    logger.warning(
+                        "OpenAI-compatible circuit recovery probe already in progress. Skipping API call."
+                    )
+                    return {
+                        "error": {
+                            "message": (
+                                "AIサービス（OpenAI互換）は一時的に利用できません"
+                                "（サーキット回復プローブ実行中）"
+                            ),
+                            "status_code": 503,
+                            "provider": "openai_compatible",
+                        }
+                    }
+                circuit_probe_claimed = True
             client = _get_openai_client(base_url, api_key)
             resp = client.post(endpoint, json=payload, headers=headers)
 
@@ -986,19 +994,9 @@ def stream_openai_chat(
         return
 
     circuit_probe_claimed = False
-    circuit_state = app_state.market.get_circuit_state("openai_compatible")
-    if circuit_state.get("status") == "HALF_OPEN":
-        if not app_state.market.try_claim_circuit_probe("openai_compatible"):
-            logger.warning(
-                "OpenAI-compatible circuit recovery probe already in progress. Skipping stream call."
-            )
-            yield _stream_error_event(
-                "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
-                503,
-            )
-            return
-        circuit_probe_claimed = True
-
+    # M7 (2026-11-07 review): claim the HALF_OPEN probe only after the stream
+    # semaphore is held below — same ordering as call_openai_chat (see the
+    # M7 note there).
     base_url = get_openai_base_url()
     model = _model_override if _model_override else get_openai_model()
     if max_tokens is None:
@@ -1036,6 +1034,19 @@ def stream_openai_chat(
     client: Any = None
     try:
         with app_state.ai.openai_stream_semaphore:
+            # M7: probe claimed only after the stream slot is held.
+            circuit_state = app_state.market.get_circuit_state("openai_compatible")
+            if circuit_state.get("status") == "HALF_OPEN":
+                if not app_state.market.try_claim_circuit_probe("openai_compatible"):
+                    logger.warning(
+                        "OpenAI-compatible circuit recovery probe already in progress. Skipping stream call."
+                    )
+                    yield _stream_error_event(
+                        "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
+                        503,
+                    )
+                    return
+                circuit_probe_claimed = True
             client = _get_openai_client(base_url, api_key)
 
             def _open_stream(p: dict[str, Any]):
@@ -1585,6 +1596,17 @@ def get_openai_embeddings_batch(
                     resp.status_code,
                     resp.text[:200],
                 )
+                # M8 (2026-11-07 review): permanent client errors (auth
+                # failure, unknown model, malformed request) cannot succeed
+                # on the next batch; stop instead of burning one provider
+                # round-trip per remaining batch. Rate limits stay transient.
+                if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                    logger.warning(
+                        "OpenAI embeddings aborted after client error (HTTP %d); "
+                        "remaining batches fall back to None",
+                        resp.status_code,
+                    )
+                    break
         except Exception as exc:
             logger.debug("OpenAI embeddings call failed (fallback to None): %s", exc)
         finally:

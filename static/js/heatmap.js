@@ -151,9 +151,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (mode === "3d") {
       if (!els.canvas3d || typeof THREE === "undefined") {
-        if (els.canvas3d) {
-          els.canvas3d.textContent =
+        // (L21, 2026-11-07 review) #heatmap-3d-canvas carries `hidden` on
+        // these paths, so writing the message there gave the user NO
+        // feedback while the 3D button appeared to do nothing. Deliver to a
+        // visible channel instead; the 2D fallback state is unchanged.
+        const target = document.getElementById("view-mode-toggle-container");
+        const channel = target || document.body;
+        if (!channel.querySelector(".heatmap-3d-error")) {
+          const msg = document.createElement("div");
+          msg.className = "heatmap-3d-error";
+          msg.setAttribute("role", "alert");
+          msg.style.gridColumn = "1 / -1";
+          msg.textContent =
             "3D表示を読み込めません。2D表示を使用してください。";
+          channel.appendChild(msg);
         }
         return;
       }
@@ -163,8 +174,18 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (error) {
           console.error("3D heatmap initialization failed:", error);
           state.three.isInit = false;
-          els.canvas3d.textContent =
-            "3D表示を初期化できません。2D表示を使用してください。";
+          // (L21) same rationale: deliver the failure to a visible channel.
+          const target = document.getElementById("view-mode-toggle-container");
+          const channel = target || document.body;
+          if (!channel.querySelector(".heatmap-3d-error")) {
+            const msg = document.createElement("div");
+            msg.className = "heatmap-3d-error";
+            msg.setAttribute("role", "alert");
+            msg.style.gridColumn = "1 / -1";
+            msg.textContent =
+              "3D表示を初期化できません。2D表示を使用してください。";
+            channel.appendChild(msg);
+          }
           return;
         }
       }

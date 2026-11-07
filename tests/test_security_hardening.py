@@ -437,16 +437,39 @@ class CredentialsAdminTokenTestCase(unittest.TestCase):
             self.assertEqual(data.get("error_code"), 1403)
 
     def test_invalid_proxy_fix_integer_uses_safe_default(self):
+        # M34 (2026-11-07 review): this test previously only exercised the
+        # code path without asserting anything — an unsafe overwrite (e.g.
+        # x_for=999 or removing ProxyFix) passed silently. Unwrap the
+        # middleware and assert the effective x_for values.
         from flask import Flask
+        from werkzeug.middleware.proxy_fix import ProxyFix
 
         from app import _apply_proxy_fix
+        from app_factory.wiring import RawRemoteAddressMiddleware
 
         with patch.dict(
             os.environ,
             {"MNS_PROXY_FIX": "1", "MNS_PROXY_FIX_X_FOR": "not-an-int"},
             clear=False,
         ):
-            _apply_proxy_fix(Flask("proxy-test"))
+            app_invalid = Flask("proxy-test")
+            _apply_proxy_fix(app_invalid)
+        wrapped = app_invalid.wsgi_app
+        self.assertIsInstance(wrapped, RawRemoteAddressMiddleware)
+        self.assertIsInstance(wrapped.wsgi_app, ProxyFix)
+        self.assertEqual(wrapped.wsgi_app.x_for, 1, "invalid value must use the safe default 1")
+
+        with patch.dict(
+            os.environ,
+            {"MNS_PROXY_FIX": "1", "MNS_PROXY_FIX_X_FOR": "3"},
+            clear=False,
+        ):
+            app_valid = Flask("proxy-test-valid")
+            _apply_proxy_fix(app_valid)
+        wrapped_valid = app_valid.wsgi_app
+        self.assertIsInstance(wrapped_valid, RawRemoteAddressMiddleware)
+        self.assertIsInstance(wrapped_valid.wsgi_app, ProxyFix)
+        self.assertEqual(wrapped_valid.wsgi_app.x_for, 3)
 
     def test_remote_public_origin_with_valid_admin_token_is_accepted(self):
         """Remote credentials access is authenticated by the admin token."""

@@ -98,6 +98,16 @@ class MarketDataState:
         # skip loading (both initial 0 would match and cause an early return).
         self.user_stocks_rev = 0
         self.last_loaded_rev = -1
+        # Depth counter of in-flight save_user_stocks() calls (H3 of the
+        # 2026-11-07 review). save_user_stocks() deliberately releases
+        # user_stocks_lock during its disk I/O; load_user_stocks() must not
+        # publish the on-disk (pre-swap) state over un-flushed in-memory
+        # mutations in that window — a queued second save would snapshot the
+        # reverted state and persist it, silently losing the earlier mutation.
+        # Increments happen under user_stocks_lock at save snapshot time and
+        # decrement in the save's finally, so load can skip publishing (and
+        # leave last_loaded_rev untouched) whenever the count is positive.
+        self.user_stocks_save_pending = 0
         # Set when load_user_stocks() fails to decrypt the stored blob (e.g.
         # master key rotated / keyring reset). When set, the in-memory lists are
         # deliberately NOT reset to {} so a subsequent save cannot overwrite the

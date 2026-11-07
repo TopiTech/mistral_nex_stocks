@@ -54,9 +54,37 @@ class StorageCoverageTests(unittest.TestCase):
         "utils.storage.LEGACY_USER_STOCKS_FILE", new_callable=lambda: "/tmp/nonexistent/legacy.json"
     )
     def test_migrate_legacy_when_target_exists(self, *_):
-        """Migration is skipped when target already exists."""
-        # Should not raise
-        storage._migrate_legacy_user_stocks()
+        """Migration is skipped when target already exists.
+
+        (M34/F9, 2026-11-07 review) the original test called the function and
+        asserted nothing — and with BOTH patched paths nonexistent it actually
+        exercised the "legacy absent" skip, not the documented "target exists"
+        one. Pin the real contracts: True return, target untouched, and the
+        legacy file never consumed.
+        """
+        target = Path(self._tmpdir) / "user_stocks.json"
+        legacy = Path(self._tmpdir) / "legacy.json"
+        target_payload = {"us": {"MSFT": "Microsoft"}, "jp": {}, "idx": {}}
+        legacy_payload = {"us": {"AAPL": "Apple"}, "jp": {}, "idx": {}}
+        target.write_text(json.dumps(target_payload), encoding="utf-8")
+        legacy.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+        with (
+            patch.object(storage, "USER_STOCKS_FILE", str(target)),
+            patch.object(storage, "LEGACY_USER_STOCKS_FILE", str(legacy)),
+        ):
+            self.assertIs(storage._migrate_legacy_user_stocks(), True)
+
+        # Target must not be overwritten by the legacy payload.
+        self.assertEqual(
+            json.loads(target.read_text(encoding="utf-8"))["us"].get("MSFT"),
+            "Microsoft",
+        )
+        self.assertNotIn(
+            "AAPL", json.loads(target.read_text(encoding="utf-8"))["us"]
+        )
+        # The legacy source must remain intact (not consumed/deleted).
+        self.assertTrue(legacy.exists())
 
     # ------------------------------------------------------------------
     # _locked_read_user_stocks Unix path
@@ -72,8 +100,11 @@ class StorageCoverageTests(unittest.TestCase):
             result = storage._locked_read_user_stocks(self._lock_file)
             # On Windows, this should succeed with msvcrt; on other platforms
             # an unavailable lock implementation returns the failure sentinel.
-            if result is not storage._USER_STOCKS_READ_FAILED:
-                self.assertEqual(result["us"]["AAPL"], "Apple")
+            # M34 (2026-11-07 review): this conditionally skipped the
+            # assertion on exactly the failure mode (returning the sentinel).
+            # The read must succeed and carry the content.
+            self.assertIsNot(result, storage._USER_STOCKS_READ_FAILED)
+            self.assertEqual(result["us"]["AAPL"], "Apple")
 
     @patch("os.name", "posix")
     def test_locked_read_unix_import_error_fallback(self):

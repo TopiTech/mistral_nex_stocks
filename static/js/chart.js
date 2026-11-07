@@ -524,7 +524,15 @@ async function fetchStockHistoryPayload(
         ) {
           throw err;
         }
-        if (err instanceof TypeError) {
+        // (L19, 2026-11-07 review) apiFetch wraps network TypeErrors into a
+        // plain Error while preserving `name` ("TypeError") and setting
+        // `type: "network"`; a bare instanceof check therefore never matched
+        // in production and the coded retry stayed dead.
+        if (
+          err instanceof TypeError ||
+          err?.name === "TypeError" ||
+          err?.type === "network"
+        ) {
           logger.warn(
             `Fetch failed for ${symbol} (${period}/${interval}), retrying...`,
           );
@@ -558,6 +566,8 @@ async function fetchStockHistoryPayload(
             }
             throw new Error(
               "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
+              // (M36) 保持 outer catch の実例外を原因として保持する。
+              { cause: err },
             );
           } finally {
             clearTimeout(retryTimeoutId);
@@ -849,6 +859,33 @@ function formatPrice(value, stock) {
 const _chartPrefCache = new Map(); // key: "chart_${pref}_${stockKey}" -> value
 const _chartPrefDirtyKeys = new Set();
 let _chartPrefPersistTimer = null;
+// (L25, 2026-11-07 review) 長時間セッションでは閲覧銘柄数に比例して
+// _chartPrefCache が成長し続けていた(localStorage は半永続のため
+// 本キャッシュと異なり問題外)。200 銘柄(≈12 設定/銘柄)分の上限で最古
+// エントリから退避する。退避されたキーは次アクセス時に localStorage から
+// 遅延再読込されるため、機能上の損失はない。
+const _CHART_PREF_CACHE_MAX_STOCKS = 200;
+const _CHART_PREFS_PER_STOCK = 12;
+
+function _evictChartPrefCache() {
+  const maxEntries = _CHART_PREF_CACHE_MAX_STOCKS * _CHART_PREFS_PER_STOCK;
+  while (_chartPrefCache.size >= maxEntries) {
+    const oldestKey = _chartPrefCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    // 保留中の debounce 書き込みを持つキーは、退避して書き込みを失う
+    // 代わりに今すぐ localStorage へ同期的に永続化する。
+    if (_chartPrefDirtyKeys.has(oldestKey)) {
+      try {
+        const val = _chartPrefCache.get(oldestKey);
+        if (val !== undefined) localStorage.setItem(oldestKey, val);
+      } catch {
+        // storage full or blocked — the entry is lost either way
+      }
+      _chartPrefDirtyKeys.delete(oldestKey);
+    }
+    _chartPrefCache.delete(oldestKey);
+  }
+}
 
 function _loadChartPrefIntoCache(key, defaultValue) {
   try {
@@ -909,6 +946,7 @@ function getChartPref(stockKey, pref, defaultVal) {
  */
 function setChartPref(stockKey, pref, val) {
   const key = `chart_${pref}_${stockKey}`;
+  if (!_chartPrefCache.has(key)) _evictChartPrefCache();
   _chartPrefCache.set(key, val);
   _chartPrefDirtyKeys.add(key);
   _scheduleChartPrefPersist();
@@ -1083,30 +1121,6 @@ function setActiveTab(tab) {
 }
 
 // #region Stock Chart Rendering
-function buildVolumeSeries(lineData = [], ohlcData = []) {
-  const volumeByTs = new Map();
-  (ohlcData || []).forEach((d) => {
-    const ts = Number(d?.x);
-    const v = Number(d?.v);
-    if (Number.isFinite(ts)) {
-      volumeByTs.set(ts, Number.isFinite(v) ? v : 0);
-    }
-  });
-
-  return (lineData || []).map((d) => {
-    const ts = Number(d?.x);
-    const direct = Number(d?.v);
-    const y = Number.isFinite(direct)
-      ? direct
-      : volumeByTs.has(ts)
-        ? volumeByTs.get(ts)
-        : 0;
-    return { x: ts, y: Number.isFinite(y) ? y : 0 };
-  });
-}
-
-const isIntradayPeriodMode = (period) => period === "1d" || period === "5d";
-
 function getDatasetHiddenStateByLabel(chart) {
   const hiddenByLabel = new Map();
   if (!chart?.data?.datasets) return hiddenByLabel;
@@ -1133,29 +1147,6 @@ function applyDatasetHiddenStateByLabel(chart, hiddenByLabel) {
     }
   });
 }
-
-function ensureVolumeScale(chart, showVolume) {
-  if (!chart?.options) return;
-  if (!chart.options.scales) chart.options.scales = {};
-  if (showVolume && !chart.options.scales.yVolume) {
-    chart.options.scales.yVolume = {
-      display: true,
-      position: "right",
-      beginAtZero: true,
-      ticks: {
-        color: "#ccc",
-        maxTicksLimit: 4,
-        callback: function (value) {
-          return Number(value).toLocaleString();
-        },
-      },
-      grid: { drawOnChartArea: false },
-    };
-  } else if (chart.options.scales.yVolume) {
-    chart.options.scales.yVolume.display = showVolume;
-  }
-}
-
 function createBaseChartOptions(animate, timeConfig, showVolume) {
   return {
     responsive: true,
@@ -1283,6 +1274,15 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   const isJpScheme =
     typeof getColorSchemePreference === "function" &&
     getColorSchemePreference() === "jp_standard";
+
+  // (L20, 2026-11-07 review) drawChart destroys and re-creates the chart on
+  // every refresh. Without carrying per-dataset legend visibility across the
+  // destroy boundary, user-hidden datasets (legend clicks) silently reset to
+  // visible on each SSE-triggered redraw.
+  const previousChart = chartInstances.get(canvas);
+  const hiddenByLabel = previousChart
+    ? getDatasetHiddenStateByLabel(previousChart)
+    : null;
 
   _safeDestroyChart(canvas);
 
@@ -1692,6 +1692,12 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     (stockKey && stockKey.endsWith(".T") ? "jp" : "us");
   chart.$currency =
     options.currency || (chart.$market === "jp" ? "JPY" : "USD");
+
+  // (L20) Restore legend-hidden datasets carried over the destroy/recreate.
+  if (hiddenByLabel && hiddenByLabel.size > 0) {
+    applyDatasetHiddenStateByLabel(chart, hiddenByLabel);
+    chart.update("none");
+  }
 
   // Pass AI technical lines data to chart for the custom plugin if enabled
   if (showAILines) {

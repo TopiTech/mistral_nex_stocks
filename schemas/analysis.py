@@ -51,6 +51,17 @@ class AIChatRequest(BaseModel):
     conversation_scope: str | None = Field(
         default=None, description="Client conversation scope token"
     )
+    # L9 (2026-11-07 review): the streaming-vs-polling decision used to be
+    # read from the raw body (``data.get("stream") is True``), so a truthy
+    # non-boolean spelling ("true"/1) silently degraded to the polling job
+    # with no validation error. The flag is now part of the schema-owned
+    # contract; pydantic rejects non-boolean spellings with the standard
+    # malformed-input envelope.
+    stream: bool = Field(
+        default=False,
+        strict=True,
+        description="Request SSE streaming instead of executor polling",
+    )
 
     @model_validator(mode="before")
     @classmethod

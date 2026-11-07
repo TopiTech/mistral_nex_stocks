@@ -211,3 +211,9 @@ class TemplateConfigSchema(BaseModel):
     credentials_ephemeral: bool = False
     credentials_ephemeral_keys: list[str] = Field(default_factory=list)
     credentials_ephemeral_warning: str | None = None
+    # (L12, 2026-11-07 review) Effective server heartbeat cadence in seconds
+    # (MNS_SSE_HEARTBEAT_INTERVAL, 3..120). The SSE client derives its watchdog
+    # timeout from this so a slow-heartbeat deployment cannot trip the fixed
+    # 45s client timeout. Non-secret runtime constant; default matches
+    # constants.SSE_HEARTBEAT_INTERVAL.
+    sse_heartbeat_interval: int = 15

@@ -97,6 +97,25 @@ class SanitizedFormatter(logging.Formatter):
         return _sanitize_log_message(formatted)
 
 
+class _RestrictiveRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler that keeps the live file 0o600 after rollover.
+
+    L33 (2026-11-07 review): same pattern as logging_config (M31).
+    RotatingFileHandler.doRollover re-opens the base file with the process
+    umask (usually 0o644 on POSIX), so the native-host log became
+    group/world-readable after the first rotation. Re-assert the restrictive
+    mode on every open of the base file.
+    """
+
+    def _open(self):
+        stream = super()._open()
+        try:
+            os.chmod(self.baseFilename, 0o600)
+        except OSError:
+            pass
+        return stream
+
+
 # --- Imports and Constants ---
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -120,7 +139,7 @@ _log_dir = Path(
     or _default_log_dir
 )
 _log_dir.mkdir(parents=True, exist_ok=True)
-_file_handler = RotatingFileHandler(
+_file_handler = _RestrictiveRotatingFileHandler(
     _log_dir / "native_host.log",
     maxBytes=1024 * 1024,
     backupCount=3,

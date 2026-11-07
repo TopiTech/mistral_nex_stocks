@@ -41,20 +41,21 @@ logger = logging.getLogger("bg.sync_worker")
 
 
 def _handle_yfinance_error(exc: Exception, symbol: str = "") -> None:
-    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+    # M39 (2026-11-07 review): use the canonical rate-limit classifier from
+    # services/stock/errors.py instead of a drifted local subset — the local
+    # list missed several documented markers ("rate limit", "access
+    # forbidden", "your request was denied", "temporarily unavailable",
+    # "thank you for your patience", 403) and its final else branch reset the
+    # graduated 429 streak on unrecognized transient errors, silently
+    # clearing the backoff.
+    from services.stock.errors import _is_yfinance_rate_limit_error
+
     exc_str_lower = str(exc).lower()
 
-    if (
-        status_code in (401, 429, 402, 439)
-        or "too many requests" in exc_str_lower
-        or "payment required" in exc_str_lower
-        or "invalid crumb" in exc_str_lower
-        or "unauthorized" in exc_str_lower
-    ):
+    if _is_yfinance_rate_limit_error(exc):
         backoff_time = app_state.market.mark_yf_429(retry_after=parse_retry_after(exc))
         logger.warning(
-            "yfinance rate limit / block hit (%s) for symbol=%s; backing off for %d seconds.",
-            status_code if status_code else "unknown",
+            "yfinance rate limit / block hit for symbol=%s; backing off for %d seconds.",
             symbol,
             int(backoff_time),
         )
@@ -265,7 +266,11 @@ def fetch_stocks_batch(
         logger.warning("Batch fetch completely failed or empty. Preserving previous state.")
         return [None] * len(items)
 
-    results_map: dict[str, Any] = {}
+    # M24 (2026-11-07 review): key results by (symbol, market) — items are
+    # (symbol, name, market) triples and the same symbol can legitimately be
+    # scheduled under two markets (e.g. a JP holding and an idx watchlist
+    # entry); a bare-symbol key silently dropped one market's payload.
+    results_map: dict[tuple[str, str], Any] = {}
     fallback_items = []
     max_fallbacks = 2
 
@@ -289,15 +294,15 @@ def fetch_stocks_batch(
                 logger.debug("Failed to extract %s from batch: %s", symbol, extract_exc)
 
         if payload is not None:
-            results_map[symbol] = payload
+            results_map[(symbol, market)] = payload
         else:
             fallback_items.append((symbol, name, market))
 
     if lightweight:
         logger.debug("Lightweight mode: skipping all %d fallbacks", len(fallback_items))
         for symbol, _name, _market in fallback_items:
-            results_map[symbol] = None
-        results = [results_map.get(item[0]) for item in items]
+            results_map[(symbol, _market)] = None
+        results = [results_map.get((item[0], item[2])) for item in items]
         return results
 
     if app_state.market.is_yf_rate_limited():
@@ -305,18 +310,18 @@ def fetch_stocks_batch(
             "yfinance rate-limited: skipping %d batch fallbacks.",
             len(fallback_items),
         )
-        results = [results_map.get(item[0]) for item in items]
+        results = [results_map.get((item[0], item[2])) for item in items]
         return results
 
     to_fetch = fallback_items[:max_fallbacks]
     skipped_items = fallback_items[max_fallbacks:]
 
-    for symbol, _, _ in skipped_items:
+    for symbol, _, _market in skipped_items:
         logger.debug("Skipping fallback for %s: limit reached", symbol)
-        results_map[symbol] = None
+        results_map[(symbol, _market)] = None
 
     if to_fetch:
-        futures_map: dict[concurrent.futures.Future[Any], str] = {}
+        futures_map: dict[concurrent.futures.Future[Any], tuple[str, str]] = {}
 
         logger.info(
             "Fallback parallel single queries triggered for %d stocks (limit %d)",
@@ -331,9 +336,9 @@ def fetch_stocks_batch(
                 )
             except (queue.Full, RuntimeError) as submit_exc:
                 logger.warning("Fallback fetch submission skipped for %s: %s", symbol, submit_exc)
-                results_map[symbol] = None
+                results_map[(symbol, market)] = None
                 continue
-            futures_map[fut] = symbol
+            futures_map[fut] = (symbol, market)
         from utils.env_helpers import _env_float
 
         fallback_timeout = _env_float("MNS_FALLBACK_FETCH_TIMEOUT", 10.0, 1.0, 60.0)
@@ -343,20 +348,20 @@ def fetch_stocks_batch(
         )
 
         for fut in done:
-            symbol = futures_map[fut]
+            sym_key = futures_map[fut]
             try:
                 payload = fut.result()
-                results_map[symbol] = payload
+                results_map[sym_key] = payload
             except (RequestException, ValueError, TypeError, RuntimeError) as exc:
-                logger.warning("Parallel fallback fetch failed for %s: %s", symbol, exc)
-                results_map[symbol] = _invalid_tuple_if_applicable(symbol, exc)
+                logger.warning("Parallel fallback fetch failed for %s: %s", sym_key[0], exc)
+                results_map[sym_key] = _invalid_tuple_if_applicable(sym_key[0], exc)
         for fut in not_done:
-            symbol = futures_map[fut]
+            sym_key = futures_map[fut]
             fut.cancel()
-            logger.warning("Parallel fallback fetch timed out for %s", symbol)
-            results_map[symbol] = None
+            logger.warning("Parallel fallback fetch timed out for %s", sym_key[0])
+            results_map[sym_key] = None
 
-            def _log_late_failure(f: Any, _sym: str = symbol) -> None:
+            def _log_late_failure(f: Any, _sym: str = sym_key[0]) -> None:
                 try:
                     exc = f.exception()
                 except Exception as log_exc:
@@ -368,7 +373,7 @@ def fetch_stocks_batch(
 
             fut.add_done_callback(_log_late_failure)
 
-    results = [results_map.get(item[0]) for item in items]
+    results = [results_map.get((item[0], item[2])) for item in items]
     return results
 
 

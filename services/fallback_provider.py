@@ -156,20 +156,34 @@ class AlphaVantageProvider(BaseFallbackProvider):
                     if is_bool_like(val):
                         return default
                     num = float(val)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
+                    # OverflowError: float(10**400)-style JSON integers escape
+                    # the numeric-coercion boundary and previously aborted the
+                    # whole quote via the outer handler (M21, 2026-11-07).
                     return default
                 return int(num) if math.isfinite(num) else default
 
             price = _to_float(quote["05. price"])
 
+            # M22 (2026-11-07 review): never fake unknown OHLC as the current
+            # price — a fabricated previous close forces change=0.00% and
+            # misrepresents stale fallback data ("flat market"). JP-tier
+            # providers already return None for exactly this reason; the
+            # downstream payload and services tolerate None (no change
+            # rendered until real data arrives).
+            prev_close = _finite_number(quote.get("08. previous close"))
+            open_num = _finite_number(quote.get("02. open"))
+            high_num = _finite_number(quote.get("03. high"))
+            low_num = _finite_number(quote.get("04. low"))
+
             return {
                 "symbol": symbol,
                 "regularMarketPrice": price,
-                "regularMarketPreviousClose": _to_float(quote.get("08. previous close"), price),
+                "regularMarketPreviousClose": prev_close,
                 "regularMarketVolume": _to_int(quote.get("06. volume"), 0),
-                "regularMarketOpen": _to_float(quote.get("02. open"), price),
-                "regularMarketDayHigh": _to_float(quote.get("03. high"), price),
-                "regularMarketDayLow": _to_float(quote.get("04. low"), price),
+                "regularMarketOpen": open_num,
+                "regularMarketDayHigh": high_num,
+                "regularMarketDayLow": low_num,
             }
         except Exception as exc:
             # requests exception text embeds the full request URL, which
@@ -373,7 +387,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             if price is None or _finite_number(price) is None:
                 return None
 
-            def _quote_float(field: str, default: float) -> float:
+            def _quote_float(field: str, default: float | None) -> float | None:
                 raw = _extract_fmt(field)
                 num = _finite_number(raw) if raw is not None else None
                 return num if num is not None else default
@@ -384,7 +398,8 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                     return default
                 try:
                     num = float(raw)
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
+                    # M21: extreme JSON integers must degrade, not abort.
                     return default
                 if not math.isfinite(num) or num < 0:
                     return default
@@ -394,14 +409,16 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             if price_finite is None:
                 return None
             price_val = price_finite
+            # M22: see the AlphaVantage branch — unknown OHLC is None, not a
+            # copy of the current price.
             return {
                 "symbol": symbol,
                 "regularMarketPrice": price_val,
-                "regularMarketPreviousClose": _quote_float("regularMarketPreviousClose", price_val),
+                "regularMarketPreviousClose": _quote_float("regularMarketPreviousClose", None),
                 "regularMarketVolume": _quote_int("regularMarketVolume", 0),
-                "regularMarketOpen": _quote_float("regularMarketOpen", price_val),
-                "regularMarketDayHigh": _quote_float("regularMarketDayHigh", price_val),
-                "regularMarketDayLow": _quote_float("regularMarketDayLow", price_val),
+                "regularMarketOpen": _quote_float("regularMarketOpen", None),
+                "regularMarketDayHigh": _quote_float("regularMarketDayHigh", None),
+                "regularMarketDayLow": _quote_float("regularMarketDayLow", None),
             }
         except Exception as exc:
             logger.debug("Yahoo HTML scraper failed for %s: %s", symbol, exc)

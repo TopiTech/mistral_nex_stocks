@@ -483,6 +483,7 @@
       const isActive = pill.dataset.preset === "custom";
       pill.classList.toggle("active", isActive);
       pill.setAttribute("aria-pressed", String(isActive));
+      pill.setAttribute("tabindex", isActive ? "0" : "-1");
     });
     document.getElementById("ai-pf-custom-panel")?.classList.remove("hidden");
     const themeInput = document.getElementById("ai-theme-input");
@@ -538,6 +539,7 @@
           const isActive = pill.dataset.preset === "tech";
           pill.classList.toggle("active", isActive);
           pill.setAttribute("aria-pressed", String(isActive));
+          pill.setAttribute("tabindex", isActive ? "0" : "-1");
         });
         document.getElementById("ai-pf-custom-panel")?.classList.add("hidden");
         loadAiPortfolio(activeAiPreset);
@@ -1300,10 +1302,14 @@
         changePct !== null
           ? `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`
           : "--%";
+      // (L22, 2026-11-07 review) missing data (null sentinel) is NOT a
+      // decline — the old fallback colored "no data" cells red.
       const changeColor =
-        changePct !== null && changePct >= 0
-          ? "var(--color-positive)"
-          : "var(--color-negative)";
+        changePct === null
+          ? "var(--color-muted, inherit)"
+          : changePct >= 0
+            ? "var(--color-positive)"
+            : "var(--color-negative)";
       const targetPrice = toNumber(item.target_price);
       const targetPriceText =
         targetPrice !== null && targetPrice > 0

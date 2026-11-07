@@ -315,6 +315,29 @@ def resolve_model_target(arg: str):
     for entry in MISTRAL_MODELS.values():
         if entry.get("name") == raw:
             return dict(entry)
+    # M27 (2026-11-07 review): the supported-ids check must run BEFORE the
+    # legacy-alias fallback. Several explicitly supported versioned ids
+    # (mistral-large-2411, codestral-2501, ...) also appear in the alias
+    # table, and the alias consult prefaced the membership check — silently
+    # substituting a different model instead of serving the requested id
+    # verbatim.
+    #
+    # Pointer tags are the one intentional exception: "-latest" names that
+    # the alias table maps (mistral-{small,medium,large}-latest) are POINTERS
+    # by design — the alias entry is the single source of truth for which
+    # versioned snapshot the tag currently resolves to, and the catalog/UI
+    # contract pins those expansions (e.g. mistral-medium-latest ->
+    # mistral-medium-2604). They must therefore expand BEFORE the
+    # supported-verbatim branch, which would otherwise return the raw tag
+    # as the display name.
+    pointing_target = MISTRAL_LEGACY_ALIASES.get(raw) if raw.endswith("-latest") else None
+    if pointing_target:
+        match = next((v for v in MISTRAL_MODELS.values() if v.get("name") == pointing_target), None)
+        if match:
+            return dict(match)
+        return {"name": pointing_target, "badge": pointing_target}
+    if raw in MISTRAL_SUPPORTED_MODELS:
+        return {"name": raw, "badge": raw, "label": raw}
     # Check legacy aliases (e.g. "mistral-small-4" -> "mistral-small-2603")
     resolved = MISTRAL_LEGACY_ALIASES.get(raw)
     if resolved:
@@ -322,8 +345,6 @@ def resolve_model_target(arg: str):
         if match:
             return dict(match)
         return {"name": resolved, "badge": resolved}
-    if raw in MISTRAL_SUPPORTED_MODELS:
-        return {"name": raw, "badge": raw, "label": raw}
     return None
 
 

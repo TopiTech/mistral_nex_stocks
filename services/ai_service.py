@@ -11,6 +11,7 @@ import queue
 import random
 import re
 import secrets
+import threading
 import time
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -429,32 +430,48 @@ def _run_coro_sync(coro: Any, timeout_sec: float | None = None) -> Any:
     except RuntimeError:
         loop = None
 
-    if loop is None:
-        return asyncio.run(asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro)
+    try:
+        if loop is None:
+            return asyncio.run(
+                asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
+            )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        def _runner():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            try:
-                task = asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
-                return new_loop.run_until_complete(task)
-            finally:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+
+            def _runner():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
                 try:
-                    pending = asyncio.all_tasks(new_loop)
-                    for t in pending:
-                        t.cancel()
-                    if pending:
-                        new_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                    new_loop.run_until_complete(new_loop.shutdown_asyncgens())
-                except Exception:
-                    pass
+                    task = asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
+                    return new_loop.run_until_complete(task)
                 finally:
-                    asyncio.set_event_loop(None)
-                    new_loop.close()
+                    try:
+                        pending = asyncio.all_tasks(new_loop)
+                        for t in pending:
+                            t.cancel()
+                        if pending:
+                            new_loop.run_until_complete(
+                                asyncio.gather(*pending, return_exceptions=True)
+                            )
+                        new_loop.run_until_complete(new_loop.shutdown_asyncgens())
+                    except Exception:
+                        pass
+                    finally:
+                        asyncio.set_event_loop(None)
+                        new_loop.close()
 
-        future = executor.submit(_runner)
-        return future.result(timeout=timeout_sec)
+            future = executor.submit(_runner)
+            return future.result(timeout=timeout_sec)
+    except TimeoutError as exc:
+        # M9 (2026-11-07 review): the builtin TimeoutError subclasses OSError
+        # on 3.11+, so the communication-error classifier would file it under
+        # the generic transport branch (status_code=0, generic message, no
+        # circuit-failure accounting) instead of a provider timeout. Translate
+        # it onto the class the classifier maps to 504 with the
+        # timeout-specific public message.
+        raise httpx.TimeoutException(
+            f"Mistral SDK run timed out after {timeout_sec}s"
+        ) from exc
 
 
 def _get_mistral_model_name():
@@ -1013,6 +1030,11 @@ def call_mistral_chat(
         with app_state.ai.mistral_call_semaphore:
             if app_state.market.is_circuit_open("mistral"):
                 logger.warning("Mistral circuit is OPEN. Skipping API call.")
+                # SVC-02 completion (M6, 2026-11-07 review): the pacing slot
+                # was reserved above but no request is issued; roll it back so
+                # gated traffic does not accumulate phantom min-interval
+                # delays and surface a misleading 429 on the next attempt.
+                _release_mistral_call_slot()
                 return {
                     "error": {
                         "message": "AI service is temporarily unavailable (circuit open)",
@@ -1027,6 +1049,7 @@ def call_mistral_chat(
                     logger.warning(
                         "Mistral circuit recovery probe already in progress. Skipping API call."
                     )
+                    _release_mistral_call_slot()
                     return {
                         "error": {
                             "message": "AI service is temporarily unavailable (circuit recovery probe in progress)",
@@ -1134,6 +1157,18 @@ def call_mistral_chat(
                                 response_format=response_format,
                             )
                         except Exception as parse_err:
+                            # H4 (2026-11-07 review): the parse -> json_schema ->
+                            # json_object chain exists for STRUCTURAL
+                            # rejections (e.g. the pinned TypeError for message
+                            # content shape). A provider-health failure
+                            # (429/5xx/timeout/transport) must NOT be retried
+                            # twice more with the SDK retry budget — that
+                            # triples the provider load from one user call
+                            # while holding a semaphore slot for up to 3x the
+                            # call timeout. Re-raise so the outer classifier
+                            # (cooldown/circuit/Retry-After) sees it.
+                            if isinstance(parse_err, _MISTRAL_COMMUNICATION_ERRORS):
+                                raise
                             logger.info(
                                 "Mistral SDK chat.parse encountered an error type=%s; falling back to chat.complete.",
                                 type(parse_err).__name__,
@@ -1149,6 +1184,8 @@ def call_mistral_chat(
                                 }
                                 response = client.chat.complete(**kwargs)
                             except Exception as schema_err:
+                                if isinstance(schema_err, _MISTRAL_COMMUNICATION_ERRORS):
+                                    raise
                                 logger.debug(
                                     "json_schema complete fallback failed type=%s; using json_object",
                                     type(schema_err).__name__,
@@ -1167,6 +1204,9 @@ def call_mistral_chat(
                             }
                             response = client.agents.complete(**kwargs)
                         except Exception as schema_err:
+                            # H4: same rule as the non-agents branch (see above).
+                            if isinstance(schema_err, _MISTRAL_COMMUNICATION_ERRORS):
+                                raise
                             logger.debug(
                                 "agents json_schema call failed type=%s; using json_object",
                                 type(schema_err).__name__,
@@ -2224,20 +2264,11 @@ def stream_mistral_chat(
         return
 
     circuit_probe_claimed = False
-    if not _is_fallback:
-        circuit_state = app_state.market.get_circuit_state("mistral")
-        if circuit_state.get("status") == "HALF_OPEN":
-            if not app_state.market.try_claim_circuit_probe("mistral"):
-                logger.warning(
-                    "Mistral circuit recovery probe already in progress. Skipping stream call."
-                )
-                yield {
-                    "type": "error",
-                    "message": "AIサービスは一時的に利用できません（復旧プローブ実行中）",
-                    "status_code": 503,
-                }
-                return
-            circuit_probe_claimed = True
+    # M7 note (2026-11-07 review): the HALF_OPEN probe claim happens INSIDE the
+    # stream semaphore below. Claiming here would hold the probe while blocked
+    # on the semaphore for up to (slots x request timeout), rejecting every
+    # other AI call with 503 "probe in progress" without ever issuing a probe
+    # request of our own.
 
     client = _get_mistral_client(api_key)
     if client is None:
@@ -2283,6 +2314,22 @@ def stream_mistral_chat(
     # the slot mid-stream — would let burst traffic bypass global pacing).
     sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_stream_semaphore
     with sem_ctx:
+        # M7 (2026-11-07 review): claim the HALF_OPEN probe only after the
+        # stream slot is held (see the note above the semaphore).
+        if not _is_fallback:
+            circuit_state = app_state.market.get_circuit_state("mistral")
+            if circuit_state.get("status") == "HALF_OPEN":
+                if not app_state.market.try_claim_circuit_probe("mistral"):
+                    logger.warning(
+                        "Mistral circuit recovery probe already in progress. Skipping stream call."
+                    )
+                    yield {
+                        "type": "error",
+                        "message": "AIサービスは一時的に利用できません（復旧プローブ実行中）",
+                        "status_code": 503,
+                    }
+                    return
+                circuit_probe_claimed = True
         kwargs: dict[str, Any] = {
             "messages": messages,
             "max_tokens": token_limit,
@@ -2319,10 +2366,21 @@ def stream_mistral_chat(
                     agent = load_sdk_agent(api_key=api_key, model=model)
                 prompt_content = _format_messages_for_sdk_agent(messages)
 
-                event_queue: queue.Queue[Any] = queue.Queue()
+                class _AgentConsumerAborted(Exception):
+                    """Raised inside agent.run's on_event when the consumer left."""
+
+                # M4 (2026-11-07 review): bound the queue so a slow/hidden
+                # consumer cannot accumulate unbounded deltas, and give the
+                # consumer a cooperative abort so closing the SSE generator
+                # stops the agent run instead of leaving a daemon burning
+                # provider tokens on a dead connection.
+                event_queue: queue.Queue[Any] = queue.Queue(maxsize=512)
                 stop_sentinel = object()
+                consumer_abort = threading.Event()
 
                 def on_event(event: Any) -> None:
+                    if consumer_abort.is_set():
+                        raise _AgentConsumerAborted()
                     if isinstance(event, mistral_agents.TextDelta) if mistral_agents else False:
                         t = getattr(event, "text", "")
                         if t:
@@ -2330,27 +2388,87 @@ def stream_mistral_chat(
                     elif getattr(event, "text", None):
                         event_queue.put({"type": "delta", "text": event.text})
 
+                def _enqueue_unlocked(item: Any) -> None:
+                    """Put without blocking when the consumer has already left."""
+                    try:
+                        event_queue.put(item)
+                    except queue.Full:
+                        pass
+
                 def _stream_worker():
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
                     try:
+                        # The SDK bounds its own run (run accepts timeout=),
+                        # so an abandoned worker cannot outlive the call
+                        # timeout budget even if it never sees another event.
                         res = new_loop.run_until_complete(
-                            agent.run(prompt_content, on_event=on_event)
+                            agent.run(
+                                prompt_content,
+                                on_event=on_event,
+                                timeout=MISTRAL_API_TIMEOUT_SEC,
+                            )
                         )
-                        event_queue.put({"type": "done", "result": res})
+                        _enqueue_unlocked({"type": "done", "result": res})
+                    except _AgentConsumerAborted:
+                        logger.info("Agent SDK run aborted: SSE consumer disconnected.")
                     except Exception as e:
-                        event_queue.put({"type": "error", "exception": e})
+                        _enqueue_unlocked({"type": "error", "exception": e})
                     finally:
-                        event_queue.put(stop_sentinel)
-                        new_loop.close()
+                        try:
+                            event_queue.put_nowait(stop_sentinel)
+                        except queue.Full:
+                            pass
+                        try:
+                            pending = asyncio.all_tasks(new_loop)
+                            for t in pending:
+                                t.cancel()
+                            if pending:
+                                new_loop.run_until_complete(
+                                    asyncio.gather(*pending, return_exceptions=True)
+                                )
+                            new_loop.run_until_complete(new_loop.shutdown_asyncgens())
+                        except Exception:
+                            pass
+                        finally:
+                            asyncio.set_event_loop(None)
+                            new_loop.close()
 
-                import threading
-                stream_thread = threading.Thread(target=_stream_worker, daemon=True)
+                stream_thread = threading.Thread(
+                    target=_stream_worker, daemon=True, name="mns-agent-stream"
+                )
                 stream_thread.start()
+
+                def _report_agent_stream_failure() -> None:
+                    """Circuit-account an agents-mode stream failure (M5).
+
+                    The queue carries errors as items — not exceptions through
+                    the communication-error handler — so without this report a
+                    HALF_OPEN probe against a dead provider never re-opens the
+                    circuit and every subsequent AI call claims a doomed probe.
+                    Mirrors the non-agent path's failure classification, and
+                    clears the claim flag the same way so the generator's
+                    finally does not double-release the probe.
+                    """
+                    nonlocal circuit_probe_claimed
+                    app_state.market.report_circuit_result(
+                        "mistral", success=False, threshold=3, open_sec=60
+                    )
+                    circuit_probe_claimed = False
 
                 try:
                     while True:
-                        item = event_queue.get(timeout=MISTRAL_API_TIMEOUT_SEC)
+                        try:
+                            item = event_queue.get(timeout=MISTRAL_API_TIMEOUT_SEC)
+                        except queue.Empty:
+                            logger.warning("Agent SDK stream timed out waiting for events")
+                            _report_agent_stream_failure()
+                            yield {
+                                "type": "error",
+                                "message": "Agent stream timed out",
+                                "status_code": 504,
+                            }
+                            return
                         if item is stop_sentinel:
                             break
                         if isinstance(item, dict):
@@ -2362,10 +2480,19 @@ def stream_mistral_chat(
                                     yield {"type": "delta", "text": d_text}
                             elif item_type == "error":
                                 err_obj = item.get("exception")
-                                logger.error("Agent SDK stream error: %s", err_obj)
+                                logger.error(
+                                    "Agent SDK stream error type=%s: %s",
+                                    type(err_obj).__name__ if err_obj else "unknown",
+                                    err_obj,
+                                )
+                                _report_agent_stream_failure()
+                                # M5b: never surface raw SDK exception text to
+                                # the browser; use the sanitized public message.
                                 yield {
                                     "type": "error",
-                                    "message": str(err_obj) if err_obj else "Agent stream error",
+                                    "message": _public_mistral_error_message(
+                                        err_obj or Exception("Agent stream error"), 500
+                                    ),
                                     "status_code": 500,
                                 }
                                 return
@@ -2376,14 +2503,12 @@ def stream_mistral_chat(
                                     if res_text:
                                         full_parts.append(res_text)
                                         yield {"type": "delta", "text": res_text}
-                except queue.Empty:
-                    logger.warning("Agent SDK stream timed out waiting for events")
-                    yield {
-                        "type": "error",
-                        "message": "Agent stream timed out",
-                        "status_code": 504,
-                    }
-                    return
+                finally:
+                    # Consumer exit (normal end, error, or Flask closing the
+                    # generator on client disconnect): cooperatively abort the
+                    # run and reclaim the worker within a bounded window.
+                    consumer_abort.set()
+                    stream_thread.join(timeout=5.0)
 
                 app_state.market.report_circuit_result("mistral", success=True)
                 circuit_probe_claimed = False

@@ -231,7 +231,25 @@ async function apiFetch(url, options = {}, behaviors = {}) {
 // client-side auto-reconnect and stops as soon as the stream delivers a
 // message again. (M-7: removed the unused sseManager wrapper that duplicated
 // the openSSE path to avoid confusion / drift.)
-const sseApiClient = new APIClient("/api");
+// (L12, 2026-11-07 review) サーバのハートビート間隔は
+// MNS_SSE_HEARTBEAT_INTERVAL(3..120 秒)で環境依存だが、クライアントの
+// watchdog タイムアウトは 45 秒固定だった。間隔 >15 秒のデプロイでは
+// 「まだ生きている接続」が毎周期 kill されて reconnect churn になる。
+// APP_CONFIG 経由で実効間隔を受け取り、タイムアウトを
+// max(45 秒, サーバ間隔 x 3) に揃える（config_init.js は api.js より
+// 先に読み込まれるので window.APP_CONFIG が利用可能）。
+const _sseHeartbeatIntervalSec = Number(
+  (typeof window !== "undefined" &&
+    window.APP_CONFIG?.sse_heartbeat_interval) ||
+    NaN,
+);
+const sseHeartbeatTimeoutMs =
+  Number.isFinite(_sseHeartbeatIntervalSec) && _sseHeartbeatIntervalSec > 0
+    ? Math.max(45000, Math.ceil(_sseHeartbeatIntervalSec * 1000) * 3)
+    : 45000;
+const sseApiClient = new APIClient("/api", {
+  sseHeartbeatTimeout: sseHeartbeatTimeoutMs,
+});
 
 /**
  * Maximum time (ms) to keep showing skeletons before falling back to a
@@ -1332,12 +1350,12 @@ function _parseNewsItems(raw) {
     )
     .map((x) => x.replace(/^"|"$/g, "").trim())
     .filter((x) => !_isNoiseLine(x))
-    .filter((x) => !/^[\[{\]}]$/.test(x))
+    .filter((x) => !/^[[{}\]]$/.test(x))
     .filter(Boolean);
   if (lines.length) return lines;
 
   if (
-    /^[\s\[{]/.test(text) ||
+    /^[\s[{]/.test(text) ||
     /"(?:us|jp|trends|topic|summary|details|market_impact)"\s*:/.test(text)
   ) {
     return [];
@@ -1675,8 +1693,8 @@ async function loadNews(forceRefresh = false) {
     }
   } finally {
     if (timeoutId) {
+      // No later statement reads this local — clearing alone is enough.
       clearTimeout(timeoutId);
-      timeoutId = null;
     }
     state.isLoadingNews = false;
     resetButton(refreshBtn);
@@ -1989,6 +2007,11 @@ async function streamChatReply(payload, onDelta) {
   const decoder = new TextDecoder();
   let buffer = "";
   let reply = "";
+  // (L13, 2026-11-07 review) the server emits an explicit done frame only on
+  // a clean finish; a clean EOF without it means the stream was cut
+  // (proxy/worker restart) and the accumulated text is a TRUNCATED reply —
+  // the pre-existing code returned it as the complete answer.
+  let sawDoneFrame = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -2018,10 +2041,21 @@ async function streamChatReply(payload, onDelta) {
           onDelta(reply);
         }
         if (evt.done) {
+          sawDoneFrame = true;
           reply = evt.reply || reply;
           return reply;
         }
       }
+    }
+    if (!sawDoneFrame) {
+      // EOF without a done frame: the partial reply must NOT be presented as
+      // complete. Fall back to polling (the caller can recover the
+      // server-cached full reply via request_token).
+      const truncErr = new Error(
+        "ストリームが中断されました。再試行してください",
+      );
+      truncErr.isStreamFallback = true;
+      throw truncErr;
     }
     if (!reply) throw new Error("応答を取得できませんでした");
     return reply;

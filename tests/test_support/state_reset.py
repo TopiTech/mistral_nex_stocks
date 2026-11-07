@@ -363,3 +363,14 @@ def reset_app_state_internals() -> None:
         from execution_state import ExecutionState
 
         app_state.execution = ExecutionState()
+        # M33 (2026-11-07 review): a fresh ExecutionState carries REAL thread
+        # pools, and apply_synchronous_executors() only runs once at conftest
+        # import — the reset silently restored the "eliminate async races"
+        # guarantee mid-worker. Re-apply the synchronous stubs after the swap
+        # so the test isolation contract holds for every subsequent test.
+        try:
+            from tests.test_support.patches import apply_synchronous_executors
+
+            apply_synchronous_executors()
+        except ImportError:
+            pass

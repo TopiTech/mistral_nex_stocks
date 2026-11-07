@@ -257,7 +257,7 @@ def _encode_secret(value: str, key_name: str = "default"):
 
     # プレーンテキストへのフォールバックはセキュリティリスクのため完全に削除しましたが、
     # ヘッドレス/Docker環境での起動不能を防ぐため、MNS_EPHEMERAL_FALLBACK=1が指定されている場合は一時的インメモリ保存（ephemeral）にフォールバックします。
-    if os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1":
+    if os.environ.get("MNS_EPHEMERAL_FALLBACK", "").strip().lower() in ("1", "true", "yes", "on"):
         logger.warning(
             "セキュアストレージ (keyring/DPAPI) が利用できません。対象: '%s'。 "
             "MNS_EPHEMERAL_FALLBACK=1 が指定されているため、プロセスメモリ内で暗号化して保持します。 "
@@ -528,6 +528,12 @@ def unprotect_data(
     if scheme == "fernet":
         val_str = entry.get("value", "")
         if not val_str:
+            return ""
+        if not isinstance(val_str, str):
+            # M26 (2026-11-07 review): a malformed stored entry (e.g.
+            # {"scheme": "fernet", "value": 123}) used to raise
+            # AttributeError on .encode below, escaping the documented
+            # "return '' on undecodable" contract.
             return ""
         if master_key is None:
             import config_store as _cs  # type: ignore[import-not-found]

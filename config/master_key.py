@@ -46,7 +46,7 @@ def get_or_create_master_key() -> str:
     if (
         not KEYRING_AVAILABLE
         and not _is_windows()
-        and os.environ.get("MNS_EPHEMERAL_FALLBACK") == "1"
+        and os.environ.get("MNS_EPHEMERAL_FALLBACK", "").strip().lower() in ("1", "true", "yes", "on")
         and not _allow_ephemeral_master
     ):
         raise RuntimeError(

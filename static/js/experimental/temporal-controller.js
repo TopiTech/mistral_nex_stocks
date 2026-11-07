@@ -10,6 +10,9 @@
   "use strict";
 
   const GRANULARITY_PERIODS = ["1d", "5d", "1mo", "3mo", "1y"];
+  // (L25) 1 銘柄あたり最大 5 粒度 + LIVE/タイムラプス参照の余裕を見込み、
+  // セッション内の履歴キャッシュを 16 銘柄分に制限する。
+  const HISTORY_CACHE_MAX_ENTRIES = GRANULARITY_PERIODS.length * 16;
 
   class TemporalController {
     constructor(state, elements) {
@@ -377,6 +380,17 @@
             ? global.ObservatoryDataAdapter.normalizeHistory(data.history)
             : data.history;
 
+          // (L25, 2026-11-07 review) historyCache は銘柄×粒度の組み合わせで
+          // 無制限に成長していた。FIFO 上限に合わせて最古エントリを退避
+          // する (state.js historyPrefetchCache と同じ契約)。挿入は
+          // 「別銘柄への切替(=表示銘柄の交代)」時のみ発生し、各 fetch は
+          // activeHistoryKey を自分自身に再設定するため、退避されるのは
+          // 常時「もう表示されていない」エントリに限られる。
+          while (this.historyCache.size >= HISTORY_CACHE_MAX_ENTRIES) {
+            const oldestKey = this.historyCache.keys().next().value;
+            if (oldestKey === undefined) break;
+            this.historyCache.delete(oldestKey);
+          }
           this.historyCache.set(cacheKey, normalized);
           if (this.isCurrentHistoryContext(cleanSymbol, period)) {
             this.applyHistoricalData(cleanSymbol, period, normalized);

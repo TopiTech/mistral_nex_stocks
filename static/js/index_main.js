@@ -559,6 +559,11 @@ async function fetchInitialStocks(force = false) {
       return INITIAL_STOCKS_FETCH_RESULT.STALE;
     }
     logger.warn("Init fetch err:", e);
+    // (L18, 2026-11-07 review) this terminal outcome must reset the skeleton
+    // session timestamp: renderSkeletons only stamps when falsy, so a stale
+    // value let the SSE watchdog flip the NEXT session's fresh skeletons to
+    // the timeout state well before the intended window.
+    sseState.skeletonShownAt = 0;
     ["us", "jp", "idx"].forEach((market) => {
       const container = document.getElementById(`${market}-stocks`);
       if (!container) return;

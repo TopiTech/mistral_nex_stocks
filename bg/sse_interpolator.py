@@ -214,6 +214,16 @@ def bg_interpolate_loop() -> None:
                 current_idx = list(app_state.market.current_stocks_cache.get("idx", []))
 
                 indices_copy = copy.deepcopy(app_state.market.current_indices_cache)
+                # M25 (2026-11-07 review): snapshot the exact container objects
+                # read above. The compute below runs WITHOUT the lock; if a
+                # concurrent publisher (sync_all_stocks_now / the reset
+                # endpoint / _update_indices_data) replaces them meanwhile,
+                # the write-back below silently reverts that fresher payload
+                # and announces the stale one to every SSE listener.
+                owned_us = app_state.market.current_stocks_cache.get("us")
+                owned_jp = app_state.market.current_stocks_cache.get("jp")
+                owned_idx = app_state.market.current_stocks_cache.get("idx")
+                owned_indices = app_state.market.current_indices_cache
 
             if any((target_us, target_jp, target_idx)):
                 new_current_stocks = {
@@ -224,15 +234,33 @@ def bg_interpolate_loop() -> None:
                     ),
                 }
 
+                fluctuated_indices = indices_copy
                 if any_open:
-                    _fluctuate_indices(indices_copy, us_open, jp_open)
+                    # Fluctuate a private copy so indices_copy stays a pristine
+                    # snapshot of what was read — the write-back compares it
+                    # against the live cache to detect concurrent in-place
+                    # publishers (_update_indices_data) as well as whole-dict
+                    # replacements (sync publish / reset).
+                    fluctuated_indices = copy.deepcopy(indices_copy)
+                    _fluctuate_indices(fluctuated_indices, us_open, jp_open)
 
                 with app_state.cache.sse_data_lock:
-                    app_state.market.current_stocks_cache = new_current_stocks
-                    app_state.market.current_indices_cache = indices_copy
+                    still_ours = (
+                        app_state.market.current_stocks_cache.get("us") is owned_us
+                        and app_state.market.current_stocks_cache.get("jp") is owned_jp
+                        and app_state.market.current_stocks_cache.get("idx") is owned_idx
+                        and app_state.market.current_indices_cache is owned_indices
+                        and app_state.market.current_indices_cache == indices_copy
+                    )
+                    if still_ours:
+                        # No concurrent publisher touched the caches during the
+                        # compute window: publish the interpolated snapshot.
+                        app_state.market.current_stocks_cache = new_current_stocks
+                        app_state.market.current_indices_cache = fluctuated_indices
 
-                _invalidate_sse_payload_cache()
-                announce_current_market_state()
+                if still_ours:
+                    _invalidate_sse_payload_cache()
+                    announce_current_market_state()
 
             if not any_open:
                 app_state.execution.shutdown_event.wait(SSE_MARKET_CLOSED_SLEEP)

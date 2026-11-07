@@ -1,5 +1,11 @@
 name: CI
 
+# F7 (2026-11-07 review): least-privilege token — every step is read-only
+# (checkout + test + artifact uploads); the repo-default scope (potentially
+# read/write contents) must not be the fallback.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, master]
@@ -202,6 +208,14 @@ jobs:
           $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path $testManifest -Encoding utf8
           ./native_host/validate_native_host_windows.ps1 -ManifestPath $testManifest -RequireLauncher
 
+      - name: Set up Node (32, 2026-11-07 review)
+        # ~16 tests gate on `shutil.which("node")`; relying on the runner
+        # image's preinstalled node lets them silently vanish if the image
+        # changes. Pin the tool so the fallback-to-skip can never trigger.
+        uses: actions/setup-node@d1f3c8f3ecb1f22e48b03c0ab531a0d63e1308f1 # v6.0.0
+        with:
+          node-version: "24"
+
       - name: Install test dependencies
         run: uv sync --locked --group test --python ${{ matrix.python-version }}
 
@@ -242,3 +256,15 @@ jobs:
           uv run --locked --group test python -m pytest
           tests/test_ai_portfolio.py::test_posix_auto_master_key_portfolio_persistence_completes
           -q --timeout=20 --timeout-method=thread
+
+      - name: Run the POSIX-only test population (F5, 2026-11-07 review)
+        # The full suite runs on windows-latest; every test guarded by
+        # os.name == "posix" (flock/fprintf paths, 0600 permissions, leader
+        # election fcntl branch) previously executed ON NO CI JOB at all —
+        # production is Linux/gunicorn. Select the platform guarded tests
+        # by their documented naming conventions.
+        run: >
+          uv run --locked --group test python -m pytest tests/
+          -q --timeout=60 --timeout-method=thread
+          -k "posix or flock or fcntl or 0600 or permission"
+          -m "not network" --no-header -p no:randomly

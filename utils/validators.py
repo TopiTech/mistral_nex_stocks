@@ -24,6 +24,11 @@ _CHAT_CONTENT_FAILURE_PREFIXES = (
     "(テキストの抽出に失敗しました)",
     "(応答が返されませんでした)",
     "(不予期の応答形式:",
+    # L4 (2026-11-07 review): the sixth sentinel emitted by extract_chat_content
+    # — the thinking-only response — was missing from this list, so the repair
+    # pipeline treated the sentinel string as usable content and burned a
+    # provider call "repairing" it instead of failing fast to the fallback.
+    "(思考プロセスのみの応答でした)",
 )
 
 

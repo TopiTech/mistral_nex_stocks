@@ -109,9 +109,13 @@ def bootstrap(app: Flask) -> None:
                         "Removed portfolio fields from %d legacy payload cache entries",
                         migrated_payloads,
                     )
-            except (OSError, TypeError) as cache_exc:
-                # Market-data cache is disposable and must not make core
-                # application bootstrap fail.
+            # M32 (2026-11-07 review): UnicodeDecodeError (a ValueError)
+            # escapes remove_fields_recursive's per-entry handling when a
+            # half-written legacy entry contains a truncated multi-byte char —
+            # a single disposable cache entry must not crash the bootstrap.
+            # Market-data cache is disposable and must not make core
+            # application bootstrap fail.
+            except (OSError, TypeError, ValueError) as cache_exc:
                 logger.warning("Could not migrate legacy payload cache: %s", cache_exc)
             load_user_stocks(force=True)
         except Exception as exc:

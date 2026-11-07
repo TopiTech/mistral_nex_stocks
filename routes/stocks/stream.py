@@ -110,6 +110,7 @@ def api_create_sse_ticket() -> Any:
         "1",
         "true",
         "yes",
+        "on",
     )
     resp.set_cookie(
         "sse_ticket",

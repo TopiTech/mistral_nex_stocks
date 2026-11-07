@@ -138,7 +138,8 @@ function initTabSwitching() {
     btn.addEventListener("click", () => selectTab(btn));
     btn.addEventListener("keydown", (event) => {
       const index = buttons.indexOf(btn);
-      let nextIndex = index;
+      // All non-Return branches below assign nextIndex (or return) before use.
+      let nextIndex;
       if (event.key === "ArrowRight") nextIndex = (index + 1) % buttons.length;
       else if (event.key === "ArrowLeft")
         nextIndex = (index - 1 + buttons.length) % buttons.length;
@@ -638,6 +639,12 @@ function isInjectableUrl(url) {
   if (!url || typeof url !== "string") return true;
   const lower = url.toLowerCase();
   if (
+    // (L30, 2026-11-07 review) file:// はユーザーが拡張機能詳細ページで
+    // 「ファイルへのアクセスを許可」を明示有効化しない限り content script
+    // が injection されない。従来はここを通過し、executeScript の失敗が
+    // 下流で「ティッカー0件」(データ主張)として誤報告されていた。
+    lower.startsWith("file://") ||
+    lower.startsWith("file:///") ||
     lower.startsWith("chrome://") ||
     lower.startsWith("chrome-extension://") ||
     lower.startsWith("edge://") ||
@@ -655,6 +662,12 @@ function isInjectableUrl(url) {
 }
 
 let detectorGeneration = 0;
+
+// (L30) content script の injection/messaging 失敗時に出す固定メッセージ。
+// 権限関連の表示はすべてこの 1 文に集約し、データ不在(ティッカー0件)と
+// 区別されるレビュー契約とする。
+const INJECTION_FAILED_MSG =
+  "このページの内容は拡張機能から読み取れませんでした（アクセス権・制限付きページの可能性）。ページを開き直すか、公開ページでお試しください。";
 
 // Ticker Auto-Detection logic for Active Web Page
 async function loadDetectedTickers() {
@@ -717,6 +730,7 @@ async function loadDetectedTickers() {
     }
 
     let response;
+    let injectionFailed = false;
     try {
       response = await chrome.tabs.sendMessage(tab.id, {
         action: "detectTickers",
@@ -734,12 +748,28 @@ async function loadDetectedTickers() {
             action: "detectTickers",
           });
         } catch (e2) {
+          // (L30, 2026-11-07 review) injection(messaging)成否と「ページ内に
+          // ティッカーが存在しない」ことは別の事件。executeScript 拒否
+          // (file:// 無効化・ポリシー制限・activeTab 失効等)はアクセス権
+          // の問題であり、データ不在の主張に偽装してはならない。
           console.debug("Script injection skipped or failed:", e2);
+          injectionFailed = true;
         }
+      } else {
+        injectionFailed = true;
       }
     }
 
     if (currentGen !== detectorGeneration) return;
+
+    if (injectionFailed) {
+      container.textContent = "";
+      const permDiv = document.createElement("div");
+      permDiv.className = "detector-empty";
+      permDiv.textContent = INJECTION_FAILED_MSG;
+      container.appendChild(permDiv);
+      return;
+    }
 
     if (
       !response ||
@@ -853,7 +883,10 @@ async function loadDetectedTickers() {
   }
 }
 
-// Clean up background polling and active timers when the popup is closed or unloaded
+// Clean up background polling and active timers when the popup is closed.
+// (L29, 2026-11-07 review) the deprecated `unload` listener is dead weight:
+// Chrome does not fire it for many navigations, pagehide always precedes it
+// when it does fire, and keeping it pins the deprecated-event path in the
+// lint/lifecycle baselines.
 window.addEventListener("pagehide", stopStockPolling);
-window.addEventListener("unload", stopStockPolling);
 window.addEventListener("beforeunload", stopStockPolling);

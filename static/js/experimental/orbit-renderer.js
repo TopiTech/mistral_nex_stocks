@@ -501,6 +501,23 @@
     }
 
     updateAndRenderNodes(ctx, assignedStocks, stateData, dt, now) {
+      // (L25, 2026-11-07 review) nodeRenderData 常に現リスト+一時ノードのみを保持する:
+      // setStocks がリストを差し替えても本レンダラは通知を受けないため、
+      // 過去の星座のシンボルが trail 配列とともに無制限に蓄積していた。
+      // 毎フレーム、現行の割当シンボルと描画中の一時ノード
+      // (hover/drag/connected) 以外のエントリを破棄する。
+      if (this.nodeRenderData.size > 0 && assignedStocks.length > 0) {
+        const keepSymbols = new Set(stateData.connectedSymbols || []);
+        if (stateData.hoveredSymbol) keepSymbols.add(stateData.hoveredSymbol);
+        if (stateData.draggedSymbol) keepSymbols.add(stateData.draggedSymbol);
+        for (const stock of assignedStocks) {
+          if (stock?.symbol) keepSymbols.add(stock.symbol);
+        }
+        for (const symbol of this.nodeRenderData.keys()) {
+          if (!keepSymbols.has(symbol)) this.nodeRenderData.delete(symbol);
+        }
+      }
+
       // 1. Orbital Anti-collision spacing pass
       const tierMap = new Map();
       for (const stock of assignedStocks) {

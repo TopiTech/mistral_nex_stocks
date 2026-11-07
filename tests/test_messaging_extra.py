@@ -1,5 +1,6 @@
 """Additional coverage tests for messaging.py — MessageAnnouncer edge cases."""
 
+import logging
 import queue
 import threading
 
@@ -16,13 +17,24 @@ def test_unlisten_non_existent_queue():
     ann.unlisten(q)
 
 
-def test_unlisten_already_removed_queue():
-    """unlisten on a queue that was already removed logs debug but does not raise."""
+def test_unlisten_already_removed_queue(caplog):
+    """unlisten on a queue that was already removed logs debug but does not raise.
+
+    (M34/F9, 2026-11-07 review) the double-unlisten path is only reachable
+    when the ValueError branch runs; pin the observable side effect — the
+    debug log — instead of relying on "does not raise".
+    """
     ann = MessageAnnouncer()
     q = ann.listen()
     ann.unlisten(q)
-    # Second unlisten should not raise
-    ann.unlisten(q)
+    with caplog.at_level(logging.DEBUG, logger="backend"):
+        # Second unlisten should not raise
+        ann.unlisten(q)
+    assert any(
+        record.getMessage() == "SSE listener already removed from list"
+        for record in caplog.records
+    ), "double unlisten must hit the already-removed debug branch"
+    assert q not in list(ann.listeners)
 
 
 def test_announce_no_listeners():

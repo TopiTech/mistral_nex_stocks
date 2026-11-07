@@ -128,9 +128,12 @@ def test_yahoo_scraper_rejects_nonfinite_price_and_bool_volume() -> None:
         quote = provider.get_latest_quote("AAPL")
     assert quote is not None
     assert quote["regularMarketPrice"] == 150.0
-    assert quote["regularMarketPreviousClose"] == 150.0
+    # 2026-11-07 review (M22): rejected (bool/nonfinite) OHLC inputs return
+    # None under the documented fallback contract — faking them as the current
+    # price manufactured a 0.00% "flat market" out of stale data.
+    assert quote["regularMarketPreviousClose"] is None
     assert quote["regularMarketVolume"] == 0
-    assert quote["regularMarketOpen"] == 150.0
+    assert quote["regularMarketOpen"] is None
     assert math.isfinite(quote["regularMarketPrice"])
 
 

@@ -8,7 +8,7 @@ Verifies:
 4. static/js/api.js: duplicate stock addition surfaces yellow warning toast (#ffb86c) instead of red error.
 5. static/js/api.js: toast deduplication in loadNews, chatPollingReply, and requestStockAnalysis.
 6. static/js/chart.js: _safeDestroyChart defensive wrapper prevents ReferenceError when loaded before ui.js.
-7. chrome_extension/popup.js: window registers pagehide, unload, and beforeunload listeners for stopStockPolling.
+7. chrome_extension/popup.js: window registers pagehide and beforeunload listeners for stopStockPolling (the deprecated `unload` listener was removed in the 2026-11-07 review).
 """
 
 from __future__ import annotations
@@ -197,5 +197,8 @@ def test_chrome_extension_popup_lifecycle_cleanup() -> None:
     popup_js = (ROOT_DIR / "chrome_extension" / "popup.js").read_text(encoding="utf-8")
 
     assert 'window.addEventListener("pagehide", stopStockPolling);' in popup_js
-    assert 'window.addEventListener("unload", stopStockPolling);' in popup_js
     assert 'window.addEventListener("beforeunload", stopStockPolling);' in popup_js
+    # L29 (2026-11-07 review): the deprecated `unload` listener was residue
+    # (never fires reliably, replaced by pagehide/beforeunload) and was
+    # removed. pagehide + beforeunload fully cover the lifecycle.
+    assert 'addEventListener("unload"' not in popup_js

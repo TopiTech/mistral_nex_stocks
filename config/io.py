@@ -140,9 +140,18 @@ def load_config() -> dict[str, Any]:
             except Exception as exc:
                 logger.debug("Failed to chmod config file: %s", exc)
         else:
-            config_store.save_config(config_store.DEFAULT_CONFIG)
+            written_key = config_store.save_config(config_store.DEFAULT_CONFIG)
             config_store._CONFIG_CACHE["data"] = copy.deepcopy(config_store.DEFAULT_CONFIG)
-            config_store._CONFIG_CACHE["key"] = _config_cache_key()
+            # M16 (2026-11-07 review): key the freshly written defaults to the
+            # stat of the file this process just wrote (captured inside the
+            # write lock by save_config). A path stat taken after the write
+            # could observe a NEWER file written by another process (native
+            # host token rotation / second app instance) and cache defaults
+            # under the valid file's key, masking credentials until the file
+            # changed again.
+            config_store._CONFIG_CACHE["key"] = (
+                written_key if written_key is not None else _config_cache_key()
+            )
             return copy.deepcopy(config_store._CONFIG_CACHE["data"])
 
         # Acquire a shared process-level lock before reading the JSON file.
@@ -151,6 +160,10 @@ def load_config() -> dict[str, Any]:
         )
         data = None
         read_key: tuple[int, int] | Literal["missing"] | None = None
+        # M16: the negative-cache key must describe the content this load is
+        # about to read, not the post-backup state of the file (captured in
+        # the corruption handler below).
+        read_attempt_key: tuple[int, int] | Literal["missing"] = _config_cache_key()
 
         try:
             if os.name == "nt":  # Windows
@@ -300,7 +313,12 @@ def load_config() -> dict[str, Any]:
             config_store._CONFIG_CACHE["key"] = read_key
             config_store._CONFIG_CORRUPTED = False
             return copy.deepcopy(cfg)
-        except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
+        except (json.JSONDecodeError, OSError, TypeError, ValueError, RecursionError) as e:
+            # RecursionError: json.load parses arbitrarily deep structures, but
+            # the deepcopy of the parsed value (and later sanitize dumps) recurs
+            # per nesting level; a hand-crafted 10k-deep config would otherwise
+            # escape this tuple and leave every config read 500-ing with no
+            # corrupt backup and no defaults fallback (M26, 2026-11-07 review).
             config_store._CONFIG_CORRUPTED = True
             corrupt_backup = config_store.CONFIG_FILE.with_suffix(
                 config_store.CONFIG_FILE.suffix + f".corrupt.{datetime.now(UTC):%Y%m%d%H%M%S}.bak"
@@ -331,12 +349,18 @@ def load_config() -> dict[str, Any]:
             # Repairing or replacing the file changes mtime/size, which
             # invalidates this entry; the next load then re-reads and clears
             # _CONFIG_CORRUPTED on success.
+            # M16: the key MUST be the stat captured before the attempted read
+            # (and before the backup I/O). Stat-ing the file here could observe
+            # a VALID file that another process swapped in during the backup,
+            # pinning defaults under the valid file's key — credentials would
+            # be served as defaults and this process would stay on a stale
+            # corruption flag with no self-heal reload.
             config_store._CONFIG_CACHE["data"] = copy.deepcopy(config_store.DEFAULT_CONFIG)
-            config_store._CONFIG_CACHE["key"] = _config_cache_key()
+            config_store._CONFIG_CACHE["key"] = read_attempt_key
             return copy.deepcopy(config_store.DEFAULT_CONFIG)
 
 
-def save_config(cfg, create_backup=True):
+def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
     """設定ファイルに保存。デフォルト値との統合を保証"""
     with config_store._CONFIG_LOCK:
         if is_config_corrupted():
@@ -435,7 +459,7 @@ def save_config(cfg, create_backup=True):
                         logger.warning(
                             "Failed to set backup config file permissions: %s", chmod_exc
                         )
-            except (TypeError, json.JSONDecodeError) as corrupt_exc:
+            except (TypeError, json.JSONDecodeError, RecursionError) as corrupt_exc:
                 # DATA-7: the on-disk config exists but is unparseable (or
                 # has a non-object root). Corruption detection otherwise only
                 # happens lazily in load_config; a save-first process would
@@ -478,6 +502,7 @@ def save_config(cfg, create_backup=True):
             config_store.CONFIG_FILE.suffix + ".lock"
         )
 
+        written_key: tuple[int, int] | None = None
         try:
             # Windowsでのファイルアクセス競合対策（リトライロジック + プラットフォーム別ファイルロック）
             # Unix: fcntl.flock, Windows: msvcrt.locking
@@ -487,7 +512,7 @@ def save_config(cfg, create_backup=True):
                     # --- プラットフォーム別ファイルロック & アトミック置換 ---
                     # 置換処理（os.replace）までをファイルロック保持のスコープ内でアトミックに実施
                     try:
-                        _write_and_replace_with_lock(
+                        written_key = _write_and_replace_with_lock(
                             data, tmp_file, config_store.CONFIG_FILE, lock_file
                         )
                     except PermissionError as perm_exc:
@@ -539,3 +564,7 @@ def save_config(cfg, create_backup=True):
                     tmp_file.unlink()
                 except OSError as unlink_exc:
                     logger.debug("Failed to remove temp config file: %s", unlink_exc)
+        # M16: surface the stat of the exact file this process wrote (captured
+        # inside the write lock) so callers that cache the saved payload key
+        # it to their own write instead of a later path stat.
+        return written_key

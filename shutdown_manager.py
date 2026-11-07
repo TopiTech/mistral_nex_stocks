@@ -112,12 +112,12 @@ class ShutdownTokenManager:
             # _migrate_legacy_token_file proves the migrated token was already
             # consumed in a previous run, so it must be regenerated instead of
             # silently resurrected.
+            # M30 (2026-11-07 review): the used-marker must be unlinked ONLY
+            # after the replacement token is durably persisted. Deleting it
+            # first left a window (disk full / AV lock / crash) where the disk
+            # held the OLD consumed token with NO marker — the next boot
+            # validated and resurrected an already-used single-use token.
             was_used = self.used_marker.exists()
-            if was_used:
-                try:
-                    self.used_marker.unlink(missing_ok=True)
-                except OSError:
-                    pass
 
             try:
                 if not was_used and self.token_file.exists():
@@ -154,6 +154,17 @@ class ShutdownTokenManager:
                 # R6: Atomic 0o600 creation - avoid window with default perms.
                 _write_atomic_restricted(self.token_file, json.dumps(protected))
                 self.logger.info("Session shutdown token generated and secured.")
+                # M30: the replacement token is now durable — only now may the
+                # used-marker be cleared. On write failure the marker survives
+                # and keeps blocking the previously consumed token.
+                if was_used:
+                    try:
+                        self.used_marker.unlink(missing_ok=True)
+                    except OSError:
+                        self.logger.warning(
+                            "Failed to clear used shutdown-token marker after rotation; "
+                            "the previously consumed token stays blocked."
+                        )
             except Exception as exc:
                 self.logger.error("Failed to write shutdown token file: %s", exc)
             return self.shutdown_token

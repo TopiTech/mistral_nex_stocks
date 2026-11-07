@@ -3,7 +3,6 @@ import os
 import random
 import threading
 import time
-from concurrent.futures import as_completed
 from typing import Any
 
 from ddgs import DDGS
@@ -479,11 +478,17 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
         futures = [
             pool.submit(_collect_one, idx, q) for idx, q in enumerate(target_queries)
         ]
-        for fut in as_completed(futures):
-            if len(items) >= limit * 2:
-                break
+        # M14 (2026-11-07 review): merging in as_completed order made the
+        # survivor of a duplicate (ts.dedupe keeps the FIRST occurrence) and
+        # the final item order depend on network timing — the same query set
+        # returned different merges run to run. Collect into the query index
+        # and extend in submission order; the early-exit cancels stragglers
+        # so they cannot keep running on the shared 3-worker pool.
+        results_by_index: dict[int, list] = {}
+        early_exit = False
+        for idx, fut in enumerate(futures):
             try:
-                items.extend(fut.result())
+                collected = fut.result()
             except Exception as exc:
                 if "No results found" in str(exc):
                     logger.debug("DDGS context collection: no results for a query")
@@ -492,6 +497,18 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
                         "DDGS context collection query failed error_type=%s",
                         type(exc).__name__,
                     )
+                continue
+            results_by_index[idx] = collected
+            if sum(len(v) for v in results_by_index.values()) >= limit * 2:
+                early_exit = True
+                break
+        if early_exit:
+            # Mirror the old early-exit: the not-yet-consumed stragglers are
+            # cancelled so they cannot keep occupying the shared pool.
+            for pending in futures:
+                pending.cancel()
+        for idx in range(len(target_queries)):
+            items.extend(results_by_index.get(idx, []))
     except Exception as exc:
         if "No results found" in str(exc):
             logger.debug("DDGS context collection: no results for queries")

@@ -202,6 +202,18 @@ def get_mistral_embeddings_batch(
                 )
                 if app_state.market.is_circuit_open("mistral"):
                     break
+            elif 400 <= status_code < 500:
+                # M8 (2026-11-07 review): a permanent client error (401/403
+                # auth, unknown model, bad request) cannot succeed on the
+                # next chunk; without this branch every remaining chunk paid
+                # one doomed provider round-trip plus the min-interval pacing
+                # wait. Remaining chunks keep the existing None fallback.
+                logger.warning(
+                    "Mistral batch embeddings aborted after client error (status=%s); "
+                    "remaining chunks fall back to None",
+                    status_code,
+                )
+                break
 
     return results
 

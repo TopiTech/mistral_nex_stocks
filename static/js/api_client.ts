@@ -86,6 +86,8 @@ class APIClient {
   private _visibilityHandler: (() => void) | null;
   private _onlineHandler: (() => void) | null;
   private _offlineHandler: (() => void) | null;
+  /** Token of the newest in-flight _openWithResolvedUrl chain (L11, 2026-11-07). */
+  private _openChainToken: object | null = null;
 
   constructor(baseURL = "/api", config: APIClientConfig = {}) {
     this.baseURL = baseURL;
@@ -145,7 +147,12 @@ class APIClient {
       if (
         this._lastSSEParams &&
         !this.currentEventSource &&
-        !this.isVisibilityPaused
+        !this.isVisibilityPaused &&
+        // (L11, 2026-11-07 review) never re-enter while a URL resolution is
+        // still pending: _resumeSSE would mint a second ticket POST and the
+        // stale chain's finally would clear isConnecting early — together
+        // they could permanently bypass the visibility pause.
+        !this.isConnecting
       ) {
         _log.info("Network back online: Immediate SSE reconnection attempt");
         this._resumeSSE(false);
@@ -206,6 +213,13 @@ class APIClient {
   private _openWithResolvedUrl(params: SSEParams): void {
     const { onMessage, onError, options } = params;
     this.isConnecting = true;
+    // (L11, 2026-11-07 review) serialize concurrent connect chains: only the
+    // LATEST chain owns the isConnecting flag — a stale chain finishing while
+    // a newer chain is still resolving used to clear the flag early and let
+    // a hidden Session open an EventSource that the visibility pause would
+    // never tear down.
+    const chainToken = {};
+    this._openChainToken = chainToken;
     let urlOrPromise: string | Promise<string | null> | null;
     try {
       urlOrPromise = options.urlProvider
@@ -247,7 +261,9 @@ class APIClient {
         this._handleReconnect(onError);
       })
       .finally(() => {
-        this.isConnecting = false;
+        if (this._openChainToken === chainToken) {
+          this.isConnecting = false;
+        }
       });
   }
 
@@ -535,6 +551,30 @@ class APIClient {
         _log.error("SSE: Stream error", error);
         this._handleReconnect(onError);
       };
+      // (L7, 2026-11-07 review) the server emits fully-formed `event: error`
+      // frames (e.g. "too many SSE connections") that the browser delivers as
+      // MessageEvents on the same channel as transport errors; per WHATWG
+      // they reach addEventListener("error") too. Without this listener the
+      // payload — including the server's reason — was silently dropped.
+      eventSource.addEventListener("error", (event: Event) => {
+        const maybeMessage = event as Partial<MessageEvent>;
+        if (typeof maybeMessage.data !== "string" || !maybeMessage.data) return;
+        try {
+          const payload = JSON.parse(maybeMessage.data) as Record<string, unknown>;
+          const message =
+            typeof payload.message === "string"
+              ? payload.message
+              : "サーバーからSSEエラーが通知されました";
+          _log.warn("SSE: Server error frame:", message);
+          try {
+            onError(new Error(message));
+          } catch (cbErr) {
+            _log.error("SSE: onError callback threw an exception", cbErr);
+          }
+        } catch (parseErr) {
+          _log.debug("SSE: Non-JSON server error frame ignored", parseErr);
+        }
+      });
       options.onReconnect?.(eventSource);
       return eventSource;
     } catch (error: unknown) {

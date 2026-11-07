@@ -1,6 +1,7 @@
 import calendar
 import logging
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from datetime import date as dt_date
 from datetime import time as dt_time
@@ -9,7 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app_state import app_state
-from utils.caching import get_cached
+from utils.caching import _has_cached_key, _set_cached_value, get_cached
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +237,12 @@ def _market_status_symbol(market_type):
 
 def _market_state_from_metadata(metadata):
     """Extract market state (REGULAR/CLOSED) from yfinance history metadata."""
-    if not isinstance(metadata, dict):
+    # H5 (2026-11-07 review): yfinance >= 1.6 returns a HistoryMetadata
+    # Mapping wrapper, not a dict — an isinstance(metadata, dict) guard made
+    # this live-state branch permanently inert and is_market_open silently
+    # degraded to the static weekday/hours heuristic (misreporting holidays
+    # as REGULAR). Accept any Mapping.
+    if not isinstance(metadata, (dict, Mapping)):
         return None
 
     raw_state = metadata.get("marketState") or metadata.get("market_state")
@@ -335,12 +341,25 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
     if bypass_cache:
         live_state = _fetch_live_market_state(market_type)
     else:
-        live_state = get_cached(
-            f"market_state_{market_type}",
-            lambda: _fetch_live_market_state(market_type),
-            duration=300,
-            valid_func=lambda value: value in ("REGULAR", "CLOSED"),
-        )
+        # M20 (2026-11-07 review): a failed/unknown live fetch returned None,
+        # which ``get_cached`` refuses to store — every subsequent call on the
+        # SSE interpolator's 2-second loop re-fired a yfinance network probe
+        # forever (during a Yahoo outage this also paced probes into the
+        # app-wide limiter). Negative-cache the failed probe for a short TTL,
+        # mirroring get_cached_context_with_negative_cache; the time-based
+        # heuristic fallback below still answers every call.
+        negative_key = f"market_state_{market_type}__negative"
+        if not _has_cached_key(negative_key, 60):
+            live_state = get_cached(
+                f"market_state_{market_type}",
+                lambda: _fetch_live_market_state(market_type),
+                duration=300,
+                valid_func=lambda value: value in ("REGULAR", "CLOSED"),
+            )
+            if live_state not in ("REGULAR", "CLOSED"):
+                _set_cached_value(negative_key, True, duration=60)
+        else:
+            live_state = None
 
     if live_state in ("REGULAR", "CLOSED"):
         app_state.market.update_market_status(market_type, live_state)

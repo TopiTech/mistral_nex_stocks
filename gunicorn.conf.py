@@ -54,7 +54,10 @@ sse_listener_limit = _env_int("MNS_MAX_SSE_LISTENERS", 64, 1, 1000)
 sse_non_stream_thread_reserve = 6
 required_threads = sse_listener_limit + sse_non_stream_thread_reserve
 # Priority: CLI --threads (handled by Gunicorn if supplied) > MNS_GUNICORN_THREADS > required_threads.
-threads = _env_int("MNS_GUNICORN_THREADS", required_threads, 1, 1000)
+# The ceiling must include the reserve headroom: with the listener limit at its
+# documented maximum (1000), required_threads is 1006, so a hard cap of 1000
+# would make every env-configured threads value fail the on_starting check.
+threads = _env_int("MNS_GUNICORN_THREADS", required_threads, 1, max(1000, required_threads))
 
 # ---------------------------------------------------------------------------
 # Network
@@ -91,11 +94,13 @@ def on_starting(server):
 
     # Respect the documented MNS_WORKER_VALIDATION=0 opt-out so this hook stays
     # consistent with the guard in wsgi.py (reserved for environments that have
-    # externalized all shared state).
-    if server.num_workers > 1 and os.environ.get("MNS_WORKER_VALIDATION", "1") not in (
+    # externalized all shared state). Keep the falsy-value spelling set in sync
+    # with utils/worker_validation.py ("off" must disable here too).
+    if server.num_workers > 1 and os.environ.get("MNS_WORKER_VALIDATION", "1").strip().lower() not in (
         "0",
         "false",
         "no",
+        "off",
     ):
         sys.stderr.write(
             f"FATAL: Multi-worker mode is not supported (configured workers: {server.num_workers}).\n"

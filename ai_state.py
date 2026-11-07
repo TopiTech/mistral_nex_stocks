@@ -14,12 +14,27 @@ import httpx
 from cachetools import LRUCache, TTLCache
 
 from constants import (
+    DEFAULT_USDJPY_RATE,
     MISTRAL_API_TIMEOUT_SEC,
     MISTRAL_BASE_URL,
     STREAM_CHAT_MAX_CONCURRENT,
 )
 
 logger = logging.getLogger("backend")
+
+
+def _tracked_usdjpy_rate() -> float:
+    """Best-effort read of the tracked USD/JPY rate (0.0 when unavailable).
+
+    The import is local: app_state aggregates this module, so a module-level
+    back-import would be circular.
+    """
+    try:
+        from app_state import app_state
+
+        return float(app_state.market.last_usdjpy_rate or 0.0)
+    except Exception:
+        return 0.0
 
 
 class AIState:
@@ -91,8 +106,20 @@ class AIState:
         """Accumulate token usage for the specified AI provider ('mistral' or 'openai_compatible')."""
         if not isinstance(usage, dict):
             return
-        prompt_tokens = int(usage.get("prompt_tokens") or 0)
-        completion_tokens = int(usage.get("completion_tokens") or 0)
+
+        def _coerce_usage_int(value: Any) -> int:
+            # M10 (2026-11-07 review): arbitrary OpenAI-compatible gateways
+            # emit token counts as strings ("1,234") or floats ("12.5"); a
+            # bare int() raised and turned an otherwise successful LLM
+            # response into the error envelope. Coerce best-effort and
+            # degrade defunct values to 0 instead of losing the answer.
+            try:
+                return int(float(str(value).replace(",", "")))
+            except (TypeError, ValueError, OverflowError):
+                return 0
+
+        prompt_tokens = _coerce_usage_int(usage.get("prompt_tokens") or 0)
+        completion_tokens = _coerce_usage_int(usage.get("completion_tokens") or 0)
         if prompt_tokens < 0 or completion_tokens < 0:
             return
         clean_model = (model or "unknown").strip().lower()
@@ -102,7 +129,7 @@ class AIState:
                 self.openai_call_count += 1
                 self.openai_total_prompt_tokens += prompt_tokens
                 self.openai_total_completion_tokens += completion_tokens
-                if clean_model:
+                if clean_model and clean_model != "unknown":
                     if clean_model not in self.openai_model_usage:
                         self.openai_model_usage[clean_model] = {
                             "calls": 0,
@@ -117,7 +144,7 @@ class AIState:
                 self.mistral_call_count += 1
                 self.mistral_total_prompt_tokens += prompt_tokens
                 self.mistral_total_completion_tokens += completion_tokens
-                if clean_model:
+                if clean_model and clean_model != "unknown":
                     if clean_model not in self.mistral_model_usage:
                         self.mistral_model_usage[clean_model] = {
                             "calls": 0,
@@ -141,6 +168,9 @@ class AIState:
         with self.mistral_usage_lock:
             total_cost_usd = 0.0
             by_model_out: dict[str, dict[str, Any]] = {}
+            by_model_prompt = 0
+            by_model_completion = 0
+            by_model_calls = 0
 
             for m_name, m_data in self.mistral_model_usage.items():
                 p_toks = m_data["prompt_tokens"]
@@ -150,6 +180,9 @@ class AIState:
                     c_toks / 1_000_000.0 * pricing["completion"]
                 )
                 total_cost_usd += cost
+                by_model_prompt += p_toks
+                by_model_completion += c_toks
+                by_model_calls += m_data["calls"]
                 by_model_out[m_name] = {
                     "calls": m_data["calls"],
                     "prompt_tokens": p_toks,
@@ -158,14 +191,31 @@ class AIState:
                     "estimated_cost_usd": round(cost, 6),
                 }
 
-            if not self.mistral_model_usage and (
-                self.mistral_total_prompt_tokens or self.mistral_total_completion_tokens
-            ):
-                total_cost_usd = (self.mistral_total_prompt_tokens / 1_000_000.0 * 0.10) + (
-                    self.mistral_total_completion_tokens / 1_000_000.0 * 0.30
+            # M11 (2026-11-07 review): the totals accrue every call while
+            # the by-model map only tracks calls with a usable model name, so
+            # model-less entries (e.g. agents runs with an unnamed model)
+            # previously vanished from the cost when ANY other model existed.
+            # Price the residual tokens at the default rates so the reported
+            # cost always matches the reported token totals.
+            residual_prompt = self.mistral_total_prompt_tokens - by_model_prompt
+            residual_completion = self.mistral_total_completion_tokens - by_model_completion
+            if residual_prompt > 0 or residual_completion > 0:
+                residual_cost = (max(0, residual_prompt) / 1_000_000.0 * 0.10) + (
+                    max(0, residual_completion) / 1_000_000.0 * 0.30
                 )
+                total_cost_usd += residual_cost
+                by_model_out["unknown"] = {
+                    "calls": max(0, self.mistral_call_count - by_model_calls),
+                    "prompt_tokens": max(0, residual_prompt),
+                    "completion_tokens": max(0, residual_completion),
+                    "total_tokens": max(0, residual_prompt) + max(0, residual_completion),
+                    "estimated_cost_usd": round(residual_cost, 6),
+                }
 
-            cost_jpy = round(total_cost_usd * 155.0, 2)
+            # M11: convert using the tracked USD/JPY rate instead of a hard
+            # coded 155.0, so the yen figure matches the dashboard's rate.
+            fx_rate = _tracked_usdjpy_rate() or DEFAULT_USDJPY_RATE
+            cost_jpy = round(total_cost_usd * fx_rate, 2)
 
             return {
                 "call_count": self.mistral_call_count,
@@ -238,7 +288,14 @@ class AIState:
             except (TypeError, ValueError):
                 retry_after = 0.0
             backoff = min(max(exponential_backoff, retry_after), 300.0)
-            self.mistral_next_allowed_ts = time.time() + backoff
+            # Monotonic window (M1, 2026-11-07 review): a concurrent 429
+            # reported with a smaller backoff must never SHRINK an active
+            # server-requested cooldown. Every sibling cooldown in
+            # market_state.py uses the same window-max idiom, and the rollback
+            # in ai_service._wait_for_rate_limit_slot deliberately does too —
+            # otherwise the calls resume at full rate well before the
+            # Retry-After the server demanded.
+            self.mistral_next_allowed_ts = max(self.mistral_next_allowed_ts, time.time() + backoff)
             return backoff
 
     def reset_mistral_streak(self):

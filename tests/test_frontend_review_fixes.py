@@ -82,7 +82,11 @@ def test_escape_uses_drawer_close_paths_that_restore_state():
     assert "closeAiDrawer();" in utils_source
     assert "closeFsChartModal();" in main_source
     assert "function closeFsChartModal()" in ui_source
-    assert "detailInner.appendChild(child)" in ui_source
+    # L17 (2026-11-07 review): the drawer restore is filtered to the OWNED
+    # element selectors (appendScoped) instead of restoring every tab child
+    # into the hidden inline panel.
+    assert "appendScoped(chartContent, ownedChartSelectors);" in ui_source
+    assert "detailInner.appendChild(el);" in ui_source
     assert "stockDetailDrawerTrigger?.focus?.();" in ui_source
     assert "aiDrawerTrigger?.focus?.();" in ui_source
 

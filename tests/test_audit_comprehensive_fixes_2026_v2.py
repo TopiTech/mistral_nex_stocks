@@ -213,7 +213,14 @@ def test_r6_start_backend_breakaway_fallback():
 # R7: sanitize_ai_portfolio 100% Weight Invariant
 # ---------------------------------------------------------------------------
 def test_r7_sanitize_ai_portfolio_weight_invariant():
-    """Verify sanitize_ai_portfolio guarantees the weights of positive items sum to 100.0%."""
+    """Weights of the sanitized portfolio must sum to 100.0%.
+
+    (L10, 2026-11-07 review) the sanitizer previously DROPPED explicitly
+    zero-weight items whenever a positive item existed, contradicting the
+    validator contract (weight_pct 0..100 inclusive). The corrected semantics
+    keep zero-weight items — a legitimate explicit underweight — so this pin
+    now expects all three items with their invariant-preserving weights.
+    """
     raw_portfolio = {
         "theme": "test",
         "items": [
@@ -223,7 +230,7 @@ def test_r7_sanitize_ai_portfolio_weight_invariant():
         ],
     }
     sanitized = sanitize_ai_portfolio(raw_portfolio)
-    assert len(sanitized["items"]) == 2
+    assert len(sanitized["items"]) == 3
     total_w = sum(it["weight_pct"] for it in sanitized["items"])
     assert math.isclose(total_w, 100.0, abs_tol=1e-4)
 

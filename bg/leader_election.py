@@ -224,6 +224,19 @@ def _try_acquire_leader_lock() -> bool:
                     lock_path.touch(exist_ok=True)
                     lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
                     opened_here = True
+                else:
+                    # LIVENESS: an open mirror handle means this process already
+                    # owns the OS-level lock. Unlike flock (idempotent), msvcrt
+                    # re-locking the same byte range through the same fd fails
+                    # with EACCES even for the lock owner, which would make this
+                    # branch return False and, via the finally below, close the
+                    # mirror handle and silently abdicate leadership. Refresh the
+                    # recorded pid and report ownership instead of re-locking.
+                    lock_f.seek(0)
+                    lock_f.truncate(0)
+                    lock_f.write(str(pid))
+                    lock_f.flush()
+                    return True
                 acquired = False
                 try:
                     fd = lock_f.fileno()
@@ -255,6 +268,16 @@ def _try_acquire_leader_lock() -> bool:
                     lock_path.touch(exist_ok=True)
                     lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
                     opened_here = True
+                else:
+                    # Mirror of the Windows branch: an open mirror handle means
+                    # this process already holds the flock. Re-locking is
+                    # idempotent on POSIX, but skipping it keeps both platforms
+                    # on the same ownership-first contract.
+                    lock_f.seek(0)
+                    lock_f.truncate(0)
+                    lock_f.write(str(pid))
+                    lock_f.flush()
+                    return True
                 acquired = False
                 try:
                     fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]

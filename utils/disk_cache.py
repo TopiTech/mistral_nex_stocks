@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 # Cleanup interval (seconds) — periodic stale file removal
 # ---------------------------------------------------------------------------
 _STALE_CLEANUP_INTERVAL = 600.0  # 10 minutes
+# Grace window before a leaked *.tmp write file is swept: far longer than any
+# legitimate in-flight atomic write (fsync + replace complete in milliseconds
+# to a few seconds even on slow disks).
+_STALE_TMP_GRACE_SEC = 600.0
 
 # Maximum time (seconds) to wait for the cross-process cache lock before
 # treating the cache as unavailable. Bounded so a wedged peer process can never
@@ -198,7 +202,20 @@ class StockDiskCache:
             import msvcrt
 
             msvcrt_module = cast(Any, msvcrt)
-            fd = os.open(str(self._process_lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            # M18 (2026-11-07 review): an acquisition failure (read-only
+            # filesystem, AV-induced file lock, permission problem) is the
+            # same condition as a lock timeout — the cache is unavailable —
+            # and must surface as DiskCacheLockTimeout so every method's
+            # existing degrade handler (get/has/delete/clear/cleanup/stats/
+            # set) returns the documented degraded value with the Retry-After
+            # warning instead of propagating a raw OSError and turning e.g.
+            # /api/metrics into a 500.
+            try:
+                fd = os.open(str(self._process_lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            except OSError as exc:
+                raise DiskCacheLockTimeout(
+                    f"Could not open disk cache lock file: {self._process_lock_path} ({exc})"
+                ) from exc
             locked = False
             try:
                 if os.fstat(fd).st_size == 0:
@@ -242,7 +259,15 @@ class StockDiskCache:
             import fcntl  # pylint: disable=import-error
 
             fcntl_module = cast(Any, fcntl)
-            with self._process_lock_path.open("a+", encoding="utf-8") as handle:
+            # M18: mirror the Windows branch — open failures degrade, not
+            # propagate (see comment above).
+            try:
+                handle = self._process_lock_path.open("a+", encoding="utf-8")
+            except OSError as exc:
+                raise DiskCacheLockTimeout(
+                    f"Could not open disk cache lock file: {self._process_lock_path} ({exc})"
+                ) from exc
+            with handle:
                 while True:
                     try:
                         fcntl_module.flock(
@@ -304,6 +329,14 @@ class StockDiskCache:
     def _remove_stale_entries(self) -> int:
         """Remove all entries whose age exceeds the maximum allowed TTL.
 
+        Also sweeps orphaned ``*.tmp`` files left behind by an abrupt process
+        kill between the fsync'd tmp write and the ``os.replace`` swap: the
+        atomic write deletes its tmp on every in-process error path, so only a
+        hard crash can leak one; no other cleanup path matches them, and
+        repeated crashes would otherwise accumulate garbage forever. Files
+        younger than ``_STALE_TMP_GRACE_SEC`` are left alone so an in-flight
+        concurrent writer's tmp is never touched.
+
         Returns the number of entries removed.
         """
         removed = 0
@@ -332,8 +365,28 @@ class StockDiskCache:
                     continue
         except OSError:
             pass
+        removed += self._remove_stale_tmp_files(now)
         if removed:
             logger.debug("Disk cache: removed %d stale entries from %s", removed, self._cache_dir)
+        return removed
+
+    def _remove_stale_tmp_files(self, now: float) -> int:
+        """Unlink ``*.tmp`` write files older than the grace window.
+
+        The tmp naming mirrors ``Cache.set``/``update`` (``.<uuid>.tmp``), and
+        the grace window is far longer than any legitimate in-flight write.
+        """
+        removed = 0
+        try:
+            for tmp_entry in self._cache_dir.glob("*.tmp"):
+                try:
+                    if now - tmp_entry.stat().st_mtime > _STALE_TMP_GRACE_SEC:
+                        tmp_entry.unlink()
+                        removed += 1
+                except OSError:
+                    continue
+        except OSError:
+            pass
         return removed
 
     def _maybe_run_cleanup(self, force: bool = False) -> None:

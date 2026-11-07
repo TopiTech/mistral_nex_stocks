@@ -66,6 +66,62 @@ atexit.register(lambda: _EXECUTOR.shutdown(wait=False, cancel_futures=True))
 _GOOGLE_TRENDS_LOCK = threading.Lock()
 _GOOGLE_TRENDS_LAST_CALL = 0.0
 _GOOGLE_TRENDS_MIN_INTERVAL = 1.5  # seconds between calls
+# M12 (2026-11-07 review): one client per market (keyed by resolved locale),
+# cached instead of reconstructed per keyword — TrendReq.__init__ performs a
+# live cookie fetch, which multiplied Google request pressure per keyword and
+# (with retries=5/backoff 2.0) kept abandoned tasks on the 6 trend workers
+# for minutes after the 12s collection window cancelled them. Invalidation on
+# failure keeps the client honest: the next call rebuilds it fresh.
+_GOOGLE_TRENDS_CLIENTS: dict[str, Any] = {}
+_GOOGLE_TRENDS_CLIENT_LOCK = threading.Lock()
+
+
+def _invalidate_google_trends_client(market_key: str) -> None:
+    with _GOOGLE_TRENDS_CLIENT_LOCK:
+        _GOOGLE_TRENDS_CLIENTS.pop(market_key, None)
+
+
+def _google_trends_client(market: str):
+    if TrendReq is None:
+        raise RuntimeError(
+            "pytrends-modern is not available. "
+            "Install pytrends-modern to enable Google Trends keyword lookup."
+        )
+    market_key = _market_key(market)
+
+    with _GOOGLE_TRENDS_CLIENT_LOCK:
+        cached_client = _GOOGLE_TRENDS_CLIENTS.get(market_key)
+        if cached_client is not None:
+            return cached_client
+
+    # Use BrowserConfig if available and explicitly enabled via env (accept the
+    # canonical boolean spellings documented in env_helpers, not only "1").
+    browser_cfg = None
+    if BrowserConfig is not None and os.environ.get("MNS_USE_BROWSER_TRENDS", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        try:
+            browser_cfg = BrowserConfig(headless=True)
+        except Exception as exc:
+            logger.debug("Failed to initialize BrowserConfig: %s", exc)
+
+    client = TrendReq(
+        hl=GOOGLE_TRENDS_HL[market_key],
+        tz=GOOGLE_TRENDS_TZ[market_key],
+        # M12: bounded retry budget — with the caller's collective wait capped
+        # at TREND_SOURCE_RESULT_TIMEOUT_SEC (12s), a 2-attempt budget with a
+        # short backoff lets an abandoned task exit within the window instead
+        # of minutes.
+        retries=2,
+        backoff_factor=0.5,
+        browser_config=browser_cfg,
+    )
+    with _GOOGLE_TRENDS_CLIENT_LOCK:
+        _GOOGLE_TRENDS_CLIENTS[market_key] = client
+    return client
 
 
 class QueryTemplates:
@@ -410,31 +466,6 @@ def _dataframe_first_column_values(df, limit: int = 10) -> list[str]:
         return []
 
 
-def _google_trends_client(market: str):
-    if TrendReq is None:
-        raise RuntimeError(
-            "pytrends-modern is not available. "
-            "Install pytrends-modern to enable Google Trends keyword lookup."
-        )
-    market_key = _market_key(market)
-
-    # Use BrowserConfig if available and explicitly enabled via env
-    browser_cfg = None
-    if BrowserConfig is not None and os.environ.get("MNS_USE_BROWSER_TRENDS", "0") == "1":
-        try:
-            browser_cfg = BrowserConfig(headless=True)
-        except Exception as exc:
-            logger.debug("Failed to initialize BrowserConfig: %s", exc)
-
-    return TrendReq(
-        hl=GOOGLE_TRENDS_HL[market_key],
-        tz=GOOGLE_TRENDS_TZ[market_key],
-        retries=5,
-        backoff_factor=2.0,
-        browser_config=browser_cfg,
-    )
-
-
 def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> list[str]:
     if TrendReq is None:
         return []
@@ -505,6 +536,10 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
         if is_expected:
             with _GOOGLE_TRENDS_LOCK:
                 _GOOGLE_TRENDS_LAST_CALL = max(_GOOGLE_TRENDS_LAST_CALL, time.time())
+            # M12: a failed client (e.g. 429, rotated cookies) must not stay
+            # cached — the next keyword rebuilds it instead of hammering a
+            # broken session.
+            _invalidate_google_trends_client(_market_key(market))
             logger.debug("Google Trends keyword lookup failed for %s: %s", keyword, exc)
             return []
         raise

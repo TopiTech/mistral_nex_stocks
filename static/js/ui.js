@@ -147,17 +147,25 @@ async function ensureStockDetails(wrapper) {
   const isCurrentRequest = () =>
     wrapper.__detailsReqController === requestController;
 
-  const detailInner = wrapper.querySelector(".detail-inner");
-  const sectorEl = wrapper.querySelector(".detail-sector");
-  const industryEl = wrapper.querySelector(".detail-industry");
-  const mcapEl = wrapper.querySelector(".detail-mcap");
-  const peEl = wrapper.querySelector(".detail-pe");
+  // (L16, 2026-11-07 review) ドロワーがこの銘柄で開いている間は .detail-info
+  // が #stock-detail-drawer 配下へ移動済みのため、ラッパー直下の問い合わせは
+  // null を返し、ローディング/失敗プレースホルダとエラーバナーが不可視の
+  // インラインパネルにしか出なかった。renderDetailExtras(chart.js) と同じ
+  // 「ラッパー → 開いているドロワー」フォールバック契約に揃える。
+  const findDetailEl = (sel) =>
+    wrapper.querySelector(sel) ||
+    document.querySelector(`#stock-detail-drawer ${sel}`);
 
-  // Remove existing error banner if any
-  const existingBanner = wrapper.querySelector(".detail-error-banner");
-  if (existingBanner) {
-    existingBanner.remove();
-  }
+  const detailInner = wrapper.querySelector(".detail-inner");
+  const sectorEl = findDetailEl(".detail-sector");
+  const industryEl = findDetailEl(".detail-industry");
+  const mcapEl = findDetailEl(".detail-mcap");
+  const peEl = findDetailEl(".detail-pe");
+
+  // Remove existing error banner if any (both locations, in case the drawer
+  // moved between renders and a stale banner survived in the inline panel).
+  const staleBanners = document.querySelectorAll(".detail-error-banner");
+  staleBanners.forEach((el) => el.remove());
 
   // Show loading state visual feedback
   if (sectorEl) sectorEl.textContent = "取得中...";
@@ -182,9 +190,22 @@ async function ensureStockDetails(wrapper) {
     if (mcapEl) mcapEl.textContent = "取得失敗";
     if (peEl) peEl.textContent = "取得失敗";
 
-    if (!detailInner) return;
+    // (L16) バナーは「今見えている側」のコンテナへ出す: ドロワーがこの銘柄で
+    // 開いていれば #drawerTabChartContent(可視)、閉じていれば元の
+    // .detail-inner に入れる。detailInner はドロワー移動後は不可視のため。
+    const drawerEl = document.getElementById("stock-detail-drawer");
+    const isDrawerActive =
+      currentDrawerActiveWrapper === wrapper ||
+      Boolean(
+        drawerEl?.classList.contains("open") &&
+        drawerEl.dataset.stockKey === stockKey,
+      );
+    const bannerHost = isDrawerActive
+      ? document.getElementById("drawerTabChartContent")
+      : detailInner;
+    if (!bannerHost) return;
     // Prevent stacking multiple banners on repeated failures
-    const staleBanner = detailInner.querySelector(".detail-error-banner");
+    const staleBanner = bannerHost.querySelector(".detail-error-banner");
     if (staleBanner) staleBanner.remove();
 
     // Create single error banner at the bottom of detail panel info
@@ -205,8 +226,8 @@ async function ensureStockDetails(wrapper) {
     });
     banner.appendChild(retryBtn);
 
-    // Append to detail panel inner container
-    detailInner.appendChild(banner);
+    // Append to the visible host container (see bannerHost above)
+    bannerHost.appendChild(banner);
   };
 
   try {
@@ -223,8 +244,8 @@ async function ensureStockDetails(wrapper) {
       url.search = new URLSearchParams({ symbol, market }).toString();
       const res = await fetch(url.toString(), { signal: controller.signal });
       // HTTPステータスを明示的に確認する(プロキシ等の502 JSONボディを
-      // 成功扱いにしないため)。
-      let body = null;
+      // 成功扱いにしないため)。両分岐が body を代入するため初期化不要。
+      let body;
       try {
         body = await res.json();
       } catch (_jsonErr) {
@@ -254,6 +275,7 @@ async function ensureStockDetails(wrapper) {
     // 成功は「明示的な ok:true」のみとし、失敗フラグの不在を成功と見なさない
     // (空オブジェクトやプロキシの502ボディをキャッシュで恒久汚染しない)。
     if (data && data.ok === true && !data.fetching) {
+      if (!stockDetailsCache.has(stockKey)) _enforceStockDetailsCacheLimit();
       stockDetailsCache.set(stockKey, data);
       renderDetailExtras(wrapper, data);
     } else if (data && data.fetching) {
@@ -1795,7 +1817,6 @@ function renderPortfolio() {
 
 // #region Portfolio Logic
 let lastPfChartSignature = "";
-const portfolioChartCache = new Map();
 
 function computeHoldingsHash(holdings) {
   return holdings
@@ -2950,7 +2971,8 @@ function updateTabCounts() {
       ? state.stocks.idx.length
       : document.querySelectorAll("#idx-stocks .stock-wrapper").length;
 
-  let pfCount = 0;
+  // 両分岐が pfCount を代入するため初期化不要(M36 dead-store 修正)。
+  let pfCount;
   if (typeof getAllStocks === "function") {
     const allStocks = getAllStocks();
     const holdings = allStocks.filter((s) => {
@@ -3365,16 +3387,34 @@ function closeStockDetailDrawer() {
     const aiContent = document.getElementById("drawerTabAiContent");
 
     if (detailInner) {
-      if (chartContent) {
-        Array.from(chartContent.children).forEach((child) =>
-          detailInner.appendChild(child),
-        );
-      }
-      if (aiContent) {
-        Array.from(aiContent.children).forEach((child) =>
-          detailInner.appendChild(child),
-        );
-      }
+      // (L17, 2026-11-07 review) 従来はタブ内の全子要素を無条件で不可視の
+      // インライン .detail-inner へ戻していた。この戻し先は描画時に
+      // wrapper 側の検索が先にヒットするため、ドロワー専用の一時要素
+      // (.ai-tech-lines-summary 等)が一度でもインラインへ戻ると、以後の
+      // 再描画が永遠に不可視パネル側へ行われる。openStockDetailDrawer が
+      // 移動させた「所有」要素のみを復帰し、一時要素はドロワー内に
+      // 残して次回オープン時の replaceChildren() で破棄する。
+      const ownedChartSelectors = [
+        ".detail-info",
+        ".detail-actions",
+        ".chart-controls",
+        ".chart-container:not(.pnl-chart-container)",
+        ".pnl-chart-container",
+      ];
+      const ownedAiSelectors = [
+        ".analyze-btn",
+        ".ai-section",
+        ".chat-toggle-btn",
+        ".chat-section",
+      ];
+      const appendScoped = (host, selectors) => {
+        selectors.forEach((sel) => {
+          const el = host.querySelector(`:scope > ${sel}`);
+          if (el) detailInner.appendChild(el);
+        });
+      };
+      if (chartContent) appendScoped(chartContent, ownedChartSelectors);
+      if (aiContent) appendScoped(aiContent, ownedAiSelectors);
       // TASK-13: buildDetailPanelでの標準順序を完全復元
       // [expandButton, pfBlock, info, actions, chartControls, chartContainer, pnlContainer, analyzeBtn, aiSection, chatToggleBtn, chatSection]
       const orderedSelectors = [
@@ -3624,12 +3664,30 @@ function renderAiTechnicalLinesSummary(wrapper, data) {
       drawerEl.dataset.stockKey === stockKey,
     );
 
-  let summaryBox = wrapper.querySelector(".ai-tech-lines-summary");
-  if (!summaryBox && isDrawerActive) {
+  // (L17, 2026-11-07 review) ドロワーがアクティブな間は .chart-container が
+  // ドロワー側へ移動しており、要約はドロワー内に描画される。このとき
+  // wrapper.querySelector を先に試すと、ドロワー非アクティブ時に作られた
+  // 不可視パネル側の古い要約に永遠に描き込み続けてしまうため、
+  // アクティブ時はドロワー側を優先する。
+  let summaryBox = null;
+  if (isDrawerActive) {
     const drawerChartContent = document.getElementById("drawerTabChartContent");
     summaryBox =
       drawerChartContent?.querySelector(".ai-tech-lines-summary") ||
       drawerEl?.querySelector(".ai-tech-lines-summary");
+  }
+  if (!summaryBox) {
+    summaryBox = wrapper.querySelector(".ai-tech-lines-summary");
+  }
+  // ドロワーアクティブ時は要約がドロワー内になければラッパー側の古い
+  // 要約をドロワーへ移して再利用する(不可視パネルに置き去りにしない)。
+  if (
+    summaryBox &&
+    isDrawerActive &&
+    !summaryBox.closest("#stock-detail-drawer")
+  ) {
+    const drawerChartContent = document.getElementById("drawerTabChartContent");
+    drawerChartContent?.appendChild(summaryBox);
   }
 
   if (!summaryBox) {

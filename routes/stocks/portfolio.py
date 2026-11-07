@@ -204,6 +204,15 @@ def api_update_portfolio() -> Any:
             val.pop("avg_fx_rate", None)
 
         container[symbol] = val
+        # API-7: freeze the exact state this request wrote. A concurrent
+        # same-symbol request pops and re-adds this very object after mutating
+        # it in place, so comparing the rollback against the live ``val``
+        # would still match our aliased object (identity == content equality)
+        # and erase the concurrent, already-persisted update. The frozen
+        # snapshot keeps the conditional rollback scoped to this request's
+        # own write, and preserves the API-7 contract for external
+        # new-dict writers, whose content always differs from the snapshot.
+        written_snapshot = copy.deepcopy(val)
 
     try:
         save_user_stocks()
@@ -214,7 +223,7 @@ def api_update_portfolio() -> Any:
                 # API-7: conditional rollback — only undo this request's own
                 # write and never overwrite a concurrent mutation committed
                 # between the persist attempt and this re-entry.
-                if container.get(symbol) == val:
+                if container.get(symbol) == written_snapshot:
                     container.pop(symbol, None)
                 if (
                     matching_symbol is not None

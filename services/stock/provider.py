@@ -15,6 +15,7 @@ import math
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -579,7 +580,7 @@ class YFinanceProvider(BaseStockProvider):
                             metadata = getattr(t, "history_metadata", None)
                             if metadata is None and hasattr(t, "get_history_metadata"):
                                 metadata = t.get_history_metadata()
-                            if isinstance(metadata, dict):
+                            if isinstance(metadata, (dict, Mapping)):
                                 exchange = (
                                     metadata.get("exchangeName")
                                     or metadata.get("fullExchangeName")
@@ -893,7 +894,7 @@ class YFinanceProvider(BaseStockProvider):
                     metadata = getattr(t, "history_metadata", None)
                     if metadata is None:
                         metadata = t.get_history_metadata()
-                    if isinstance(metadata, dict) and metadata.get("currency"):
+                    if isinstance(metadata, (dict, Mapping)) and metadata.get("currency"):
                         currency = metadata.get("currency")
                 except Exception as exc:
                     logger.debug("Failed to retrieve history metadata for %s: %s", symbol, exc)
@@ -914,7 +915,7 @@ class YFinanceProvider(BaseStockProvider):
                     metadata = getattr(t, "history_metadata", None)
                     if metadata is None and hasattr(t, "get_history_metadata"):
                         metadata = t.get_history_metadata()
-                    if isinstance(metadata, dict):
+                    if isinstance(metadata, (dict, Mapping)):
                         exchange = (
                             metadata.get("exchangeName")
                             or metadata.get("fullExchangeName")

@@ -297,9 +297,45 @@ def _mark_user_stocks_load_failure(reason: str) -> None:
     )
 
 
+def _remove_stale_user_stocks_tmp_files() -> None:
+    """Sweep orphaned ``user_stocks.*.tmp`` files from crash-killed writes.
+
+    ``save_user_stocks`` writes through a uuid tmp file and deletes it on
+    every in-process error path, but a hard process kill between the fsync'd
+    tmp write and the ``os.replace`` swap leaks the file forever — no other
+    cleanup path matches the ``*.tmp`` suffix (the backup rotator only looks
+    at ``user_stocks.bak.*``). Sweep tmp files older than the grace window so
+    repeated crashes cannot accumulate garbage; younger files may belong to a
+    concurrent in-flight save and are left alone.
+    """
+    threshold = time.time() - 600.0
+    try:
+        for tmp_entry in Path(USER_STOCKS_FILE).parent.glob("user_stocks.*.tmp"):
+            try:
+                if tmp_entry.stat().st_mtime < threshold:
+                    tmp_entry.unlink()
+                    logger.info("Removed stale user_stocks tmp file: %s", tmp_entry.name)
+            except OSError as exc:
+                logger.debug("Could not sweep stale tmp %s: %s", tmp_entry.name, exc)
+    except OSError as exc:
+        logger.debug("user_stocks tmp sweep failed: %s", exc)
+
+
 def load_user_stocks(force=False):
     """ユーザーの銘柄設定をファイルから読み込む。"""
+    if getattr(app_state.market, "user_stocks_save_pending", 0) > 0:
+        # H3 (2026-11-07 review): a save_user_stocks() call is mid-flight.
+        # Its snapshot already captured the newest in-memory state and the
+        # disk swap may still be in progress, so publishing the on-disk
+        # state now would revert unsaved mutations (a queued second save
+        # would snapshot the reverted memory and persist it, silently
+        # losing a mutation that already reported success). Skip the
+        # publish; the next load after the save completes re-reads the
+        # swapped file (the save bumps user_stocks_rev, so last_loaded_rev
+        # stays stale and even non-force loads refresh).
+        return
     config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _remove_stale_user_stocks_tmp_files()
     migration_ok = _migrate_legacy_user_stocks()
     if not os.path.exists(USER_STOCKS_FILE):
         # A legacy file that could not be migrated is not equivalent to an
@@ -669,6 +705,14 @@ def save_user_stocks():
         UserStocksPersistError: if the write cannot complete safely. Callers
             must treat this as failure (do not report success to the client).
     """
+    # H3 (2026-11-07 review): mark "save in flight" at entry, before the
+    # serialized section, so a save that is queued behind another one also
+    # blocks load_user_stocks() from publishing the on-disk state over the
+    # mutations this call was invoked to persist. The counter is only ever
+    # mutated while holding user_stocks_lock and is decremented in the
+    # finally below, also under the lock.
+    with app_state.market.user_stocks_lock:
+        app_state.market.user_stocks_save_pending += 1
     try:
         with _user_stocks_save_lock:
             with app_state.market.user_stocks_lock:
@@ -763,3 +807,8 @@ def save_user_stocks():
         # so mutation handlers can roll back in-memory state consistently.
         logger.error("Failed to save user stocks: %s", exc)
         raise UserStocksPersistError(f"Failed to save user stocks: {exc}") from exc
+    finally:
+        # H3: always release the in-flight marker — including the refusal and
+        # error paths — so load_user_stocks() can never stay blocked forever.
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_stocks_save_pending -= 1

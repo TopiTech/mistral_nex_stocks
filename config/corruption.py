@@ -62,7 +62,11 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
             sanitized["api_credentials"] = {}
             for secret_key in ("flask_secret_key", "mns_master_key", "extension_api_token"):
                 sanitized.pop(secret_key, None)
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (json.JSONDecodeError, OSError, ValueError, RecursionError):
+        # RecursionError: json.loads parses deep nesting beyond the recursion
+        # limit in some build/depth combinations; the fallback below must
+        # degrade to the shallow fallback object instead of escaping the
+        # corrupt-handling path (M26, 2026-11-07 review).
         pass
     if sanitized is None:
         try:
@@ -85,12 +89,12 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
                     for sk in ("flask_secret_key", "mns_master_key", "extension_api_token"):
                         if sk in sanitized and sanitized[sk] == "[REDACTED]":
                             sanitized.pop(sk, None)
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError, RecursionError):
                 sanitized = {
                     "api_credentials": {},
                     "_corrupt_backup_note": "sanitized; original was not parseable JSON",
                 }
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             sanitized = {
                 "api_credentials": {},
                 "_corrupt_backup_note": "sanitized; original was not readable",

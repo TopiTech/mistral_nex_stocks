@@ -89,6 +89,10 @@ function sanitizeTextInput(text, maxLength = 1000) {
   }
 
   // 制御文字の削除（改行とタブは許可）
+  // (M36) このサニタイザーは制御文字の「除去」自体が目的であるため、
+  // no-control-regex は意図した検出として本行のみ無効化する。文字クラスは
+  // 制御文字を含まなければ本 goal の契約を満たせない。
+  // eslint-disable-next-line no-control-regex
   sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
   return sanitized;

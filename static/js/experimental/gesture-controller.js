@@ -16,6 +16,12 @@
 
       this.pointerDownTarget = null;
       this.pointerDownPos = { x: 0, y: 0 };
+      // (L28, 2026-11-07 review) activePointerId 以外の up/cancel で gesture
+      // 状態を壊さないためのガード。従来は第二本の pointerdown が
+      // pointerDownTarget を無条件に上書きし、第一指の up が第二指の
+      // ノードに作用する(誤選択/AI 誤起動)ほか、第二指の移動が判定距離に
+      // 加算されるなど、単一ポインタ前提の状態がすべて破綻していた。
+      this.activePointerId = null;
       this.isDragging = false;
       this.dragThreshold = 6;
       this.longPressTimer = null;
@@ -57,6 +63,13 @@
 
     handlePointerDown(e) {
       if (e.button !== 0 && e.pointerType === "mouse") return; // Left click only for mouse
+      // (L28) すでにアクティブなポインタがある場合は新規 pointerdown を
+      // 無視する(既存のドラッグ/ロングプレス/選択状態を維持する)。
+      if (this.activePointerId !== null) {
+        if (e.pointerId !== this.activePointerId) return;
+      } else {
+        this.activePointerId = e.pointerId;
+      }
       const pos = this.getCanvasPos(e);
       const hitNode = this.renderer.hitTest(pos.x, pos.y);
 
@@ -87,6 +100,9 @@
     }
 
     handlePointerMove(e) {
+      // (L28) アクティブポインタ以外の移動は gesture 計算に使わない。
+      if (this.activePointerId !== null && e.pointerId !== this.activePointerId)
+        return;
       const pos = this.getCanvasPos(e);
 
       // 1. If pointer is down and threshold exceeded, initiate dragging
@@ -135,7 +151,11 @@
       }
     }
 
-    handlePointerUp(_e) {
+    handlePointerUp(e) {
+      // (L28) アクティブポインタ以外の up は gesture 状態を releasing しない。
+      if (this.activePointerId !== null && e.pointerId !== this.activePointerId)
+        return;
+      this.activePointerId = null;
       this.clearLongPressTimer();
 
       if (this.longPressTriggered) {
@@ -190,7 +210,17 @@
       this.canvas.style.cursor = "default";
     }
 
-    handlePointerCancel(_e) {
+    handlePointerCancel(e) {
+      // (L28) アクティブポインタ以外の cancel は無視する。ただし
+      // window blur (ポインタではないイベント)は pointerId を持たない
+      // ため、従来どおり全ポインタを abandon する。
+      if (
+        this.activePointerId !== null &&
+        e.pointerId !== undefined &&
+        e.pointerId !== this.activePointerId
+      )
+        return;
+      this.activePointerId = null;
       this.clearLongPressTimer();
       this.longPressTriggered = false;
       if (this.isDragging) {

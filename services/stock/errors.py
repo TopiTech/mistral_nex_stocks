@@ -15,10 +15,20 @@ except ImportError:
         pass
 
 
-from yfinance.exceptions import (
-    YFPricesMissingError,
-    YFTickerMissingError,
-)
+try:
+    from yfinance.exceptions import YFPricesMissingError, YFTickerMissingError
+except ImportError:
+    # M38 (2026-11-07 review): the shim protected only YFRateLimitError, but
+    # an old yfinance lacking the ticker/prices error classes would fail the
+    # whole module import (app boot). The sentinals keep isinstance checks
+    # inert, matching each sentinel's documented contract. All supported
+    # versions (>=0.2.40) provide the real classes; this is belt-and-braces
+    # consistency for the supported floor.
+    class YFPricesMissingError(Exception):  # type: ignore[no-redef]
+        pass
+
+    class YFTickerMissingError(Exception):  # type: ignore[no-redef]
+        pass
 
 from utils.http_utils import parse_retry_after
 

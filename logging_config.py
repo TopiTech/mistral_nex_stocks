@@ -13,6 +13,26 @@ import os
 import threading
 import time
 from logging.handlers import RotatingFileHandler
+
+
+class _RestrictiveRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler that keeps the live file 0o600 after rollover.
+
+    M31 (2026-11-07 review): the 0o600 guarantee was applied only at initial
+    creation (via umask). RotatingFileHandler.doRollover closes/renames the
+    live file and re-opens it in append mode with the PROCESS umask (usually
+    0o644), so after the first rollover backend.log/error.log became
+    group/world-readable on POSIX. Re-assert the restrictive mode on every
+    open of the base file.
+    """
+
+    def _open(self):
+        stream = super()._open()
+        try:
+            os.chmod(self.baseFilename, 0o600)
+        except OSError:
+            pass
+        return stream
 from pathlib import Path
 
 from app_state import BackendLogFilter, PollingFilter
@@ -296,13 +316,13 @@ def init_logging(app) -> None:
     # user_stocks / DB files so other local users cannot read them.
     _old_umask = os.umask(0o077)
     try:
-        rotating_handler = RotatingFileHandler(
+        rotating_handler = _RestrictiveRotatingFileHandler(
             str(log_file),
             maxBytes=5 * 1024 * 1024,  # 5MB
             backupCount=3,
             encoding="utf-8",
         )
-        error_handler = RotatingFileHandler(
+        error_handler = _RestrictiveRotatingFileHandler(
             str(error_log_file),
             maxBytes=2 * 1024 * 1024,  # 2MB
             backupCount=5,

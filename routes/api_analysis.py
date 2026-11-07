@@ -436,9 +436,34 @@ def api_chat():
     inflight_key = f"chat:{conversation_scope}:{operation_token}"
     chat_key = f"{conversation_scope}:{market}:{symbol}"
 
-    # Fast path: check chat_result_cache immediately
+    # Fast path + inflight claim in ONE critical section (M28, 2026-11-07
+    # review): the previous two-phase flow (cache read, then a separate
+    # lock acquisition for the inflight claim) let a poll land exactly
+    # between the background job's finally-block mutations (pop inflight +
+    # write result-cache), see "no cached result, no inflight job", and start
+    # a brand-new paid LLM job with a duplicated user message. Reading the
+    # cache and claiming the inflight slot atomically eliminates that
+    # window. Same restructure as the analyze-v2 path below.
+    result_holder: FetchJob | None = None
+    already_fetching = False
     with chat_fetch_lock:
         cached = chat_result_cache.get(inflight_key)
+        if cached is None:
+            if inflight_key in chat_fetch_inflight:
+                result_holder = chat_fetch_inflight[inflight_key]
+                already_fetching = True
+            else:
+                new_result_holder: FetchJob = {
+                    "result": None,
+                    "error": None,
+                    "done": threading.Event(),
+                    "step": "started",
+                    "start_time": time.time(),
+                    "message": "AIチャット処理を開始しました",
+                }
+                chat_fetch_inflight[inflight_key] = new_result_holder
+                result_holder = new_result_holder
+                already_fetching = False
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
@@ -481,24 +506,15 @@ def api_chat():
             }
         )
 
-    # Atomically check and claim inflight_key under chat_fetch_lock to prevent
-    # concurrent requests from duplicating user message appends in chat_history.
-    with chat_fetch_lock:
-        result_holder = chat_fetch_inflight.get(inflight_key)
-        if result_holder is not None:
-            already_fetching = True
-        else:
-            new_result_holder: FetchJob = {
-                "result": None,
-                "error": None,
-                "done": threading.Event(),
-                "step": "started",
-                "start_time": time.time(),
-                "message": "AIチャット処理を開始しました",
-            }
-            chat_fetch_inflight[inflight_key] = new_result_holder
-            result_holder = new_result_holder
-            already_fetching = False
+    if result_holder is None:
+        # Every cache-hit branch returned above; a None holder here means a
+        # cache entry raced in between the two locks (impossible after M28's
+        # merge, but fail honestly instead of de-referencing None).
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "チャット処理の状態を確認できませんでした。再試行してください。"},
+            status_code=500,
+        )
 
     # チャット履歴の管理
     with app_state.ai.chat_history_lock:
@@ -570,7 +586,7 @@ def api_chat():
     # リクエスト（既に実行中）は fetching:True を返し、クライアントは
     # ポーリング経路へフォールバックする。同時実行数は stream_chat_slots
     # で上限を設け、超過時は executor キュー満杯時と同じ 503 を返す(R3)。
-    if data.get("stream") is True:
+    if parsed_chat.stream:
         if already_fetching:
             try:
                 app_state.ai.chat_history.close()
@@ -613,6 +629,15 @@ def api_chat():
             # スロット解放は _ReleaseOnce により冪等に保護されているため、
             # 例外時にも安全に 1 回のみ解放される。
             release_once()
+            # F2 (2026-11-07 review): a setup failure inside _stream_chat_response
+            # (before the SSE Response exists) left the inflight entry claimed
+            # and the user turn un-rolled-back — unlike every sibling failure
+            # path below. Mirror them so a retry of the same token cannot be
+            # wedged in already_fetching=True until the poll timeout.
+            with chat_fetch_lock:
+                chat_fetch_inflight.pop(inflight_key, None)
+                chat_result_cache.pop(inflight_key, None)
+            _rollback_user_message()
             try:
                 app_state.ai.chat_history.close()
             except Exception as close_exc:
@@ -1069,6 +1094,16 @@ def _chat_error_response(
         )
         msg = "AIサービス呼び出しがタイムアウトしました。モデルの応答に時間がかかっています。しばらく待ってから再試行してください。"
         status_code = 504
+    elif isinstance(exc, queue.Full):
+        # L8 (2026-11-07 review): the submitter of a saturated executor gets
+        # TOO_MANY_REQUESTS/503 while a same-token waiter mapping the stored
+        # queue.Full through this handler landed in the generic 500 branch —
+        # one condition, two different codes and envelopes.
+        current_app.logger.warning(
+            "api_chat executor queue saturated id=%s: capacity error", req_id
+        )
+        msg = "AIチャットの処理待ちが混雑しています。しばらくしてから再試行してください。"
+        status_code = 503
     elif isinstance(exc, (ValueError, TypeError)):
         current_app.logger.error(
             "api_chat processing error id=%s error_type=%s: %s",
@@ -1395,8 +1430,39 @@ def api_analyze_v2():
     # still fresh in the cache. Return it immediately instead of starting a new
     # job or creating a brand-new (never-completed) result_holder that would
     # otherwise return jsonify(None). This makes client re-polls reliable.
+    # M28 (2026-11-07 review): combining the cache read and the inflight
+    # claim into ONE critical section — see the chat path above; polling in
+    # the window between the job's inflight-pop and cache-write must not
+    # launch a duplicate paid job. A cached entry stored as (None, None) —
+    # fetch produced no data — is NOT a satisfied hit (the historical
+    # fall-through starts a fresh job below).
+    result_holder: FetchJob | None = None
+    already_fetching = False
     with analyze_fetch_lock:
         cached = analyze_result_cache.get(inflight_key)
+        cache_satisfied = cached is not None and (
+            cached[1] is not None or cached[2] is not None
+        )
+        if not cache_satisfied:
+            # (None, None) cache entries are the documented fall-through: a
+            # fresh job must start, so treat the entry as absent.
+            cached = None
+        if cached is None:
+            if inflight_key in analyze_fetch_inflight:
+                result_holder = analyze_fetch_inflight[inflight_key]
+                already_fetching = True
+            else:
+                new_result_holder: FetchJob = {
+                    "result": None,
+                    "error": None,
+                    "done": threading.Event(),
+                    "step": "started",
+                    "start_time": time.time(),
+                    "message": "AI分析処理を開始しました",
+                }
+                analyze_fetch_inflight[inflight_key] = new_result_holder
+                result_holder = new_result_holder
+                already_fetching = False
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
@@ -1429,22 +1495,15 @@ def api_analyze_v2():
         # result was None (e.g. fetch failed to produce data) -> fall through
         # to start a fresh job below.
 
-    with analyze_fetch_lock:
-        if inflight_key in analyze_fetch_inflight:
-            result_holder = analyze_fetch_inflight[inflight_key]
-            already_fetching = True
-        else:
-            new_result_holder: FetchJob = {
-                "result": None,
-                "error": None,
-                "done": threading.Event(),
-                "step": "started",
-                "start_time": time.time(),
-                "message": "AI分析処理を開始しました",
-            }
-            analyze_fetch_inflight[inflight_key] = new_result_holder
-            result_holder = new_result_holder
-            already_fetching = False
+    if result_holder is None:
+        # Every cache-satisfied branch returned above; a None holder here
+        # means a cache entry raced in between the two locks (impossible
+        # after M28's merge, but fail honestly instead of de-referencing None).
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AI分析処理の状態を確認できませんでした。再試行してください。"},
+            status_code=500,
+        )
 
     if not already_fetching:
 
@@ -1883,6 +1942,20 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
             ErrorCode.API_SERVICE_ERROR,
             details={"reason": "AIモデルの応答がタイムアウトしました。サーバーの負荷状況を確認して再試行してください。", "error_type": err_type},
             status_code=504,
+        )
+
+    if isinstance(job_err, queue.Full):
+        # L8: capacity conditions map to 503 here too, not the 500 branch.
+        current_app.logger.warning(
+            "Analyze-v2 executor queue saturated id=%s: capacity error", req_id
+        )
+        return error_response(
+            ErrorCode.TOO_MANY_REQUESTS,
+            details={
+                "reason": "AI分析の処理待ちが混雑しています。しばらくしてから再試行してください。",
+                "error_type": err_type,
+            },
+            status_code=503,
         )
 
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):

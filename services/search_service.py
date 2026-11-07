@@ -467,13 +467,12 @@ def _get_market_trending_titles(
         _set_cached_value(cache_key, trend_titles, duration=300)
         return trend_titles
 
-    started = _schedule_market_trends_refresh_async(
-        market, strategy, langsearch_api_key, tavily_api_key
-    )
-    logger.info(
-        "Market trending refresh %s after cache miss: market=%s strategy=%s",
-        "started" if started else "already-running",
-        market,
-        strategy,
-    )
+    # M13 (2026-11-07 review): a failed/empty build was never negative-
+    # cached, so during a provider outage every request re-ran the full
+    # multi-provider cascade (~30-80s) while the rate limiter allowed 30/min
+    # — same class as the negative-cache the news/research context path
+    # already uses. The empty-list marker lives in the same duration bucket
+    # the reader consults (300s, matching the success TTL); the reader
+    # returns it as-is and the next rebuild happens after the TTL.
+    _set_cached_value(cache_key, [], duration=300)
     return []

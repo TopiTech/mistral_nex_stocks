@@ -38,36 +38,56 @@ def test_submit_with_max_queue_size():
 
 
 def test_semaphore_released_on_submit_exception():
-    """If super().submit() raises, the semaphore must be released."""
+    """If super().submit() raises, the semaphore must be released (M34).
+
+    Regression for the 2026-11-07 review: this test previously asserted
+    nothing — deleting the release block in utils/threading.py would still
+    pass. Drain the bounded semaphore after an injected submit failure to
+    prove it was returned to its full initial capacity.
+    """
     ex = DaemonThreadPoolExecutor(max_workers=1, max_queue_size=5)
     try:
-        # Monkey-patch to inject a failure inside ThreadPoolExecutor.submit
-        submitted_something = False
+        initial = ex._semaphore._initial_value if ex._semaphore is not None else None
+        assert initial is not None
 
-        def _fail_submit(fn, /, *args, **kwargs):
-            nonlocal submitted_something
-            submitted_something = True
-            raise RuntimeError("injected submit failure")
+        sem = threading.BoundedSemaphore(initial)
+        with pytest.MonkeyPatch.context() as mp:
+            object.__setattr__(ex, "_semaphore", None)
+            import concurrent.futures as cf_mod
 
-        with pytest.MonkeyPatch.context():
-            # We can't easily monkey-patch super().submit, but we can force
-            # the condition by passing an uncallable first argument.
-            # Actually, the semaphore is acquired BEFORE super().submit, so
-            # if super().submit raises, the except block releases it.
-            # A more reliable approach: make the wrapper raise.
-            pass
 
-        # More straightforward: submit a callable that will fail inside
-        # the executor thread (that exercises exception_path, not the
-        # super().submit raise path). To hit the submit-raise path we
-        # need an actual framework error. Let's skip and test the
-        # cancellation path instead.
+            def failing_submit(self_inner, fn, /, *args, **kwargs):
+                # The DaemonThreadPoolExecutor wrapper acquires the semaphore
+                # itself before calling super().submit; this only raises.
+                raise RuntimeError("injected submit failure")
+
+            mp.setattr(cf_mod.ThreadPoolExecutor, "submit", failing_submit)
+            object.__setattr__(ex, "_semaphore", sem)
+
+            with pytest.raises(RuntimeError):
+                ex.submit(lambda: None)
+
+        # The wrapper's except must have released the slot: the semaphore
+        # drains back to its FULL initial capacity.
+        drained = 0
+        if ex._semaphore is not None:
+            while ex._semaphore.acquire(blocking=False) and drained < initial:
+                drained += 1
+        assert drained == initial, (
+            "submit failure must release the semaphore back to full capacity"
+        )
     finally:
         ex.shutdown(wait=True)
 
 
-def test_cancelled_future_does_not_propagate():
-    """A cancelled future is logged but does not raise in the done callback."""
+def test_cancelled_future_does_not_propagate(caplog):
+    """A cancelled future is logged but does not raise in the done callback.
+
+    (M34/F9, 2026-11-07 review) a running future cannot be cancelled, so the
+    genuine cancelled branch (utils/threading.py debug log) is only executed
+    when the task never started. Pin the observable behavior via log capture;
+    cancelling a RUNNING task is covered separately below.
+    """
     ex = DaemonThreadPoolExecutor(max_workers=1)
     try:
         blocker = threading.Event()
@@ -76,18 +96,55 @@ def test_cancelled_future_does_not_propagate():
         def _slow():
             blocker.set()
             released.wait(timeout=5)
+            return "done"
+
+        started = ex.submit(_slow)
+        assert blocker.wait(timeout=3)
+
+        # Queue a second task behind the busy worker, then cancel it before
+        # it starts: futures that never ran genuinely report cancelled().
+        def _never():
+            return "never"
+
+        queued = ex.submit(_never)
+        with caplog.at_level(logging.DEBUG, logger="utils.threading"):
+            # add_done_callback fires synchronously on cancel — capture first.
+            assert queued.cancel() is True
+            assert any(
+                record.getMessage() == "Background task was cancelled"
+                for record in caplog.records
+            ), "cancelled future must hit the debug-log branch in the done callback"
+
+        assert queued.cancelled() is True
+        released.set()
+        assert started.result(timeout=3) == "done"
+    finally:
+        ex.shutdown(wait=True)
+
+
+def test_cancel_request_on_running_task_is_denied():
+    """Cancelling a task that is already running is denied; it completes.
+
+    (M34/F9) the previous single test mixed both cases; cancelling a RUNNING
+    future returns False and must leave the result intact.
+    """
+    ex = DaemonThreadPoolExecutor(max_workers=1)
+    try:
+        blocker = threading.Event()
+        released = threading.Event()
+
+        def _slow():
+            blocker.set()
+            released.wait(timeout=5)
+            return "result"
 
         fut = ex.submit(_slow)
         assert blocker.wait(timeout=3)
-        # Cancel the future while it's running (Python allows this)
-        cancelled = fut.cancel()
-        if not cancelled:
-            # Future was already running so cancel returns False.
-            # The done callback will still fire when it completes.
-            pass
+        # Running tasks cannot be cancelled by the standard executor contract.
+        assert fut.cancel() is False
         released.set()
-        result = fut.result(timeout=3)
-        assert result is None
+        assert fut.result(timeout=3) == "result"
+        assert fut.cancelled() is False
     finally:
         ex.shutdown(wait=True)
 

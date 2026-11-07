@@ -1,4 +1,10 @@
+import js from "@eslint/js";
+
 export default [
+  // (M36, 2026-11-07 review) the config previously enabled only
+  // no-unused-vars and no-undef; the recommended base (no-empty,
+  // no-fallthrough, no-redeclare, no-constant-condition, ...) was missing.
+  js.configs.recommended,
   {
     files: ["static/js/**/*.js", "chrome_extension/**/*.js"],
     languageOptions: {
@@ -47,7 +53,6 @@ export default [
         findWrapperByStockKey: "readonly",
         updateExistingCard: "readonly",
         APIClient: "readonly",
-        sseManager: "readonly",
         updateIndicesBar: "readonly",
         updateStocksFromSseData: "readonly",
         debouncedRenderPortfolio: "readonly",
@@ -115,8 +120,11 @@ export default [
         getAppAiProvider: "readonly",
         isOpenAiCompatibleProvider: "readonly",
         getAiProviderLabel: "readonly",
-        HAS_MISTRAL_API_KEY: "readonly",
-        IS_PREVIEW_MODE: "readonly",
+        // Reassigned at runtime by state.js's credential-state refresh:
+        HAS_MISTRAL_API_KEY: "writable",
+        IS_PREVIEW_MODE: "writable",
+        HAS_LANGSEARCH_API_KEY: "writable",
+        HAS_TAVILY_API_KEY: "writable",
         DEFAULT_SYMBOLS: "readonly",
         APP_CONFIG: "readonly",
         IntersectionObserver: "readonly",
@@ -138,10 +146,10 @@ export default [
         renderSkeletons: "readonly",
         renderInitialLoadingTimeoutState: "readonly",
         wrapperRegistryMap: "readonly",
-        portfolioChartCache: "writable",
         computeHoldingsHash: "readonly",
         resolvePortfolioChartAnimationControl: "readonly",
-        portfolioFixedExchangeRate: "readonly",
+        // Fixed on tab switch in chart.js (runtime assignment, not a constant):
+        portfolioFixedExchangeRate: "writable",
         buildLocalDateKey: "readonly",
         getSortOrder: "readonly",
         orderIndex: "readonly",
@@ -173,6 +181,7 @@ export default [
         INITIAL_SKELETON_MAX_WAIT_MS: "readonly",
         Notification: "readonly",
         _enforcePrefetchCacheLimit: "readonly",
+        _enforceStockDetailsCacheLimit: "readonly",
         applyHistoryToStockAndWrapper: "readonly",
         clearChartError: "readonly",
         clearLegacyApiKeyStorage: "readonly",
@@ -232,6 +241,17 @@ export default [
         },
       ],
       "no-undef": "error",
+      // (M36, 2026-11-07 review) These are classic scripts sharing one global
+      // lexical scope: the globals list above documents definitions living in
+      // SIBLING files, so redefining them here is the architecture, not a bug.
+      // Within-file duplicate declarations are still flagged; conflicts with
+      // actual builtins (Promise, fetch...) are covered by those files' own
+      // declarations not being listed here.
+      "no-redeclare": ["error", { builtinGlobals: false }],
+      // Deliberate fallback-on-invalid-input catch blocks are this codebase's
+      // documented pattern (parse failures fall through to the next strategy;
+      // storage access failures in restricted contexts).
+      "no-empty": ["error", { allowEmptyCatch: true }],
     },
   },
   {

@@ -288,22 +288,19 @@ def api_generate_ai_portfolio() -> Any:
 
     conversation_scope = _get_conversation_scope(data)
     inflight_key = f"generate:{conversation_scope}:{theme}"
+    # M28 sibling (2026-11-07 review): cache read + inflight claim in ONE
+    # critical section — a poll landing between the job's inflight-pop and
+    # cache-write otherwise launched a duplicate paid generation job.
+    result_holder: FetchJob | None = None
+    already_fetching = False
     with ai_portfolio_fetch_lock:
         cached = ai_portfolio_result_cache.get(inflight_key)
-    if cached is not None:
-        _cached_ts, cached_result, cached_err = cached
-        if cached_err is not None:
-            with ai_portfolio_fetch_lock:
-                ai_portfolio_result_cache.pop(inflight_key, None)
-            return _ai_portfolio_error_response(cached_err, g)
-        if cached_result is not None:
-            return ok_response({"portfolio": cached_result})
-
-    with ai_portfolio_fetch_lock:
-        if inflight_key in ai_portfolio_fetch_inflight:
+        if cached is not None:
+            _cached_ts, cached_result, cached_err = cached
+        if cached is None and inflight_key in ai_portfolio_fetch_inflight:
             result_holder = ai_portfolio_fetch_inflight[inflight_key]
             already_fetching = True
-        else:
+        elif cached is None:
             new_result_holder: FetchJob = {
                 "result": None,
                 "error": None,
@@ -315,6 +312,22 @@ def api_generate_ai_portfolio() -> Any:
             ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
             result_holder = new_result_holder
             already_fetching = False
+    if cached is not None:
+        _cached_ts2, cached_result, cached_err = cached
+        if cached_err is not None:
+            with ai_portfolio_fetch_lock:
+                ai_portfolio_result_cache.pop(inflight_key, None)
+            return _ai_portfolio_error_response(cached_err, g)
+        if cached_result is not None:
+            return ok_response({"portfolio": cached_result})
+    if result_holder is None:
+        # Unreachable: every cached branch returned above and the miss paths
+        # assigned a holder; fail honestly instead of de-referencing None.
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AIポートフォリオ生成の状態を確認できませんでした。再試行してください。"},
+            status_code=500,
+        )
 
     req_id = getattr(g, "request_id", "-")
     if not already_fetching:
@@ -415,24 +428,16 @@ def api_rebalance_ai_portfolio() -> Any:
 
     conversation_scope = _get_conversation_scope(data)
     inflight_key = f"rebalance:{conversation_scope}:{theme}"
+    # M28 sibling: cache drain + inflight claim in ONE critical section (see
+    # the generate path above).
+    result_holder: FetchJob | None = None
+    already_fetching = False
     with ai_portfolio_fetch_lock:
         cached = ai_portfolio_result_cache.pop(inflight_key, None)
-    if cached is not None:
-        _cached_ts, cached_result, cached_err = cached
-        if cached_err is not None:
-            return _ai_portfolio_error_response(
-                cached_err, g, default_reason="AI ポートフォリオのリバランスに失敗しました"
-            )
-        if cached_result is not None:
-            return ok_response(
-                {"portfolio": cached_result, "message": "リバランスが完了しました"}
-            )
-
-    with ai_portfolio_fetch_lock:
-        if inflight_key in ai_portfolio_fetch_inflight:
+        if cached is None and inflight_key in ai_portfolio_fetch_inflight:
             result_holder = ai_portfolio_fetch_inflight[inflight_key]
             already_fetching = True
-        else:
+        elif cached is None:
             new_result_holder: FetchJob = {
                 "result": None,
                 "error": None,
@@ -444,6 +449,23 @@ def api_rebalance_ai_portfolio() -> Any:
             ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
             result_holder = new_result_holder
             already_fetching = False
+    if cached is not None:
+        _cached_ts, cached_result, cached_err = cached
+        if cached_err is not None:
+            return _ai_portfolio_error_response(
+                cached_err, g, default_reason="AI ポートフォリオのリバランスに失敗しました"
+            )
+        if cached_result is not None:
+            return ok_response(
+                {"portfolio": cached_result, "message": "リバランスが完了しました"}
+            )
+    if result_holder is None:
+        # Unreachable: every cached branch returned above; fail honestly.
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AIポートフォリオリバランスの状態を確認できませんでした。再試行してください。"},
+            status_code=500,
+        )
 
     req_id = getattr(g, "request_id", "-")
     if not already_fetching:

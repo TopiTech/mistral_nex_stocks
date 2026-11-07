@@ -45,16 +45,28 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
 
 def _write_and_replace_with_lock(
     data: dict, tmp_file: Path, target_file: Path, lock_file: Path
-) -> None:
+) -> tuple[int, int] | None:
     """Write JSON data to tmp_file and replace target_file with platform-appropriate locking.
 
     Uses fcntl.flock on Unix/POSIX and msvcrt.locking on Windows.
     Falls back to lock-free write and replace if neither is available.
+    Returns the (mtime_ns, size) cache key of the target file captured while
+    the write lock is still held (or None when the key cannot be captured),
+    so callers can key a cache entry to the exact content they persisted
+    without a cross-process replacement slipping between the swap and a
+    later stat call.
     """
     if os.name == "nt":  # Windows
-        _write_and_replace_with_msvcrt_lock(data, tmp_file, target_file, lock_file)
-    else:
-        _write_and_replace_with_fcntl_lock(data, tmp_file, target_file, lock_file)
+        return _write_and_replace_with_msvcrt_lock(data, tmp_file, target_file, lock_file)
+    return _write_and_replace_with_fcntl_lock(data, tmp_file, target_file, lock_file)
+
+
+def _target_stat_key(target_file: Path) -> tuple[int, int] | None:
+    try:
+        st = os.stat(target_file)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 
 
 def _durable_write_json(path: Path, data: dict) -> None:
@@ -140,7 +152,7 @@ def _safe_write_json(tmp_file: Path, data: dict) -> None:
 
 def _write_and_replace_with_fcntl_lock(
     data: dict, tmp_file: Path, target_file: Path, lock_file: Path
-) -> None:
+) -> tuple[int, int] | None:
     """Write and replace with POSIX fcntl.flock locking."""
     try:
         import fcntl  # type: ignore[import-untyped]
@@ -180,6 +192,10 @@ def _write_and_replace_with_fcntl_lock(
                         os.close(dir_fd)
                 except OSError:
                     pass
+            # Capture the cache key while the lock is held: the content just
+            # swapped in cannot be replaced by another process before this
+            # stat, so a caller caching its payload can key it exactly.
+            return _target_stat_key(target_file)
         finally:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
@@ -203,11 +219,12 @@ def _write_and_replace_with_fcntl_lock(
                     os.close(dir_fd)
             except OSError:
                 pass
+        return _target_stat_key(target_file)
 
 
 def _write_and_replace_with_msvcrt_lock(
     data: dict, tmp_file: Path, target_file: Path, lock_file: Path
-) -> None:
+) -> tuple[int, int] | None:
     """Write and replace with Windows msvcrt.locking."""
     try:
         import msvcrt  # type: ignore[import-untyped]
@@ -258,6 +275,9 @@ def _write_and_replace_with_msvcrt_lock(
                         os.close(dir_fd)
                 except OSError:
                     pass
+            # Capture the cache key while the write lock is still held (see
+            # _write_and_replace_with_lock).
+            return _target_stat_key(target_file)
         finally:
             if locked:
                 try:
@@ -285,6 +305,7 @@ def _write_and_replace_with_msvcrt_lock(
                     os.close(dir_fd)
             except OSError:
                 pass
+        return _target_stat_key(target_file)
     except RuntimeError as exc:
         # Lock contention after retries: do NOT write lock-free (would risk a
         # partial/corrupted config). Surface the failure so the caller can

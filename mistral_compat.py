@@ -84,18 +84,38 @@ except ImportError:
 
                     def __init__(self, *args, **kwargs):
                         super().__init__(*args)
-                        self.status_code = kwargs.get("status_code", 0)
-                        try:
-                            from requests import Response
+                        response, status_code = _fallback_sdk_error_response(
+                            *args, **kwargs
+                        )
+                        self.status_code = status_code
+                        self.response = response
+                        # Mirror the real SDK's attribute name (``raw_response``) so
+                        # ai_service._extract_error_response works identically in
+                        # both environments (R1).
+                        self.raw_response = response  # type: ignore[assignment]
 
-                            self.response = kwargs.get("response") or Response()
-                            # Mirror the real SDK's attribute name (``raw_response``) so
-                            # ai_service._extract_error_response works identically in
-                            # both environments (R1).
-                            self.raw_response = self.response  # type: ignore[assignment]
-                        except ImportError:
-                            self.response = None
-                            self.raw_response = None  # type: ignore[assignment]
+
+def _fallback_sdk_error_response(*args, **kwargs):
+    """Derive ``(response, status_code)`` for the no-SDK fallback SDKError.
+
+    The real SDK signature is ``SDKError(message, raw_response)`` with the
+    response POSITIONAL, and ``_BaseFallback._sdk_err`` passes it
+    positionally. Reading the response from kwargs alone dropped the crafted
+    503 response and broke the raw_response contract consumed by
+    ``ai_service._extract_error_response`` in SDK-missing environments
+    (M2, 2026-11-07 review). Module-level so the derivation is unit-testable
+    and works even when ``requests`` is unavailable.
+    """
+    status_code = kwargs.get("status_code", 0)
+    response = (args[1] if len(args) > 1 else None) or kwargs.get("response")
+    if response is not None:
+        return response, status_code
+    try:
+        from requests import Response
+
+        return Response(), status_code
+    except ImportError:  # pragma: no cover - requests is a hard dependency
+        return None, status_code
 
 
 # --------------------------------------------------------------------------
@@ -302,7 +322,24 @@ def load_sdk_agent(
         from constants import DEFAULT_MISTRAL_MODEL
 
         if api_key:
-            os.environ.setdefault("MISTRAL_API_KEY", api_key)
+            # M3 (2026-11-07 review): the Agents SDK sources its key from
+            # the MISTRAL_API_KEY environment variable only, so this bridge
+            # is unavoidable — but setdefault silently preferred a stale
+            # pre-existing key, making the agent authenticate with a
+            # DIFFERENT account than the caller-resolved credential with no
+            # error or log. The caller's credential is authoritative (it is
+            # the same key the non-agents paths pass explicitly to the
+            # client), so overwrite and log the replacement fingerprint.
+            previous = os.environ.get("MISTRAL_API_KEY")
+            if previous is not None and previous != api_key:
+                logger.warning(
+                    "Replacing a conflicting pre-existing MISTRAL_API_KEY with the "
+                    "caller-configured credential for the local agents run "
+                    "(stored_len=%d, configured_len=%d)",
+                    len(previous),
+                    len(api_key),
+                )
+            os.environ["MISTRAL_API_KEY"] = api_key
         chosen_model = (model or "").strip() or DEFAULT_MISTRAL_MODEL
         return mistral_agents.Agent(
             model=chosen_model,

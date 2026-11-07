@@ -169,30 +169,30 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 }
             )
     if clean_items:
-        positive_items = [it for it in clean_items if it.get("weight_pct", 0) > 0.0]
-        if not positive_items:
+        # L10 (2026-11-07 review): the validator explicitly accepts
+        # weight_pct == 0.0 (0..100, all-zero equal-split), but the old
+        # `positive_items` filter silently DROPPED zero-weight items whenever
+        # any positive item existed, contradicting the validator contract
+        # ([0%, 100%] persisted as a one-item portfolio). Renormalize over ALL
+        # validated items: zero stays a legitimate explicit underweight, and
+        # the all-zero equal-split case keeps its pinned behavior.
+        tot_clean_w = sum(it.get("weight_pct", 0.0) for it in clean_items)
+        if tot_clean_w <= 0.0:
             equal_w = round(100.0 / len(clean_items), 1)
             for it in clean_items:
                 it["weight_pct"] = equal_w
             diff = round(100.0 - sum(it["weight_pct"] for it in clean_items), 1)
             if diff != 0.0:
                 clean_items[0]["weight_pct"] = round(clean_items[0]["weight_pct"] + diff, 1)
-            active_items = clean_items
         else:
-            tot_clean_w = sum(it["weight_pct"] for it in positive_items)
-            if tot_clean_w <= 0.0:
-                equal_w = round(100.0 / len(positive_items), 1)
-                for it in positive_items:
-                    it["weight_pct"] = equal_w
-            else:
-                for it in positive_items:
-                    it["weight_pct"] = round((it["weight_pct"] / tot_clean_w) * 100.0, 1)
-            diff = round(100.0 - sum(it["weight_pct"] for it in positive_items), 1)
+            for it in clean_items:
+                it["weight_pct"] = round((it["weight_pct"] / tot_clean_w) * 100.0, 1)
+            diff = round(100.0 - sum(it["weight_pct"] for it in clean_items), 1)
             if diff != 0.0:
                 # Clamp after rounding overshoot so rebalance never breaches 100±tiny.
-                new_w = round(positive_items[0]["weight_pct"] + diff, 1)
-                positive_items[0]["weight_pct"] = max(0.0, min(100.0, new_w))
-            active_items = positive_items
+                new_w = round(clean_items[0]["weight_pct"] + diff, 1)
+                clean_items[0]["weight_pct"] = max(0.0, min(100.0, new_w))
+        active_items = clean_items
     else:
         active_items = []
     gen_by = str(portfolio.get("generated_by") or "")
@@ -474,8 +474,13 @@ def delete_custom_ai_portfolio(portfolio_id: str) -> bool:
         # The route owns the 503 response and its single log entry.
         raise
     except Exception as e:
+        # L6 (2026-11-07 review): returning False conflates "id absent" with
+        # "storage failed", and the route mapped BOTH to 404 NOT_FOUND — an
+        # I/O failure (OSError, AV-induced Windows lock) reported the id as
+        # missing. Storage failures re-raise as the typed error so the route's
+        # existing 503 branch reports them honestly.
         logger.error("Failed to delete custom AI portfolio (%s): %s", portfolio_id, e)
-        return False
+        raise PortfolioStorageError(f"Failed to delete portfolio {portfolio_id}: {e}") from e
 
 
 def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None) -> dict[str, Any]:

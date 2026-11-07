@@ -34,6 +34,25 @@ def _first_not_none(*values):
             return value
     return None
 
+
+def _first_finite_number(*values):
+    """Return the first value that sanitizes to a real finite number.
+
+    M37 (2026-11-07 review): quote/fundamentals fields used the raw
+    ``_first_not_none`` passthrough, so values like ``"N/A"``, booleans and
+    NaN/Infinity reached the model prompt JSON verbatim. ``_finite_number``
+    rejects bool-likes, non-finite floats and unparseable strings, returning
+    None instead — and a None field cleanly enables the documented fallback
+    chains below. Zero stays a valid finite value (never coerced to None).
+    """
+    for value in values:
+        if value is None or is_bool_like(value):
+            continue
+        num = _finite_number(value)
+        if num is not None:
+            return num
+    return None
+
 # ---------------------------------------------------------------------------
 # Mistral Function Calling Tool Schemas
 # ---------------------------------------------------------------------------
@@ -238,24 +257,26 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(info, dict):
             info = {}
 
-        price = _first_not_none(
+        # (M37) numeric prompt fields must be real finite numbers: raw
+        # passthrough let "N/A"/booleans/NaN into the model prompt.
+        price = _first_finite_number(
             info.get("price"),
             info.get("current_price"),
             info.get("regularMarketPrice"),
             info.get("currentPrice"),
         )
-        change = _first_not_none(info.get("change"), info.get("regularMarketChange"))
-        change_pct = _first_not_none(
+        change = _first_finite_number(info.get("change"), info.get("regularMarketChange"))
+        change_pct = _first_finite_number(
             info.get("change_pct"),
             info.get("change_percent"),
             info.get("regularMarketChangePercent"),
         )
-        volume = _first_not_none(info.get("volume"), info.get("regularMarketVolume"))
-        high = _first_not_none(
+        volume = _first_finite_number(info.get("volume"), info.get("regularMarketVolume"))
+        high = _first_finite_number(
             info.get("high"), info.get("regularMarketDayHigh"), info.get("dayHigh")
         )
-        low = _first_not_none(info.get("low"), info.get("regularMarketDayLow"), info.get("dayLow"))
-        open_val = _first_not_none(info.get("open"), info.get("regularMarketOpen"))
+        low = _first_finite_number(info.get("low"), info.get("regularMarketDayLow"), info.get("dayLow"))
+        open_val = _first_finite_number(info.get("open"), info.get("regularMarketOpen"))
         updated_at = _first_not_none(info.get("updated_at"), info.get("timestamp"))
 
         # 1. Fallback to realtime market engine snapshot if price missing
@@ -272,7 +293,11 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                     if change is None:
                         change = rt.get("change")
                     if change_pct is None:
-                        change_pct = rt.get("change_pct") or rt.get("change_percent")
+                        # (M37) `or` swallowed a legitimate 0.0 change (falsy)
+                        # into the secondary key / None.
+                        change_pct = _first_finite_number(
+                            rt.get("change_pct"), rt.get("change_percent")
+                        )
                     if volume is None:
                         volume = rt.get("volume")
                     if high is None:
@@ -296,8 +321,11 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                         if change is None:
                             change = cached_payload.get("change")
                         if change_pct is None:
-                            change_pct = cached_payload.get("change_percent") or cached_payload.get(
-                                "change_pct"
+                            # (M37) `or` swallowed a legitimate 0.0 change
+                            # (falsy) into the secondary key / None.
+                            change_pct = _first_finite_number(
+                                cached_payload.get("change_percent"),
+                                cached_payload.get("change_pct"),
                             )
                         if volume is None:
                             volume = cached_payload.get("volume")
@@ -431,34 +459,40 @@ def _tool_get_company_fundamentals(args: dict[str, Any]) -> dict[str, Any]:
         if not info or not isinstance(info, dict):
             return {"symbol": symbol, "market": market, "status": "ファンダメンタルズ取得不可"}
 
+        # (M37) fundamentals reached the prompt with "N/A"/booleans as-is;
+        # every numeric field must be a real finite number (None otherwise).
         return {
             "symbol": symbol,
             "name": info.get("name") or symbol,
             "sector": info.get("sector", "Unknown"),
             "industry": info.get("industry", "Unknown"),
-            "market_cap": _first_not_none(info.get("market_cap"), info.get("marketCap")),
-            "pe_ratio": _first_not_none(
+            "market_cap": _first_finite_number(
+                info.get("market_cap"), info.get("marketCap")
+            ),
+            "pe_ratio": _first_finite_number(
                 info.get("pe_ratio"), info.get("trailing_pe"), info.get("trailingPE")
             ),
-            "forward_pe": _first_not_none(info.get("forward_pe"), info.get("forwardPE")),
-            "pb_ratio": _first_not_none(
+            "forward_pe": _first_finite_number(
+                info.get("forward_pe"), info.get("forwardPE")
+            ),
+            "pb_ratio": _first_finite_number(
                 info.get("pb_ratio"), info.get("price_to_book"), info.get("priceToBook")
             ),
-            "dividend_yield": _first_not_none(
+            "dividend_yield": _first_finite_number(
                 info.get("dividend_yield"), info.get("dividendYield")
             ),
-            "eps": _first_not_none(
+            "eps": _first_finite_number(
                 info.get("eps"),
                 info.get("trailing_eps"),
                 info.get("trailingEps"),
                 info.get("earningsPerShare"),
             ),
-            "52w_high": _first_not_none(
+            "52w_high": _first_finite_number(
                 info.get("fifty_two_week_high"),
                 info.get("fiftyTwoWeekHigh"),
                 info.get("52w_high"),
             ),
-            "52w_low": _first_not_none(
+            "52w_low": _first_finite_number(
                 info.get("fifty_two_week_low"),
                 info.get("fiftyTwoWeekLow"),
                 info.get("52w_low"),

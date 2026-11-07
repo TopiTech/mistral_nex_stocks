@@ -848,8 +848,27 @@
           const nonce = document.querySelector("script[nonce]")?.nonce || "";
           if (nonce) tvScript.nonce = nonce;
           tvScript.onload = mountWidget;
+          // (L15, 2026-11-07 review) a failed CDN load left a dead script
+          // element in the DOM forever: every retry re-attached a `load`
+          // listener to an element that can never fire, so the fullscreen
+          // chart silently stayed blank. Surface the failure and remove the
+          // element so the next renderAdvancedChart creates a fresh one.
+          tvScript.onerror = () => {
+            console.error("TradingView: Failed to load the tv.js script");
+            const stale = document.getElementById("tv-script-js");
+            if (stale) stale.remove();
+            const chartHost = document.getElementById("tv_chart_container");
+            if (chartHost && !chartHost.querySelector(".tv-load-error")) {
+              const msg = document.createElement("div");
+              msg.className = "tv-load-error";
+              msg.setAttribute("role", "alert");
+              msg.textContent =
+                "チャートの読み込みに失敗しました。再試行してください。";
+              chartHost.appendChild(msg);
+            }
+          };
           document.head.appendChild(tvScript);
-        } else {
+        } else if (!tvScript.dataset.loadFailed) {
           // 読み込み中スクリプトへの古い待ち閉包を除去してから積む
           // (同一要素に複数のloadリスナーが溜まるのを防ぐ)。
           if (tvScript._pendingMountHandler) {

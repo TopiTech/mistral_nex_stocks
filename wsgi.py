@@ -62,7 +62,10 @@ try:
             )
             sys.exit(1)
         try:
-            _hops = int(_os_wsgi.environ.get("MNS_PROXY_FIX_X_FOR", "1").strip())
+            # Treat an empty/whitespace value as unset so a stray
+            # "MNS_PROXY_FIX_X_FOR=" line in a .env file resolves to the same
+            # default (1) as every other layer instead of a fatal exit.
+            _hops = int(_os_wsgi.environ.get("MNS_PROXY_FIX_X_FOR", "1").strip() or "1")
         except (ValueError, AttributeError):
             _hops = 0
         if _hops < 1:

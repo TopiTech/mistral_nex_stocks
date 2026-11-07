@@ -172,7 +172,16 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
     with app_state.yfinance_short_cache_lock:
         cached_short = app_state.yfinance_short_cache.get(short_cache_key)
     if isinstance(cached_short, dict):
-        return dict(cached_short)
+        # M19 (2026-11-07 review): fetch_stock_info_async parks a failure
+        # marker ({"failed": True, "error": True}) in this same slot; serving
+        # it as "valid info" bypassed every downstream failure guard (e.g.
+        # ai_tools fabricated fundamentals with "Unknown" sector from it for
+        # the LLM prompt). Treat a failure marker as a miss and fall through
+        # to the disk-cache / negative-cache paths instead.
+        if cached_short.get("failed") or cached_short.get("error"):
+            pass
+        else:
+            return dict(cached_short)
 
     disk_key = f"info_disk_{symbol}"
     # Try reading from disk cache first

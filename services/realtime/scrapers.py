@@ -193,6 +193,16 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
             if idx < 0:
                 return None
             window = html[idx : idx + 400]
+            if signed:
+                # M15 (2026-11-07 review): Japanese quotes on SBI render a
+                # negative day-change with the ▲/▼ marks, which `[+-]` cannot
+                # consume — the regex then matched the magnitude (or the next
+                # number, e.g. the percentage), silently flipping the sign of
+                # the displayed change. Normalize the marks (mirroring the
+                # Kabutan parser in this same file) and merge a sign followed
+                # by whitespace so "▲ 9.6" parses as -9.6, not +9.6.
+                window = window.replace("▲", "-").replace("▼", "-")
+                window = re.sub(r"([+-])\s+(?=[0-9])", r"\1", window)
             pattern = r"([+-]?[0-9][0-9,]*\.?[0-9]*)" if signed else r"([0-9][0-9,]*\.?[0-9]*)"
             m = re.search(pattern, window)
             if not m:
@@ -998,42 +1008,42 @@ class YahooJPRealtimeScraper:
                                         symbol,
                                     )
                         if price > 0:
-                                change_str = self._extract_quote_field(html, "priceChange")
-                                if change_str is None:
-                                    if next_data is None:
-                                        next_data = _extract_next_data_quotes(html)
-                                    if next_data:
-                                        change_str = next_data.get("priceChange")
-                                change = _parse_quote_number(change_str)
+                            change_str = self._extract_quote_field(html, "priceChange")
+                            if change_str is None:
+                                if next_data is None:
+                                    next_data = _extract_next_data_quotes(html)
+                                if next_data:
+                                    change_str = next_data.get("priceChange")
+                            change = _parse_quote_number(change_str)
 
-                                change_pct_str = self._extract_quote_field(html, "priceChangeRate")
-                                if change_pct_str is None:
-                                    change_pct_str = self._extract_quote_field(html, "priceChangePercent")
-                                if change_pct_str is None:
-                                    if next_data is None:
-                                        next_data = _extract_next_data_quotes(html)
-                                    if next_data:
-                                        change_pct_str = (
-                                            next_data.get("priceChangeRate")
-                                            or next_data.get("priceChangePercent")
-                                        )
-                                # Volume is strictly sourced from yfinance, not from scrapers
-                                res_payload = {
-                                    "symbol": f"{clean_code}.T",
-                                    "price": price,
-                                    "change": change,
-                                    "change_percent": _parse_quote_number(change_pct_str),
-                                    "source": "yahoojp",
-                                    "updated_at": time.time(),
-                                }
-                                logger.debug(
-                                    "[Yahoo JP Scraper] Scrape success for %s.T: price=%.2f, change=%.2f (source=yahoojp)",
-                                    clean_code,
-                                    price,
-                                    change,
-                                )
-                                self._record_fetch_success(symbol)
-                                return res_payload
+                            change_pct_str = self._extract_quote_field(html, "priceChangeRate")
+                            if change_pct_str is None:
+                                change_pct_str = self._extract_quote_field(html, "priceChangePercent")
+                            if change_pct_str is None:
+                                if next_data is None:
+                                    next_data = _extract_next_data_quotes(html)
+                                if next_data:
+                                    change_pct_str = (
+                                        next_data.get("priceChangeRate")
+                                        or next_data.get("priceChangePercent")
+                                    )
+                            # Volume is strictly sourced from yfinance, not from scrapers
+                            res_payload = {
+                                "symbol": f"{clean_code}.T",
+                                "price": price,
+                                "change": change,
+                                "change_percent": _parse_quote_number(change_pct_str),
+                                "source": "yahoojp",
+                                "updated_at": time.time(),
+                            }
+                            logger.debug(
+                                "[Yahoo JP Scraper] Scrape success for %s.T: price=%.2f, change=%.2f (source=yahoojp)",
+                                clean_code,
+                                price,
+                                change,
+                            )
+                            self._record_fetch_success(symbol)
+                            return res_payload
                         else:
                             logger.debug("[Yahoo JP Scraper] No price found on page for %s", symbol)
                     except Exception as exc:

@@ -100,27 +100,66 @@ document.addEventListener("DOMContentLoaded", () => {
   );
 
   // Canvas keyboard operation: arrows cycle the reference stock, Enter
-  // confirms it as the center, and D/H open AI Dive / help. This gives the
-  // focused canvas itself a direct keyboard path independent of the global
-  // shortcuts (which intentionally ignore focused controls).
+  // confirms it as the center, and D/C/M/H mirror the global shortcuts. This
+  // gives the focused canvas itself a direct keyboard path independent of the
+  // global shortcuts (which intentionally ignore focused controls —
+  // role="application" is in their suppression list, so without these local
+  // cases the keys the canvas aria-label promises (D/C/H) would be dead).
   canvas.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     const stocks = state.state.stockList || [];
-    if (!stocks.length) return;
     const current = state.state.selectedSymbol;
-    let idx = stocks.findIndex((s) => s.symbol === current);
-    if (idx === -1) idx = 0;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-      e.preventDefault();
-      const next = stocks[(idx + 1) % stocks.length];
-      state.setSelectedSymbol(next.symbol);
-    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const prev = stocks[(idx - 1 + stocks.length) % stocks.length];
-      state.setSelectedSymbol(prev.symbol);
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      if (current) state.setSelectedSymbol(current);
+
+    // Navigation keys require a stock list.
+    if (stocks.length) {
+      let idx = stocks.findIndex((s) => s.symbol === current);
+      if (idx === -1) idx = 0;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = stocks[(idx + 1) % stocks.length];
+        state.setSelectedSymbol(next.symbol);
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = stocks[(idx - 1 + stocks.length) % stocks.length];
+        state.setSelectedSymbol(prev.symbol);
+        return;
+      }
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        if (current) state.setSelectedSymbol(current);
+        return;
+      }
+    }
+
+    // (L26, 2026-11-07 review) Single-letter shortcuts promised by the canvas
+    // aria-label, active on canvas focus (global ones are suppressed there).
+    switch (e.key) {
+      case "d":
+      case "D":
+        e.preventDefault();
+        if (current) state.openAiDive(current);
+        break;
+      case "c":
+      case "C":
+        e.preventDefault();
+        state.toggleConnectMode();
+        break;
+      case "m":
+      case "M":
+        e.preventDefault();
+        state.toggleReducedMotion();
+        break;
+      case "h":
+      case "H":
+      case "?":
+        e.preventDefault();
+        accessibilityController.openHelpModal();
+        break;
+      default:
+        break;
     }
   });
 
@@ -401,6 +440,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadObservatoryData(
     retryCount = 0,
     expectedGeneration = null,
+    { silent = false } = {},
   ) {
     if (expectedGeneration !== null && expectedGeneration !== loadGeneration) {
       return;
@@ -425,7 +465,10 @@ document.addEventListener("DOMContentLoaded", () => {
       loadAbortController === controller &&
       state.state.market === market;
 
-    setLoading(true);
+    // (L27) サイレント更新(定期/復帰時)ではローディングオーバーレイを
+    // 出さず、失敗時も既存の表示を壊さない。初回とユーザー操作由来の
+    // 読み込みは従来どおり全体オーバーレイ+エラー表示。
+    if (!silent) setLoading(true);
     hideError();
 
     try {
@@ -496,6 +539,12 @@ document.addEventListener("DOMContentLoaded", () => {
         .filter(Boolean);
 
       if (!normalizedList.length) {
+        if (silent) {
+          console.warn(
+            "[Observatory] Refresh returned no stocks; keeping current data",
+          );
+          return;
+        }
         showError("表示可能な銘柄データを取得できませんでした。");
         return;
       }
@@ -506,12 +555,14 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       if (err.name !== "AbortError" && isCurrentRequest()) {
         console.error("[Observatory] Load error:", err);
-        const reason =
-          err?.details?.reason ||
-          err?.data?.details?.reason ||
-          err?.message ||
-          "接続を確認してください。";
-        showError(`市場データの取得に失敗しました（${reason}）`);
+        if (!silent) {
+          const reason =
+            err?.details?.reason ||
+            err?.data?.details?.reason ||
+            err?.message ||
+            "接続を確認してください。";
+          showError(`市場データの取得に失敗しました（${reason}）`);
+        }
       }
     }
   }
@@ -566,10 +617,64 @@ document.addEventListener("DOMContentLoaded", () => {
   // Start initial load
   loadObservatoryData();
 
+  // (L27, 2026-11-07 review) 観測所は初期マウント時に一度だけデータを読み
+  // 込んでいたため、ページは LIVE バッジを表示したまま価格が永遠に凍結
+  // していた。可視復帰時と可視中の低頻度間隔で(既存のgeneration/abort
+  // ガードを再利用して)サイレント再取得する。 hidden 中は何もしない。
+  const OBSERVATORY_REFRESH_INTERVAL_MS = 60000;
+  let observatoryRefreshTimer = null;
+  let observatoryUnloadHandlers = [];
+
+  startObservatoryRefresh();
+
+  function observatoryRefreshHandler() {
+    // hidden 中は何も取得しない(renderer も rAF を止めている)。
+    // 読み込み中の再取得も安全: loadObservatoryData は generation/abort
+    // ガードで古い要求を無効化し、最後の応答のみが採用される。
+    if (document.hidden) return;
+    loadObservatoryData(0, null, { silent: true });
+  }
+
+  function startObservatoryRefresh() {
+    if (typeof document.addEventListener === "function") {
+      observatoryUnloadHandlers.push([
+        document,
+        "visibilitychange",
+        observatoryVisibilityRefresh,
+      ]);
+      document.addEventListener(
+        "visibilitychange",
+        observatoryVisibilityRefresh,
+      );
+    }
+    if (typeof window.setInterval === "function") {
+      observatoryRefreshTimer = window.setInterval(
+        observatoryIntervalRefresh,
+        OBSERVATORY_REFRESH_INTERVAL_MS,
+      );
+    }
+  }
+
+  function observatoryVisibilityRefresh() {
+    observatoryRefreshHandler();
+  }
+
+  function observatoryIntervalRefresh() {
+    observatoryRefreshHandler();
+  }
+
   // Cleanup on unload
   window.addEventListener("beforeunload", () => {
     loadGeneration += 1;
     cancelObservatoryLoadRetry();
+    if (observatoryRefreshTimer !== null) {
+      window.clearInterval(observatoryRefreshTimer);
+      observatoryRefreshTimer = null;
+    }
+    observatoryUnloadHandlers.forEach(([target, type, fn]) => {
+      target.removeEventListener(type, fn);
+    });
+    observatoryUnloadHandlers = [];
     renderer.destroy();
     gestureController.destroy();
     temporalController.destroy();

@@ -490,6 +490,10 @@ const getTransitionFallbackMs = (el, extraPaddingMs = 80) => {
 
 // #region Cache Eviction
 const PREFETCH_CACHE_MAX_SIZE = 50;
+// (L25, 2026-11-07 review) stockDetailsCache は閲覧した銘柄詳細を
+// 永続キャッシュしていた(銘柄の削除・リスト変更後も残る)ため、
+// historyPrefetchCache と同じ 50 銘柄上限の FIFO 退避に統一する。
+const STOCK_DETAILS_CACHE_MAX_SIZE = 50;
 
 function _enforcePrefetchCacheLimit() {
   // FIFO eviction: remove oldest entries when exceeding maxSize
@@ -498,6 +502,16 @@ function _enforcePrefetchCacheLimit() {
     const firstKey = historyPrefetchCache.keys().next().value;
     if (firstKey) {
       historyPrefetchCache.delete(firstKey);
+    }
+  }
+}
+
+function _enforceStockDetailsCacheLimit() {
+  // FIFO eviction: remove oldest entries when exceeding maxSize
+  if (stockDetailsCache.size >= STOCK_DETAILS_CACHE_MAX_SIZE) {
+    const firstKey = stockDetailsCache.keys().next().value;
+    if (firstKey) {
+      stockDetailsCache.delete(firstKey);
     }
   }
 }

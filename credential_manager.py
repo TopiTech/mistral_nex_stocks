@@ -7,6 +7,7 @@ config_utils.py から抽出した API 鍵・シークレットキー管理関�
 import copy
 import ipaddress
 import logging
+import math
 import os
 import secrets
 import time
@@ -597,6 +598,7 @@ def get_api_credential_state() -> dict[str, Any]:
     from constants import (
         LANGSEARCH_API_KEY_MIN_LENGTH,
         MISTRAL_API_KEY_MIN_LENGTH,
+        SSE_HEARTBEAT_INTERVAL,
         TAVILY_API_KEY_MIN_LENGTH,
     )
 
@@ -630,6 +632,9 @@ def get_api_credential_state() -> dict[str, Any]:
         "mistral_api_key_min_length": MISTRAL_API_KEY_MIN_LENGTH,
         "langsearch_api_key_min_length": LANGSEARCH_API_KEY_MIN_LENGTH,
         "tavily_api_key_min_length": TAVILY_API_KEY_MIN_LENGTH,
+        # (L12) expose the effective SSE heartbeat cadence so the frontend
+        # can scale its watchdog timeout to deployments with long intervals.
+        "sse_heartbeat_interval": SSE_HEARTBEAT_INTERVAL,
     }
 
 
@@ -770,6 +775,15 @@ def get_or_create_extension_api_token() -> str:
                         created_ts_f = float(created_ts) if created_ts else 0.0
                     except (ValueError, TypeError, OverflowError):
                         created_ts_f = 0.0
+                if not math.isfinite(created_ts_f):
+                    # json.load accepts NaN/Infinity literals, so a corrupted
+                    # config can persist a non-finite timestamp. NaN defeats
+                    # BOTH consumers of this value: `created_ts_f > 0` is
+                    # False (rotation never triggers) while `not created_ts_f`
+                    # is also False (the self-heal backfill never triggers),
+                    # so a leaked token would never rotate and never recover.
+                    # Normalize to 0.0 so the backfill below heals the entry.
+                    created_ts_f = 0.0
                 if (
                     max_age_sec > 0
                     and created_ts_f > 0

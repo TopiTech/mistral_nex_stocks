@@ -324,7 +324,11 @@ function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
     cleanup();
   });
 
-  // Auto restore after 6 seconds of inactivity (store timer so onConfirm can cancel it)
+  // (L24, 2026-11-07 review) the auto-restore must never fire while the
+  // deletion request is still in flight: re-showing the delete button mid-
+  // request let the user submit a second POST for the same symbol and race
+  // the backend. The yes handler clears the timer before confirming; the
+  // in-flight Set guard in executeDeleteStock dedupes any residual click.
   const autoRestoreTimer = setTimeout(() => {
     if (group.parentElement) cleanup();
   }, 6000);
@@ -333,6 +337,14 @@ function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
     clearTimeout(autoRestoreTimer);
     _origCleanup();
   };
+  yesBtn.addEventListener(
+    "click",
+    (e) => {
+      e.stopPropagation();
+      clearTimeout(autoRestoreTimer);
+    },
+    { capture: true },
+  );
 }
 
 /**
@@ -342,15 +354,20 @@ function attachInlineDeleteConfirm(container, originalBtn, onConfirm) {
  */
 async function readSettingsApiResponse(res) {
   const payload = await res.text();
-  let data = {};
+  // Every success path assigns below; the thrown parse error carries the
+  // original exception for diagnostics (M36: preserve-caught-error).
+  let data;
   try {
     data = payload ? JSON.parse(payload) : {};
   } catch (_parseErr) {
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`, {
+        cause: _parseErr,
+      });
     }
     throw new Error(
       `サーバー応答の解析に失敗しました: ${payload ? payload.slice(0, 200) : "(empty)"}`,
+      { cause: _parseErr },
     );
   }
   if (!res.ok) {
@@ -364,7 +381,14 @@ async function readSettingsApiResponse(res) {
   return data;
 }
 
+const deletingStockKeys = new Set();
 async function executeDeleteStock(market, symbol) {
+  // (L24, 2026-11-07 review) dedupe in-flight deletions for the same symbol:
+  // the confirm UI previously allowed a second POST while the first was
+  // still in flight (slow server >6s), producing a duplicated backend race.
+  const key = `${market}:${symbol}`;
+  if (deletingStockKeys.has(key)) return;
+  deletingStockKeys.add(key);
   try {
     const res = await csrfFetch("/api/stocks/delete", {
       method: "POST",
@@ -377,6 +401,8 @@ async function executeDeleteStock(market, symbol) {
   } catch (e) {
     logger.error(e);
     showToast(`削除に失敗しました: ${e.message || "不明なエラー"}`, "#ff7d7d");
+  } finally {
+    deletingStockKeys.delete(key);
   }
 }
 
@@ -1358,8 +1384,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (oaUrl) payload.openai_base_url = oaUrl;
         if (oaModel) payload.openai_model = oaModel;
-        // 空文字は保存層で「存続値の上書き(実質クリア)」になるため、
-        // 兄弟フィールドと同じく入力があるときのみ送信する。
+        // 保存層は空文字を「クリア」ではなく「変更なし」として保護された既存値を
+        // 保持する仕様(test_save_api_credentials_preserves_protected_langsearch_when_blank)。
+        // API キーをクリアするには DELETE /api/credentials(全キー一括)を使う。
+        // そのため入力があるときのみ送信する。
         if (oaEmb) payload.openai_embeddings_model = oaEmb;
         if (oaKey) payload.openai_api_key = oaKey;
       } else {

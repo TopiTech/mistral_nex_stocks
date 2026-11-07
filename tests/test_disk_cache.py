@@ -261,9 +261,10 @@ class TestStockDiskCache(unittest.TestCase):
         long_key = "x" * 500
         self.cache.set(long_key, "value")
         result = self.cache.get(long_key)
-        # Key is truncated but the value should still be retrievable
-        # (we can't easily test the exact truncated key, just that it doesn't crash)
-        self.assertIsInstance(result, (str, type(None)))
+        # M34 (2026-11-07 review): the previous assertion accepted both
+        # outcomes — a silent write-drop (None) passed the same way as the
+        # documented transparent truncation. Truncation must be invisible.
+        self.assertEqual(result, "value")
 
     def test_corrupt_json_returns_none(self):
         self.cache.set("good", "data")

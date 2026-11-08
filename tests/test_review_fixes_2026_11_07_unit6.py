@@ -292,33 +292,29 @@ def test_interpolator_writeback_rejects_stale_snapshot():
             ), patch.object(
                 sse_interpolator, "_get_app_bg_attr", lambda name, default=None: default
             ):
-                # Stop the loop right after the first iteration.
+                # Stop the loop right after the first iteration in the test thread.
                 real_shutdown = app_state.execution.shutdown_event
-                stop = threading.Event()
+                test_thread_id = threading.get_ident()
 
                 class _StopAfterOne:
                     def __init__(self, inner):
                         self._inner = inner
-                        self._iter = 0
+                        self._test_thread_iter = 0
 
                     def __getattr__(self, name):
                         return getattr(self._inner, name)
 
                     def is_set(self):
-                        return self._iter > 1
+                        if threading.get_ident() == test_thread_id:
+                            return self._test_thread_iter > 1
+                        return self._inner.is_set()
 
                     def wait(self, timeout=None):
-                        self._iter += 1
-                        if self._iter > 1:
-                            return True
-                        # Let the loop body run one iteration's compute,
-                        # which performs the concurrent publish.
-                        import time as _t
-
-                        deadline = _t.time() + (timeout or 2.0)
-                        while _t.time() < deadline and not stop.is_set():
-                            _t.sleep(0.01)
-                        return self.is_set()
+                        if threading.get_ident() == test_thread_id:
+                            self._test_thread_iter += 1
+                            # First wait before the loop: return False immediately so compute proceeds
+                            return self._test_thread_iter > 1
+                        return self._inner.wait(timeout)
 
                 app_state.execution.shutdown_event = _StopAfterOne(real_shutdown)
                 try:

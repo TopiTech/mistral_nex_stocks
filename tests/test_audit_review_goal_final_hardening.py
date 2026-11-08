@@ -1,7 +1,7 @@
 """
 Regression test suite for autonomous full-codebase review & hardening (2026).
 Covers:
-1. routes/stocks/views.py: _parse_strict_float rejects Python and NumPy booleans.
+1. routes/stocks/views.py: the screener float parser rejects Python and NumPy booleans.
 2. routes/stocks/views.py: _parse_screener_float safely rejects booleans, NaN/Inf, invalid types.
 3. routes/stocks/views.py: api_screener filters correctly when stock items have boolean fields.
 4. routes/stocks/views.py: _safe_sort_key does not coerce booleans to 1.0 or 0.0.

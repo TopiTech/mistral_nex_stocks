@@ -300,11 +300,12 @@ def test_stock_errors_import_survives_missing_yf_exception_classes(monkeypatch):
     """An old yfiction build lacking the exception classes must not kill boot."""
     import importlib
 
+    import services.stock.errors as errors_mod
+
+    original_exc_mod = sys.modules.get("yfinance.exceptions")
     fake_exc_mod = types.ModuleType("yfinance.exceptions")
     # No attributes at all — every `from yfinance.exceptions import X` fails.
     monkeypatch.setitem(sys.modules, "yfinance.exceptions", fake_exc_mod)
-
-    import services.stock.errors as errors_mod
 
     reloaded = importlib.reload(errors_mod)
     try:
@@ -314,7 +315,15 @@ def test_stock_errors_import_survives_missing_yf_exception_classes(monkeypatch):
         # The text heuristic classifier still works with sentinels in place.
         assert reloaded._is_yfinance_rate_limit_error(RuntimeError("429 Too Many Requests"))
     finally:
-        del sys.modules["yfinance.exceptions"]
+        # Restore the *original* module object before reloading. Deleting the
+        # entry instead made the reload import a fresh module whose exception
+        # classes were not the ones every other test imports, so isinstance
+        # checks in the reloaded module silently stopped matching (the
+        # monkeypatch teardown then put the original module back).
+        if original_exc_mod is not None:
+            sys.modules["yfinance.exceptions"] = original_exc_mod
+        else:
+            sys.modules.pop("yfinance.exceptions", None)
         importlib.reload(errors_mod)
 
 

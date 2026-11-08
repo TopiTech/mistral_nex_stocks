@@ -169,7 +169,9 @@ def test_call_openai_chat_plain_text():
 
     with patch("httpx.Client.post", return_value=mock_resp), patch(
         "services.openai_service.app_state.ai.record_mistral_usage"
-    ) as mock_record:
+    ) as mock_mistral_record, patch(
+        "services.openai_service.app_state.ai.record_openai_usage"
+    ) as mock_openai_record:
         result = call_openai_chat(
             api_key="sk-test",
             messages=[{"role": "user", "content": "How is the market?"}],
@@ -179,7 +181,11 @@ def test_call_openai_chat_plain_text():
     assert "choices" in result
     msg = result["choices"][0]["message"]
     assert msg["content"] == "Market analysis is bullish."
-    mock_record.assert_called_once()
+    # AI-01: an OpenAI-compatible call is billed to the OpenAI counters only.
+    # Recording it to the Mistral counters as well inflated the Mistral
+    # call/token/cost panels by every OpenAI request.
+    mock_openai_record.assert_called_once()
+    mock_mistral_record.assert_not_called()
 
 
 def test_call_openai_chat_with_pydantic_schema():

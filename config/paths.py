@@ -31,4 +31,8 @@ def _get_runtime_data_dir() -> Path:
 
 
 def _ensure_runtime_dir() -> None:
-    config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # The directory holds the credential store and its rotation history. Every
+    # file inside is written 0o600, but a world-traversable directory still
+    # lets other local users enumerate those filenames, and any future file
+    # written without an explicit mode inherits the directory default (CFG-10).
+    config_store.APP_DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)

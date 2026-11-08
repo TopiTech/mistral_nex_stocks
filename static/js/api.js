@@ -313,6 +313,8 @@ const sseState = {
   reconnectTimer: null,
   /** @type {number|null} */
   fallbackPolling: null,
+  /** @type {boolean} */
+  fallbackPollInFlight: false,
   disconnectedSince: 0,
   lastNotifyAt: 0,
   skeletonShownAt: 0,
@@ -366,7 +368,18 @@ function handleYfinanceRateLimitStatus(isLimited) {
 function startSseFallbackPolling() {
   if (sseState.fallbackPolling) return;
   sseState.fallbackPolling = setInterval(() => {
-    fetchInitialStocks();
+    // FE-01: fetchInitialStocks() aborts its predecessor, so a tick that fires
+    // while the previous request is still running would cancel it and the UI
+    // would never update. Skip the tick instead of restarting the request.
+    if (sseState.fallbackPollInFlight) return;
+    sseState.fallbackPollInFlight = true;
+    Promise.resolve(fetchInitialStocks())
+      .catch((err) => {
+        $logger.warn("[startSseFallbackPolling] poll failed:", err);
+      })
+      .finally(() => {
+        sseState.fallbackPollInFlight = false;
+      });
   }, 30000);
 }
 
@@ -1522,6 +1535,9 @@ async function loadNews(forceRefresh = false) {
     const headers = {
       "Content-Type": "application/json",
     };
+    // FE-02: one token for the whole job so the server's polling-skip can
+    // recognise the retries instead of counting each one against the quota.
+    const newsRequestToken = createRequestToken();
 
     const newsRequestController = new AbortController();
     timeoutId = setTimeout(() => {
@@ -1533,6 +1549,7 @@ async function loadNews(forceRefresh = false) {
       {
         method: "POST",
         headers,
+        body: JSON.stringify({ request_token: newsRequestToken }),
         signal: newsRequestController.signal,
       },
       { showToast: false },
@@ -1560,6 +1577,7 @@ async function loadNews(forceRefresh = false) {
           {
             method: "POST",
             headers,
+            body: JSON.stringify({ request_token: newsRequestToken }),
             signal: newsRequestController.signal,
           },
           { showToast: false },

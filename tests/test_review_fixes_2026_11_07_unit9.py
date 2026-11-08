@@ -101,9 +101,22 @@ def test_native_host_rotating_handler_keeps_0600_across_rollover() -> None:
     _rollover_and_assert_chmod_600(handler_cls)
 
 
-def test_native_host_source_uses_restrictive_handler_for_log() -> None:
-    source = (ROOT / "native_host" / "native_host.py").read_text(encoding="utf-8")
-    assert "_file_handler = _RestrictiveRotatingFileHandler(" in source
+def test_native_host_source_uses_restrictive_handler_for_log(tmp_path) -> None:
+    """The native host log must go through the 0o600-preserving handler.
+
+    Asserted behaviourally: the handler construction moved into
+    ``_build_file_handler`` so a read-only data directory degrades instead of
+    killing the host at import time (NH-07), and pinning the old assignment
+    line would forbid that.
+    """
+    import native_host.native_host as nh_module
+
+    handler = nh_module._build_file_handler(tmp_path / "logs")
+    try:
+        assert isinstance(handler, nh_module._RestrictiveRotatingFileHandler)
+    finally:
+        if handler is not None:
+            handler.close()
 
 
 def test_eslint_config_enables_recommended_base() -> None:

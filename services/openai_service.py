@@ -21,6 +21,7 @@ import re
 import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from flask import current_app, g, has_app_context
@@ -41,6 +42,7 @@ from credential_manager import (
 )
 from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
+from utils.networking import validate_outbound_base_url
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
@@ -186,12 +188,19 @@ def verify_openai_connection(
 ) -> dict[str, Any]:
     """Verify connectivity with OpenAI-compatible endpoint and query available models."""
     target_url = (base_url or get_openai_base_url()).strip().rstrip("/")
+    # ROUTES-02: the base URL is caller-supplied. Reject link-local / cloud
+    # metadata targets before issuing any request, and never follow redirects
+    # (a 302 to 169.254.169.254 would bypass the host check entirely).
+    url_ok, url_reason = validate_outbound_base_url(target_url)
+    if not url_ok:
+        return {"ok": False, "valid": False, "error": url_reason, "latency_ms": 0}
+    target_host = (urlparse(target_url).hostname or "").lower()
     models_endpoint = f"{target_url}/models"
     headers = _build_openai_headers(api_key)
 
     start_ts = time.time()
     try:
-        with _create_httpx_client(timeout=timeout_sec, follow_redirects=True) as client:
+        with _create_httpx_client(timeout=timeout_sec, follow_redirects=False) as client:
             resp = client.get(models_endpoint, headers=headers)
             latency_ms = int((time.time() - start_ts) * 1000)
 
@@ -210,24 +219,22 @@ def verify_openai_connection(
                     "latency_ms": latency_ms,
                 }
             if resp.status_code >= 400:
-                err_text = ""
-                try:
-                    body = resp.json()
-                    err_text = (
-                        body.get("error", {}).get("message", "") if isinstance(body, dict) else ""
-                    )
-                except Exception:
-                    pass
+                # ROUTES-02: do not reflect the target's error body. It turned
+                # this endpoint into a read oracle for whatever internal service
+                # the caller pointed the base URL at.
                 return {
                     "ok": False,
                     "valid": False,
-                    "error": err_text or f"接続テスト失敗 (HTTP {resp.status_code})",
+                    "error": f"接続テスト失敗 (HTTP {resp.status_code})",
                     "latency_ms": latency_ms,
                 }
 
             # OpenRouter provides public unauthenticated access to /models.
             # If the target is OpenRouter, verify the API key with /auth/key.
-            if "openrouter.ai" in target_url:
+            # Match the parsed hostname, not a substring of the whole URL: a
+            # target like ``http://169.254.169.254/?openrouter.ai`` used to
+            # satisfy the substring test and reach the /auth/key branch.
+            if target_host == "openrouter.ai" or target_host.endswith(".openrouter.ai"):
                 if not api_key or not api_key.strip():
                     return {
                         "ok": False,
@@ -664,12 +671,12 @@ def call_openai_chat(
                     }
                 circuit_probe_claimed = True
             client = _get_openai_client(base_url, api_key)
+            payload_modified = False
             resp = client.post(endpoint, json=payload, headers=headers)
 
             # Retry handler for common 400 / 422 parameter rejections across diverse OpenAI providers
             if resp.status_code in (400, 422):
                 resp_text_lower = resp.text.lower()
-                modified = False
 
                 # 1. max_tokens / max_completion_tokens incompatibility
                 if (
@@ -686,14 +693,14 @@ def call_openai_chat(
                             model,
                         )
                         payload["max_completion_tokens"] = payload.pop("max_tokens")
-                        modified = True
+                        payload_modified = True
                     elif "max_completion_tokens" in payload:
                         logger.info(
                             "OpenAI model %s rejected max_completion_tokens. Retrying with max_tokens.",
                             model,
                         )
                         payload["max_tokens"] = payload.pop("max_completion_tokens")
-                        modified = True
+                        payload_modified = True
 
                 # 2. temperature rejected (e.g. o1/o3 only supports default temperature)
                 if "temperature" in resp_text_lower and "temperature" in payload:
@@ -703,7 +710,7 @@ def call_openai_chat(
                         resp.status_code,
                     )
                     payload.pop("temperature", None)
-                    modified = True
+                    payload_modified = True
 
                 # 3. Tools rejected (common for non-tool reasoning/chat models)
                 if tools and "tool" in resp_text_lower and "tools" in payload:
@@ -714,7 +721,7 @@ def call_openai_chat(
                     )
                     payload.pop("tools", None)
                     payload.pop("tool_choice", None)
-                    modified = True
+                    payload_modified = True
 
                 # 4. Reasoning effort rejected
                 if "reasoning" in resp_text_lower and "reasoning_effort" in payload:
@@ -724,7 +731,7 @@ def call_openai_chat(
                         resp.status_code,
                     )
                     payload.pop("reasoning_effort", None)
-                    modified = True
+                    payload_modified = True
 
                 # 5. response_format rejected
                 rf_reject_keywords = (
@@ -749,7 +756,7 @@ def call_openai_chat(
                             resp.status_code,
                         )
                         payload["response_format"] = {"type": "json_object"}
-                        modified = True
+                        payload_modified = True
                     else:
                         logger.info(
                             "OpenAI model %s rejected response_format (HTTP %d). Retrying without response_format.",
@@ -757,9 +764,9 @@ def call_openai_chat(
                             resp.status_code,
                         )
                         payload.pop("response_format", None)
-                        modified = True
+                        payload_modified = True
 
-                if modified:
+                if payload_modified:
                     resp = client.post(endpoint, json=payload, headers=headers)
 
             if resp.status_code >= 400:
@@ -844,7 +851,9 @@ def call_openai_chat(
             circuit_probe_claimed = False
             usage = data.get("usage")
             if isinstance(usage, dict):
-                app_state.ai.record_mistral_usage(usage, model=model)
+                # AI-01: this is an OpenAI-compatible call. Recording it to the
+                # Mistral counters too inflated the Mistral call/token/cost
+                # panels by every OpenAI request.
                 app_state.ai.record_openai_usage(usage, model=model)
 
             # Structured output & fallback post-processing
@@ -887,7 +896,12 @@ def call_openai_chat(
                     if reasoning_fallback:
                         data["choices"][0]["message"]["content"] = reasoning_fallback
 
-            if use_cache and _openai_response_has_content(data):
+            # AI-03: the 400/422 retry handler mutates ``payload`` (drops
+            # tools/temperature/response_format, swaps the token field). The
+            # cache key was built from the original request, so storing a
+            # degraded answer under it would replay a tool-less or schema-less
+            # response to a caller that asked for tools or a JSON schema.
+            if use_cache and not payload_modified and _openai_response_has_content(data):
                 with app_state.ai.mistral_response_lock:
                     app_state.ai.mistral_response_cache[cache_key] = copy.deepcopy(data)
 

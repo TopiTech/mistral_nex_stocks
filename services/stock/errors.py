@@ -109,6 +109,25 @@ def _is_yfinance_rate_limit_error(exc: Exception) -> bool:
 is_yfinance_rate_limit_error = _is_yfinance_rate_limit_error
 
 
+# Markers that unambiguously mean "this ticker does not exist". Broad phrases
+# are deliberately absent: ``requests`` formats every 404 as
+# "404 Client Error: Not Found for url: ..." and yfinance appends
+# "symbol may be delisted" to its transient no-price-data message, so either
+# phrase would classify a temporary outage as a dead ticker (SVC-DATA-01).
+_STRICT_INVALID_SYMBOL_MARKERS = (
+    "ticker does not exist",
+    "unknown symbol",
+    "invalid symbol",
+    "http error 404",
+)
+
+
+def _has_strict_invalid_symbol_marker(exc: Exception) -> bool:
+    """Return True only for text that unambiguously names a dead ticker."""
+    exc_text = str(exc).lower()
+    return any(marker in exc_text for marker in _STRICT_INVALID_SYMBOL_MARKERS)
+
+
 def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
     """Detect yfinance errors that mean the *symbol itself is invalid*.
 
@@ -124,38 +143,27 @@ def _is_yfinance_invalid_symbol_error(exc: Exception) -> bool:
       2. HTTP 404 status code on the underlying response object
       3. Text-based heuristics on the exception message (defense-in-depth)
     """
-    # Type-based check first: YFTickerMissingError is a strict indicator.
-    if isinstance(exc, YFTickerMissingError):
-        return True
-
     # HTTP 404 status code: a 404 from Yahoo means the symbol/ticker does not
     # exist (as opposed to 401/402/429/439 which are transient blocks).
     response = getattr(exc, "response", None)
     status_code = getattr(response, "status_code", None) if response is not None else None
+
+    # SVC-DATA-01: ``YFPricesMissingError`` subclasses ``YFTickerMissingError``
+    # in current yfinance, so it must be classified BEFORE the strict type
+    # check. "No price data for this range" happens on market holidays,
+    # pre-open, and transient data gaps; treating it as an invalid symbol
+    # deleted valid watchlist entries after three sync cycles.
+    if isinstance(exc, YFPricesMissingError):
+        return status_code == 404 or _has_strict_invalid_symbol_marker(exc)
+
+    # Type-based check: YFTickerMissingError is a strict indicator.
+    if isinstance(exc, YFTickerMissingError):
+        return True
+
     if status_code == 404:
         return True
 
-    # Text-based heuristics on exception message
-    exc_text = str(exc).lower()
-    text_markers = (
-        "no data found",
-        "ticker does not exist",
-        "symbol may be delisted",
-        "delisted",
-        "unknown symbol",
-        "invalid symbol",
-        "http error 404",
-        "not found",
-        "could not find",
-    )
-    is_text_matched = any(marker in exc_text for marker in text_markers)
-
-    # YFPricesMissingError can occur on market holidays or transient data gaps.
-    # Treat it as invalid ONLY if accompanied by an explicit text marker or 404.
-    if isinstance(exc, YFPricesMissingError):
-        return is_text_matched
-
-    return is_text_matched
+    return _has_strict_invalid_symbol_marker(exc)
 
 
 def _handle_yf_rate_limit(exc: Exception, m_state: Any, context: str = "") -> float:

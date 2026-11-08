@@ -328,32 +328,26 @@ class NativeHostRateLimitTestCase(unittest.TestCase):
         """Normal traffic within limits should be allowed"""
         import native_host.native_host as nh_module
         from native_host.native_host import _check_rate_limit
+        from tests.test_support.native_host_state import isolated_native_host_rate_limit
 
-        old_timestamps = nh_module._rate_limit_timestamps.copy()
-        try:
-            nh_module._rate_limit_timestamps.clear()
+        with isolated_native_host_rate_limit(nh_module):
             self.assertTrue(_check_rate_limit())
-        finally:
-            nh_module._rate_limit_timestamps.clear()
-            nh_module._rate_limit_timestamps.extend(old_timestamps)
 
     def test_rate_limit_blocks_excessive_traffic(self):
         """Excessive traffic should be blocked"""
         import native_host.native_host as nh_module
         from native_host.native_host import _check_rate_limit
+        from tests.test_support.native_host_state import isolated_native_host_rate_limit
 
-        old_timestamps = nh_module._rate_limit_timestamps.copy()
         old_max = nh_module._NATIVE_RATE_LIMIT_MAX
         try:
-            nh_module._rate_limit_timestamps.clear()
-            nh_module._NATIVE_RATE_LIMIT_MAX = 3
-            self.assertTrue(_check_rate_limit())
-            self.assertTrue(_check_rate_limit())
-            self.assertTrue(_check_rate_limit())
-            self.assertFalse(_check_rate_limit())
+            with isolated_native_host_rate_limit(nh_module):
+                nh_module._NATIVE_RATE_LIMIT_MAX = 3
+                self.assertTrue(_check_rate_limit())
+                self.assertTrue(_check_rate_limit())
+                self.assertTrue(_check_rate_limit())
+                self.assertFalse(_check_rate_limit())
         finally:
-            nh_module._rate_limit_timestamps.clear()
-            nh_module._rate_limit_timestamps.extend(old_timestamps)
             nh_module._NATIVE_RATE_LIMIT_MAX = old_max
 
 

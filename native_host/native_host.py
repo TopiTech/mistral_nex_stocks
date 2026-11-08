@@ -11,6 +11,7 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from logging.handlers import RotatingFileHandler
@@ -138,21 +139,41 @@ _log_dir = Path(
     or os.environ.get("MNS_APP_DATA_DIR")
     or _default_log_dir
 )
-_log_dir.mkdir(parents=True, exist_ok=True)
-_file_handler = _RestrictiveRotatingFileHandler(
-    _log_dir / "native_host.log",
-    maxBytes=1024 * 1024,
-    backupCount=3,
-    encoding="utf-8",
-)
-_file_handler.setFormatter(SanitizedFormatter(_log_format))
+
+
+def _build_file_handler(log_dir: Path) -> logging.Handler | None:
+    """Create the rotating log handler, degrading gracefully.
+
+    NH-07 (2026-11-08 review): the directory was created at import time, so a
+    read-only or permission-denied data directory raised before the host could
+    answer a single message and the extension only saw a dead port. Logging is
+    diagnostics, not a prerequisite for the protocol.
+    """
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = _RestrictiveRotatingFileHandler(
+            log_dir / "native_host.log",
+            maxBytes=1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+    except OSError:
+        return None
+    handler.setFormatter(SanitizedFormatter(_log_format))
+    return handler
+
+
+_file_handler = _build_file_handler(_log_dir)
+if _file_handler is None:
+    _log_dir = Path(tempfile.gettempdir()) / "mistral_nex_stocks"
+    _file_handler = _build_file_handler(_log_dir)
 
 _stream_handler = logging.StreamHandler(sys.stderr)
 _stream_handler.setFormatter(SanitizedFormatter(_log_format))
 
 logging.basicConfig(
     level=logging.DEBUG,
-    handlers=[_file_handler, _stream_handler],
+    handlers=[h for h in (_file_handler, _stream_handler) if h is not None],
 )
 logger = logging.getLogger(__name__)
 
@@ -241,17 +262,156 @@ _NATIVE_RATE_LIMIT_WINDOW = _safe_float_env("NATIVE_HOST_RATE_LIMIT_WINDOW", 1.0
 _rate_limit_timestamps: list = []
 _rate_limit_lock = threading.Lock()
 
+# --- Cross-process sliding-window ledger (NH-01) ---
+# chrome.runtime.sendNativeMessage starts a *fresh* host process for every
+# message, so the in-memory windows below only ever held the current message
+# and neither budget could ever deny anything. Mirror both windows into a small
+# file guarded by an OS-level advisory lock so the window survives process
+# exit. The kernel releases the lock when a process dies, so a crashed host
+# cannot wedge the ledger.
+_RATE_LIMIT_LEDGER_PATH = _log_dir / "native_host_rate_limit.json"
+_RATE_LIMIT_LEDGER_LOCK_TIMEOUT = 2.0
+_rate_limit_ledger_disabled = False
+
+
+def _ledger_lock(fd: int) -> bool:
+    """Take an exclusive advisory lock on *fd*, waiting at most the timeout."""
+    deadline = time.monotonic() + _RATE_LIMIT_LEDGER_LOCK_TIMEOUT
+    while True:
+        try:
+            if os.name == "nt":
+                import msvcrt as _msvcrt
+
+                _msvcrt_mod = cast(Any, _msvcrt)
+                os.lseek(fd, 0, os.SEEK_SET)
+                _msvcrt_mod.locking(fd, _msvcrt_mod.LK_NBLCK, 1)
+            else:
+                import fcntl as _fcntl  # type: ignore[import-not-found]
+
+                _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)  # type: ignore[attr-defined]
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
+
+
+def _ledger_unlock(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt as _msvcrt
+
+            _msvcrt_mod = cast(Any, _msvcrt)
+            os.lseek(fd, 0, os.SEEK_SET)
+            _msvcrt_mod.locking(fd, _msvcrt_mod.LK_UNLCK, 1)
+        else:
+            import fcntl as _fcntl  # type: ignore[import-not-found]
+
+            _fcntl.flock(fd, _fcntl.LOCK_UN)  # type: ignore[attr-defined]
+    except OSError:
+        pass
+
+
+def _ledger_read(fd: int) -> dict:
+    """Read the ledger payload; a corrupt or empty file reads as empty."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    raw = b"".join(chunks).strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _ledger_write(fd: int, payload: dict) -> None:
+    # No fsync: the ledger is a rate-limit window, not durable data. Other
+    # processes read through the same page cache, so cross-process visibility
+    # does not need the flush, and fsync would add milliseconds to every IPC
+    # message.
+    data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, data)
+    os.ftruncate(fd, len(data))
+
+
+def _sliding_window_allow(bucket: str, timestamps: list, max_events: int, window: float) -> bool:
+    """Record one event in *bucket* if the window still has room.
+
+    The in-memory list is the in-process view, the ledger the cross-process
+    one. Both are pruned to the same cutoff and merged, so a burst spread over
+    several short-lived host processes is still counted once.
+    """
+    global _rate_limit_ledger_disabled
+    now = time.time()
+    cutoff = now - window
+    with _rate_limit_lock:
+        timestamps[:] = [t for t in timestamps if t > cutoff]
+        merged = list(timestamps)
+        fd = -1
+        locked = False
+        payload: dict = {}
+        if not _rate_limit_ledger_disabled:
+            try:
+                fd = os.open(_RATE_LIMIT_LEDGER_PATH, os.O_RDWR | os.O_CREAT, 0o600)
+            except OSError:
+                _rate_limit_ledger_disabled = True
+                logger.warning(
+                    "Rate-limit ledger unavailable at %s; using the in-process window only",
+                    _RATE_LIMIT_LEDGER_PATH,
+                    exc_info=True,
+                )
+                fd = -1
+        if fd >= 0:
+            locked = _ledger_lock(fd)
+            if locked:
+                try:
+                    payload = _ledger_read(fd)
+                except OSError:
+                    payload = {}
+                stored = payload.get(bucket)
+                if isinstance(stored, list):
+                    merged.extend(
+                        float(value)
+                        for value in stored
+                        if isinstance(value, (int, float)) and value > cutoff
+                    )
+            else:
+                logger.warning("Rate-limit ledger lock timed out; using the in-process window only")
+        merged = sorted(set(merged))
+        allowed = len(merged) < max_events
+        if allowed:
+            merged.append(now)
+        timestamps[:] = merged
+        if locked:
+            try:
+                payload[bucket] = merged
+                _ledger_write(fd, payload)
+            except OSError:
+                _rate_limit_ledger_disabled = True
+                logger.warning("Failed to persist the rate-limit ledger", exc_info=True)
+            finally:
+                _ledger_unlock(fd)
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        return allowed
+
 
 def _check_rate_limit():
     """IPCメッセージのレート制限をチェック（スライディングウィンドウ）"""
-    now = time.time()
-    with _rate_limit_lock:
-        cutoff = now - _NATIVE_RATE_LIMIT_WINDOW
-        _rate_limit_timestamps[:] = [t for t in _rate_limit_timestamps if t > cutoff]
-        if len(_rate_limit_timestamps) >= _NATIVE_RATE_LIMIT_MAX:
-            return False
-        _rate_limit_timestamps.append(now)
-        return True
+    return _sliding_window_allow(
+        "ipc", _rate_limit_timestamps, _NATIVE_RATE_LIMIT_MAX, _NATIVE_RATE_LIMIT_WINDOW
+    )
 
 
 # Stricter budget for actions that return secret material (shutdown token,
@@ -268,14 +428,12 @@ _token_action_timestamps: list = []
 
 def _check_token_action_rate_limit():
     """Rate limit for actions that disclose secrets (sliding window)."""
-    now = time.time()
-    with _rate_limit_lock:
-        cutoff = now - _NATIVE_TOKEN_ACTION_WINDOW
-        _token_action_timestamps[:] = [t for t in _token_action_timestamps if t > cutoff]
-        if len(_token_action_timestamps) >= _NATIVE_TOKEN_ACTION_MAX:
-            return False
-        _token_action_timestamps.append(now)
-        return True
+    return _sliding_window_allow(
+        "token",
+        _token_action_timestamps,
+        _NATIVE_TOKEN_ACTION_MAX,
+        _NATIVE_TOKEN_ACTION_WINDOW,
+    )
 
 
 def _token_action_allowed():
@@ -733,6 +891,13 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
             None,
         )
         if not res or not h_store:
+            # NH-06 (2026-11-08 review): CryptQueryObject can hand back a
+            # message handle even when the store handle is NULL, and the early
+            # return leaked it. Close whatever was allocated.
+            if h_store:
+                crypt32.CertCloseStore(h_store, 0)
+            if h_msg:
+                crypt32.CryptMsgClose(h_msg)
             return None
 
         subjects: list[str] = []

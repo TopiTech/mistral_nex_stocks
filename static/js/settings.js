@@ -15,6 +15,9 @@ let stocksLoadGeneration = 0;
 let _currentCredentialsData = null;
 // 移動操作の多重実行ガード: 連打で同一スワップが2回適用されるのを防ぐ。
 const stocksMoveInFlight = new Set();
+// 全銘柄初期化の多重実行ガード: 確認クリック中に再度クリックすると
+// 2 本目の POST が走っていた (FE-03)。
+let resetAllStocksInFlight = false;
 
 // getSortOrder は utils.js で定義済み(全ページ共通)。
 // saveSortOrder は本ページで使う localStorage 保存ユーティリティ。
@@ -408,6 +411,10 @@ async function executeDeleteStock(market, symbol) {
 
 async function resetAllStocks() {
   const resetBtn = document.getElementById("reset-btn");
+  // (FE-03, 2026-11-08 review) the confirm flow only guarded the *first*
+  // click: a third click re-armed __isConfirming and a fourth fired a second
+  // POST while the first was still in flight. Guard the request itself.
+  if (resetAllStocksInFlight) return;
   if (resetBtn && !resetBtn.__isConfirming) {
     resetBtn.__isConfirming = true;
     const originalText = resetBtn.textContent;
@@ -429,6 +436,12 @@ async function resetAllStocks() {
     resetBtn.__isConfirming = false;
   }
 
+  resetAllStocksInFlight = true;
+  if (resetBtn) {
+    resetBtn.disabled = true;
+    resetBtn.textContent = "初期化中...";
+  }
+
   try {
     const res = await csrfFetch("/api/stocks/reset", { method: "POST" });
     await readSettingsApiResponse(res);
@@ -448,7 +461,9 @@ async function resetAllStocks() {
       "#ff7d7d",
     );
   } finally {
+    resetAllStocksInFlight = false;
     if (resetBtn) {
+      resetBtn.disabled = false;
       resetBtn.textContent = "⚠️ すべての追加銘柄を削除して初期化";
       resetBtn.style.background = "";
     }

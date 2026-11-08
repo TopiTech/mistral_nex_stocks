@@ -1481,8 +1481,15 @@
         targetPrice !== null && targetPrice > 0 ? String(targetPrice) : "100",
       );
       addBtn.setAttribute("data-weight", String(weightPct));
+      // (FE-08, 2026-11-08 review) the top-level copy button guards against
+      // double submits but this per-card one did not: a double click queued
+      // two POSTs and the second overwrote the first's target/weight.
       addBtn.addEventListener("click", () => {
-        copyAiPortfolioToMy([item]);
+        if (addBtn.disabled) return;
+        addBtn.disabled = true;
+        void copyAiPortfolioToMy([item]).finally(() => {
+          addBtn.disabled = false;
+        });
       });
 
       footer.appendChild(favBtn);

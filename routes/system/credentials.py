@@ -516,23 +516,27 @@ def api_credentials_verify():
 
             agent = None
             beta_api = getattr(client, "beta", None)
-            from unittest.mock import Mock
-            if beta_api and hasattr(beta_api, "agents") and hasattr(beta_api.agents, "get") and isinstance(beta_api.agents.get, Mock):
+            agents_api = getattr(beta_api, "agents", None) if beta_api is not None else None
+            get_agent = getattr(agents_api, "get", None) if agents_api is not None else None
+
+            # Prefer the already-authenticated client: it is the same credential
+            # the caller just verified, and it avoids constructing a second SDK
+            # client. ``load_sdk_agent`` stays as the fallback for SDK builds
+            # that do not expose ``beta.agents``.
+            if callable(get_agent):
                 try:
-                    agent = beta_api.agents.get(agent_id=agent_id.strip())
-                except Exception:
-                    pass
+                    agent = get_agent(agent_id=agent_id.strip())
+                except Exception as client_err:
+                    current_app.logger.debug("client.beta.agents.get failed: %s", client_err)
 
             if agent is None and HAS_AGENTS_SDK and mistral_agents is not None:
                 try:
                     agent = load_sdk_agent(agent_id.strip(), api_key=api_key)
                 except Exception as sdk_err:
-                    current_app.logger.debug("load_sdk_agent fallback to client: %s", sdk_err)
+                    current_app.logger.debug("load_sdk_agent fallback failed: %s", sdk_err)
 
             if agent is None:
-                if beta_api and hasattr(beta_api, "agents") and hasattr(beta_api.agents, "get"):
-                    agent = beta_api.agents.get(agent_id=agent_id.strip())
-                else:
+                if not callable(get_agent):
                     sdk_err_msg = "Agents SDK (mistralai-agents) が現在のSDKでサポートされていません。"
                     return error_response(
                         ErrorCode.INVALID_API_KEY,
@@ -541,6 +545,9 @@ def api_credentials_verify():
                         details={"reason": sdk_err_msg},
                         extra_fields={"code": "INVALID_API_KEY", "valid": False},
                     )
+                # Both lookup paths failed. Surface it through the unified
+                # envelope instead of retrying the same call a second time.
+                raise RuntimeError(f"Agent {agent_id.strip()} could not be retrieved")
 
             latency_ms = int((time.time() - start_ts) * 1000)
             agent_model = getattr(agent, "model", None) if agent else ""

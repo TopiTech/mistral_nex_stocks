@@ -95,8 +95,13 @@ def test_native_host_rate_limit_env_rejects_unsafe_windows_and_counts():
             )
         assert native_host_module._NATIVE_RATE_LIMIT_MAX == 1
         assert native_host_module._NATIVE_RATE_LIMIT_WINDOW == 0.001
-        assert native_host_module._check_rate_limit() is True
-        assert native_host_module._check_rate_limit() is False
+        # The clamp above is the contract under test. The behavioural check
+        # needs a frozen clock: with a 1 ms window the two calls race the
+        # wall clock (and the cross-process ledger's file I/O) instead of the
+        # limiter, which made the assertion order- and machine-dependent.
+        with patch("time.time", return_value=1_000_000.0):
+            assert native_host_module._check_rate_limit() is True
+            assert native_host_module._check_rate_limit() is False
 
         native_host_module._NATIVE_TOKEN_ACTION_MAX = _safe_int_env("TEST_RATE_MAX", 3, min_value=1)
         native_host_module._NATIVE_TOKEN_ACTION_WINDOW = _safe_float_env(
@@ -112,8 +117,9 @@ def test_native_host_rate_limit_env_rejects_unsafe_windows_and_counts():
             )
         assert native_host_module._NATIVE_TOKEN_ACTION_MAX == 1
         assert native_host_module._NATIVE_TOKEN_ACTION_WINDOW == 0.001
-        assert native_host_module._token_action_allowed() is True
-        assert native_host_module._token_action_allowed() is False
+        with patch("time.time", return_value=1_000_000.0):
+            assert native_host_module._token_action_allowed() is True
+            assert native_host_module._token_action_allowed() is False
     finally:
         native_host_module._NATIVE_RATE_LIMIT_MAX = old_rate_max
         native_host_module._NATIVE_RATE_LIMIT_WINDOW = old_rate_window

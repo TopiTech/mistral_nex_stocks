@@ -44,7 +44,11 @@ BASE_DIR = Path(__file__).resolve().parent
 # Log level resolution
 # ---------------------------------------------------------------------------
 _LOG_LEVEL_NAME = (os.environ.get("BACKEND_LOG_LEVEL", "INFO") or "INFO").upper()
-LOG_LEVEL: int = getattr(logging, _LOG_LEVEL_NAME, logging.INFO)
+# ``getattr(logging, name)`` also resolves non-level attributes (``basicConfig``,
+# ``getLogger``, ...), which would put a function into ``LOG_LEVEL`` and crash
+# ``setLevel`` at startup with a traceback that never mentions the env var.
+# Restrict the lookup to the registered level names (CFG-08).
+LOG_LEVEL: int = logging.getLevelNamesMapping().get(_LOG_LEVEL_NAME, logging.INFO)
 
 # ---------------------------------------------------------------------------
 # Detailed API log path set (used in app.py for request tracing)

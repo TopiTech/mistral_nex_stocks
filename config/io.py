@@ -14,7 +14,6 @@ import logging
 import os
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 import config_store
@@ -321,7 +320,7 @@ def load_config() -> dict[str, Any]:
             # corrupt backup and no defaults fallback (M26, 2026-11-07 review).
             config_store._CONFIG_CORRUPTED = True
             corrupt_backup = config_store.CONFIG_FILE.with_suffix(
-                config_store.CONFIG_FILE.suffix + f".corrupt.{datetime.now(UTC):%Y%m%d%H%M%S}.bak"
+                config_store.CONFIG_FILE.suffix + f".corrupt.{uuid.uuid4().hex}.bak"
             )
             try:
                 _sanitize_and_backup_corrupt_config(config_store.CONFIG_FILE, corrupt_backup)
@@ -468,7 +467,7 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 # on the documented fail-closed contract instead of silently
                 # destroying the file.
                 corrupt_backup = config_store.CONFIG_FILE.with_suffix(
-                    config_store.CONFIG_FILE.suffix + f".corrupt.{datetime.now(UTC):%Y%m%d%H%M%S}.bak"
+                    config_store.CONFIG_FILE.suffix + f".corrupt.{uuid.uuid4().hex}.bak"
                 )
                 try:
                     _sanitize_and_backup_corrupt_config(config_store.CONFIG_FILE, corrupt_backup)

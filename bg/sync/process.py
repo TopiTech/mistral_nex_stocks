@@ -31,7 +31,7 @@ from route_helpers import (
     invalidate_stock_caches,
     remove_stock_from_caches,
 )
-from services.stock_provider import YFTickerMissingError
+from services.stock_provider import YFRateLimitError, YFTickerMissingError
 from utils.market_utils import is_market_open
 from utils.normalization import is_bool_like
 from utils.stock_payload import (
@@ -447,6 +447,7 @@ def _update_indices_data(
                 IndexError,
                 TypeError,
                 YFTickerMissingError,
+                YFRateLimitError,
             ) as safety_exc:
                 logger.warning("Safety net failed for %s: %s", key, safety_exc)
     if new_header_data:

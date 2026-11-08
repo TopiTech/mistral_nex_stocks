@@ -171,14 +171,6 @@ def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
     return scope
 
 
-def _get_operation_token(data: dict[str, Any]) -> str | None:
-    """Validate the client operation token used to resume one async job."""
-    token = data.get("request_token")
-    if not isinstance(token, str) or not _OPERATION_TOKEN_RE.fullmatch(token):
-        return None
-    return token
-
-
 def _normalize_for_history(content: object) -> str:
     """Normalize assistant content for chat history persistence.
 
@@ -1156,7 +1148,10 @@ def _is_cacheable_news_bundle(bundle: Any) -> bool:
 
 
 @api_analysis_bp.route("/api/news", methods=["POST"])
-@rate_limit(max_requests=20, window_seconds=60)
+# FE-02: the client polls this endpoint while a summary is generating (up to
+# ~30 requests per job). Without the polling-skip the first slow job consumed
+# the whole 20/60s budget and the next modal open got a 429.
+@rate_limit(max_requests=20, window_seconds=60, skip_polling_duplicates=True)
 def api_news():
     """ニュースAPIエンドポイント
 

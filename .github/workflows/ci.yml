@@ -158,7 +158,10 @@ jobs:
               my $c = do { local $/; <$fh> };
               while ($c =~ /<script\b([^>]*)>/g) {
                 my $attrs = $1;
-                if ($attrs =~ /src="https:\/\// && $attrs !~ /integrity="sha384-/) {
+                # CI-SRI-1 (2026-11-08 review): the previous patterns required
+                # double quotes, so a single-quoted or unquoted src/integrity
+                # made the gate pass silently. Accept any quoting style.
+                if ($attrs =~ /\bsrc\s*=\s*["']?https:\/\// && $attrs !~ /\bintegrity\s*=\s*["']?sha384-/) {
                   print "MISSING SRI in $f\n";
                   exit 1;
                 }
@@ -216,6 +219,13 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install frontend dependencies
+        # CI-GEN-1 (2026-11-08 review): tests/test_api_client_build.py skips
+        # unless node_modules/typescript and node_modules/prettier exist, so
+        # the generated-artifact assertion never ran in this job. The Node
+        # setup above exists precisely so node-gated tests cannot vanish.
+        run: npm ci
+
       - name: Install test dependencies
         run: uv sync --locked --group test --python ${{ matrix.python-version }}
 
@@ -263,8 +273,11 @@ jobs:
         # election fcntl branch) previously executed ON NO CI JOB at all —
         # production is Linux/gunicorn. Select the platform guarded tests
         # by their documented naming conventions.
+        # CI-POSIX-1 (2026-11-08 review): the selector listed "0600" but the
+        # permission tests are named "..._0o600", which is not a substring
+        # match, so they were silently excluded. "0o600" and "umask" added.
         run: >
           uv run --locked --group test python -m pytest tests/
           -q --timeout=60 --timeout-method=thread
-          -k "posix or flock or fcntl or 0600 or permission"
+          -k "posix or flock or fcntl or 0600 or 0o600 or permission or umask"
           -m "not network" --no-header -p no:randomly

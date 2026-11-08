@@ -48,7 +48,7 @@ from constants import (
     SSE_YAHOO_FETCH_MARKET_OPEN_SLEEP,
     SSE_YAHOO_FETCH_NO_LISTENER_SLEEP,
 )
-from services.stock_provider import YFTickerMissingError
+from services.stock_provider import YFRateLimitError, YFTickerMissingError
 from utils.market_utils import is_market_open
 
 logger = logging.getLogger("bg.sync_worker")
@@ -184,6 +184,7 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
         OSError,
         RuntimeError,
         YFTickerMissingError,
+        YFRateLimitError,
     ):
         logger.exception("sync_all_stocks_now error")
         raise

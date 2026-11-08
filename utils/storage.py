@@ -462,7 +462,15 @@ def load_user_stocks(force=False):
             )
         except Exception as exc:
             logger.debug("Failed registering loaded symbols with RealtimeMarketEngine: %s", exc)
-    except (OSError, json.JSONDecodeError) as exc:
+    except Exception as exc:
+        # U-01: this handler is the only thing that arms the destructive-save
+        # guard (``user_stocks_load_error``). Narrowing it to
+        # ``(OSError, json.JSONDecodeError)`` let ``RuntimeError`` from
+        # ``get_or_create_master_key()`` (undecodable key, missing keyring,
+        # production without MNS_MASTER_KEY) and crypto ``InvalidToken`` escape
+        # unmarked, so the next ``save_user_stocks()`` overwrote a recoverable
+        # encrypted portfolio with the empty in-memory state. Any failure to
+        # load must fail closed, so the breadth here is deliberate.
         _mark_user_stocks_load_failure(f"Failed to load user stocks: {exc}")
 
 
@@ -804,7 +812,20 @@ def save_user_stocks():
 
             with app_state.market.user_stocks_lock:
                 app_state.market.user_stocks_rev += 1
-                app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
+                # The write already succeeded (tmp + fsync + os.replace). The
+                # mtime read is best-effort observability: a transient OSError
+                # here (Windows sharing violation, AV scanner holding the
+                # handle) must not turn a durable save into a reported failure,
+                # because callers would then roll back in-memory state that the
+                # disk already reflects.
+                try:
+                    app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
+                except OSError as stat_exc:
+                    logger.debug(
+                        "Saved user stocks but could not read mtime for %s: %s",
+                        USER_STOCKS_FILE,
+                        stat_exc,
+                    )
 
         # register_symbols acquires yahoojp_scraper.lock; publish outside
         # user_stocks_lock to avoid deadlock with _pts_worker_loop (R-deadlock).

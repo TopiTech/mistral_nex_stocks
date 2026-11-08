@@ -644,13 +644,18 @@ class StockDiskCache:
         if not safe_prefix.strip("_"):
             logger.warning("delete_prefix called with non-alphanumeric prefix; ignoring")
             return 0
+        # Mirror ``_entry_path``: the filename keeps at most 120 sanitized
+        # characters before the digest, so a longer prefix would never match
+        # and the call would silently delete nothing.
+        safe_prefix = safe_prefix[:120]
         removed = 0
         try:
             with self._lock, self._process_lock():
                 for entry in self._cache_dir.glob("*.json"):
+                    # ``entry.stem`` is always ``<safe_key>_<digest>``, so an
+                    # equality check against the bare prefix can never match.
                     is_match = (
-                        entry.stem == safe_prefix
-                        or entry.stem.startswith(f"{safe_prefix}_")
+                        entry.stem.startswith(f"{safe_prefix}_")
                         or entry.stem.startswith(f"{safe_prefix}-")
                         or (safe_prefix.endswith(("_", "-")) and entry.stem.startswith(safe_prefix))
                     )

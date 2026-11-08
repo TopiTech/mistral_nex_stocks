@@ -28,11 +28,25 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
     does not accumulate runtime state that could be accidentally bundled,
     committed, or exposed.
     """
-    if target.exists() or not source.exists():
+    if not source.exists():
         return
     _ensure_runtime_dir()
     try:
-        shutil.copy2(source, target)
+        # O_EXCL makes the existence check atomic: two processes starting
+        # together cannot both stream into the same target and interleave a
+        # half-written config that load_config() then classifies as corrupt.
+        # Copying content (not metadata) also stops the legacy file's mode
+        # (e.g. 0o644 from a checkout) from being propagated onto the runtime
+        # config (CFG-11).
+        fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return
+    except OSError as exc:
+        logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
+        return
+    try:
+        with os.fdopen(fd, "wb") as dst, open(source, "rb") as src:
+            shutil.copyfileobj(src, dst)
         logger.info("Migrated legacy runtime file %s -> %s", source, target)
         try:
             source.unlink()
@@ -41,6 +55,11 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
             logger.warning("Failed to remove legacy runtime file %s: %s", source, rm_exc)
     except OSError as exc:
         logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
+        # Leave no partial target behind so a later attempt can retry.
+        try:
+            target.unlink()
+        except OSError:
+            pass
 
 
 def _write_and_replace_with_lock(

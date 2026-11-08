@@ -10,7 +10,7 @@ import queue
 import time
 from typing import Any
 
-from flask import Blueprint, Response, current_app, g, request
+from flask import Blueprint, current_app, g, request
 
 from app_state import app_state
 from constants import (
@@ -101,23 +101,6 @@ def api_screener() -> Any:
     min_pe = parsed.min_pe
     max_pe = parsed.max_pe
     limit_val = parsed.limit
-
-    def _parse_strict_float(raw: Any, field_name: str) -> float | None | tuple[Response, int]:
-        if raw is None or str(raw).strip() == "":
-            return None
-        try:
-            res = float(str(raw).strip())
-        except (ValueError, TypeError):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"{field_name} は数値で指定してください", "fields": [field_name]},
-            )
-        if not math.isfinite(res):
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={"reason": f"{field_name} は有限数で指定してください", "fields": [field_name]},
-            )
-        return res
 
     def _parse_screener_float(val: Any) -> float | None:
         if val is None or is_bool_like(val):

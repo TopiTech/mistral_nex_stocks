@@ -23,7 +23,7 @@ from bg.sync.state import (
     _get_app_bg_attr,
     _get_logger,
 )
-from services.stock_provider import YFTickerMissingError
+from services.stock_provider import YFRateLimitError, YFTickerMissingError
 from utils.http_utils import parse_retry_after
 from utils.market_utils import is_market_open
 from utils.normalization import (
@@ -111,6 +111,7 @@ def fetch_stock(
             IndexError,
             OSError,
             YFTickerMissingError,
+            YFRateLimitError,
         ) as e:
             logger.debug("Fetch failed for %s with period %s: %s", symbol, period, e)
             invalid = _invalid_tuple_if_applicable(symbol, e)
@@ -150,6 +151,7 @@ def fetch_stock(
         IndexError,
         OSError,
         YFTickerMissingError,
+        YFRateLimitError,
     ) as exc:
         _handle_yfinance_error(exc, symbol)
         logger.exception("Stock fetch failed (%s)", symbol)
@@ -249,7 +251,14 @@ def fetch_stocks_batch(
             downloaded = app_state.stock_provider.download_batch(
                 symbols, period=period, lightweight=lightweight
             )
-        except (RequestException, ValueError, TypeError, KeyError, OSError) as exc:
+        except (
+            RequestException,
+            ValueError,
+            TypeError,
+            KeyError,
+            OSError,
+            YFRateLimitError,
+        ) as exc:
             _handle_yfinance_error(exc, "batch_fetch")
             logger.warning(
                 "Batch fetch failed with exception: %s.",
@@ -352,7 +361,13 @@ def fetch_stocks_batch(
             try:
                 payload = fut.result()
                 results_map[sym_key] = payload
-            except (RequestException, ValueError, TypeError, RuntimeError) as exc:
+            except (
+                RequestException,
+                ValueError,
+                TypeError,
+                RuntimeError,
+                YFRateLimitError,
+            ) as exc:
                 logger.warning("Parallel fallback fetch failed for %s: %s", sym_key[0], exc)
                 results_map[sym_key] = _invalid_tuple_if_applicable(sym_key[0], exc)
         for fut in not_done:
@@ -413,6 +428,14 @@ def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None
             "volume": _fmt_vol(last_row.get("Volume")),
             "market_state": market_state,
         }
-    except (RequestException, ValueError, TypeError, KeyError, IndexError, OSError):
+    except (
+        RequestException,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        OSError,
+        YFRateLimitError,
+    ):
         logger.exception("Index fetch failed for %s", key)
         return None

@@ -436,32 +436,40 @@ def _run_coro_sync(coro: Any, timeout_sec: float | None = None) -> Any:
                 asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
             )
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
-            def _runner():
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
+        def _runner():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                task = asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
+                return new_loop.run_until_complete(task)
+            finally:
                 try:
-                    task = asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
-                    return new_loop.run_until_complete(task)
+                    pending = asyncio.all_tasks(new_loop)
+                    for t in pending:
+                        t.cancel()
+                    if pending:
+                        new_loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+                    new_loop.run_until_complete(new_loop.shutdown_asyncgens())
+                except Exception:
+                    pass
                 finally:
-                    try:
-                        pending = asyncio.all_tasks(new_loop)
-                        for t in pending:
-                            t.cancel()
-                        if pending:
-                            new_loop.run_until_complete(
-                                asyncio.gather(*pending, return_exceptions=True)
-                            )
-                        new_loop.run_until_complete(new_loop.shutdown_asyncgens())
-                    except Exception:
-                        pass
-                    finally:
-                        asyncio.set_event_loop(None)
-                        new_loop.close()
+                    asyncio.set_event_loop(None)
+                    new_loop.close()
 
+        try:
             future = executor.submit(_runner)
             return future.result(timeout=timeout_sec)
+        finally:
+            # AI-05: ``shutdown(wait=True)`` (the context-manager default)
+            # blocks until ``_runner`` returns, which defeats the timeout when
+            # the coroutine is stuck in a synchronous call that ``wait_for``
+            # cannot cancel. Abandon the worker instead of blocking the caller
+            # (and the semaphore slot it holds) forever.
+            executor.shutdown(wait=False)
     except TimeoutError as exc:
         # M9 (2026-11-07 review): the builtin TimeoutError subclasses OSError
         # on 3.11+, so the communication-error classifier would file it under
@@ -723,7 +731,7 @@ def _build_mistral_retry_config() -> RetryConfig | None:
     )
 
 
-def _clamp_max_tokens(max_tokens: int) -> int:
+def _clamp_max_tokens(max_tokens: int | None) -> int:
     """Clamp a requested token budget into the supported range.
 
     The floor (64) matches the previous behaviour. The ceiling is the
@@ -900,7 +908,7 @@ def _response_has_content(data: Any) -> bool:
 def call_mistral_chat(
     api_key: str,
     messages: list[Any],
-    max_tokens: int = 600,
+    max_tokens: int | None = None,
     use_cache: bool = True,
     response_format=None,
     tools=None,
@@ -929,10 +937,14 @@ def call_mistral_chat(
             if (api_key and not api_key.startswith("mns-preview"))
             else (get_openai_api_key() or "")
         )
+        # AI-04: ``None`` means "let the provider pick its default". The old
+        # code used the literal 600 as that sentinel, so an explicit
+        # ``max_tokens=600`` was silently replaced by the provider default
+        # (2500/4000 tokens) with no signal to the caller.
         effective_max_tokens: int | None = max_tokens
-        if max_tokens == 600:
-            effective_max_tokens = None
-        elif (response_format is not None) and (effective_max_tokens is not None and effective_max_tokens < 2500):
+        if (response_format is not None) and (
+            effective_max_tokens is not None and effective_max_tokens < 2500
+        ):
             effective_max_tokens = 2500
         return call_openai_chat(
             eff_key,

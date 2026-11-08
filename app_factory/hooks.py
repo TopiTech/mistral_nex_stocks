@@ -35,6 +35,10 @@ _CROSS_SITE_COSTLY_GET_PATHS = frozenset(
         "/api/trending",
         "/api/screener",
         "/api/stocks/stream",
+        # ROUTES-06: the legacy alias serves the same SSE stream. Omitting it
+        # let a cross-site EventSource bypass the Sec-Fetch-Site block and hold
+        # one of the MAX_SSE_LISTENERS slots (and a gthread worker) open.
+        "/stocks/stream",
         "/api/news",
         "/api/ai-portfolio",
     }

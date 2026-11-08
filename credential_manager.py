@@ -827,15 +827,19 @@ def require_extension_token(request_obj: Any) -> tuple[bool, str]:
         (True, "") on success, else (False, reason).
     """
     auth_header = request_obj.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        # Reject before resolving the token: provisioning it takes two
+        # exclusive cross-process config locks, so an unauthenticated caller
+        # must not be able to trigger that work (CFG-02).
+        return False, "invalid or missing extension token"
+    token = auth_header.removeprefix("Bearer ").strip()
     expected_token = get_or_create_extension_api_token()
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.removeprefix("Bearer ").strip()
-        # secrets.compare_digest() raises TypeError for str inputs containing
-        # non-ASCII characters; the header is attacker-controlled, so a
-        # non-ASCII token must be rejected here instead of crashing the
-        # endpoint with an unhandled 500 (DATA-3). Branching on ASCII-ness
-        # leaks nothing the attacker does not already control; the compare
-        # itself stays constant-time for ASCII inputs.
-        if token.isascii() and secrets.compare_digest(token, expected_token):
-            return True, ""
+    # secrets.compare_digest() raises TypeError for str inputs containing
+    # non-ASCII characters; the header is attacker-controlled, so a
+    # non-ASCII token must be rejected here instead of crashing the
+    # endpoint with an unhandled 500 (DATA-3). Branching on ASCII-ness
+    # leaks nothing the attacker does not already control; the compare
+    # itself stays constant-time for ASCII inputs.
+    if token.isascii() and secrets.compare_digest(token, expected_token):
+        return True, ""
     return False, "invalid or missing extension token"

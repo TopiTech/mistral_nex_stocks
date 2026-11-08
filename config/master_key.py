@@ -56,6 +56,35 @@ def get_or_create_master_key() -> str:
             "to become unreadable and lost upon next restart. Please set a persistent MNS_MASTER_KEY in your environment."
         )
 
+    # Fast path: reading an existing key needs no lock. ``load_config()`` is
+    # already serialized internally and keyed on the file's (mtime_ns, size),
+    # so a concurrent writer is observed without forcing a cache flush. Taking
+    # the exclusive cross-process update lock here (as the generate path must)
+    # serialized every ``user_stocks`` read/write behind one global lock and
+    # re-read config.json on every call (CFG-01).
+    cfg = config_store.load_config()
+    if not isinstance(cfg, dict):
+        cfg = {}
+    key_entry = cfg.get("mns_master_key")
+    if key_entry and isinstance(key_entry, dict):
+        key = config_store._decode_secret(key_entry, "mns_master_key")
+        if key:
+            return key
+        # The entry exists but could not be decoded. This is NOT the same as
+        # "no key generated yet": silently generating a new key here would
+        # overwrite mns_master_key and permanently orphan every Fernet-
+        # encrypted value protected with the original key (user_stocks.json,
+        # flask_secret_key, extension_api_token). Fail closed instead of
+        # silently destroying data.
+        raise RuntimeError(
+            "FATAL: mns_master_key exists in config but could not be decoded "
+            "(keyring/DPAPI read failure, corrupted entry, or ciphertext "
+            "encrypted by another identity). Refusing to overwrite it: doing "
+            "so would make all encrypted data permanently unreadable. "
+            "Restore the secret store backing this key or set MNS_MASTER_KEY "
+            "to the correct key, then retry."
+        )
+
     # The read/generate/write sequence must be serialized inside a process.
     # save_config() already has an OS-level atomic replacement lock, while this
     # dedicated lock prevents two startup threads from generating divergent

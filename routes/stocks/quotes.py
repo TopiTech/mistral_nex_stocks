@@ -333,13 +333,29 @@ def api_stock_history() -> Any:
         )
 
     def make_history_response(payload: Any, is_cacheable: bool = True) -> Any:
+        if isinstance(payload, dict) and "error" in payload:
+            # ROUTES-03: error payloads used to be hand-built as
+            # {ok, error_flag, error} with no code/error_code/message/details,
+            # so clients could not branch on the canonical envelope. Route them
+            # through the single envelope owner and keep the history-specific
+            # fields as additive extras.
+            #
+            # The HTTP status stays 200 on purpose: the chart client polls this
+            # endpoint and treats a body-level ``error`` as terminal, while a
+            # non-2xx is retried as a transport failure (static/js/chart.js).
+            extra = {
+                key: value
+                for key, value in payload.items()
+                if key not in ("error", "ok", "error_flag", "success")
+            }
+            return error_response(
+                ErrorCode.SYMBOL_NOT_FOUND,
+                status_code=200,
+                message=str(payload.get("error") or ""),
+                extra_fields=extra,
+            )
         if isinstance(payload, dict):
-            if "error" not in payload:
-                resp = ok_response(payload)
-            else:
-                payload.setdefault("ok", False)
-                payload.setdefault("error_flag", True)
-                resp = jsonify(payload)
+            resp = ok_response(payload)
         else:
             resp = jsonify(payload)
         if is_cacheable and isinstance(payload, dict) and "error" not in payload and not payload.get("fetching"):

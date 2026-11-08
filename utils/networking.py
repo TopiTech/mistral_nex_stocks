@@ -4,10 +4,11 @@ import logging
 import os
 import re
 import secrets
+import socket
 import threading
 import time
 from pathlib import Path
-from urllib.parse import unquote_plus
+from urllib.parse import unquote_plus, urlparse
 
 from app_state import app_state
 from constants import _BASE_ALLOWED_CORS_ORIGINS
@@ -511,6 +512,70 @@ def _is_loopback_ip(ip_str: str) -> bool:
         return addr.is_loopback
     except ValueError:
         return False
+
+
+# Link-local ranges are never a legitimate OpenAI-compatible endpoint and are
+# the standard cloud metadata pivot (AWS/GCP/Azure IMDS, IPv6 IMDS).
+_BLOCKED_OUTBOUND_NETWORKS = (
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("fd00:ec2::254/128"),
+)
+
+
+def is_blocked_outbound_host(host: str) -> bool:
+    """Return True when *host* resolves only to link-local / metadata addresses.
+
+    Loopback and RFC1918 targets stay allowed on purpose: the app documents
+    support for local and LAN OpenAI-compatible servers
+    (``is_local_openai_base_url``), so a blanket private-range ban would break
+    a supported deployment. Link-local addresses are never a model endpoint and
+    are the standard SSRF pivot to cloud metadata, so they are rejected.
+
+    An unresolvable host returns False: the request is allowed to fail on its
+    own rather than turning a transient DNS error into a validation error.
+    """
+    if not host:
+        return True
+    candidates: list[str] = []
+    try:
+        candidates.append(str(ipaddress.ip_address(host)))
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except (OSError, UnicodeError):
+            return False
+        for info in infos:
+            sockaddr = info[4]
+            if sockaddr:
+                candidates.append(str(sockaddr[0]))
+    for candidate in candidates:
+        try:
+            addr = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        for network in _BLOCKED_OUTBOUND_NETWORKS:
+            if addr.version == network.version and addr in network:
+                return True
+    return False
+
+
+def validate_outbound_base_url(raw: str) -> tuple[bool, str]:
+    """Validate a caller-supplied OpenAI-compatible base URL.
+
+    Returns ``(True, "")`` when acceptable, else ``(False, reason)``. The
+    reason is a fixed string so a caller cannot use the endpoint as a read
+    oracle for internal services.
+    """
+    target = (raw or "").strip()
+    if not target:
+        return False, "Base URLが未設定です"
+    parsed = urlparse(target)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False, "Base URLが不正です (http/https のみ対応)"
+    if is_blocked_outbound_host(parsed.hostname):
+        return False, "Base URLの接続先は許可されていません"
+    return True, ""
 
 
 def _is_local_request(req):

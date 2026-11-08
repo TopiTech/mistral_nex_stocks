@@ -3129,6 +3129,12 @@ function initStockDetailDrawerEvents() {
 
 let currentDrawerActiveWrapper = null;
 let stockDetailDrawerTrigger = null;
+// (FE-06, 2026-11-08 review) the deferred chart/detail refresh below used a
+// fire-and-forget timer. Closing the drawer within 50 ms still ran the
+// refresh against a detached wrapper, and reopening for another symbol let
+// the stale timer overwrite the new drawer's chart. Keep the id so the close
+// path can cancel it.
+let stockDetailDrawerRefreshTimer = null;
 
 /**
  * Cards are updated in place for SSE and polling updates, so their click
@@ -3337,7 +3343,11 @@ function openStockDetailDrawer(stock, wrapper) {
       ? "3mo"
       : getChartPref(stockKey, "period", "3mo");
 
-    setTimeout(() => {
+    if (stockDetailDrawerRefreshTimer !== null) {
+      clearTimeout(stockDetailDrawerRefreshTimer);
+    }
+    stockDetailDrawerRefreshTimer = setTimeout(() => {
+      stockDetailDrawerRefreshTimer = null;
       refreshStockChart(wrapper, period);
       ensureStockDetails(wrapper);
     }, 50);
@@ -3345,6 +3355,10 @@ function openStockDetailDrawer(stock, wrapper) {
 }
 
 function closeStockDetailDrawer() {
+  if (stockDetailDrawerRefreshTimer !== null) {
+    clearTimeout(stockDetailDrawerRefreshTimer);
+    stockDetailDrawerRefreshTimer = null;
+  }
   const overlay = document.getElementById("stock-detail-drawer-overlay");
   if (overlay && !overlay.classList.contains("hidden")) {
     if (overlay.contains(document.activeElement)) {

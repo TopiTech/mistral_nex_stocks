@@ -12,7 +12,6 @@ Covers:
 
 from __future__ import annotations
 
-import inspect
 import pathlib
 import time
 import unittest
@@ -188,17 +187,6 @@ class TestStocksViewsTypingAndOriginValidation(unittest.TestCase):
         """api_add_stock_ext in routes/stocks/views.py must call is_allowed_trusted_origin."""
         views_src = pathlib.Path("routes/stocks/views.py").read_text(encoding="utf-8")
         self.assertIn("utils.networking.is_allowed_trusted_origin(request)", views_src)
-
-    def test_parse_strict_float_signature_annotated(self) -> None:
-        """_parse_strict_float inside api_screener view must have typed annotations."""
-        import routes.stocks.views as views_mod
-
-        src = inspect.getsource(views_mod.api_screener)
-        self.assertIn(
-            "def _parse_strict_float(raw: Any, field_name: str) -> float | None | tuple[Response, int]:",
-            src,
-        )
-
 
 class TestAiPortfolioPresetBarAccessibility(unittest.TestCase):
     """Test R21: AI portfolio preset bar keyboard navigation and aria-pressed attributes."""

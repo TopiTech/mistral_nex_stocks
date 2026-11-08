@@ -297,11 +297,12 @@ class NativeHostCoverageTestCase(unittest.TestCase):
             self.assertEqual(native_host._safe_int_env("TEST_INT", 10, min_value=200), 200)
 
     def test_token_action_rate_limiter(self):
-        with native_host._rate_limit_lock:
-            native_host._token_action_timestamps.clear()
-        for _ in range(3):
-            self.assertTrue(native_host._token_action_allowed())
-        self.assertFalse(native_host._token_action_allowed())
+        from tests.test_support.native_host_state import isolated_native_host_rate_limit
+
+        with isolated_native_host_rate_limit(native_host):
+            for _ in range(3):
+                self.assertTrue(native_host._token_action_allowed())
+            self.assertFalse(native_host._token_action_allowed())
 
     def test_read_and_send_message_io(self):
         import struct

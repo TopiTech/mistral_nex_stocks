@@ -539,6 +539,12 @@ class APIClient {
           const wrappers = typeMap?.get(type);
           if (wrappers && wrappers.length > 0) {
             target = wrappers.pop()!;
+            if (wrappers.length === 0 && typeMap) {
+              typeMap.delete(type);
+              if (typeMap.size === 0) {
+                listenerMap.delete(listener);
+              }
+            }
           }
         }
         if (target) {

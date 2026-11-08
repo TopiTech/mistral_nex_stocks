@@ -320,6 +320,13 @@ def api_generate_ai_portfolio() -> Any:
             return _ai_portfolio_error_response(cached_err, g)
         if cached_result is not None:
             return ok_response({"portfolio": cached_result})
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.pop(inflight_key, None)
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AIポートフォリオの生成結果が空でした。再試行してください。"},
+            status_code=500,
+        )
     if result_holder is None:
         # Unreachable: every cached branch returned above and the miss paths
         # assigned a holder; fail honestly instead of de-referencing None.
@@ -336,6 +343,8 @@ def api_generate_ai_portfolio() -> Any:
             current_app.logger.info("Starting background AI portfolio generation job id=%s theme=%s", req_id, theme)
             try:
                 res = generate_ai_portfolio_by_theme(theme, api_key=api_key)
+                if not isinstance(res, dict) or not res:
+                    raise ValueError("AIポートフォリオの生成結果が空でした")
                 result_holder["result"] = res
                 result_holder["step"] = "done"
                 result_holder["message"] = "AIポートフォリオの生成が完了しました"
@@ -398,6 +407,15 @@ def api_generate_ai_portfolio() -> Any:
             ai_portfolio_result_cache.pop(inflight_key, None)
         return _ai_portfolio_error_response(result_holder["error"], g)
 
+    if result_holder["result"] is None:
+        with ai_portfolio_fetch_lock:
+            ai_portfolio_result_cache.pop(inflight_key, None)
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AIポートフォリオの生成結果が空でした。再試行してください。"},
+            status_code=500,
+        )
+
     return ok_response({"portfolio": result_holder["result"]})
 
 
@@ -459,6 +477,11 @@ def api_rebalance_ai_portfolio() -> Any:
             return ok_response(
                 {"portfolio": cached_result, "message": "リバランスが完了しました"}
             )
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AIポートフォリオリバランスの結果が空でした。再試行してください。"},
+            status_code=500,
+        )
     if result_holder is None:
         # Unreachable: every cached branch returned above; fail honestly.
         return error_response(
@@ -474,6 +497,8 @@ def api_rebalance_ai_portfolio() -> Any:
             current_app.logger.info("Starting background AI portfolio rebalance job id=%s theme=%s", req_id, theme)
             try:
                 res = generate_ai_portfolio_by_theme(theme, force_rebalance=True, api_key=api_key)
+                if not isinstance(res, dict) or not res:
+                    raise ValueError("AIポートフォリオリバランスの結果が空でした")
                 result_holder["result"] = res
                 result_holder["step"] = "done"
                 result_holder["message"] = "リバランスが完了しました"
@@ -544,6 +569,13 @@ def api_rebalance_ai_portfolio() -> Any:
     if result_holder["error"] is not None:
         return _ai_portfolio_error_response(
             result_holder["error"], g, default_reason="AI ポートフォリオのリバランスに失敗しました"
+        )
+
+    if result_holder["result"] is None:
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "AIポートフォリオリバランスの結果が空でした。再試行してください。"},
+            status_code=500,
         )
 
     return ok_response(

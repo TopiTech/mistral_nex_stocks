@@ -244,6 +244,11 @@ class AINewsRequest(BaseModel):
     """Schema for POST /api/news optional request body."""
 
     force: bool = Field(default=False, description="Force fresh fetch bypassing cached news")
+    request_token: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9_-]{16,128}$",
+        description="Client operation idempotency token",
+    )
 
 
 class AITechnicalLinesRequest(BaseModel):

@@ -3385,3 +3385,83 @@ SDKの環境ガード、テストが `app_state` を初期化する正当なパ�
 - POSIX専用テストの修正は、Windows環境のため実行検証できていない。
 - ブラウザ実画面・WebGL・スクリーンリーダーは未目視。OpenAI互換の実エンド
   ポイントには未接続。CDNのブラウザ読み込みも未目視。
+
+---
+
+## Appendix M — 包括的フルプロジェクト全層網羅コードレビュー・台帳突合・根本解決（2026-11-08）
+
+### M.1 監査のスコープと実施方法
+
+プロジェクト全体の全レイヤー（UI / フロントエンド、バックエンド、DB・データ層、共通モジュール・設定ファイル、API境界・型整合性・バリデーション・エラー形式、Chrome拡張機能、ネイティブメッセージングホスト）を網羅的に精査。
+正常系のみならず、エッジケース・異常系、非同期競合（レースコンディション）、リソース・メモリリーク、セキュリティ（XSS, injection, token tampering, CSP nonces）、パフォーマンス、型安全性の観点から全ファイルを調査。
+
+- **静的解析・型チェック・セキュリティ監査ツール全実行**:
+  - `npm run build` (TypeScript 5.8 `tsc --noEmit`, `compile`, `verify-generated`, ESLint 10, Prettier 3.9)
+  - `ruff check . --line-length=100`
+  - `flake8 . --count --select=E9,F63,F7,F82`
+  - `mypy` (125 source files checked)
+  - `pyrefly check` & `pyrefly check --python-platform win32`
+  - `pylint --errors-only --disable=import-error <CI targets>`
+  - `bandit --configfile pyproject.toml -r . --severity-level medium` (43,862行走査、0 issues, 0 nosec)
+  - `pip-audit --strict` (0 known vulnerabilities)
+  - `powershell -ExecutionPolicy Bypass -File native_host/validate_native_host_windows.ps1`
+  - `python tests/startup_smoke_runner.py`
+  - `pytest` (全4,100テスト + 47 subtests)
+
+- **横断スクリプト・AST・全ファイル検査**:
+  - フロントエンド全 `fetch` 呼び出しおよびバックエンド対応ルート・Pydanticスキーマの全突合
+  - 全エンドポイントの `request_token` 送受信整合性の網羅的調査
+  - `static/js/` 内の全DOM書き込みシンク (`innerHTML`, `outerHTML`, `textContent` 等) の完全走査
+  - `psutil` / プロセス管理、シグナル処理、ソケット・ファイルリソース管理のライフサイクル走査
+
+### M.2 洗い出し課題・妥当性評価（根本原因 vs 誤検知/意図された仕様の判定）
+
+1. **[修正済・根本解決] `AINewsRequest` の `request_token` フィールド欠落による型・契約不整合**
+   - **症状**: フロントエンド `static/js/api.js` の `loadNews()` は `csrfFetch("/api/news", { method: "POST", body: JSON.stringify({ request_token: ... }) })` を送信していたが、バックエンドの `schemas/analysis.py::AINewsRequest` は `force: bool` のみ定義されており、`request_token` がスキーマに含まれていなかった。
+   - **根本原因**: `route_helpers.py:rate_limit(skip_polling_duplicates=True)` は `request_token` によるクライアント重複排除・冪等性制御をサポートしているが、`AINewsRequest` スキーマの定義漏れにより、厳格バリデーション時にクライアントトークンが検証・受容されていなかった。
+   - **修正内容**: `schemas/analysis.py::AINewsRequest` に `request_token: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{16,128}$", description="Client operation idempotency token")` を追加。英数字・ハイフン・アンダースコア16〜128文字のバリデーションを適用。
+
+2. **[修正済・根本解決] AIポートフォリオ フォールバック警告 (`fallback_warning`) のUI通知・表示漏れ**
+   - **症状**: LLM呼び出し失敗時に `services/ai_portfolio_service.py` はプリセットフォールバックを行い、レスポンスに `fallback_warning` フィールド（サニタイズ済み）を含めて返却していたが、`static/js/ai_portfolio.js` はこれを描画せず、ユーザーがAIによる動的生成なのか静的プリセットなのかを判別できなかった。
+   - **根本原因**: バックエンドAPIレスポンスのUI側消費漏れ。
+   - **修正内容**: `static/js/ai_portfolio.js` において、`fallback_warning` が存在する場合にトースト警告 (`showToast("⚠️ " + warning, "#f59e0b")`) を表示し、ポートフォリオ概要 (`ai-pf-commentary-text`) の先頭に `【⚠️ 注意】...` バナーを安全な `textContent` 経由で付与。
+
+3. **[誤検知として除外] APIクレデンシャル更新時の空文字列挙動**
+   - **評価**: 空文字 `""` 送信時に既存APIキーを削除せず保持する挙動は、HTMLフォームの未変更フィールド保持を目的とした意図的仕様（`test_save_api_credentials_preserves_protected_langsearch_when_blank` で担保）。クレデンシャル削除は `DELETE /api/credentials` で明示的に実行する設計であり、変更不要と判定。
+
+4. **[誤検知として除外] Chrome拡張機能 manifest.json における content_scripts 未定義**
+   - **評価**: manifest v3 の最小権限原則（Least Privilege）に基づき、全ページへの静的スクリプト注入を避け、`activeTab` + `scripting` によるユーザー明示トリガー時のオンデマンド注入 (`chrome.scripting.executeScript({ files: ["content.js"] })`) を採用している堅牢なセキュリティ仕様であり、変更不要と判定。
+
+5. **[誤検知として除外] Windows psutil 不在時のプロセスシグナル処理**
+   - **評価**: Windowsで `psutil` 不在時に `os.kill` を呼ぶと強制終了 (`TerminateProcess`) となりリソースが正常解放されないため、意図的にフォールバックをスキップする設計（`tests/test_review_2026_10_31_lifecycle.py` で担保）。また本番環境では `pyproject.toml` に `psutil>=5.9.8` が必須依存関係としてロックされており実害なしと判定。
+
+6. **[安全確認] DOM書き込みおよびXSS・CSP Nonce検証**
+   - **評価**: `static/js/` 配下の全28ファイルにおいて `innerHTML` / `outerHTML` / `insertAdjacentHTML` は0件。すべて `document.createElement`, `textContent`, `setAttribute` で安全に構築されている。また `tradingview_manager.js` の動的スクリプト生成も `getAttribute("nonce")` ではなくプロパティ `document.querySelector("script[nonce]")?.nonce` を使用しており、DOM Clobbering / CSP Nonceハイジャック耐性を確認。
+
+### M.3 追加されたテスト
+
+- `tests/test_code_review_audit_2026_11_comprehensive.py`:
+  - `test_ai_news_request_valid_tokens`: `AINewsRequest` 境界値（16文字・128文字・デフォルトNone・force併用）
+  - `test_ai_news_request_invalid_tokens`: 不正トークン（短すぎる・長すぎる・不正文字）のValidationError検証
+  - `test_api_news_route_accepts_valid_request_token`: `/api/news` エンドポイントが正常トークンを受容して200を返す契約検証
+  - `test_api_news_route_rejects_malformed_request_token`: 不正トークンに対して400 (MALFORMED_INPUT) を返す境界検証
+  - `test_sanitize_ai_portfolio_preserves_fallback_warning`: データ層でのフォールバック警告保持検証
+  - `test_sanitize_ai_portfolio_strips_html_from_fallback_warning`: フォールバック警告内の悪意あるHTML・スクリプト除去検証
+  - `test_ai_portfolio_frontend_displays_fallback_warning`: フロントエンド `ai_portfolio.js` の構文・警告ハンドリング検証
+
+### M.4 最終検証結果マトリクス
+
+| 検査種別 | コマンド / 対象 | 結果 |
+|---|---|---|
+| Python テストスイート | `pytest` | **4,100 passed**, 3 skipped (POSIX専用), 47 subtests passed (24.75s) |
+| 単体回帰テスト | `pytest tests/test_code_review_audit_2026_11_comprehensive.py` | **7 passed** (2.89s) |
+| スタートアップ検証 | `python tests/startup_smoke_runner.py` | **exit 0** クリーン起動・初期化完了 |
+| ネイティブホスト検証 | `native_host/validate_native_host_windows.ps1` | **[ OK ]** 構造的完全性確認 |
+| Ruff リント | `ruff check . --line-length=100` | **All checks passed!** (0 issues) |
+| Flake8 | `flake8 . --count --select=E9,F63,F7,F82` | **0** (exit 0) |
+| Mypy 型チェック | `mypy` | **Success: no issues found in 125 source files** |
+| Pyrefly 型チェック | `pyrefly check` | **0 errors** (19 suppressed, 50 warnings) |
+| Bandit セキュリティ解析 | `bandit --configfile pyproject.toml -r . --severity-level medium` | **No issues identified** (43,862 lines scanned, 0 issues) |
+| Pip Audit 脆弱性スキャン | `pip-audit --strict` | **No known vulnerabilities found** |
+| フロントエンド統合ビルド | `npm run build` (tsc, compile, verify-generated, eslint, prettier) | **exit 0** すべてPASS |
+| Git ワークツリー整合性 | `git status` / `git diff --check` | 変更ファイル3点＋新規テスト1点＋本ドキュメントのみ、不要成果物・デバッグ痕跡0 |

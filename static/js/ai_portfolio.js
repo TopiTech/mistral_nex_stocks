@@ -735,6 +735,12 @@
         currentAiPortfolio = data.portfolio;
         renderAiPortfolio(currentAiPortfolio);
         upsertSavedAiPortfolio(currentAiPortfolio);
+        if (
+          currentAiPortfolio.fallback_warning &&
+          typeof showToast === "function"
+        ) {
+          showToast(`⚠️ ${currentAiPortfolio.fallback_warning}`, "#f59e0b");
+        }
       } else {
         throw new Error(
           getApiErrorMessage(data, "AIポートフォリオの生成に失敗しました。"),
@@ -889,7 +895,11 @@
         renderAiPortfolio(currentAiPortfolio);
         upsertSavedAiPortfolio(currentAiPortfolio);
         if (typeof showToast === "function") {
-          showToast("🤖 AIリバランスが完了しました！", "#7dffb0");
+          if (currentAiPortfolio.fallback_warning) {
+            showToast(`⚠️ ${currentAiPortfolio.fallback_warning}`, "#f59e0b");
+          } else {
+            showToast("🤖 AIリバランスが完了しました！", "#7dffb0");
+          }
         }
       } else {
         throw new Error(getApiErrorMessage(data, "リバランスに失敗しました"));
@@ -1082,9 +1092,15 @@
     if (riskEl) riskEl.textContent = portfolio.risk_level || "中リスク";
     if (returnEl)
       returnEl.textContent = `期待年間リターン: ${portfolio.expected_return || "8-12%"}`;
-    if (commentaryEl)
-      commentaryEl.textContent =
-        portfolio.commentary || "AIによる最適化戦略を適用中。";
+    if (commentaryEl) {
+      if (portfolio.fallback_warning) {
+        commentaryEl.textContent =
+          `【⚠️ 注意】${portfolio.fallback_warning} ${portfolio.commentary || ""}`.trim();
+      } else {
+        commentaryEl.textContent =
+          portfolio.commentary || "AIによる最適化戦略を適用中。";
+      }
+    }
     if (countEl)
       countEl.textContent = `${portfolio.items ? portfolio.items.length : 0} 銘柄`;
 

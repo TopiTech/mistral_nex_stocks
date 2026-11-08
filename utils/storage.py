@@ -163,7 +163,15 @@ def _migrate_legacy_user_stocks() -> bool:
                     raise
             finally:
                 os.umask(old_umask)
-        os.replace(tmp_file, target)
+        for attempt in range(4):
+            try:
+                os.replace(tmp_file, target)
+                break
+            except PermissionError:
+                if _is_windows() and attempt < 3:
+                    time.sleep(0.015 * (attempt + 1))
+                    continue
+                raise
         if not _is_windows():
             os.chmod(target, 0o600)
         logger.info("Migrated and encrypted legacy user stocks file %s -> %s", legacy, target)

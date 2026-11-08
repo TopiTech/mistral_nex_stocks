@@ -202,19 +202,16 @@ class StockDiskCache:
         """
         self._ensure_cache_dir()
         deadline = time.monotonic() + _PROCESS_LOCK_TIMEOUT_SEC
-        use_msvcrt = False
+        msvcrt_module: Any = None
         if os.name == "nt":
             try:
                 import msvcrt
 
-                use_msvcrt = True
+                msvcrt_module = msvcrt
             except ImportError:
-                use_msvcrt = False
+                msvcrt_module = None
 
-        if use_msvcrt:
-            import msvcrt
-
-            msvcrt_module = cast(Any, msvcrt)
+        if msvcrt_module is not None:
             # M18 (2026-11-07 review): an acquisition failure (read-only
             # filesystem, AV-induced file lock, permission problem) is the
             # same condition as a lock timeout — the cache is unavailable —
@@ -740,7 +737,15 @@ class StockDiskCache:
                                 os.fsync(handle.fileno())
                             except OSError:
                                 pass
-                        os.replace(str(tmp_path), str(entry))
+                        for attempt in range(4):
+                            try:
+                                os.replace(str(tmp_path), str(entry))
+                                break
+                            except PermissionError:
+                                if _is_windows() and attempt < 3:
+                                    time.sleep(0.015 * (attempt + 1))
+                                    continue
+                                raise
                         migrated += 1
                     except (TypeError, json.JSONDecodeError) as exc:
                         logger.debug("Deleting invalid disk cache entry %s: %s", entry, exc)

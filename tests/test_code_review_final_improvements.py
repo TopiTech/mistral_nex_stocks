@@ -15,7 +15,7 @@ from services.market_data_service import build_screener_enrichment
 from services.realtime.engine import RealtimeMarketEngine
 from utils.caching import _get_cached_value, _set_cached_value
 from utils.disk_cache import StockDiskCache
-from utils.storage import _write_user_stocks_with_lock
+from utils.storage import _migrate_legacy_user_stocks, _write_user_stocks_with_lock
 
 
 def test_realtime_engine_wait_for_updates_captures_late_signal():
@@ -208,3 +208,65 @@ def test_invalidate_stock_caches_clears_info_prefix():
 
     assert _get_cached_value(f"info_{symbol}", 3600) is None
     assert _get_cached_value(f"hist_{symbol}", 3600) is None
+
+
+def test_disk_cache_remove_fields_recursive_retries_on_transient_permission_error(tmp_path):
+    """Verify StockDiskCache.remove_fields_recursive retries os.replace on transient PermissionError."""
+    cache = StockDiskCache(tmp_path)
+    cache.set("item1", {"secret": "hide_me", "public": "keep_me"})
+    replace_calls = 0
+    orig_replace = os.replace
+
+    def mock_replace(src, dst):
+        nonlocal replace_calls
+        replace_calls += 1
+        if replace_calls < 3:
+            raise PermissionError("Simulated WinError 32 file lock")
+        orig_replace(src, dst)
+
+    with (
+        patch("os.replace", mock_replace),
+        patch("utils.disk_cache._is_windows", return_value=True),
+    ):
+        migrated = cache.remove_fields_recursive(["secret"])
+
+    assert migrated == 1
+    assert replace_calls == 3
+    updated = cache.get("item1")
+    assert updated == {"public": "keep_me"}
+
+
+def test_storage_migrate_legacy_user_stocks_retries_on_transient_permission_error(tmp_path, monkeypatch):
+    """Verify _migrate_legacy_user_stocks retries os.replace on transient PermissionError."""
+    import config_store
+
+    # Ensure master key is initialized prior to test so config save doesn't consume replace calls
+    config_store.get_or_create_master_key()
+
+    legacy_file = tmp_path / "user_stocks.json"
+    legacy_file.write_text('{"AAPL": {"shares": 10}}', encoding="utf-8")
+    target_file = tmp_path / "enc_user_stocks.json"
+
+    monkeypatch.setattr("utils.storage.LEGACY_USER_STOCKS_FILE", str(legacy_file))
+    monkeypatch.setattr("utils.storage.USER_STOCKS_FILE", str(target_file))
+
+    replace_calls = 0
+    orig_replace = os.replace
+
+    def mock_replace(src, dst):
+        nonlocal replace_calls
+        replace_calls += 1
+        if replace_calls < 3:
+            raise PermissionError("Simulated WinError 32 file lock")
+        orig_replace(src, dst)
+
+    with (
+        patch("utils.storage.os.replace", mock_replace),
+        patch("utils.storage._is_windows", return_value=True),
+    ):
+        result = _migrate_legacy_user_stocks()
+
+    assert result is True
+    assert replace_calls == 3
+    assert target_file.exists()
+

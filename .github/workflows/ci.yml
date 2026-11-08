@@ -212,7 +212,7 @@ jobs:
         # ~16 tests gate on `shutil.which("node")`; relying on the runner
         # image's preinstalled node lets them silently vanish if the image
         # changes. Pin the tool so the fallback-to-skip can never trigger.
-        uses: actions/setup-node@d1f3c8f3ecb1f22e48b03c0ab531a0d63e1308f1 # v6.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 

@@ -654,7 +654,15 @@ def _write_user_stocks_with_lock(
                 finally:
                     os.umask(old_umask)
                 # Promote inside the lock (no TOCTOU window).
-                os.replace(tmp_file, target_file)
+                for attempt in range(4):
+                    try:
+                        os.replace(tmp_file, target_file)
+                        break
+                    except PermissionError:
+                        if _is_windows() and attempt < 3:
+                            time.sleep(0.015 * (attempt + 1))
+                            continue
+                        raise
                 o_dir = getattr(os, "O_DIRECTORY", None)
                 if o_dir is not None:
                     try:

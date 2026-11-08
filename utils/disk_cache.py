@@ -47,6 +47,10 @@ _PROCESS_LOCK_TIMEOUT_SEC = 10.0
 _PROCESS_LOCK_POLL_SEC = 0.05
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 class DiskCacheLockTimeout(OSError):
     """Raised when the cross-process cache lock cannot be acquired within
     ``_PROCESS_LOCK_TIMEOUT_SEC``.
@@ -198,7 +202,16 @@ class StockDiskCache:
         """
         self._ensure_cache_dir()
         deadline = time.monotonic() + _PROCESS_LOCK_TIMEOUT_SEC
+        use_msvcrt = False
         if os.name == "nt":
+            try:
+                import msvcrt
+
+                use_msvcrt = True
+            except ImportError:
+                use_msvcrt = False
+
+        if use_msvcrt:
             import msvcrt
 
             msvcrt_module = cast(Any, msvcrt)
@@ -557,7 +570,7 @@ class StockDiskCache:
                             os.replace(str(tmp_path), str(path))
                             break
                         except PermissionError:
-                            if os.name == "nt" and attempt < 3:
+                            if _is_windows() and attempt < 3:
                                 time.sleep(0.015 * (attempt + 1))
                                 continue
                             raise

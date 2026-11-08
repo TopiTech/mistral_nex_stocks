@@ -112,7 +112,10 @@ def test_disk_cache_set_retries_on_transient_permission_error(tmp_path):
             raise PermissionError("Simulated WinError 32 file lock")
         orig_replace(src, dst)
 
-    with patch("os.replace", mock_replace), patch("os.name", "nt"):
+    with (
+        patch("os.replace", mock_replace),
+        patch("utils.disk_cache._is_windows", return_value=True),
+    ):
         cache.set("test_key", {"data": 123})
 
     assert replace_calls == 3

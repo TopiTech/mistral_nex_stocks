@@ -152,7 +152,7 @@ jobs:
           echo "Verifying SRI integrity hashes on all CDN <script> tags..."
           missing=0
           for f in templates/*.html; do
-            if perl -0777 -e '
+            if perl -0777 - "$f" <<'EOF'
               my $f = shift;
               open my $fh, "<", $f or die $!;
               my $c = do { local $/; <$fh> };
@@ -166,7 +166,8 @@ jobs:
                   exit 1;
                 }
               }
-            ' "$f"; then :; else missing=1; fi
+          EOF
+            then :; else missing=1; fi
           done
           if [ "$missing" -eq 1 ]; then echo "SRI check FAILED: a CDN <script> lacks an integrity hash"; exit 1; fi
           echo "SRI check passed."

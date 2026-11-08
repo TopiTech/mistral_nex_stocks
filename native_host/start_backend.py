@@ -409,6 +409,14 @@ def _start(extension_id=None):
             PID_FILE.write_text(str(proc.pid), encoding="utf-8")
         except OSError:
             pass
+    finally:
+        # Remove the staging file even when os.replace fails (permission error,
+        # AV scanner, read-only runtime dir): the fallback write above must not
+        # leave a stale .backend.tmp behind on every failed promotion.
+        try:
+            tmp_pid.unlink(missing_ok=True)
+        except OSError:
+            pass
     # The backend is launched detached; the extension already polls /api/health
     # after this call, so we must NOT block the native host's synchronous message
     # loop for up to 20s here (Chrome's native-messaging timeout is shorter). Return

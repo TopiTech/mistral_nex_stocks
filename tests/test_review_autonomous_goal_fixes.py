@@ -249,27 +249,36 @@ def test_ai_technical_lines_candlestick_timestamp_conversion():
 # ---------------------------------------------------------------------------
 def test_polling_token_inflight_thread_safety():
     token = "test_token_1234567890123456"
+    errors: list[BaseException] = []
+    results: list[bool] = []
 
     # Simulate concurrently modifying cache while checking inflight
     def _cache_mutator():
-        for i in range(100):
-            with chat_fetch_lock:
-                chat_result_cache[f"chat:scope:{token}_{i}"] = (time.time(), {"ok": True}, None)
-            with analyze_fetch_lock:
-                analyze_result_cache[f"analyze:scope:{token}_{i}"] = (
-                    time.time(),
-                    {"ok": True},
-                    None,
-                )
-            time.sleep(0.001)
+        try:
+            for i in range(100):
+                with chat_fetch_lock:
+                    chat_result_cache[f"chat:scope:{token}_{i}"] = (
+                        time.time(),
+                        {"ok": True},
+                        None,
+                    )
+                with analyze_fetch_lock:
+                    analyze_result_cache[f"analyze:scope:{token}_{i}"] = (
+                        time.time(),
+                        {"ok": True},
+                        None,
+                    )
+                time.sleep(0.001)
+        except BaseException as exc:
+            errors.append(exc)
 
     t = threading.Thread(target=_cache_mutator)
     t.start()
 
     try:
         for _ in range(50):
-            # Should not raise KeyError or RuntimeError
-            _is_polling_token_inflight(token)
+            # Should not raise KeyError or RuntimeError, and must stay boolean.
+            results.append(_is_polling_token_inflight(token))
             time.sleep(0.002)
     finally:
         t.join()
@@ -281,6 +290,10 @@ def test_polling_token_inflight_thread_safety():
             for k in list(analyze_result_cache.keys()):
                 if token in k:
                     analyze_result_cache.pop(k, None)
+
+    assert not errors
+    assert len(results) == 50
+    assert all(isinstance(result, bool) for result in results)
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +341,12 @@ def test_register_symbol_graceful_on_shutdown_executor():
             # Should not raise RuntimeError: cannot schedule new futures after shutdown
             engine.register_symbol("7203.T", "jp")
             engine.register_symbol("AAPL", "us")
+
+            # Registration must still reach the provider clients even when the
+            # background fetch cannot be submitted to the stopped executor.
+            engine.yahoojp_scraper.add_symbol.assert_called_once_with("7203.T")
+            assert engine.tv_client.add_symbol.call_count == 1
+            assert "AAPL" in engine.tv_client.add_symbol.call_args.args[0]
         finally:
             engine.stop()
 

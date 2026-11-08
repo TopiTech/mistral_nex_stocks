@@ -146,6 +146,22 @@ document.addEventListener("DOMContentLoaded", () => {
     loadHeatmap();
   }
 
+  // init3DScene は #heatmap-3d-canvas が `hidden`（display:none）のまま実行される
+  // ため clientWidth/clientHeight が 0 になり、フォールバックの 1000x600 で
+  // レンダラとカメラが固定される。さらに 2D 表示中のリサイズは resize ハンドラが
+  // 3D 時のみ寸法を更新するため反映されない。表示後に実寸へ同期する。
+  function sync3DViewportSize() {
+    const { renderer, camera } = state.three;
+    if (!renderer || !camera || !els.canvas3d) return false;
+    const width = els.canvas3d.clientWidth;
+    const height = els.canvas3d.clientHeight;
+    if (!(width > 0 && height > 0)) return false;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+    return true;
+  }
+
   function switchViewMode(mode) {
     if (state.viewMode === mode) return;
 
@@ -199,6 +215,7 @@ document.addEventListener("DOMContentLoaded", () => {
       els.canvas?.classList.add("hidden");
       els.canvas3d?.classList.remove("hidden");
       els.controls3d?.classList.remove("hidden");
+      sync3DViewportSize();
       start3DAnimation();
       if (hasRenderableStocks()) {
         const normalized = state.rawStocks
@@ -1276,19 +1293,8 @@ document.addEventListener("DOMContentLoaded", () => {
       height: window.innerHeight,
     };
     hideTooltip();
-    if (
-      state.viewMode === "3d" &&
-      state.three.renderer &&
-      state.three.camera &&
-      els.canvas3d
-    ) {
-      const w = els.canvas3d.clientWidth;
-      const h = els.canvas3d.clientHeight;
-      if (w > 0 && h > 0) {
-        state.three.camera.aspect = w / h;
-        state.three.camera.updateProjectionMatrix();
-        state.three.renderer.setSize(w, h);
-      }
+    if (state.viewMode === "3d") {
+      sync3DViewportSize();
     }
   };
   window.addEventListener("resize", _resizeHandler);

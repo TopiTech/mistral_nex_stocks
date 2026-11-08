@@ -583,12 +583,18 @@ class StockDiskCache:
                             pass
                 except (OSError, TypeError) as exc:
                     logger.debug("Disk cache write error for %s: %s", key, exc)
+                    return
+                finally:
+                    # Clean up the tmp file on every exit, including exceptions
+                    # this handler does not classify (ValueError for a circular
+                    # payload, RecursionError for pathologically deep data).
+                    # Leaving it behind leaked one orphan per failed write until
+                    # the periodic stale-file sweep.
                     if tmp_path.exists():
                         try:
                             tmp_path.unlink()
                         except OSError:
                             pass
-                    return
 
                 self._evict_if_needed()
                 self._maybe_run_cleanup()

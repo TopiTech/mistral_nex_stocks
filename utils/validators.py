@@ -1019,6 +1019,32 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
                 else:
                     res["upside_3m"] = str(val)
                 break
+
+    # The analysis API contract declares upside_3m as a percentage string and
+    # the detail UI calls String.prototype.includes on it. A model that returns
+    # a bare number (e.g. {"upside_3m": 12.5}) previously passed validation and
+    # normalization unchanged, so the browser threw instead of rendering the
+    # analysis. Canonicalize every non-string, non-null value here, where all
+    # upstream shapes (structured response, repaired JSON, aliases) converge.
+    if (
+        "upside_3m" in res
+        and res["upside_3m"] is not None
+        and not isinstance(res["upside_3m"], str)
+    ):
+        raw_upside = res["upside_3m"]
+        if is_bool_like(raw_upside):
+            res["upside_3m"] = str(raw_upside)
+        else:
+            try:
+                numeric_upside = float(raw_upside)
+            except (TypeError, ValueError, OverflowError):
+                res["upside_3m"] = str(raw_upside)
+            else:
+                if math.isfinite(numeric_upside):
+                    sign = "+" if numeric_upside > 0 else ""
+                    res["upside_3m"] = f"{sign}{numeric_upside}%"
+                else:
+                    res["upside_3m"] = str(raw_upside)
     if "confidence" not in res or not res["confidence"]:
         for alias in ("confidence_level", "certainty", "conviction"):
             if alias in res and isinstance(res[alias], str) and res[alias].strip():

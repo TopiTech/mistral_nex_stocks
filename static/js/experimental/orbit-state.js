@@ -114,6 +114,7 @@
           validList.push(s);
         }
       }
+      const previousSelectedSymbol = this.data.selectedSymbol;
       this.data.stocks = map;
       this.data.stockList = validList;
 
@@ -132,8 +133,14 @@
       }
 
       this.notify("stocks", validList);
-      this.notify("selectedSymbol", this.data.selectedSymbol);
-      // SCRUB 中(timeCursor > 0)は stocks/selectedSymbol 通知が中央カードを
+      // 変更通知の契約: selectedSymbol は実際に変わったときだけ通知する。
+      // 毎分の市場データ更新でも無条件に通知していたため、購読側の
+      // TemporalController がタイムラプス再生を停止し、履歴の再適用を
+      // 繰り返していた(同じ銘柄のまま操作が中断される)。
+      if (this.data.selectedSymbol !== previousSelectedSymbol) {
+        this.notify("selectedSymbol", this.data.selectedSymbol);
+      }
+      // SCRUB 中(timeCursor > 0)は stocks 通知が中央カードを
       // live 値で描き換えるため、最後にカーソル状態を再通知して時系列
       // コントローラーに歴史値の再適用を行うさせる(FE-exp-4)。
       if (this.data.timeCursor > 0) {

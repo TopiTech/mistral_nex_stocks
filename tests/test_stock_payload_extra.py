@@ -74,8 +74,12 @@ class TestClearYfinanceShortCachePrefix(unittest.TestCase):
             self.assertIn("other_key", app_state.yfinance_short_cache)
 
     def test_clear_prefix_empty(self):
-        """Empty prefix does nothing."""
+        """Empty prefix does nothing, including preserving existing entries."""
+        with app_state.yfinance_short_cache_lock:
+            app_state.yfinance_short_cache["keep_me"] = {"ok": True}
         clear_yfinance_short_cache_prefix("")
+        with app_state.yfinance_short_cache_lock:
+            self.assertIn("keep_me", app_state.yfinance_short_cache)
 
 
 class TestGetStockContainer(unittest.TestCase):

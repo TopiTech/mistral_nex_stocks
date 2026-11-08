@@ -205,10 +205,12 @@ class StorageCoverageTests(unittest.TestCase):
     # _backup_unreadable_user_stocks
     # ------------------------------------------------------------------
 
-    @patch.object(storage, "USER_STOCKS_FILE", new_callable=lambda: "/nonexistent/path")
-    def test_backup_unreadable_nonexistent(self, *_):
-        """Backup gracefully handles missing source file."""
-        storage._backup_unreadable_user_stocks()
+    def test_backup_unreadable_nonexistent(self):
+        """Backup gracefully handles a missing source without creating a backup."""
+        missing = Path(self._tmpdir) / "missing_user_stocks.json"
+        with patch.object(storage, "USER_STOCKS_FILE", str(missing)):
+            storage._backup_unreadable_user_stocks()
+        self.assertEqual(list(Path(self._tmpdir).glob("missing_user_stocks.bak.*")), [])
 
     # ------------------------------------------------------------------
     # _write_user_stocks_with_lock Unix path — ImportError fallback

@@ -15,6 +15,8 @@ def test_unlisten_non_existent_queue():
     q = queue.Queue()
     # Should not raise ValueError
     ann.unlisten(q)
+    assert ann.listeners == []
+    assert ann.stats()["listeners"] == 0
 
 
 def test_unlisten_already_removed_queue(caplog):
@@ -41,6 +43,8 @@ def test_announce_no_listeners():
     """announce with zero listeners should not raise."""
     ann = MessageAnnouncer()
     ann.announce("hello")  # should not error
+    assert ann.listeners == []
+    assert ann.stats() == {"listeners": 0, "announced": 0, "dropped": 0}
 
 
 def test_multiple_listeners_all_receive():

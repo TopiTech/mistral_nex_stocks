@@ -1812,9 +1812,29 @@ def _parse_credentials_save_request(
         return None, _credentials_error_from_validation(exc)
 
 
+def _request_token_error_from_validation(
+    exc: ValidationError,
+) -> tuple[Any, int] | None:
+    """Render the canonical request-token error, or None when the field is valid."""
+    if any(
+        (candidate.get("loc") or (None,))[0] == "request_token"
+        for candidate in exc.errors()
+    ):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "request_token must be a 16-128 character URL-safe token",
+                "fields": ["request_token"],
+            },
+            status_code=400,
+        )
+    return None
+
+
 def _ai_generate_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
     """Map canonical generate-schema failures to the historic errors."""
-    joined = " ".join(str(candidate.get("msg", "")) for candidate in exc.errors())
+    errors = exc.errors()
+    joined = " ".join(str(candidate.get("msg", "")) for candidate in errors)
     if "theme_must_be_string" in joined:
         return error_response(
             ErrorCode.INVALID_INPUT,
@@ -1822,13 +1842,18 @@ def _ai_generate_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
             status_code=400,
         )
     if any(
-        candidate.get("type") == "string_too_long" for candidate in exc.errors()
+        (candidate.get("loc") or (None,))[0] == "theme"
+        and candidate.get("type") == "string_too_long"
+        for candidate in errors
     ):
         return error_response(
             ErrorCode.INVALID_INPUT,
             details={"reason": "themeは120文字以内で指定してください"},
             status_code=400,
         )
+    token_error = _request_token_error_from_validation(exc)
+    if token_error is not None:
+        return token_error
     return error_response(
         ErrorCode.MISSING_REQUIRED_FIELD, details={"fields": ["theme"]}, status_code=400
     )
@@ -1851,13 +1876,27 @@ def _parse_ai_rebalance_request(
     try:
         req_obj = AIPortfolioRebalanceRequest.model_validate(data)
     except ValidationError as exc:
-        joined = " ".join(str(candidate.get("msg", "")) for candidate in exc.errors())
+        errors = exc.errors()
+        joined = " ".join(str(candidate.get("msg", "")) for candidate in errors)
         if "theme_must_be_string" in joined:
             return None, error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": "themeは文字列で指定してください", "fields": ["theme"]},
                 status_code=400,
             )
+        if any(
+            (candidate.get("loc") or (None,))[0] == "theme"
+            and candidate.get("type") == "string_too_long"
+            for candidate in errors
+        ):
+            return None, error_response(
+                ErrorCode.MALFORMED_INPUT,
+                details={"reason": "テーマは120文字以内で入力してください"},
+                status_code=400,
+            )
+        token_error = _request_token_error_from_validation(exc)
+        if token_error is not None:
+            return None, token_error
         return None, error_response(
             ErrorCode.MALFORMED_INPUT,
             details={"reason": "テーマは120文字以内で入力してください"},

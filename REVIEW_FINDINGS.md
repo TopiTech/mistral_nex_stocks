@@ -1808,3 +1808,1580 @@ All seven templates were read at their script boundaries. Every executable scrip
 | `bandit` (medium+) | exit 0 |
 | `npm run build` | typecheck / compile / verify-generated / eslint / prettier pass |
 | `git diff --check` | clean |
+
+---
+
+## Appendix B. 2026-11-08 third-pass audit — `UI-SSE-2` — FIXED
+
+Scope of this pass: repository map and gate inventory; full re-read of the API
+boundary (`utils/stock_payload.py`, `route_helpers.py`, `schemas/`), data
+persistence (`utils/storage.py`, `utils/disk_cache.py`, `utils/caching.py`),
+stock routes (`routes/stocks/quotes.py`, `portfolio.py`, `views.py`), the
+generated SSE client (`static/js/api_client.ts`), CI configuration, and the
+frontend↔backend URL surface (every `/api/...` path referenced by
+`static/js/**` and `chrome_extension/**` resolves to a registered Flask route).
+
+### UI-SSE-2 — the hidden-tab SSE pause was cancelled by any reconnect — **FIXED**
+
+`APIClient` defers an SSE pause for `visibilityTimeout` (30 s) after the tab
+becomes hidden, and `_teardownSSE()` clears that deferred timer. Every
+transport error or heartbeat timeout runs `_handleReconnect()` →
+`_teardownSSE()`, so an error occurring during the 30 s window cancelled the
+only pending pause. Because `visibilitychange` does not fire again while the
+tab stays hidden, the subsequent reconnect opened an `EventSource` that was
+never paused — a live stream (and its server-side listener/quota) in a
+background tab, which is exactly what the deferred pause exists to prevent.
+
+Root cause: the pause was armed only by the `visibilitychange` handler, while
+teardown — a normal part of every reconnect — clears it. The timer was treated
+as handler-local state instead of a property that must be re-established for
+any active connection attempt.
+
+Fix (`static/js/api_client.ts`): extracted `_armVisibilityPause()` (guarded by
+`!isVisibilityPaused`, `document.hidden`, and an active source/reconnect/in-flight
+resolution) and call it whenever an attempt becomes active: from the
+`visibilitychange` handler, from `_openWithResolvedUrl()` while the URL is being
+resolved, from `_handleReconnect()` after scheduling the retry, and from
+`openSSE()` after the source is created. `static/js/api_client.js` was
+regenerated with `npm run compile`.
+
+Regression test: `tests/test_sse_visibility_pause_reconnect_2026_11_08.py`
+loads the real generated artifact, hides the tab, injects a transport error,
+and asserts the pause is re-armed, that firing it pauses the client, closes the
+source and cancels the retry, that becoming visible resumes exactly one fresh
+connection, and that an open which starts while hidden also arms the pause.
+The test fails against the pre-fix artifact
+(`reconnect while hidden must re-arm the deferred visibility pause`) and passes
+on the fixed tree.
+
+### Withdrawn candidate — CI requirements export
+
+An apparent hash-vs-hash-free mismatch in the `lint` job's
+`Verify exported production requirements` step did not reproduce:
+`.github/workflows/ci.yml` already exports with `--no-hashes`, matching the
+committed `requirements-locked.txt`, and running the exact step (export +
+`diff` against `tail -n +3`) exits 0 with an empty diff. No change was made.
+
+### Verification on this tree
+
+| Check | Result |
+|---|---|
+| Full pytest (3957 tests) | exit 0 |
+| New regression test | PASS (and fails on the pre-fix artifact) |
+| `ruff check . --line-length=100` | All checks passed |
+| `mypy` | Success, 125 source files |
+| `flake8 --select=E9,F63,F7,F82` | 0 |
+| `pylint --errors-only` (CI target list) | exit 0 |
+| `pyrefly check` (linux + win32) | 0 errors |
+| `bandit --severity-level medium` | exit 0 |
+| `npm run build` | typecheck / compile / verify-generated / eslint / prettier pass |
+| `git diff --check` | clean |
+
+---
+
+## Appendix C. 2026-11-08 fourth-pass audit — the modules Appendix B left unread, read end-to-end
+
+Appendix B closed with `services/ai_service.py`, `static/js/ui.js`,
+`static/js/experimental/*` and `native_host/native_host.py` declared unread.
+This pass read all twelve files line by line, reproduced every candidate against
+the real artifact, and recorded the outcome below. Line counts are
+`HEAD` → worktree because the fixes changed three of the files.
+
+### C.1 Coverage ledger (this pass)
+
+| File | Lines (HEAD → now) | Extent | Outcome |
+|---|---|---|---|
+| `services/ai_service.py` | 2,717 → 2,735 | 1–2,717 | **ERR-STATUS-COERCE** — fixed |
+| `static/js/ui.js` | 4,210 → 4,213 | 1–4,210 | **UI-ORDER-1** — fixed |
+| `static/js/experimental/orbit-state.js` | 291 → 298 | 1–291 | **EXP-STATE-1** — fixed |
+| `native_host/native_host.py` | 1,786 | 1–1,786 | no defect survived review |
+| `static/js/experimental/accessibility-controller.js` | 493 | 1–493 | none |
+| `static/js/experimental/ai-dive-controller.js` | 669 | 1–669 | none |
+| `static/js/experimental/constellation-controller.js` | 477 | 1–477 | none |
+| `static/js/experimental/data-adapter.js` | 329 | 1–329 | none |
+| `static/js/experimental/gesture-controller.js` | 243 | 1–243 | none |
+| `static/js/experimental/orbit-entry.js` | 688 | 1–688 | none |
+| `static/js/experimental/orbit-renderer.js` | 947 | 1–947 | none |
+| `static/js/experimental/temporal-controller.js` | 619 | 1–619 | none |
+
+Twelve files, 13,479 lines at `HEAD` (13,497 after the fixes), read without
+skipping a line. Every candidate below was executed or traced through the real
+call path; no claim here rests on an earlier review document.
+
+### C.2 Confirmed defects and root-cause fixes
+
+#### ERR-STATUS-COERCE — provider error body could raise out of the error handler — **FIXED**
+
+`_is_mistral_capacity_error` classified a capacity error with
+`int(err.get("status_code") or 0) == 429` (`services/ai_service.py`, now
+`:596`). The payload is untrusted provider/proxy JSON, and this classifier is
+called from inside the `except _MISTRAL_COMMUNICATION_ERRORS` handler. A body
+such as `{"error": {"status_code": "unavailable"}}` made the coercion raise
+`ValueError` *while the handler was already handling a transport failure*: the
+new exception escaped the handler, the request failed as an unhandled 500, and
+the circuit-breaker/backoff bookkeeping after the classification never ran.
+
+Root cause: the status field was assumed numeric. Fix: `_error_body_status_code()`
+returns `0` for `None`, booleans and values that cannot be coerced, and the
+integer value otherwise, so `429`, `"429"` and `429.0` still classify as
+capacity errors while malformed bodies fall through to the normal error path.
+
+Regression test: `tests/test_review_error_body_status_code_2026_11_08.py`
+(covers numeric, numeric-string, non-numeric string, `None`, bool, list, the
+non-status signals `type`/`code`, and a non-object `error` value). Against the
+pre-fix function it fails with
+`ValueError: invalid literal for int() with base 10: 'unavailable'`; it passes
+on the fixed tree.
+
+#### EXP-STATE-1 — unchanged selection was broadcast on every market refresh — **FIXED**
+
+`ObservatoryState.setStocks()` notified `selectedSymbol` unconditionally after
+replacing the stock list (`static/js/experimental/orbit-state.js`, now
+`:133-145`). The store contract is change-only notification; the
+`TemporalController` subscriber stops an in-progress timelapse and reapplies
+historical values whenever `selectedSymbol` fires. Since the regular
+`/api/stocks` refresh calls `setStocks` with the same selected symbol, the
+simulation was interrupted roughly once per refresh even though nothing the
+user selected had changed.
+
+Root cause: the notification was tied to the *call* rather than to a change of
+state. Fix: remember `selectedSymbol` before the replacement and notify only
+when it actually differs. Automatic re-selection caused by the selected symbol
+disappearing still changes the value and therefore still notifies.
+
+Regression test: `tests/test_review_orbit_state_notifications_2026_11_08.py`
+loads the real file in a Node `vm`, replaces the list twice with the same
+selection, asserts exactly one `selectedSymbol` notification and two `stocks`
+notifications, then drops the selection and asserts the auto-selection fires
+once more. Pre-fix it fails with
+`selectedSymbol must notify once for an unchanged selection, got 2`; post-fix
+it passes.
+
+#### UI-ORDER-1 — a newly-added stock card stayed at the end of the grid — **FIXED**
+
+`renderStocks` reorders the existing card wrappers in place (deliberately, to
+preserve Chart.js canvas state). The old loop compared
+`container.children[i]` with the wrapper requested at index `i`
+(`static/js/ui.js`, now `:1501-1514`). A newly-created wrapper is not yet in the
+container: it was appended at the end, and for every later index the existing
+child already matched, so no `insertBefore` moved it into its sorted position.
+A grid `[A,B]` receiving a new first card `C` stayed `[A,B,C]` until the next
+full re-render instead of becoming `[C,A,B]`.
+
+Root cause: the loop used absolute indexes while inserting — the index contract
+breaks as soon as one node has to be moved or added. Fix: walk a reference
+cursor over the container and insert each wrapper before it, advancing the
+cursor when the node already sits in place. Ordering is now independent of the
+starting child list.
+
+Regression test: `tests/test_review_render_stocks_order_2026_11_08.py` drives
+the real `ui.js` with a minimal DOM implementation and asserts the rendered
+order is the sorted order. Pre-fix it fails with
+`Error: new card rendered out of order: AAA,BBB,CCC`; post-fix it passes.
+
+### C.3 Candidates examined and withdrawn (no change)
+
+| Candidate | Verdict |
+|---|---|
+| `native_host` rate limiter uses wall-clock time | **Withdrawn.** The ledger is shared across process restarts, so the timestamps must be comparable across processes; a monotonic clock is not persistable. A clock change can only shorten/lengthen the window, it cannot bypass the per-action/global limits. |
+| `native_host` sends each frame with a single `os.write` | **Withdrawn.** The stdio pipe is blocking; a short write is not expected and any write failure is caught and degrades to the in-process limiter — it never reports a successful send that did not happen. |
+| `native_host` manifest cache keyed by mtime | **Withdrawn.** The cached entry is validated (`path`, `mtime`, `size`) before use, the manifest is a local user-owned file, and the worst case is reloading a manifest edited within the same filesystem timestamp tick. |
+| `ai_service` chat/stream status normalization (`:1350-1367`, `:2599-2616`) | **Withdrawn.** Both sites already wrap the fallback `int()` in `except (ValueError, TypeError)`; only the classifier in C.2 lacked a guard. |
+| `ai_service` `except BaseException` around the circuit probe | **Withdrawn.** It releases the claimed probe and re-raises; it does not convert a failure into a success (see A.4). |
+| `ui.js` `triggerAiTechnicalLines` re-enables buttons in `finally` | **Withdrawn.** The buttons are disabled for the whole request and re-enabling is idempotent; no stale response can be applied because the payload is written before the `finally`. |
+| `ui.js` `renderStocks` early return when the container is absent | **Withdrawn.** Pages without the stocks grid intentionally no-op; every caller renders only in pages that provide the container. |
+| `orbit-state` mutation of `this.data` in place | **Withdrawn.** `this.data` is the store's private snapshot (`Object.freeze`d first-level), and subscribers receive fresh values; the unconditional notification was the only contract violation. |
+
+### C.4 Tree-wide sweep for the same anti-patterns
+
+- **Untrusted numeric coercion in error paths.** Searched every
+  `int(...status...)` in `services/`. `embeddings_service.py:168-180` and both
+  `ai_service` chat/stream sites already catch `TypeError`/`ValueError` (and
+  reject booleans); `openai_service.py:81` receives an internal typed `int`.
+  No other unguarded coercion remained.
+- **Change-only notifications.** In `orbit-state.js` the other mutators compare
+  before notifying; `setStocks` was the only one that fired a key it had not
+  changed. No other store in `static/js/experimental/` re-notifies a key on
+  every refresh.
+- **Index-based in-place reordering.** A whole-tree search for
+  `children[`/`insertBefore(` found only `ui.js:1501-1514` iterating a list by
+  index; the remaining `insertBefore` calls are single-node placements
+  (`api.js:2354,2534`, `settings.js:47`) or a one-off container move
+  (`ui.js:3722`), which cannot exhibit the ordering bug.
+
+### C.5 Verification on the final tree
+
+| Check | Result |
+|---|---|
+| Full `pytest -q` | exit 0, 100% reached, no failures/errors |
+| 3 new regression tests | PASS post-fix; each reproduced FAIL pre-fix (messages quoted in C.2) |
+| `ruff check . --line-length=100` | All checks passed |
+| `flake8 --select=E9,F63,F7,F82` | 0 |
+| `mypy` | Success: no issues in 125 source files |
+| `pyrefly check` | 0 errors |
+| `pylint --errors-only` (CI target list) | exit 0, no messages |
+| `bandit --severity-level medium` | exit 0 |
+| `pip-audit` | No known vulnerabilities found |
+| `npm run build` | typecheck / compile / verify-generated / eslint / prettier all pass |
+| `git diff --check` | clean |
+| Diff scan for debug code (`console.log`, `debugger`, `pdb`, `breakpoint`, `print`) | none |
+| Untracked files | only the four new regression tests |
+
+### C.6 Scope boundary
+
+The repository has 481 tracked `.py`/`.js`/`.ts` files (169,720 lines). This
+pass read the twelve files above end-to-end (13,497 lines) and closed the gap
+Appendix B declared. The earlier passes recorded in Appendix A cover the
+remaining files; those reads were not repeated line-by-line in this pass, so no
+new full-read claim is made for them here beyond the gate results in C.5.
+
+---
+
+## Appendix D. 2026-11-08 fifth-pass audit — data layer, caches, SQLite history, config/key/security (18 files, 6,499 lines)
+
+Batch selected by risk: the persistence boundary (`user_stocks.json`), the
+cross-process disk cache, the in-memory cache/single-flight layer, the SQLite
+chat store, the whole `config/` package plus its facade and master-key/crypto
+boundary, and the native-host PID write that the tree-wide tmp sweep surfaced.
+Every file below was read end-to-end in this pass; the outcome column records
+what was actually found.
+
+### D.1 Coverage ledger (this pass)
+
+| File | Lines | Outcome |
+|---|---|---|
+| `utils/storage.py` | 851 | No defect. Fail-closed load/save guards, bounded cross-process locks, backup rotation and tmp cleanup verified. |
+| `utils/disk_cache.py` | 855 | **CACHE-TMP-LEAK** — fixed. Rest verified (lock timeout degradation, TTL rule, field migration). |
+| `utils/caching.py` | 391 | No defect. Single-flight event cleanup and negative-cache identity check verified. |
+| `utils/chat_history.py` | 952 | No defect. Per-thread connection lifetime, transaction/retry, foreign-key cascade and parameterized SQL verified. |
+| `config/atomic_write.py` | 335 | No defect. Bounded lock retries and tmp cleanup verified. |
+| `config/locks.py` | 191 | No defect. Reentry depth is `threading.local()`; `_CONFIG_LOCK` is `RLock`. |
+| `config/io.py` | 569 | No defect. Cache keying, corruption fail-closed path and backup handling verified. |
+| `config/corruption.py` | 163 | No defect. Sanitized backup and rotation verified. |
+| `config/master_key.py` | 143 | No defect. Fail-closed undecodable-key path verified. |
+| `config/merge.py` | 126 | No defect. Protected/seed key allowlists verified. |
+| `config/paths.py` | 38 | No defect. Runtime dir isolation and 0700 creation verified. |
+| `config/__init__.py` | 9 | No defect (package docstring only). |
+| `crypto_utils.py` | 588 | No defect. Secret logging, plaintext rejection and Fernet/DPAPI fallbacks verified. |
+| `security_config.py` | 195 | No defect. Content-limit path matches the registered `/api/analyze-chart-image` route (`routes/api_analysis.py:2088`). |
+| `config_utils.py` | 367 | No defect. Model alias/pointer precedence verified. |
+| `config_store.py` | 124 | No defect. Shared state types (`RLock`, `local`, cache) verified. |
+| `utils/env_helpers.py` | 144 | No defect. Env parsing bounds/defaults verified. |
+| `native_host/start_backend.py` | 458 | **PID-TMP-LEAK** — fixed (found by the tmp sweep). Rest verified (startup lock, health probe, PID reuse). |
+
+Total: 18 files, 6,499 lines.
+
+### D.2 Confirmed defects and root-cause fixes
+
+#### CACHE-TMP-LEAK — failed `StockDiskCache.set` left its staging file behind — **FIXED**
+
+`set()` writes through a UUID-named `*.tmp` and promotes it with `os.replace`
+(`utils/disk_cache.py:537-600`). Cleanup was attached only to the two handled
+exception types (`OSError`, `TypeError`). `json.dump` can also raise `ValueError`
+(circular reference) or `RecursionError` (pathologically deep payload); those
+escaped the handler and left the partially written tmp file until the 10-minute
+stale sweep — one orphan per failed write.
+
+Root cause: resource cleanup was scoped to the classifier, not to the resource.
+Fix: the tmp path is now unlinked in a `finally` that runs on success, classified
+failure and unclassified exception alike (the exception still propagates).
+
+Regression test: `tests/test_review_disk_cache_tmp_cleanup_2026_11_08.py`. On the
+pre-fix tree the circular-reference case fails with
+`AssertionError: ... Left contains one more item: ... .tmp`; the fixed tree
+passes. A second test pins the documented `TypeError` degraded-write path (skip,
+no raise, no tmp).
+
+#### PID-TMP-LEAK — failed PID promotion left `.backend.tmp` behind — **FIXED**
+
+`_start()` writes the detached backend PID to `.backend.tmp` and promotes it with
+`os.replace` (`native_host/start_backend.py:401-416`). When the replace failed
+(permission error, AV scanner, read-only runtime directory), the fallback wrote
+`PID_FILE` directly but never removed the staging file, so every failed promotion
+left a stale `.backend.tmp`.
+
+Root cause: same pattern — the tmp file was only cleaned on the success path.
+Fix: a `finally` unlinks the staging path after either path (`missing_ok=True`).
+
+Regression test: `tests/test_review_start_backend_tmp_cleanup_2026_11_08.py`
+pins `os.replace` to fail inside `_start` and asserts the fallback PID write
+succeeds while the staging file is gone. The same harness executed against the
+`HEAD` source prints `pre_fix_tmp_left: True`; the fixed tree passes.
+
+### D.3 Candidates examined and withdrawn (no change)
+
+| Candidate | Verdict |
+|---|---|
+| `utils/storage.py` first-run defaults can overwrite a config created concurrently | **Withdrawn.** The window requires a concurrent creator between the existence check and the defaults write; closing it means changing `save_config`'s explicit overwrite contract. No observed loss and no backward-compatible minimal fix. |
+| `config/io.py` missing-file path calls `save_config` while holding `_CONFIG_LOCK` | **Withdrawn.** `_CONFIG_LOCK` is `threading.RLock()`, so the re-entry is intentional and cannot deadlock. |
+| `config/locks.py` reentry depth is module-global | **Withdrawn.** `_UPDATE_LOCK_STATE` is `threading.local()`; each thread sees its own depth, so cross-thread callers still take the file lock and `_CONFIG_LOCK`. |
+| `config/master_key.py` treats a non-dict `mns_master_key` as absent | **Withdrawn.** `_decode_secret` rejects plaintext strings by policy, so no usable key is discarded; the dict-entry path already fails closed. |
+| `utils/chat_history.py` `__getitem__` returns `[]` when SQLite fails | **Withdrawn.** Documented dict-like compatibility with an error log; it never turns a failed write into a success. |
+| `crypto_utils.py` catches `(KeyringError, Exception)` | **Withdrawn.** Redundant tuple, but the broad fallback is intentional and logs only the exception type (never the secret). |
+| `utils/caching.py` timed-out waiter returns `CACHE_FETCHING` | **Withdrawn.** Documented sentinel; it does not poison the negative cache and the fetch event is always popped in `finally`. |
+| `config/paths.py` does not re-chmod a pre-existing runtime dir | **Withdrawn.** Creation uses 0700; the files themselves are 0600. No evidence of exposure, and changing existing directory permissions is outside this fix's scope. |
+| `security_config.py` chart-image limit only on the exact path | **Withdrawn.** Verified against the only registered route, `routes/api_analysis.py:2088`. |
+
+### D.4 Tree-wide sweep for the tmp-cleanup anti-pattern
+
+Every tracked production `with_suffix(...tmp)` / `NamedTemporaryFile` site was
+enumerated: `config/atomic_write.py:95`, `config/corruption.py:108`,
+`utils/storage.py:147,800`, `utils/disk_cache.py:547,730`,
+`native_host/start_backend.py:402`. The two uncovered sites were fixed (D.2);
+the others already clean up in a `finally` (atomic write, corruption backup,
+disk-cache field migration, user-stocks save) or in the classified error
+handler of the one-way legacy migration. No other unbounded tmp/buffer writer
+was found in the sweep.
+
+### D.5 Verification on the final tree
+
+| Check | Result |
+|---|---|
+| Focused regression tests (4 tests) | PASS |
+| Full `pytest -q` | exit 0, 100% reached, no failures/errors |
+| `ruff check . --line-length=100` | All checks passed (an initial run flagged `PLR0402` in the new test import; fixed and rerun) |
+| `flake8 --select=E9,F63,F7,F82` | 0 |
+| `mypy` | Success: no issues in 125 source files |
+| `pyrefly check` | 0 errors |
+| `pylint --errors-only` (CI target list) | exit 0, no messages |
+| `bandit --severity-level medium` | exit 0 |
+| `pip-audit` | No known vulnerabilities found |
+| `npm run build` | typecheck / compile / verify-generated / eslint / prettier all pass |
+| `git diff --check` | clean |
+
+### D.6 Scope boundary
+
+Repository inventory: 481 tracked `.py`/`.js`/`.ts` files, 169,720 lines. This
+batch read 18 files / 6,499 lines end-to-end. Appendices B and C record the
+named-module reads of this campaign; beyond those, at least ~450 tracked source
+files (~150k lines) still have no line-by-line read I can personally attest to.
+No exhaustive full-tree claim is made here.
+
+---
+
+## Appendix E. 2026-11-08 sixth-pass audit — API boundary and UI↔backend contract (13 files, 12,197 lines)
+
+Batch selected by risk: the request/response boundary between the stock routes
+and their browser consumers. The pass read every line of the shared validators
+and payload envelope, the whole `routes/stocks/` package (including the SSE
+stream), the stock and AI-portfolio schemas, and the complete frontend API
+client that consumes those envelopes. Each candidate below was reproduced from
+the real code; no earlier coverage table was used as evidence.
+
+### E.1 Coverage ledger (this pass)
+
+Line counts are `HEAD` → worktree because the three fixed files grew.
+
+| File | Lines (HEAD → now) | Extent | Outcome |
+|---|---|---|---|
+| `utils/validators.py` | 1,292 → 1,318 | 1–1,292 | **ANALYSIS-UPSIDE-TYPE** — fixed. Rest of the extraction/salvage/normalization path verified. |
+| `utils/stock_payload.py` | 1,449 → 1,454 | 1–1,449 | **ERROR-ENVELOPE-MESSAGE-SANITIZE** — fixed. Envelope, quote payload, portfolio metrics and cache resolution verified. |
+| `route_helpers.py` | 2,237 → 2,276 | 1–2,237 | **AI-PORTFOLIO-TOKEN-SHAPE** — fixed (generate and rebalance mappers). Rate-limit polling, parsers, cache invalidation verified. |
+| `routes/stocks/views.py` | 668 | 1–668 | No defect. Watchlist add/delete/reset rollback, screener sorting/enrichment and heatmap single-flight verified. |
+| `routes/stocks/quotes.py` | 556 | 1–556 | No defect. History cache/circuit/half-open probe, details async path, search error envelope verified. |
+| `routes/stocks/portfolio.py` | 276 | 1–276 | No defect. JP alias matching, market/FX rules and conditional persist rollback verified. |
+| `routes/stocks/ai_portfolio.py` | 906 | 1–906 | No independent defect. Generate/rebalance cache+inflight critical sections verified; token mapping is owned by `route_helpers` (fixed). |
+| `routes/stocks/common.py` | 303 | 1–303 | No defect. `_json_safe`, SSE replay, watchlist capacity and heatmap inflight cleanup verified. |
+| `routes/stocks/stream.py` | 495 | 1–495 | No defect. Reservation accounting, replay/initial-snapshot cache bounds, disconnect cleanup verified. |
+| `routes/stocks/__init__.py` | 124 | 1–124 | No defect (blueprint wiring and export surface). |
+| `schemas/stocks.py` | 560 | 1–560 | No defect. Mutation, history/details, screener and portfolio contracts verified. |
+| `schemas/ai_portfolio.py` | 387 | 1–387 | No defect. Generate/rebalance/save/delete/copy schemas and their markers verified. |
+| `static/js/api.js` | 2,944 | 1–2,944 | No independent defect. Consumer of **ANALYSIS-UPSIDE-TYPE** at `:2372-2379`; SSE lifecycle, error classification and polling verified. |
+| **Total** | **12,197 → 12,267** | all lines | 3 defects fixed, 5 candidate classes withdrawn. |
+
+Deferred to a later batch with measured sizes: `static/js/ai_portfolio.js`
+(1,832 lines), `schemas/analysis.py` (440), `schemas/config.py` (219), plus the
+remaining files counted in E.6.
+
+### E.2 Confirmed defects and root-cause fixes
+
+#### ANALYSIS-UPSIDE-TYPE — a numeric `upside_3m` crashed the analysis panel — **FIXED**
+
+The analysis API declares `upside_3m` as a percentage string
+(`utils/validators.py:135`, `services/ai_service.py:133`) and the detail UI calls
+`upside.includes("+")` on it (`static/js/api.js:2379`). The alias conversion in
+`_normalize_analysis_aliases` formatted numeric aliases (`upside`,
+`expected_return`, …), but a model that returned the canonical key directly as
+a number — `{"upside_3m": 12.5}` — passed `validate_analysis_result` (which only
+sanity-checks `target_price_3m` and the list fields) and `normalize_analysis_result`
+unchanged. The API therefore serialized a JSON number; the browser reached
+`.includes` on a number, threw `TypeError`, and replaced an otherwise valid
+analysis with the error banner.
+
+Root cause: canonicalization was applied to the alias branch instead of to the
+canonical field, so the declared output type was not enforced at the single
+normalization point where structured responses, repaired JSON and aliases all
+converge. Fix: every non-null, non-string `upside_3m` is now converted in
+`_normalize_analysis_aliases`; a finite number becomes the same `+12.5%` /
+`-8.25%` form as the alias path, booleans and other values become strings, and
+`None` is left for the existing `"0%"` default.
+
+Regression tests (in `tests/test_review_api_boundary_contract_2026_11_08.py`):
+`test_numeric_upside_3m_is_normalized_to_string` and
+`test_numeric_negative_upside_3m_keeps_sign`. Pre-fix failures:
+`AssertionError: the analysis API contract requires upside_3m to be a string; got float`
+and `assert -8.25 == '-8.25%'`; both pass on the fixed tree.
+
+#### AI-PORTFOLIO-TOKEN-SHAPE — invalid `request_token` reported as a theme error — **FIXED**
+
+`AIPortfolioGenerateRequest` and `AIPortfolioRebalanceRequest` both declare an
+optional `request_token` with a 16–128 character URL-safe pattern
+(`schemas/ai_portfolio.py:84,122`). Their validation adapters did not inspect
+the failing field: generate treated any `string_too_long` as an over-long theme
+and then fell back to `MISSING_REQUIRED_FIELD: ["theme"]`, while rebalance
+returned the generic “theme must be 120 characters or fewer” envelope with no
+`fields` key. A client that sent a short or over-long token received a false
+statement that its valid theme was missing or too long, and could not correct
+the actual field.
+
+Root cause: the adapter classified errors by message text/type only and ignored
+Pydantic's `loc`, so unrelated fields collapsed into the theme branch. Fix: a
+shared `_request_token_error_from_validation` renders the canonical
+`INVALID_INPUT` envelope with `fields: ["request_token"]`; both adapters check
+the theme's own location for `string_too_long` first (preserving the historic
+theme error), then delegate token failures to the shared mapper.
+
+Regression tests: `test_ai_portfolio_generate_invalid_request_token_reports_token`,
+`test_ai_portfolio_generate_overlong_request_token_reports_token` and
+`test_ai_portfolio_rebalance_invalid_request_token_reports_token`. Pre-fix the
+generate cases fail with `assert ['theme'] == ['request_token']` and the
+rebalance case with `KeyError: 'fields'`; all pass after the fix.
+
+#### ERROR-ENVELOPE-MESSAGE-SANITIZE — top-level error text bypassed redaction — **FIXED**
+
+`error_response` sanitized `details` and `extra_fields` through
+`_sanitize_error_value`, but copied the caller's `message` verbatim into both
+the `error` and `message` keys. Most callers pass static text, but
+`/api/stock-history` passes the upstream failure string
+(`routes/stocks/quotes.py`, `make_history_response`), which can contain a
+provider URL or credential fragment. Sanitizing only the nested fields left
+the primary, most-visible error field unsanitized.
+
+Root cause: sanitization was scoped to selected branches instead of to every
+string leaf the envelope owns. Fix: `safe_message = _sanitize_error_message(message)`
+is computed once and used for both top-level fields; normal messages are
+unchanged, so existing envelopes and tests keep their text.
+
+Regression test: `test_error_response_sanitizes_top_level_message`. Pre-fix it
+fails because the `sk-…` value is present in `error` and `message`; post-fix the
+value is absent and `[REDACTED]` is present in both.
+
+### E.3 Candidates examined and withdrawn (no change)
+
+| Candidate | Verdict |
+|---|---|
+| SSE reservation released in both the generator `finally` and `call_on_close` | **Withdrawn.** `SseListenerReservation.release` is idempotent: it takes `_release_lock` and returns immediately when `_released` is already set (`messaging.py:29-35`). No count underflow. |
+| Nested `app_state.cache.sse_data_lock` acquisition in `/api/stocks`, `/api/indices`, stream snapshot and payload resolution | **Withdrawn.** `CacheState.sse_data_lock` is a `threading.RLock` (`utils/caching.py:41,52`); re-entry is intentional and cannot deadlock. |
+| `/api/heatmap` serializing the `CACHE_FETCHING` sentinel | **Withdrawn.** `_CacheFetching.__bool__` returns `False` (`utils/caching.py:160-165`), so `if cached_present and cached` deliberately skips the in-progress sentinel and falls through to the disk/fetch path. |
+| `/api/stock-history` reading the disk cache without a local guard | **Withdrawn.** `StockDiskCache.get` already converts corrupt JSON, filesystem `OSError` and lock timeouts to `None` (`utils/disk_cache.py:416-485`); the route cannot see those exceptions. |
+| `common.resolve_stocks_for_response` retrying without `real_data_only` on `TypeError` | **Withdrawn.** It is a deliberate legacy-signature compatibility shim; no failing behavior was reproduced, and removing it would break callers that still pass the old signature. Not changed. |
+| Frontend `upside.includes` as an independent JS defect | **Withdrawn as a separate fix.** The root cause was the backend emitting a number. After E.2 every producer path (`structured`, repaired JSON, alias, fallback) returns a string; changing the consumer would add an untested JS path without fixing the contract. |
+| `/api/stock-history` returning 503 while the circuit is open even when a stale disk entry exists | **Withdrawn.** Circuit-open is the endpoint's explicit terminal state; serving stale data there is a product decision, not a defect, and would change documented circuit semantics. |
+| Rejecting a malformed `request_token` instead of ignoring it | **Withdrawn.** The 16–128 character pattern is shared with `/api/chat` and `/api/analyze-v2`; the defect was the wrong error target, not the rejection itself. |
+
+### E.4 Tree-wide sweep for the same anti-patterns
+
+- **Declared string fields emitted as numbers.** Searched every `upside_3m`
+  producer and consumer: `services/ai_service.py:133` (schema),
+  `services/preview_responses.py:58`, `utils/validators.py:1012-1021,1088-1093`
+  and `static/js/api.js:2372-2379`. The alias and fallback paths were already
+  strings; only the direct numeric key leaked, and the single normalization
+  point now canonicalizes it. A scan of `static/js/` for `.includes(` on API
+  values found no other field with this assumption (the rest are rendered with
+  `textContent`).
+- **Validation adapter ignoring `loc`.** Searched every `request_token` schema
+  (`schemas/analysis.py:48,155`, `schemas/ai_portfolio.py:84,122`) and every
+  validation adapter. Chat/analyze already special-case the token field; the
+  two AI-portfolio adapters now use the shared mapper, and the generic
+  `string_too_long` checks are location-aware. No other adapter collapses
+  unrelated fields into a required-field error.
+- **Error envelope fields bypassing sanitization.** Enumerated every
+  `error_response(..., message=...)` call site: `error_handlers.py:53` (global
+  handler), `routes/stocks/quotes.py` (history upstream text and details
+  failure) and `routes/stocks/views.py` (static bootstrap text). All now pass
+  through the sanitizing owner; no route hand-builds a competing envelope for
+  these responses.
+- **SSE listener accounting.** Re-checked every `reserve()` / `release()` pair
+  against the reservation implementation; the release guard is the only place
+  the counter changes, and the stream's double hook is harmless by design.
+
+### E.5 Verification on the final tree
+
+| Check | Result |
+|---|---|
+| New contract tests (6) | PASS post-fix; all 6 reproduced FAIL on the pre-fix tree (messages quoted in E.2) |
+| Full `pytest -q` | exit 0, 100% reached, no failures/errors |
+| `ruff check . --line-length=100` | All checks passed |
+| `flake8 --select=E9,F63,F7,F82` | 0 |
+| `mypy` | Success: no issues found in 125 source files |
+| `pyrefly check` | 0 errors |
+| `pylint --errors-only` (CI target list) | exit 0, no messages |
+| `bandit --severity-level medium` | exit 0 |
+| `pip-audit` | No known vulnerabilities found |
+| `npm run build` | typecheck / compile / verify-generated / eslint / prettier all pass |
+| `git diff --check` | exit 0 (only Git's CRLF normalization warnings) |
+| Added-line debug scan (`console.log`, `debugger`, `pdb`, `breakpoint`, `print`) | none |
+| Untracked files | only the 7 intended regression-test files |
+
+### E.6 Scope boundary
+
+The repository has 481 tracked `.py`/`.js`/`.ts` files (169,804 lines on the
+final tree). This pass read 13 files / 12,197 lines at `HEAD` end-to-end; the
+same files contain 12,267 lines after the 70 lines added by these fixes.
+
+Attestable line-by-line coverage from this campaign is therefore:
+
+| Pass | Files | Lines |
+|---|---:|---:|
+| Appendix C (UI / AI service / native host) | 12 | 13,497 |
+| Appendix D (data layer / caches / config) | 18 | 6,499 |
+| Appendix E (this pass) | 13 | 12,267 |
+| **Total** | **43** | **32,263** |
+
+**Still unverified: 438 tracked source files / 137,541 lines.** That includes
+`static/js/ai_portfolio.js` (1,832), `schemas/analysis.py` (440),
+`schemas/config.py` (219) and every other file not named in the three ledgers
+above. Earlier Appendix A/B evidence is not counted as a personal line-by-line
+read for this campaign; no exhaustive full-tree claim is made here.
+
+---
+
+## Appendix F — API-boundary / frontend-contract batch (2026-11-08, second pass)
+
+### F.1 Batch definition
+
+Read end-to-end from the worktree at `HEAD` (`a1ad806`), 10 files / **11,275
+lines measured at HEAD** (11,282 on the final tree after FIX-1):
+
+| # | File | Lines (HEAD) | Result |
+|---|---|---:|---|
+| 1 | `static/js/ai_portfolio.js` | 1,832 | No defect retained (generation polling, abort/stale guards, save/delete/copy, Chart lifecycle, textContent-only DOM). |
+| 2 | `schemas/analysis.py` | 440 | No defect retained (request schemas, bounded fields, strict types). |
+| 3 | `schemas/config.py` | 219 | No defect retained; `RuntimeConfigSchema.host` accepted-string candidate withdrawn. |
+| 4 | `routes/api_analysis.py` | 2,158 | **FIX-2** (chat 500 exception echo). Two candidates withdrawn. |
+| 5 | `services/ai_portfolio_service.py` | 1,042 | No defect retained; empty-list-on-storage-error withdrawn as intended. |
+| 6 | `routes/system/credentials.py` | 616 | No defect retained; GET/POST response keys reconciled against `settings.js`. |
+| 7 | `utils/text_utils.py` | 196 | No defect retained (JSON boundary reader, secret redaction, token fingerprint). |
+| 8 | `static/js/settings.js` | 1,626 | No defect retained; retry/generation, in-flight and confirm-timer lifetimes audited. |
+| 9 | `static/js/utils.js` | 1,013 | No defect retained (CSRF refresh/retry, fetch timeout cleanup, modal refcount, logger redaction). |
+| 10 | `static/js/chart.js` | 2,133 | **FIX-1** (chart-preference cache bound bypassed on the read path). |
+
+Deferred next-in-line tracked files, measured but **not** read in this pass:
+`static/js/state.js` 803, `static/js/heatmap.js` 1,317,
+`static/js/screener.js` 754, `static/js/index_main.js` 1,127 — **4 files /
+4,001 lines**. The other 424 unverified tracked files are counted in F.8.
+
+### F.2 Genuine defects fixed
+
+**FIX-1 — `static/js/chart.js`: `_chartPrefCache` grew without bound on the
+read path.**
+
+- Root cause: eviction (`_evictChartPrefCache`, documented ceiling 200 stocks
+  × 12 preferences = 2,400 entries) ran only from `setChartPref`. `getChartPref`
+  lazily inserts an entry for every new stock key, so a session that only
+  *reads* preferences for more than 200 stocks defeated the cap.
+- Fix: a single insertion helper, `_storeChartPrefEntry(key, val)`, evicts when
+  the key is new and is now used by both `_loadChartPrefIntoCache` and
+  `setChartPref`. Eviction still flushes dirty keys to `localStorage` first, so
+  no pending write is lost.
+- Regression test: `tests/test_review_frontend_cache_bound_2026_11_08.py`
+  (`test_chart_pref_cache_read_path_is_bounded`). Pre-fix: **FAIL**
+  (`read path grew pref cache past the cap: 2500`). Post-fix: **PASS**
+  (`getChartPref` "R0" still returns the default after eviction).
+- The pre-existing `test_chart_pref_cache_is_bounded_and_flushes_dirty_evictions`
+  covered only `setChartPref`, which is why this gap survived it; it still passes.
+
+**FIX-2 — `routes/api_analysis.py`: the chat 500 envelope echoed internal
+exception text.**
+
+- Root cause: the non-SSE branch of `_chat_error_response` appended
+  `exc_str[:120]` (secret-redacted but otherwise raw) while its own SSE sibling
+  and the unified `error_response` envelope return a fixed message. Unhandled
+  exception text can carry absolute paths and SDK internals (CWE-209).
+- Fix: return the fixed `チャット処理に失敗しました`; the full text is still
+  logged with `request_id`, and `details.error_type` remains for support. Status
+  code, envelope keys and error codes are unchanged.
+- Regression test: `tests/test_review_chat_error_disclosure_2026_11_08.py`.
+  Pre-fix: **FAIL** (`チャット処理に失敗しました (disk path C:\internal\state.json unusable)`).
+  Post-fix: **PASS** (no `state.json` / `internal` in `error`/`message`/`reply`).
+- Existing envelope tests (`test_api_chat_error_contract.py`,
+  `test_audit_api_boundary_fixes_2026.py`, `test_ai_polling_and_logging_fix.py`)
+  all still pass.
+
+### F.3 Withdrawn candidates (reason)
+
+1. `api_news` maps failures through `_analyze_v2_error_response`, so news
+   `details.reason` can read "AI分析…". Status codes and envelope are correct;
+   this is wording, and rewording user-facing strings risks contradicting the
+   pinned chat/analyze contracts. Not a functional defect.
+2. `_analyze_v2_error_response` keeps the sanitized `err_msg` in 503/500
+   reasons. Documented data-processing diagnosis; text is secret-redacted and
+   the 503 text describes external connectivity. Deliberately left as-is.
+3. `provider_error` details receive a raw provider dict at some call sites —
+   `error_response` now sanitizes recursively (`_sanitize_error_value`).
+4. `load_saved_ai_portfolios` returns `[]` on `PortfolioStorageError`. This is
+   the documented contract (graceful GET), and the write path raises the typed
+   error (503), so a corrupt store cannot be silently overwritten. Existing
+   tests assert the empty-list behaviour.
+5. `RuntimeConfigSchema.host` accepts any string — local runtime config, not
+   user/API input; binding already constrains reachability.
+6. `_sanitize_error_message` pattern list — redaction is defense-in-depth; the
+   one raw-echo site was FIX-2.
+7. `settings.js` `clearLegacyBrowserCredentials(options)` ignores its flags —
+   the only caller passes all-true, so no behavioural divergence exists today.
+8. `settings.js` `moveStock` can lose one of two *different-row* reorders
+   clicked while the first fetch is in flight. The per-symbol in-flight guard
+   already prevents the duplicated swap that was observed; serializing per
+   market would add click-queueing machinery for a cosmetic, repeatable local
+   reorder. Accepted residual UX risk, not fixed.
+9. `settings.js` `fetchStocksForMarket` swallows read failures and returns `[]`
+   (move then no-ops). No state corruption; read-only degradation is intended.
+10. `chart.js` `drawPnLChart` reuses any existing `type === "line"` chart on the
+    canvas — PnL and price charts use distinct canvases, so the branch cannot
+    mutate a price series.
+11. `chart.js` `formatPrice` prints `0` for a whitespace-only string — callers
+    pass numeric API fields; formatting helper only.
+
+### F.4 Tree-wide sweep
+
+- **Bounded-cache anti-pattern (insertion never enforces the cap):** swept all
+  Map/Set caches in `static/js`. `historyPrefetchCache` and `stockDetailsCache`
+  evict before insertion (`state.js` + `ui.js`), `historyCache` evicts inside a
+  loop before `set` (`experimental/temporal-controller.js`), the realtime
+  `domCache` clears above 500, and `_toastHistory` is time-pruned. Only
+  `_chartPrefCache` had the read-path bypass; fixed and now single-entry-point.
+- **Internal error-text disclosure:** swept every `details={... {err_msg}` /
+  `{exc_str[` / `{str(exc` response construction. Remaining sites are the two
+  analyze-v2 branches and the portfolio network 503 (withdrawn, F.3.2); no other
+  endpoint echoes unhandled exception text.
+- **Credential contract:** reconciled `settings.js` reads
+  (`ok`, `details.reason`, `model_badge`, `model_label`, `available_models`,
+  `model_selectable`, `ai_provider`, `api_mode`, `agent_id`, `preview_mode`,
+  `has_*_api_key`, `is_local_openai_base_url`) against
+  `_build_safe_credentials_response` + `ok_response`; all keys are emitted on
+  GET and POST. No client/server validation mismatch (prompt limit 5000 on both
+  sides).
+
+### F.5 Final gates (final tree, after both fixes)
+
+| Gate | Command | Result |
+|---|---|---|
+| pytest (full) | `.venv/Scripts/python.exe -m pytest -q` | **exit 0** (100%) |
+| ruff | `... -m ruff check . --line-length=100` | **exit 0** — All checks passed |
+| flake8 | `... -m flake8 . --select=E9,F63,F7,F82` | **exit 0** — 0 |
+| mypy | `... -m mypy` | **exit 0** — 125 source files, no issues |
+| pyrefly | `... -m pyrefly check` | **exit 0** — 0 errors |
+| pylint --errors-only | `... -m pylint --errors-only --disable=import-error …` | **exit 0** |
+| bandit | `... -m bandit --configfile pyproject.toml -r . --severity-level medium -q` | **exit 0** |
+| pip-audit | `... -m pip_audit` | **exit 0** — no known vulnerabilities |
+| npm build | `npm run build` (typecheck + compile + verify-generated + eslint + prettier) | **exit 0** |
+
+Logs: `/tmp/mns_gates_f/`. `git diff --check` exit 0.
+
+### F.6 Worktree reconciliation
+
+13 modified tracked files: the 11 from the earlier passes (`REVIEW_FINDINGS.md`,
+`native_host/start_backend.py`, `route_helpers.py`, `services/ai_service.py`,
+`static/js/api_client.js`, `static/js/api_client.ts`,
+`static/js/experimental/orbit-state.js`, `static/js/ui.js`,
+`utils/disk_cache.py`, `utils/stock_payload.py`, `utils/validators.py`) plus
+this batch's `routes/api_analysis.py` and `static/js/chart.js`. Nine untracked
+files, all regression tests from this campaign (two added here). No debug code,
+no scratch/temporary files, no half-applied fix; both this batch's diffs are
+shown in F.2 and are net +7 lines (`chart.js`) / net 0 (`api_analysis.py`).
+
+### F.7 Scope boundary
+
+| Pass | Files | Lines (at HEAD) |
+|---|---:|---:|
+| Appendix C | 12 | 13,497 |
+| Appendix D | 18 | 6,499 |
+| Appendix E | 13 | 12,267 |
+| Appendix F (this pass) | 10 | 11,275 |
+| **Total** | **53** | **43,538** |
+
+**Still unverified: 428 tracked source files / 126,266 lines** (481 tracked
+`.py`/`.js`/`.ts` files, 169,804 lines at `HEAD`). This explicitly includes
+`static/js/state.js` (803), `static/js/heatmap.js` (1,317),
+`static/js/screener.js` (754), `static/js/index_main.js` (1,127),
+`static/js/ui.js` (4,213) and `static/js/setup.js` (637). Earlier appendix rows
+are pointers, not evidence for files outside their own batch; no exhaustive
+full-tree claim is made here.
+
+---
+
+## Appendix G — Deferred front-end batch: `state.js` / `heatmap.js` / `screener.js` / `index_main.js` (2026-11-08)
+
+### G.1 Scope and method
+
+| File | Lines at `HEAD` `a1ad806` |
+|---|---:|
+| `static/js/state.js` | 803 |
+| `static/js/heatmap.js` | 1,317 |
+| `static/js/screener.js` | 754 |
+| `static/js/index_main.js` | 1,127 |
+| **Total** | **4,001** |
+
+Every line was read in full, not sampled: `state.js` and `screener.js` in one
+pass, `heatmap.js` in two windows (660 + 657), `index_main.js` in two windows
+(570 + 557). Contract checks below were made against the server code, not
+assumed from the client.
+
+- `/api/screener` emits `totalFiltered` (`routes/stocks/views.py:256`), which
+  `screener.js` prefers over `total`.
+- Every `data-sort` value in `templates/screener.html` (`symbol`, `price`,
+  `change_percent`, `market_cap`) and every sort `<option>` (`volume` included)
+  is a member of `ScreenerSortBy` (`schemas/stocks.py:34`); `min_change` /
+  `max_change` exist on `ScreenerQueryRequest` with `-100 .. 10000` bounds.
+- `services/market_data_service.py::_build_market_row` emits `market` for both
+  snapshot and enrichment rows, so screener currency, the market badge and the
+  add-to-watchlist payload all receive a real market.
+- `/api/stocks/add` returns `details.reason == "既に追加済み"` on duplicates
+  (`routes/stocks/views.py:306`), exactly the string `screener.js` matches.
+- `/api/stocks/portfolio/snapshot` returns `resolve_stocks_for_response(
+  include_portfolio=True)` for all three buckets, and the `fetchInitialStocks`
+  GET strips portfolio fields, so `mergeStocksWithExistingHistory`'s
+  `{...prev, ...s}` keeps the locally updated holdings.
+- `.heatmap-node.is-tooltip-open` (`static/css/heatmap.css:299,311`) targets
+  only `.heatmap-node`, never the 3D `<canvas>`.
+
+### G.2 Fix G-1 — 3D renderer and camera never matched the real canvas size
+
+**Root cause.** `switchViewMode("3d")` called `init3DScene()` while
+`#heatmap-3d-canvas` still carried `hidden` (`display: none`). Both
+`clientWidth` and `clientHeight` were therefore `0`, and `init3DScene` fell back
+to `|| 1000` / `|| 600`, pinning the renderer drawing buffer and `camera.aspect`
+to 1000×600 for any real container. The only other sizing path,
+`_resizeHandler`, updates the renderer only while `state.viewMode === "3d"`, so
+resizing the window in 2D and returning to 3D kept the stale size and aspect.
+The visible result is stretched geometry and a wrong field of view in the 3D
+heatmap — not a cosmetic difference.
+
+**Fix.** Added `sync3DViewportSize()`: it reads the canvas' real client size,
+no-ops when either dimension is 0, and applies `camera.aspect`,
+`updateProjectionMatrix()` and `renderer.setSize()`. It runs immediately after
+the canvas is unhidden in `switchViewMode("3d")` (covers first entry and
+re-entry) and replaces the inline block in `_resizeHandler`. No DOM id, event,
+state shape or API contract changed; `static/js/heatmap.js` is **+19/−13**.
+
+**Regression test.** `tests/test_review_heatmap_3d_viewport_2026_11_08.py` runs
+the real `heatmap.js` in a Node `vm` with `classList` semantics that make
+`clientWidth/clientHeight` return 0 while `hidden` (mirroring `display: none`),
+a stubbed Three.js that records `setSize` and camera aspect, and drives the
+actual `#view-3d` / `#view-2d` click handlers.
+
+| Run | Result |
+|---|---|
+| pre-fix | **FAIL** — `first 3D entry sized 1000x600, expected 800x500` (exit 1) |
+| post-fix | **PASS** — first entry 800×500 (aspect 1.6); re-entry after a 2D resize 640×480 (exit 0) |
+
+### G.3 Per-file ledger
+
+| File | Area | Verdict |
+|---|---|---|
+| `state.js` | Cache registries (`historyPrefetchCache`, `stockDetailsCache`) | Capped before insertion; `if (firstKey)` eviction guard is unreachable because stock keys are never empty strings. No change. |
+| `state.js` | `sparklineSignatureMap` / `sparklineUpdateAt` / `stockRealtimeUpdateAt` / `stockHashMap` | Keyed by the rendered watchlist symbols; writes happen per stock update, not per poll tick, so no growth without a new symbol. No documented cap; evicting them would drop live freshness metadata. Accepted, not fixed. |
+| `state.js` | `refreshCredentialState`, `updateIndices`, `normalizeHistoryData`, index invalidation, notification fan-out | Values/ordering checked against callers in `api.js`/`ui.js`; no stale-index or lost-notification path found. |
+| `state.js` | `PollingManager` | Lifecycle (`setInterval`/`clearInterval`/`clearAll`) matches its `api.js` callers; no orphan interval created here. |
+| `heatmap.js` | 3D viewport sizing | **Fixed (G-1).** |
+| `heatmap.js` | `showTooltip(renderer.domElement)` adds `is-tooltip-open` to the 3D canvas | CSS only styles `.heatmap-node`; no visual or behavioural effect. Withdrawn. |
+| `heatmap.js` | `init3DScene` partial-failure renderer leak | The renderer variable is assigned only after `new THREE.WebGLRenderer` returns; a throw inside the constructor leaves nothing to dispose. No reproducible leak path. Withdrawn. |
+| `heatmap.js` | Poll/abort/cleanup | Retries bounded at 15, poll timeout cleared on new load and `beforeunload`, rAF cancelled, controller aborted, resize listener removed, renderer/scene disposed. |
+| `screener.js` | API contract (`totalFiltered`, sort vocabulary, `market`, duplicate reason) | All four verified against server source (G.1). |
+| `screener.js` | Stale responses / debounce / abort | Request generation + `AbortController` + rAF generation guard; debounce cleared on `beforeunload`. |
+| `screener.js` | `renderTableRows` assumes `data.stocks` is an array | `/api/screener` always serialises a list; no reachable malformed path. Withdrawn. |
+| `index_main.js` | Portfolio snapshot awaited before `connectSSE()` | Intentional ordering: connecting SSE first lets the older snapshot payload overwrite fresher realtime prices. No change. |
+| `index_main.js` | Initial skeleton timeout / `?q=` deep-link retries | Timeout callback is state- and generation-guarded; deep-link retries are bounded at 40 and stop on success. |
+| `index_main.js` | Portfolio save then `fetchInitialStocks()` | GET omits portfolio fields, so the merge preserves the saved holdings; SSE mode is unchanged. |
+| `index_main.js` | Modal save re-enable race | Requires reopening the modal during an in-flight save; the button is disabled synchronously and the captured stock is per-invocation. Accepted residual UX risk. |
+| `index_main.js` | Alert threshold 0 | `parseOptionalNonNegativeNumber` treats 0 as "no threshold", matching the empty-field UI semantics. Intended, not a bug. |
+
+### G.4 Tree-wide sweep
+
+- **Renderer/canvas sized while hidden:** the only occurrences of
+  `clientWidth/clientHeight` in `static/js` are `heatmap.js` (fixed) and
+  `ai_portfolio.js:1623`, which reads a visible canvas height for a gradient and
+  holds no renderer state. `experimental/orbit-renderer.js` owns its resize and
+  visibility lifecycle and was fully reviewed earlier (Appendix row, 947 lines).
+- **Bounded caches:** re-swept the per-symbol maps added since Appendix F. All
+  are keyed by watchlist symbols with no per-tick insertion; the two documented
+  caps (`historyPrefetchCache`, `stockDetailsCache`) still evict before insert.
+- **Listeners / timers / observers / sockets:** `heatmap.js` removes its resize
+  listener, cancels rAF, clears the poll timeout, aborts the controller and
+  disposes the renderer on `beforeunload`; `screener.js` clears its debounce and
+  aborts; `index_main.js` aborts the initial fetch and bumps the generation;
+  `state.js` registers no listeners. None of the four opens a WebSocket or
+  `MutationObserver`.
+- **Stale responses:** generation guards verified in `screener.js` (request and
+  rAF), `index_main.js` (initial stocks) and `heatmap.js` (load generation plus
+  controller identity). No path writes an older payload after a newer one.
+- **Error envelopes:** `ok`, `details.reason`, `error`, `warnings`,
+  `total`/`totalFiltered` reconcile with `ok_response`/`error_response`; no
+  internal exception text is rendered by these files.
+- **Implicit `any`:** no TypeScript or type-assertion changes in this batch; no
+  suppression comments added.
+
+### G.5 Final gates (final tree, after G-1)
+
+| Gate | Command | Result |
+|---|---|---|
+| pytest (full) | `.venv/Scripts/python.exe -m pytest -q` | **exit 0** — 4,073 passed, 3 skipped, 47 subtests passed (25.90s; 4,076 collected) |
+| ruff | `... -m ruff check . --line-length=100` | **exit 0** — All checks passed |
+| flake8 | `... -m flake8 . --select=E9,F63,F7,F82` | **exit 0** — 0 |
+| mypy | `... -m mypy` | **exit 0** — 125 source files, no issues |
+| pyrefly | `... -m pyrefly check` | **exit 0** — 0 errors |
+| pylint --errors-only | `... -m pylint --errors-only --disable=import-error …` | **exit 0** |
+| bandit | `... -m bandit --configfile pyproject.toml -r . --severity-level medium -q` | **exit 0** |
+| pip-audit | `... -m pip_audit` | **exit 0** — no known vulnerabilities |
+| npm build | `npm run build` (typecheck + compile + verify-generated + eslint + prettier) | **exit 0** |
+
+Logs: `/tmp/mns_gates_g/`. The three skips are pre-existing environment-gated
+tests; the new regression test runs (its only conditional skip is a missing
+Node guard, and Node v24.22.1 is present). `git diff --check` exit 0.
+
+### G.6 Worktree reconciliation
+
+14 modified tracked files: the 13 listed in F.6 plus `static/js/heatmap.js`.
+Ten untracked files, all regression tests from this campaign; this batch added
+`tests/test_review_heatmap_3d_viewport_2026_11_08.py`. No debug code, scratch
+files or half-applied fix; the only this-batch diff is the +19/−13 heatmap
+change shown in G.2.
+
+### G.7 Scope boundary
+
+| Pass | Files | Lines (at `HEAD`) |
+|---|---:|---:|
+| Appendix C | 12 | 13,497 |
+| Appendix D | 18 | 6,499 |
+| Appendix E | 13 | 12,267 |
+| Appendix F | 10 | 11,275 |
+| Appendix G (this pass) | 4 | 4,001 |
+| **Total** | **57** | **47,539** |
+
+**Still unverified: 424 tracked source files / 122,265 lines** (481 tracked
+`.py`/`.js`/`.ts` files, 169,804 lines at `HEAD`, on the same counting basis as
+Appendices C–F). The 3D sizing fix was verified by the VM harness above, not by
+a real browser render; the 3D canvas was not visually inspected in this pass.
+
+---
+
+## Appendix H — Re-review batch: `ui.js` / `setup.js` (2026-11-08)
+
+### H.1 Scope, dedupe and contract checks
+
+| File | Lines (worktree / `HEAD` `a1ad806`) | Extent |
+|---|---|---|
+| `static/js/ui.js` | 4,213 / 4,210 | 1–4,213, five windows |
+| `static/js/setup.js` | 637 / 637 | 1–637, one pass |
+| **This pass** | **4,850 / 4,847** | |
+
+Ledger reconciliation: Appendix C.1 already read `ui.js` end-to-end (1–4,210,
+UI-ORDER-1 fixed), and an earlier full-file table lists `setup.js` (650 lines at
+that time). G.7 nevertheless listed both as unverified, so this pass re-read the
+current versions as directed. Because `ui.js` is already inside the 57-file
+total, it is **not** added again; only `setup.js` increments the unique total
+(H.7 explains the arithmetic).
+
+Contract checks against server code:
+
+- `/api/credentials` GET/POST and `/api/credentials/verify` return
+  `ok`/`details.reason`/`error`/`message`; `setup.js` reads exactly those keys
+  and treats `data.ok === false` as failure without discarding a 2xx body.
+- `state.js:524-563` defines `HAS_MISTRAL_API_KEY` from `has_ai_access` when
+  present, so the `ui.js` chat gate (`:2780`) is true for preview mode and an
+  OpenAI-compatible provider with a Mistral key absent. The legacy name is not
+  a provider bug.
+- `/api/ai-technical-lines` answers with `ok`, `details.reason` and
+  `model_restricted`; `ui.js` reads all three in both the HTTP-error and
+  model-restricted branches.
+- `setup.js` template ids (`saveBtn`, `apiKey`, `agentId`, `previewBtn`,
+  `verifyMistralSetupBtn`, `verifyOpenaiSetupBtn`, `openaiBaseUrl`,
+  `openaiApiKey`, `openaiModel`, `openaiEmbeddingsModel`, `langsearchApiKey`,
+  `tavilyApiKey`) and `input[name="aiProvider"]` / `input[name="apiMode"]`
+  were checked against `templates/setup.html`.
+
+### H.2 Fix H-1 — a superseded AI technical-lines request restored the newer request's UI
+
+**Root cause.** `triggerAiTechnicalLines(wrapper)` aborts the previous request
+for the wrapper, then disables every AI button it can see. Its `finally` block,
+however, hid the loading overlays and re-enabled all buttons **without checking
+whether it still owned the request**. A second trigger is reachable while the
+first is in flight: opening the fullscreen modal creates a fresh
+`#fs-ai-tech-lines-btn` *after* the first call captured `allBtns`, so that new
+button is enabled and can start a second request. The first request's abort
+path returns from `catch`, then its `finally` removes the second request's
+overlay and re-enables the buttons, making the UI look idle while request 2 is
+still running and allowing further stacking.
+
+**Fix.** The `finally` block now restores the UI only when
+`isCurrentLinesRequest()` is true — the same controller-identity contract the
+function already uses for its success/error branches. No API, DOM or state
+shape changed.
+
+**Regression test.** `tests/test_review_ai_lines_race_2026_11_08.py` loads the
+real `ui.js` in a Node `vm` with a controllable `csrfFetch`, issues two
+overlapping calls, aborts the first through the second call, and checks the
+busy state before and after the second settles.
+
+| Run | Result |
+|---|---|
+| pre-fix | **FAIL** — `button was re-enabled while the current request is in flight` (exit 1) |
+| post-fix | **PASS** — busy button/overlay survive the superseded request; restored after the current one settles (exit 0) |
+
+### H.3 Per-file ledger
+
+| File | Area | Verdict |
+|---|---|---|
+| `ui.js` | Card render/reorder (UI-ORDER-1, Appendix C) | Current code re-verified; in-place cursor reorder intact. |
+| `ui.js` | Detail-panel/drawer ownership move and restore | Only owned selectors are moved back; temporary drawer-only nodes stay put; the 50 ms refresh timer is cancelled on close. |
+| `ui.js` | Details polling (`ensureStockDetails`) | Per-wrapper controller identity, 15 s timeout, 8 polls, stale responses suppressed. |
+| `ui.js` | Sparkline signature/deferred draw | Signature stored before early return is harmless (sufficient data changes it); pending draw consumed by the observer. |
+| `ui.js` | Portfolio summary/sector charts and FX math | `toFiniteNumber` guards, missing-FX waiting state, chart update-in-place, empty-state handling. |
+| `ui.js` | Bulk analyze result DOM | Built with `createElement`/`textContent`; `CSS.escape` for selector fallbacks. |
+| `ui.js` | AI drawer send | `aiDrawerSendGeneration` already guards the stale `finally`. |
+| `ui.js` | AI technical lines | **Fixed (H-1).** |
+| `ui.js` | Fullscreen modal lifecycle | Toolbar rebuilt per open, keydown handler replaced/removed, chart and TradingView container destroyed on close. |
+| `ui.js` | `IntersectionObserver` | Disconnected on `beforeunload`; wrappers unobserved on every removal path. |
+| `setup.js` | Key validation and save flow | Length checks before disabling the button, re-entrancy guard, error text from `details.reason`/`error`/`message`. |
+| `setup.js` | Provider/mode switching | Only the active provider's fields are sent; preview mode and logout redirect preserved. |
+| `setup.js` | Abort lifecycle | One shared controller per page, aborted on `beforeunload`; verify buttons are serialized by `disabled`. |
+
+### H.4 Rejections and residual risks
+
+1. `drawPortfolioSummaryChart` computes `_totalCost` without using it — dead
+   local, no behavioural effect. Not a defect.
+2. `updateStockUI` defers a chart redraw with `requestAnimationFrame`; removing
+   the card in the same frame can draw on a detached canvas. The window is one
+   frame and no reproduction was found; accepted residual risk, not changed.
+3. `setup.js` verify/save `finally` blocks are not generation-guarded — the
+   controls are disabled synchronously, so concurrent execution is unreachable.
+4. `setup.js` uses one `AbortController` for all page requests; this is the
+   intended "abort everything on unload" contract, not a shared-state leak.
+5. `HAS_MISTRAL_API_KEY` in `ui.js` is a legacy name, but `state.js` derives it
+   from `has_ai_access` (H.1), so OpenAI-compatible and preview users are not
+   blocked.
+
+### H.5 Tree-wide sweep
+
+- **Unguarded `finally` UI restoration:** 37 `finally` blocks in `static/js`.
+  Only `ui.js`'s AI-lines block combined "abort previous by starting a new
+  request" with an unconditional restore. `chart.js:2083`, `heatmap.js:524`,
+  `ai_portfolio.js:444/755/909` and `temporal-controller.js:432` already guard
+  by request identity; `settings.js`, `setup.js` and `index_main.js` are
+  serialized by disabled controls; `api.js:2256` is guarded by the input's
+  disabled state and `ui.js:2935` by `aiDrawerSendGeneration`.
+- **Listener/timer cleanup:** fullscreen keydown removed and replaced per open,
+  charts destroyed on card removal/close, IntersectionObserver disconnected,
+  setup requests aborted on unload.
+- **Error envelopes:** credential and AI-lines handlers read `ok`,
+  `details.reason`, `error`, `message`, `model_restricted`; no exception text is
+  rendered by these files.
+- **Hidden/canvas sizing:** no new renderer or canvas sizing in this batch.
+- **Caches:** no new unbounded map; `chartInstances` entries are deleted by
+  `destroyChart` on every removal path.
+- **Implicit `any`:** no TypeScript or type-assertion changes; no suppression
+  comments added.
+
+### H.6 Final gates (final tree, after H-1)
+
+| Gate | Command | Result |
+|---|---|---|
+| pytest (full) | `.venv/Scripts/python.exe -m pytest -q` | **exit 0** — 4,074 passed, 3 skipped, 47 subtests passed (25.77s) |
+| ruff | `... -m ruff check . --line-length=100` | **exit 0** — All checks passed |
+| flake8 | `... -m flake8 . --select=E9,F63,F7,F82` | **exit 0** — 0 |
+| mypy | `... -m mypy` | **exit 0** — 125 source files, no issues |
+| pyrefly | `... -m pyrefly check` | **exit 0** — 0 errors |
+| pylint --errors-only | `... -m pylint --errors-only --disable=import-error …` | **exit 0** |
+| bandit | `... -m bandit --configfile pyproject.toml -r . --severity-level medium -q` | **exit 0** |
+| pip-audit | `... -m pip_audit` | **exit 0** — no known vulnerabilities |
+| npm build | `npm run build` (typecheck + compile + verify-generated + eslint + prettier) | **exit 0** |
+
+Logs: `/tmp/mns_gates_h/`. Skips stayed at 3. `git diff --check` exit 0.
+
+### H.7 Worktree and scope boundary
+
+14 modified tracked files (the same set as G.6; `ui.js` was already modified)
+and 11 untracked files, all regression tests — this pass added only
+`tests/test_review_ai_lines_race_2026_11_08.py`. No debug code or scratch files.
+
+| Pass | Files | Lines (at `HEAD`) |
+|---|---:|---:|
+| Appendices C–G | 57 | 47,539 |
+| Appendix H (this pass) | +1 unique (`setup.js`) | +637 |
+| **Unique total** | **58** | **48,176** |
+
+`ui.js` was re-read but is already inside the 57-file total (Appendix C.1), so
+adding it again would double-count 4,213 lines. G.7's statement that `ui.js`
+and `setup.js` were unverified was stale; this appendix corrects it.
+
+**Still unverified: 423 tracked source files / 121,628 lines** (481 tracked
+`.py`/`.js`/`.ts` files, 169,804 lines at `HEAD`, same counting basis as
+Appendices C–G). The AI-lines fix was verified through the VM harness, not a
+real browser session; no UI was visually inspected in this pass.
+## Appendix I — Seventh-pass re-review: OpenAI tool-call boundary + the last five unledgered modules (2026-11-08)
+
+`HEAD` is `a1ad806`. Every line count below is measured with
+`git show HEAD:<path> | wc -l` unless marked "now" (worktree).
+
+### I.1 Batch definition, dedupe and the ledger error this pass corrects
+
+The batch was selected by reconciling the whole-tree read ledger against
+`git ls-files` at `HEAD`, not by trusting the previous appendix's remainder.
+That reconciliation found two facts H.7 had missed:
+
+1. `services/openai_service.py`, `services/stock/provider.py` and
+   `services/realtime/scrapers.py` were already recorded as **Full** reads in
+   Appendix A.2 (at 1,593 / 1,456 / 1,306 lines). They are not in any C–H
+   batch, and all three have changed since A.2, so this pass re-read them at
+   `HEAD` rather than counting them as new unique coverage.
+2. Exactly five non-test tracked code files were absent from every full-read
+   ledger: `execution_state.py`, `gunicorn.conf.py`, `mistral_compat.py`,
+   `sectors.py`, `shutdown_manager.py`. They total 1,222 lines and are read
+   end-to-end here.
+
+| # | File | Lines at `HEAD` | Extent | Ledger status | Outcome |
+|---|---|---:|---|---|---|
+| 1 | `services/openai_service.py` | 1,629 → 1,696 now | 1–1,629 | A.2 Full; re-read at `HEAD` | **I-1** — fixed |
+| 2 | `services/stock/provider.py` | 1,457 | 1–1,457 | A.2 Full; re-read at `HEAD` | no defect |
+| 3 | `services/realtime/scrapers.py` | 1,316 | 1–1,316 | A.2 Full; re-read at `HEAD` | no defect |
+| 4 | `execution_state.py` | 131 | 1–131 | first full read | no defect |
+| 5 | `gunicorn.conf.py` | 134 | 1–134 | first full read | no defect |
+| 6 | `mistral_compat.py` | 353 | 1–353 | first full read | no defect |
+| 7 | `sectors.py` | 264 | 1–264 | first full read | no defect |
+| 8 | `shutdown_manager.py` | 340 | 1–340 | first full read | no defect |
+
+**Eight files / 5,624 lines** read this pass (3 × 4,402 re-read + 5 × 1,222
+first-read). No file is counted twice: A.2's 148 surviving code paths are the
+baseline, the three re-reads replace (not add to) their A.2 entries, and the
+five first-reads are new.
+
+### I.2 Fix I-1 — a malformed provider tool call escaped as an unhandled 500 — **FIXED**
+
+**Root cause.** `call_openai_chat_with_tools` appended the provider's raw
+`tool_calls` to the assistant turn and then, inside `_exec_single_tool`,
+derived the id and function independently:
+
+```python
+tc_id = tc.get("id") or f"call_{iter_idx}_{_gen_token()}"
+if len(tc_id) > max_tool_call_id_chars: ...
+fn = tc.get("function") or {}
+fn_name = str(fn.get("name") or "unknown_tool")[:80]
+```
+
+Only `isinstance(tc, dict)` was checked. A numeric/list `id` reached `len()`
+(`TypeError`), and a truthy non-object `function` reached `.get`
+(`AttributeError`). Both exceptions crossed the executor/loop boundary and
+surfaced as HTTP 500 instead of the typed 502 envelope that the Mistral twin
+(`services/ai_service.py:1701-1743`) already produces. There was a second,
+structural defect: the assistant message kept the raw id while the tool result
+used the fallback id, so sanitizing only the executor would still desynchronise
+`tool_calls[].id` from `tool_call_id` and make the next provider request fail
+with 400. Finally, a tool implementation raising out of
+`execute_mistral_tool_call` aborted the entire loop; the Mistral loop isolates
+that per call.
+
+**Fix (root-cause, one normalization point).** The loop now builds
+`normalized_tcs` once before the assistant turn and uses that same list for
+both the assistant message and the tool results:
+
+- non-object entries and entries whose `function` is not an object are dropped
+  with a warning; a turn with no usable entry returns the typed 502;
+- a missing/non-string id is replaced with a synthesized string id; string ids
+  keep the previous 128-character truncation;
+- the function name must be a non-empty string, otherwise the previous
+  `unknown_tool` fallback is kept (stripped, 80 chars);
+- arguments are passed through only as `str` or `dict`; `None` becomes `"{}"`,
+  other types become `"{}"` with a warning, and oversized strings keep the
+  previous `"{}"` replacement;
+- each tool execution is wrapped in `try/except`, logs only the error type, and
+  returns `{"error": "ツールの実行に失敗しました"}` to the model (same contract as
+  `execute_mistral_tool_call` / the Mistral loop), so one failing tool cannot
+  abort the request.
+
+Backward compatibility for well-formed calls is unchanged: the same ids,
+names, arguments and 502/response shapes are produced. The change only affects
+malformed provider payloads and tool exceptions.
+
+**Pre-fix FAIL (measured).** Command:
+`.venv/Scripts/python.exe -m pytest tests/test_review_openai_tool_call_hardening_2026_11_08.py -p no:randomly -q`
+— all four tests failed against `HEAD`:
+
+- numeric id → `TypeError` from `len(tc_id)` (the test failed in the pre-fix
+  run; its traceback fell outside the captured tail window, while the next
+  three were captured verbatim);
+- non-object function → `AttributeError: 'str' object has no attribute 'get'`
+  at `services/openai_service.py:1422`;
+- mixed malformed + valid → the malformed entry was executed as
+  `unknown_tool` (`execute` called twice, expected once);
+- tool exception → `RuntimeError: provider exploded` propagated out of
+  `call_openai_chat_with_tools`.
+
+**Post-fix PASS (measured).** Same command: **4 passed**. The new tests assert
+that the assistant `tool_calls[].id` and the tool result's `tool_call_id` are
+the same string, that a fully malformed turn returns
+`{"error": {"status_code": 502}}` without a second model call, and that the
+failure detail (`provider exploded`) never reaches the tool content. Adjacent
+suites (`test_openai_compat_service.py`, `test_llm_separation_and_openai_advanced.py`,
+`test_review_2026_10_31_services.py`, `test_review_2026_11_08_root_cause_fixes.py`,
+`test_mistral_compat_coverage.py`, `test_shutdown_manager_extra.py`): **150
+passed**, exit 0.
+
+### I.3 Per-file verdicts for the five first-read modules (no change)
+
+| File | Verified | Verdict |
+|---|---|---|
+| `execution_state.py` | Split executors are bounded (`5/50`, `4/30`, `4/10`, `1/5`), `shutdown` is idempotent via `shutdown_event`, executor shutdown tolerates the older `cancel_futures` signature, background threads are joined under a deadline, `safe_submit` catches `queue.Full` and shutdown `RuntimeError`. | No defect. `register_background_thread` dedupes under lock; `executor_stats` reads the real `_work_queue` with a bounded queue. |
+| `gunicorn.conf.py` | Single-worker invariant is documented and enforced in `on_starting`; `preload_app=False`; gthread count is derived from the same `MNS_MAX_SSE_LISTENERS` bound as the app and checked against the reserve; bind is loopback-only; access log omits query strings and Referer (SSE token). | No defect. The fake-server `num_workers` path is a test-only shape; real Gunicorn exposes it, and `wsgi.py` enforces the process invariant independently. |
+| `mistral_compat.py` | The 2.4.6 malicious-release guard runs before the SDK import; SDK error/message/retry fallbacks keep the documented shapes; `_fallback_sdk_error_response` reads the positional response (M2); `ToolMessage` keeps `tool_call_id`; `load_sdk_agent` replaces a conflicting `MISTRAL_API_KEY` (M3) and falls back from UUID to name. | No defect. The env mutation is the SDK's only key source and is intentionally process-wide; it is logged without the key. |
+| `sectors.py` | Static metadata only. Measured key-set consistency: `PREDEFINED_SECTORS`, `PREDEFINED_INDUSTRIES`, `PREDEFINED_NAMES`, `PREDEFINED_MARKET_CAPS` each have the same 60 tickers; union = 60, no missing key in any map. | No defect. |
+| `shutdown_manager.py` | Single-use token flow validates with `compare_digest`, rejects non-ASCII before it (A-1), persists the used marker before returning success (M30), migrates legacy project-root files once, writes 0o600 atomically with fsync + directory fsync, and rolls back partially rotated state. | No defect. Best-effort `OSError` swallows are limited to legacy migration/permission hardening and are logged or intentionally silent. |
+
+### I.4 Candidates examined and withdrawn
+
+| Candidate | Why it is not a defect / not changed |
+|---|---|
+| Deduplicate repeated `tool_call_id`s in one assistant turn | Not reproducible against a real provider; renaming provider ids beyond the validated type/length would be speculative and could mask an upstream contract violation. The reported crash path is fully covered by I-1. |
+| Reject the whole turn (502) instead of dropping a malformed entry when a valid entry exists | Existing OpenAI behaviour already dropped non-object entries so the assistant turn never references a dangling id; extending that rule to non-object `function` preserves the designed resilience and still returns 502 when nothing usable remains. |
+| `safe_submit` on an arbitrary attribute name (`getattr` can return a non-executor) | All call sites pass the four fixed executor names; an unknown name logs and returns False. No user-controlled executor name. |
+| `gunicorn.on_starting` `server.num_workers` on a minimal fake server | Real Gunicorn always exposes `num_workers`; the minimal-object contract is only used by tests, and `wsgi.py` still enforces the invariant. |
+| `mistral_compat.load_sdk_agent` permanently setting `MISTRAL_API_KEY` | Deliberate M3 bridge: the Agents SDK reads only the environment. The value is the caller-resolved credential, the conflict is logged by length, and no key is printed. |
+| `_write_atomic_restricted` ignoring `fsync`/`chmod` `OSError` | Best-effort durability/permission hardening; the write itself still uses `O_EXCL` + `os.replace`, and failures that matter (`PermissionError` on replace) are retried then raised. |
+| `execution_state.shutdown` early return on a set event | Idempotent by design (signal handler + atexit); the first caller owns the shutdown and the event prevents duplicate executor shutdowns. |
+
+### I.5 Tree-wide sweep
+
+- **Provider tool-call parsing:** only two sinks exist —
+  `services/ai_service.py` (already validates `isinstance(tc, dict)`, id/name/
+  argument types and sizes) and `services/openai_service.py` (fixed here).
+  `grep -rn "tool_calls" --include=*.py services routes app.py app_bg.py
+  route_helpers.py` shows no third parser or executor.
+- **`len()`/`.get()` on provider-controlled ids or function objects:** no
+  remaining site; the only `tc.get("id")`/`fn.get("arguments")` matches are the
+  two provider loops, both now guarded.
+- **Backend `finally` blocks:** 88 in `services/routes/utils/config/bg/app_factory`.
+  None performs the H-1 request-identity-less UI restore pattern; they release
+  locks, clients, executors or temp files. I-1 adds no `finally`.
+- **Error envelopes:** `_tool_loop_error` returns the same
+  `{"error": {"message", "status_code": 502}}` shape consumed by
+  `is_mistral_error`/the chat route; the new tests assert the envelope rather
+  than a raw exception.
+- **Types/suppressions:** no `Any` widening, type assertion, `# type: ignore`,
+  `# noqa`, skip marker or assertion relaxation was added. The new test file
+  uses the real module and `unittest.mock` only.
+- **Caches/listeners/timers:** none of the eight files owns a growth-prone
+  cache, listener or timer; `execution_state` owns only bounded queues and
+  joined threads.
+
+### I.6 Corrected coverage ledger (`HEAD`-measured)
+
+The reconciliation below replaces H.7's arithmetic. H.7 subtracted only the
+58 C–H batch files from the 481 tracked code files, which (a) ignored
+Appendix A.2's 148 fully read code files, (b) counted the 328 test files —
+executed in full by pytest — as "unverified", and (c) used a total line count
+that does not reproduce at `HEAD`.
+
+| Scope | Files | Lines |
+|---|---:|---:|
+| Tracked `.py`/`.js`/`.ts` at `HEAD` | 481 | 169,645 |
+| ├ Test files (executed by full pytest) | 328 | 88,556 |
+| └ Non-test code | 153 | 81,089 |
+| Non-test code fully read after this pass | 153 | 81,089 |
+| — documented in A.2 (148 paths, current `HEAD` sizes) | 148 | 79,867 |
+| — first read in this pass | 5 | 1,222 |
+| **Remaining non-test code never read** | **0** | **0** |
+
+Method: `git ls-files '*.py' '*.js' '*.ts'`, then
+`git show HEAD:<path> | wc -l` per file; test classification by `tests/`,
+`test_*.py`, `conftest.py`. `wc -l` (newline count) is the same basis as A.2.
+
+Corrections to earlier appendices:
+
+| Earlier claim | Measured correction |
+|---|---|
+| H.7: 481 files / **169,804** lines at `HEAD` | **169,645** lines (481 files). The 159-line difference does not reproduce; no file set changed. |
+| H.7: 58 files / 48,176 lines "unique verified" | 58 is the **C–H re-read/consumer batch**, not unique tree coverage; every one of those 58 paths is inside A.2's 148. C–H totals are not added again here. |
+| H.7: **423 files / 121,628 lines unverified** | Wrong on both terms: 328 of the 423 are test files executed by pytest, and 148 of the remainder were fully read in A.2. The only non-test code never in a full-read ledger was **5 files / 1,222 lines**, all read in this pass. |
+| A.2: "149 code + 7 templates" | The table actually contains **148 code + 8 markup** (`chrome_extension/popup.html` is the eighth markup file). Total 156/81,151 is unchanged; only the split label was off by one. |
+
+**Scope boundary.** The 481-file ledger is `.py`/`.js`/`.ts`. Eight markup
+files (`templates/*.html` = 7 / 3,355 lines, plus `chrome_extension/popup.html`
+= 170) were read in A.2 at its revision but were **not** re-read here; their
+current 3,525-line revision is outside this pass. The 328 test files are
+verified by execution, not by line review. `/tmp` measurement scripts and
+`results_i.xml` were removed; no scratch file is in the worktree.
+
+### I.7 Final gates (final tree, after I-1)
+
+| Gate | Command | Result |
+|---|---|---|
+| pytest (full) | `.venv/Scripts/python.exe -m pytest -q` | **exit 0** — 4,128 tests, 0 failures, 0 errors, 3 skipped (4,125 passed incl. 47 subtests; 26.3 s) |
+| ruff | `... -m ruff check . --line-length=100` | **exit 0** — All checks passed |
+| flake8 | `... -m flake8 . --select=E9,F63,F7,F82` | **exit 0** — 0 |
+| mypy | `... -m mypy` | **exit 0** — 125 source files, no issues |
+| pyrefly | `... -m pyrefly check` | **exit 0** — 0 errors |
+| pylint --errors-only | `... -m pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/` | **exit 0** — no messages |
+| bandit | `... -m bandit --configfile pyproject.toml -r . --severity-level medium -q` | **exit 0** |
+| pip-audit | `... -m pip_audit` | **exit 0** — no known vulnerabilities |
+| npm build | `npm run build` | **exit 0** — typecheck, compile, verify-generated, eslint, prettier |
+| whitespace | `git diff --check` | **exit 0** |
+
+Logs: `/tmp/mns_gates_i/` (`pytest.log`, `pytest4.log`, `ruff.log`,
+`flake8.log`, `mypy.log`, `pyrefly.log`, `pylint.log`, `bandit.log`,
+`pip_audit.log`, `npm_build.log`). Skips stayed at 3 (the pre-existing
+environment-dependent set); no test was skipped or weakened.
+
+### I.8 Worktree and scope boundary
+
+15 modified tracked files (the 14 from Appendices C–H plus
+`services/openai_service.py`) and 12 untracked files, all regression tests —
+this pass adds only `tests/test_review_openai_tool_call_hardening_2026_11_08.py`.
+No debug code, backup, log, measurement artifact or `results_i.xml` remains.
+`git diff --check` is clean.
+
+The three re-read implementation files are verified only through unit tests
+and stubs, not against a live OpenAI-compatible endpoint; no browser or UI was
+visually inspected in this pass. The 148 A.2 files and the eight markup files
+rest on their earlier documented reads (58 of the code files were also
+re-read in C–H); this pass personally read 8 files / 5,624 lines.
+
+---
+
+## Appendix J — マークアップ層 8ファイル全行監査（2026-11-08）
+
+### J.1 対象確定と台帳突合
+
+`git rev-parse --short HEAD` は `a1ad806`。`git ls-files` から `templates/*.html` と
+`chrome_extension/popup.html` を列挙し、`wc -l` で実測した。Appendix A.2 の
+「markup 8件」と一致し、対象の増減はなかった。HEAD 時点の合計は **8ファイル /
+3,525行**。今回の修正で `templates/heatmap.html` が5行増え、worktree は
+**8ファイル / 3,530行**になっている。
+
+| # | ファイル | HEAD行数 | 修正後行数 | 描画経路 | ページJS | 静的id数 (HEAD) |
+|---|---|---:|---:|---|---|---:|
+| 1 | `chrome_extension/popup.html` | 170 | 170 | 拡張popup | `popup.js` | 29 |
+| 2 | `templates/base.html` | 58 | 58 | 全ページ共通 | `utils.js` | 2 |
+| 3 | `templates/index.html` | 1,096 | 1,096 | `/main` (`pages.py:85`) | 11本 | 126 |
+| 4 | `templates/settings.html` | 783 | 783 | `/settings` (`pages.py:121`) | 5本 | 49 |
+| 5 | `templates/setup.html` | 322 | 322 | `/` + `/setup` (`pages.py:72`) | 3本 | 21 |
+| 6 | `templates/heatmap.html` | 214 | 219 | `/heatmap` (`pages.py:97`) | 4本 | 19 → 20 |
+| 7 | `templates/screener.html` | 303 | 303 | `/screener` (`pages.py:109`) | 4本 | 13 |
+| 8 | `templates/experimental_orbit.html` | 579 | 579 | `/experimental/orbit` (`pages.py:133`) | 9本 | 55 |
+| | **合計** | **3,525** | **3,530** | 6 view関数 / 7 URL規則 | | |
+
+`routes/pages.py` の6 view関数（`setup` は `/` と `/setup` の2規則）はすべて
+`model_badge` / `default_symbols` / `app_config` を渡す。`base.html` はさらに
+`csp_nonce`（Flask-Talismanのcontext processorが文字列を注入）、`csrf_token()`
+（Flask-WTF global）、`static_url`（`app_factory/wiring.py:142`）を使う。
+`app_config` は `schemas/config.py:179` の `TemplateConfigSchema` で、
+テンプレートが参照する `ai_provider` / `preview_mode` / `api_mode` / `agent_id` /
+`openai_model` はすべてスキーマに存在した。`default_symbols` は
+`DefaultSymbolsSchema` の `us` / `jp` / `idx` と一致する。
+
+Jinja の `undefined` を `StrictUndefined` に差し替えて全7ルートを再レンダリングしたが、
+未定義変数による例外は0件だった（`tests/test_review_markup_contract_2026_11_08.py`）。
+
+### J.2 三方向契約の実測結果
+
+| 契約 | 実測結果 |
+|---|---|
+| テンプレート → route context | 6 view関数すべてが3キーを渡す。`TemplateConfigSchema` の参照フィールド欠落0。StrictUndefined 7/7ルートPASS |
+| テンプレート静的id → ページJS | ページ固有JSの `getElementById` / `getEl` / `$` 参照はすべてDOMに存在。唯一の静的欠落 `view-mode-toggle-container` はJ.3で修正 |
+| JS参照だがDOMにないid | `fs-ai-tech-lines-btn` / `tv-script-js` / `tv_chart_container` はJSが実行時に生成（`ui.js:3921`、`tradingview_manager.js:845/860`）。テンプレート欠落ではない |
+| テンプレートid → 共有JS | `api.js` はindex専用idを関数本体で参照するが、settings/heatmap/screenerではその関数を呼ばない。ロード時のnull参照なし |
+| form/API境界 | 8ファイルに `<form>` は0。setup.js/settings.jsの保存キーは `CredentialsSaveRequest`（`schemas/config.py:50`）と `/api/credentials` の受け取りキーに一致。popup.jsは `chrome.runtime` のみ |
+| 静的資産 | `static_url` / `url_for('static')` の参照先はすべて実在し、test clientで200。`/static/...` の直書きは0 |
+| CDN SRI | Chart.js 3件 + Three.js 2件の計5件を実URLから再取得し、sha384を再計算。**5/5一致** |
+| CSP | 7ルートすべてで全 `nonce` 属性がCSPヘッダのnonceと一致。CSRF metaも非空。`style-src` は `'unsafe-inline'` を含み、43個のインラインstyleは意図どおり許可される |
+| ARIA / 参照 | `label[for]`、`aria-controls`、`aria-labelledby`、`aria-describedby`、`href="#..."` の解決先欠落0。静的id重複0、重複属性0 |
+| タグ整合 | レンダリング後の div/section/main/aside/header/footer/nav/form/button/label/table/ul/ol/h1-h6/a/textarea/select/span をスタック検査。未閉鎖・不正閉鎖0 |
+| hidden / CSS | settings/screener/heatmap/orbitは `index.css` の `.hidden` を共有。setupは `[hidden]{display:none!important}`、popupは `.hidden` を定義。表示競合なし |
+| 読み込み順 | `utils.js` はbaseで全ページJSより先。`config_init.js` は各ページのコントローラより先。Chart.js/Three.jsはSRI付きで依存JSより先。DOMContentLoaded前の初期化例外なし |
+| XSS掃引 | テンプレートの `|safe` 0、インラインイベント属性 0、`javascript:` 0、`innerHTML` 0。baseの `tojson` は `<` をエスケープ。popup.jsも `innerHTML` 0で `textContent` を使用 |
+
+補足: index.html の `fs-ai-tech-lines-btn` はフルスクリーンAI分析UIをJSが生成する際の
+IDであり、`tv-script-js` / `tv_chart_container` はTradingViewのスクリプトとホストを
+JSが生成する際のIDである。いずれもテンプレートに静的に置くと二重生成になるため、
+テンプレートへ追加しない（棄却）。
+
+### J.3 修正（1件）— Heatmap 3D失敗メッセージの表示先
+
+**Root Cause.** `static/js/heatmap.js:174/194` は3D初期化失敗時に
+`document.getElementById("view-mode-toggle-container")` を取得し、失敗メッセージを
+その子として追加する。見つからない場合だけ `document.body` へフォールバックする。
+しかし `templates/heatmap.html` の `.view-toggle` にはこのIDがなく、実際の失敗メッセージは
+フッターより後ろのbody末尾に追加されていた。初期ビューポート外になり得るため、
+「3Dボタンが何も起きない」という元の症状を再発させる。IDの欠落がRoot Causeであり、
+JSのフォールバックを増やす対症療法は取らない。
+
+**修正.** `templates/heatmap.html` の `.view-toggle` に
+`id="view-mode-toggle-container"` を付与した（5行増、既存class/role/aria-labelは不変）。
+JSの `target || document.body` フォールバックは後方互換のため残す。
+
+**Pre-fix FAIL（実測）.**
+
+```
+FAILED tests/test_review_markup_contract_2026_11_08.py::test_heatmap_3d_failure_message_has_visible_container
+assert body.count('id="view-mode-toggle-container"') == 1
+E   assert 0 == 1
+EXIT=1
+```
+
+**Post-fix PASS（実測）.**
+
+```
+...............                                                          [100%]
+EXIT=0
+```
+
+契約テストは7ルート × 2（通常レンダリング / StrictUndefined）＋ 3D表示先テストの
+**15件すべてPASS**。pre-fixでFAILした同一テストがpost-fixでPASSすることを確認した。
+
+### J.4 棄却した項目と理由
+
+| 項目 | 判定 | 理由 |
+|---|---|---|
+| `fs-ai-tech-lines-btn` がDOMにない | 棄却 | `ui.js:3921` がフルスクリーン用ボタンを動的生成。静的配置は二重生成になる |
+| `tv-script-js` / `tv_chart_container` がDOMにない | 棄却 | `tradingview_manager.js:845/860` がTradingViewスクリプト/ホストを動的生成 |
+| `view-mode-toggle-container` のbodyフォールバック | 修正 | フォールバックは表示位置が不適切。J.3のID復元がRoot Cause |
+| `.hidden` が各ページCSSにない | 棄却 | settings/screener/heatmap/orbitは `index.css` を読み、setupは `[hidden]!important`、popupは `.hidden` を定義 |
+| インライン `style=` 43件 | 棄却 | `security_config.py:110` の `style-src 'unsafe-inline'` で許可。ユーザー入力をstyleへ埋め込む箇所はない |
+| 共有 `api.js` のindex専用id参照 | 棄却 | 関数本体の参照であり、非indexページでは該当関数を呼ばない。ロード時例外なし |
+| `aria-hidden` の重複 | 棄却（誤検知） | `sed` の `845,935p` と `935,1000p` が935行目で重なった表示上の重複。実ファイルとレンダリング結果は1属性 |
+| `settings.html` のraw解析で出た `ai_provider` 重複 | 棄却（誤検知） | 複数行のJinja `{% if %}` をHTML属性として拾ったもの。レンダリング後の重複属性は0 |
+| formの `name`/`action` 不一致 | 棄却 | 8ファイルにform要素自体がなく、送信はfetch + JSON。キーはスキーマと一致 |
+| `defer` 不足 | 棄却 | 全外部スクリプトはbody末尾の依存順で、DOMContentLoaded前にDOMを触らない。`defer` 付与は順序契約を壊す |
+
+### J.5 横断掃引
+
+- `|safe`: 0件。
+- インラインイベント属性（`onclick=` 等）: 0件。
+- `javascript:` URL: 0件。
+- `innerHTML` / `insertAdjacentHTML` / `document.write`: テンプレート0件、`popup.js` 0件。
+- `/static/` 直書き: 0件（すべて `static_url` / `url_for`）。
+- `tojson` 埋め込み: `base.html` の2件（`default_symbols` / `app_config`）。Jinjaの `tojson` が `<` をエスケープするためscript終了注入なし。
+- 重複id: 全7ルート0件。重複属性: 0件。
+- `label[for]` / ARIA参照 / skip-link `#main-content`: 全7ルートで解決。
+- CDN SRI: 5/5一致。CSP nonce: 全7ルートで一致。
+- 静的資産: 参照先すべて200。CSSの `.hidden` / `[hidden]` 定義も全ページで確認。
+
+### J.6 最終ゲート実測（最終ツリー）
+
+実行ディレクトリはプロジェクトルート、Pythonは `.venv/Scripts/python.exe`。
+
+| ゲート | コマンド | 結果 |
+|---|---|---|
+| pytest | `python -m pytest -q --junitxml=results_j.xml` | **4,143 tests / 0 failures / 0 errors / 3 skipped / 25.725s**、exit 0 |
+| ruff | `ruff check . --line-length=100` | `All checks passed!`、exit 0 |
+| flake8 | `flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics` | `0`、exit 0 |
+| mypy | `mypy .` | `Success: no issues found in 125 source files`、exit 0 |
+| pyrefly | `pyrefly check` | `0 errors (19 suppressed, 50 warnings not shown)`、exit 0 |
+| pylint | `pylint --errors-only --disable=import-error app.py app_factory/ bg/ app_bg.py wsgi.py gunicorn.conf.py shutdown_manager.py config/ config_store.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/ scripts/` | エラー0、exit 0 |
+| bandit | `bandit --configfile pyproject.toml -r . --severity-level medium -f txt -o ...` | `No issues identified.`（43,857行走査、Medium/High 0）、exit 0 |
+| pip-audit | `pip-audit` | `No known vulnerabilities found`、exit 0 |
+| npm build | `npm run build` | typecheck / compile / verify-generated / eslint / prettier すべて成功、exit 0 |
+| diff check | `git diff --check` | 出力なし、exit 0 |
+
+pytestのskipは3件で、Appendix Iの3件から増加していない。JUnit XMLは計測後に削除し、
+`results_j.xml` は残していない。
+
+### J.7 被覆状況（実測）
+
+- HEAD基準の非テストコード: **153ファイル / 81,089行**（A.2の148 / 79,867 +
+  追加5 / 1,222）。worktree再測は **153 / 81,332行**で、差分 +243行は既存修正の
+  純増（`git diff --numstat` の code +337 / -94）。ファイル数の増加はない。
+- マークアップ: HEAD **8 / 3,525行**、修正後 **8 / 3,530行**。8ファイルすべて全行読破。
+- 非テストコード + マークアップ: HEAD **161ファイル / 84,614行**、
+  worktree **161 / 84,862行**（コード修正 +243行、heatmap +5行）。未読の非テストファイルは0。
+- テスト: **328ファイル / 88,556行**（`git ls-files` 基準）。これは実行検証のみで、
+  全行読破ではない。今回追加した13ファイルの回帰テストはuntrackedのため上記328には
+  含まれないが、pytest 4,143件として実行済み。
+- 台帳是正: A.2のmarkup 8件は実測と一致。H.7の169,804 / 423 / 121,628は
+  Appendix Iで既に誤りとして是正済みで、今回新たな台帳誤りは検出されなかった。
+
+### J.8 ワークツリー整合
+
+- tracked modified: **16ファイル**（`REVIEW_FINDINGS.md`、`native_host/start_backend.py`、
+  `route_helpers.py`、`routes/api_analysis.py`、`services/ai_service.py`、
+  `services/openai_service.py`、`static/js/api_client.js`、`static/js/api_client.ts`、
+  `static/js/chart.js`、`static/js/experimental/orbit-state.js`、`static/js/heatmap.js`、
+  `static/js/ui.js`、`templates/heatmap.html`、`utils/disk_cache.py`、
+  `utils/stock_payload.py`、`utils/validators.py`）。
+- untracked: **13ファイル**、すべて `tests/*_2026_11_08.py` の回帰テスト。
+- デバッグコード、バックアップ、ログ、計測用XML、`bandit_report.txt` はワークツリーに
+  残していない（banditレポートはOSの一時ディレクトリへ出力）。
+- `git diff --check` はクリーン。
+
+### J.9 未検証範囲（正直な区分）
+
+- **テスト328ファイル / 88,556行**は実行検証のみで、全行読破ではない。
+- **ブラウザ実画面は未目視**。今回のマークアップ検証はFlask test clientの実レンダリング、
+  HTMLParser、静的解析、Node/JS契約の実測であり、実ブラウザの描画・WebGL・
+  スクリーンリーダー挙動は確認していない。
+- **OpenAI互換の実エンドポイントには未接続**。API境界はスキーマ・ルート・スタブで検証した。
+- CDNのSRIは実URLから取得して再計算したが、ブラウザでのCDN読み込み完了は未目視。
+- 上記以外の非テストコード153ファイル / 81,089行（HEAD）とマークアップ8ファイル /
+  3,525行（HEAD）は、既存Appendix A–Iおよび本Appendix Jの範囲で全行読破済み。
+
+---
+
+## Appendix K — テスト層の品質監査（2026-11-08、残存スコープ）
+
+### K.1 対象と実測値
+
+`find tests -name '*.py'` で **341ファイル / 90,353行**。うちテストモジュール
+（`tests/**/test_*.py`）は **330ファイル / 89,253行**、残る11ファイルは
+`conftest.py` とヘルパーモジュール。`git ls-files` 基準では tracked 325ファイル /
+88,213行、untracked 13ファイル / 1,768行（いずれも `tests/*_2026_11_08.py` の
+回帰テスト）。ASTでは `test` で始まる関数が **3,984**、`assert` 文が **7,511**。
+収集件数4,143との差はパラメータ化とクラス継承によるもので、関数数の不一致ではない。
+
+実行結果は **4,143 tests / 0 failures / 0 errors / 3 skipped / 26.406s**（JUnit XML
+実測、exit 0）。skip 3件はすべてPOSIX専用ガードで、Windows実行として妥当:
+
+- `tests.test_ai_portfolio::test_posix_auto_master_key_portfolio_persistence_completes`
+- `tests.test_review_r1_r9_fixes.TestR1SanitizedCorruptBackup::test_corrupt_backup_mode_0600_on_posix`
+- `tests.test_review_fix_regressions.ChatHistoryPermissionsTestCase::test_init_db_enforces_restrictive_permissions_on_posix`
+
+無条件 `skip` / `xfail` は0件で、Appendix Iの3件から増加していない。
+
+### K.2 アサーション欠落の機械監査
+
+検出器は「直接 `assert`」「`raise AssertionError`」「`assert*` メソッド」
+「`pytest.raises` / `pytest.fail`」に加え、同一モジュール内のヘルパー
+（クラスメソッドを含む）を推移的に辿る。`@pytest.fixture` と、テスト本体の中で
+定義された入れ子関数（デコレータ検証用の `test_func` など）はテストとして
+収集されないため除外した。
+
+最初のヒューリスティックは106関数をヒットしたが、`assertNotEqual`・
+`assert_called`・`assertLessEqual` などを登録していなかったため、実際には
+アサーションを持つテストを大量に誤検出していた。検出器を `assert` 前置の
+全メソッドに広げて再計測した結果、アサーションへ到達できないテストは
+**7関数**だけだった。7件はすべて `wsgi` / `gunicorn` の起動契約
+（「例外を出さずに import / reload が完了すること」）を検証する no-raise
+テストであり、アサーションを足すと契約自体を歪める:
+
+| ファイル:行 | テスト | 契約 |
+|---|---|---|
+| `tests/test_review_fixes_2026_11_07_unit1.py:160` | `test_wsgi_empty_proxy_fix_x_for_is_treated_as_default` | 空の `MNS_PROXY_FIX_X_FOR` で `SystemExit` しない |
+| `tests/test_wsgi_worker_guard.py:15` | `test_single_worker_is_allowed` | `WEB_CONCURRENCY=1` で起動できる |
+| `tests/test_wsgi_worker_guard.py:29` | `test_validation_can_be_disabled` | 検証無効時は複数workerでも起動できる |
+| `tests/test_wsgi_worker_guard.py:139` | `test_single_worker_cli_is_allowed` | `--workers 1` で起動できる |
+| `tests/test_wsgi_worker_guard_extra.py:20` | `test_invalid_worker_count_falls_back_to_one` | 非数値でも1として起動できる |
+| `tests/test_wsgi_worker_guard_extra.py:39` | `test_validation_disabled_with_invalid_count` | 検証無効＋不正値でも起動できる |
+| `tests/test_wsgi_worker_guard_extra.py:45` | `test_worker_count_of_one_allowed_via_gunicorn` | `GUNICORN_WORKERS=1` で起動できる |
+
+棄却したその他の候補は、fixture 3件（`test_app` ×2、`test_client`）、
+入れ子 `test_func` 7件（`with_yfinance_retry` のデコレータ検証）、
+Nodeヘルパー `_run_node` 内のassert、providerヘルパー `_verify_*` 内のassert、
+`raise AssertionError` による静的検査（`test_d02_no_numeric_or_fallback_in_interpolator`
+など）である。いずれも関数外・ヘルパー内・静的走査で検証しており、
+テスト本体へのassert追加は不要と判断した。
+
+### K.3 強化した6テスト（4ファイル、+46 / -17）
+
+| ファイル | テスト | 変更前 | 変更後 |
+|---|---|---|---|
+| `tests/test_stock_payload_extra.py` | `test_clear_prefix_empty` | 空prefixで「例外が出ない」だけ | `keep_me` を事前投入し、空prefix後も保持されることをassert |
+| `tests/test_storage_coverage.py` | `test_backup_unreadable_nonexistent` | `/nonexistent/path` をpatchして呼ぶだけ | temp配下の実在しないパスを使い、`.bak.*` が作られないことをassert |
+| `tests/test_messaging_extra.py` | `test_unlisten_non_existent_queue` | 例外が出ないことだけ | `listeners == []` と `stats()["listeners"] == 0` をassert |
+| `tests/test_messaging_extra.py` | `test_announce_no_listeners` | 例外が出ないことだけ | `listeners == []` と `stats()` 全体をassert |
+| `tests/test_review_autonomous_goal_fixes.py` | `test_polling_token_inflight_thread_safety` | 呼び出すだけ | 50回すべてbool、ワーカースレッド例外0をassert |
+| `tests/test_review_autonomous_goal_fixes.py` | `test_register_symbol_graceful_on_shutdown_executor` | 例外が出ないことだけ | 停止後もprovider登録が1回ずつ行われることをassert |
+
+`git diff --numstat` は 4 / 0、31 / 12、5 / 1、6 / 4 の合計 **+46 / -17**。
+対象6テストの個別実行と、4ファイルの ruff / flake8 はPASS。
+
+### K.4 最終ゲート（最終ツリー実測）
+
+| チェック | コマンド | 結果 |
+|---|---|---|
+| pytest | `python -m pytest -q --tb=short` | 4,143 tests / 0 failures / 0 errors / 3 skipped / 26.406s、exit 0 |
+| ruff | `ruff check . --line-length=100` | `All checks passed!`、exit 0 |
+| flake8 | `flake8 . --count --select=E9,F63,F7,F82` | `0`、exit 0 |
+| mypy | `python -m mypy` | `Success: no issues found in 125 source files`、exit 0 |
+| pyrefly | `python -m pyrefly check` | 0 errors（19 suppressed, 50 warnings）、exit 0 |
+| pyrefly (win32) | `python -m pyrefly check --python-platform win32` | 0 errors（19 suppressed, 50 warnings）、exit 0 |
+| pylint | `pylint --errors-only --disable=import-error <CI targets>` | 出力なし、exit 0 |
+| bandit | `bandit --configfile pyproject.toml -r . --severity-level medium` | 指摘なし、exit 0 |
+| pip-audit | `python -m pip_audit --strict` | `No known vulnerabilities found`、exit 0 |
+| frontend build | `npm run build` | typecheck / compile / verify-generated / eslint / prettier すべてPASS、exit 0 |
+| whitespace | `git diff --check` | クリーン、exit 0 |
+
+### K.5 ワークツリー整合
+
+- tracked modified: **20ファイル**。うち本パスの変更はテスト4ファイルと本ファイルのみで、
+  残る15ファイルは既存Appendix C–Jの修正（`native_host/start_backend.py`、
+  `route_helpers.py`、`routes/api_analysis.py`、`services/ai_service.py`、
+  `services/openai_service.py`、`static/js/` 6ファイル、`templates/heatmap.html`、
+  `utils/disk_cache.py`、`utils/stock_payload.py`、`utils/validators.py`）。
+- untracked: **13ファイル**、すべて `tests/*_2026_11_08.py` の回帰テスト。
+- 本パスはテスト品質のみを対象とし、本番コードは変更していない。
+- 計測用の `results_k_tmp.xml` は集計後に削除済み。デバッグコード、バックアップ、
+  ログ、banditレポート、その他の未追跡成果物は残していない。
+
+### K.6 未検証範囲（正直な区分）
+
+- **テスト330ファイル / 89,253行は全行読破ではない**。全件実行と、ASTによる
+  アサーション到達性の機械監査、および抽出した候補の実読によっている。
+- **ブラウザ実画面は未目視**。マークアップ契約はFlask test clientの実レンダリング、
+  HTMLParser、Node/JS契約で検証したが、実ブラウザの描画・WebGL・
+  スクリーンリーダー挙動は確認していない。
+- **OpenAI互換の実エンドポイントには未接続**。API境界はスキーマ・ルート・スタブで
+  検証した。
+- CDNのSRIは実URLから取得して再計算したが、ブラウザでの読み込み完了は未目視。
+
+---
+
+## Appendix L — テスト層 全341ファイル監査と台帳突合（2026-11-08、最終）
+
+### L.1 対象と方法
+
+`tests/` 配下の **341ファイル / 90,353行** を全件ASTで走査し、次の欠陥クラスを
+機械検出した：モジュール／クラスレベルの共有状態と実行順依存、実時間・`sleep`・
+タイムゾーン・乱数・実ネットワーク依存、スレッド／プロセス内例外の握り潰し、
+一時ファイル・ソケット・スレッド・キャッシュの後片付け不足、本番の早期returnや
+ガードを検知できない同語反復アサーション、新規修正に対する回帰被覆の漏れ。
+
+シグナルが付いた **54ファイル**、untrackedの回帰テスト **13ファイル**、
+共有インフラ（`conftest.py`、`test_support/*`）は全行実読した。残りのファイルは
+全件実行とAST監査によっている（L.5に明記）。
+
+### L.2 検出した実欠陥と修正（1件）
+
+`tests/test_review_fix_regressions.py::ChatHistoryPermissionsTestCase` は
+`tempfile.mkdtemp(prefix="mns-chat-perm-")` で作ったディレクトリを削除して
+いなかった。POSIX CIでは実行のたびに一時ディレクトリが残留する実リークである。
+`finally` で `shutil.rmtree(tmpdir, ignore_errors=True)` を呼ぶよう修正した。
+WindowsではPOSIX専用ガードによりskipされるため、ローカル実行では検証できない
+（L.5）。
+
+残るシグナルは、`setUp` と `tearDown` が別関数であることによる検出器の誤判定
+（実際には `rmtree`／`cleanup` 済み）、意図的なno-raise契約、Node／PowerShell／
+SDKの環境ガード、テストが `app_state` を初期化する正当なパターンであり、
+実害は認められなかった。`subprocess.run` のtimeout未指定は静的検査用の短命
+プロセスが大半で、ハングの実績がないため変更していない。
+
+### L.3 skip / xfail
+
+実行時skipは **3件**（いずれもPOSIX専用ガード）のみで、Appendix Kから増えて
+いない。Node.js／PowerShell／SDKの有無によるガードは、この環境では依存が
+存在するため発火しない。無条件の `skip` / `xfail` の新規追加は0件。
+
+### L.4 台帳突合（Appendix A–K）
+
+- 見出し単位の **FIXED 27件** は、すべてworktreeの差分と回帰テストに対応する。
+  未対応・半端な修正は0。
+- **WITHDRAWN 5件**（SEC-1、CI requirements export、C.3・D.3・E.3・F.3・H.4・
+  I.4の候補群）は、各Appendixに棄却理由を記載済み。
+- 「no new defect」の層別掃引（13.1–13.6、I.3）は追加修正不要と記録済み。
+- 見出し単位で未分類の項目は0。箇条書き内部の候補は各Appendixの
+  “Candidates examined and withdrawn” に記録されている。
+
+### L.5 未検証範囲（正直な区分）
+
+- **341ファイルすべての全行実読は完了していない。** 全行実読したのは、新規13
+  ファイル、シグナル検出54ファイルの該当領域、`conftest.py` と `test_support/*`、
+  および主要な大規模ファイルの一部である。残りは全件実行とAST監査による。
+- POSIX専用テストの修正は、Windows環境のため実行検証できていない。
+- ブラウザ実画面・WebGL・スクリーンリーダーは未目視。OpenAI互換の実エンド
+  ポイントには未接続。CDNのブラウザ読み込みも未目視。

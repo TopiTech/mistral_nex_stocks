@@ -316,6 +316,9 @@ class ChatHistoryPermissionsTestCase(unittest.TestCase):
                 os.environ.pop("MNS_DATA_DIR", None)
             else:
                 os.environ["MNS_DATA_DIR"] = prev_data_dir
+            import shutil
+
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class RealtimeClientCssEscapeTestCase(unittest.TestCase):

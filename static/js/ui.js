@@ -1498,16 +1498,19 @@ function renderStocks(market, stocks) {
     renderPortfolio();
   }
 
-  // Reorder in-place without innerHTML="" to preserve Chart.js canvas state
-  orderedWrappers.forEach((wrapper, i) => {
-    if (wrapper.parentNode !== container) {
-      container.appendChild(wrapper);
-    } else {
-      const currentAtIdx = container.children[i];
-      if (currentAtIdx !== wrapper) {
-        container.insertBefore(wrapper, currentAtIdx || null);
-      }
+  // Reorder in-place without innerHTML="" to preserve Chart.js canvas state.
+  // Walk a reference cursor instead of comparing container.children[i]: a
+  // newly-created card is not in the container yet, so appending it at the
+  // end while every later index already matches left it after all existing
+  // cards (e.g. [A,B] plus new C requested as [C,A,B] produced [A,B,C] until
+  // the next refresh).
+  let referenceNode = container.firstElementChild;
+  orderedWrappers.forEach((wrapper) => {
+    if (wrapper === referenceNode) {
+      referenceNode = referenceNode.nextElementSibling;
+      return;
     }
+    container.insertBefore(wrapper, referenceNode);
   });
   renderFavorites();
   updateTabCounts();
@@ -3657,13 +3660,17 @@ async function triggerAiTechnicalLines(wrapper) {
       "error",
     );
   } finally {
-    hideAiTechnicalLoading(chartContainer);
-    hideAiTechnicalLoading(fsCanvasWrapper);
-    allBtns.forEach((b) => {
-      b.disabled = false;
-      b.classList.remove("loading");
-      b.textContent = "✨ AIテクニカル描画";
-    });
+    // 後発リクエストが進行中の場合は、先発の後始末でボタン/オーバーレイを
+    // 復元しない（先発の finally が後発の実行中UIを壊し、多重送信を許す）。
+    if (isCurrentLinesRequest()) {
+      hideAiTechnicalLoading(chartContainer);
+      hideAiTechnicalLoading(fsCanvasWrapper);
+      allBtns.forEach((b) => {
+        b.disabled = false;
+        b.classList.remove("loading");
+        b.textContent = "✨ AIテクニカル描画";
+      });
+    }
   }
 }
 

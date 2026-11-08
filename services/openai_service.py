@@ -1397,10 +1397,68 @@ def call_openai_chat_with_tools(
             )
             tool_calls = tool_calls[:max_tool_calls_per_turn]
 
-        # Drop malformed entries up front so the assistant message never
-        # references a tool_call_id that has no matching tool result.
-        valid_tcs = [tc for tc in tool_calls if isinstance(tc, dict)]
-        if not valid_tcs:
+        # Normalize each requested tool call once, before building the
+        # assistant turn.  A provider/proxy can return a non-string ``id`` or a
+        # non-object ``function``; the previous code sliced ``id`` and called
+        # ``.get`` on ``function`` directly, so such a payload raised
+        # TypeError/AttributeError and surfaced as an unhandled 500 instead of
+        # the typed 502 envelope.  The assistant message must reference exactly
+        # the sanitized ids the tool results below use, otherwise the next
+        # provider request is rejected for a dangling tool_call_id.
+        normalized_tcs: list[dict[str, Any]] = []
+        for idx, tc in enumerate(tool_calls):
+            if not isinstance(tc, dict):
+                logger.warning(
+                    "OpenAI agent loop dropped a non-object tool call: turn=%d index=%d",
+                    iteration + 1,
+                    idx,
+                )
+                continue
+
+            fn = tc.get("function")
+            if not isinstance(fn, dict):
+                logger.warning(
+                    "OpenAI agent loop dropped a tool call without a function object: "
+                    "turn=%d index=%d",
+                    iteration + 1,
+                    idx,
+                )
+                continue
+
+            raw_id = tc.get("id")
+            tc_id = raw_id[:max_tool_call_id_chars] if isinstance(raw_id, str) else ""
+            if not tc_id:
+                tc_id = f"call_{iteration}_{idx}_{_gen_token()}"
+
+            raw_name = fn.get("name")
+            fn_name = (
+                raw_name.strip()[:80]
+                if isinstance(raw_name, str) and raw_name.strip()
+                else "unknown_tool"
+            )
+            fn_args = fn.get("arguments")
+            if fn_args is None:
+                fn_args = "{}"
+            if not isinstance(fn_args, (str, dict)):
+                logger.warning(
+                    "OpenAI agent loop replaced a non-text tool argument payload: "
+                    "tool=%s argument_type=%s",
+                    fn_name,
+                    type(fn_args).__name__,
+                )
+                fn_args = "{}"
+            elif isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                fn_args = "{}"
+
+            normalized_tcs.append(
+                {
+                    "id": tc_id,
+                    "type": "function",
+                    "function": {"name": fn_name, "arguments": fn_args},
+                }
+            )
+
+        if not normalized_tcs:
             return _tool_loop_error("AIサービスから不正なツール呼び出しを受信しました")
 
         # Normalize assistant message for OpenAI/Ollama compatibility:
@@ -1409,27 +1467,36 @@ def call_openai_chat_with_tools(
         assistant_turn_msg = {
             "role": "assistant",
             "content": msg.get("content") or "",
-            "tool_calls": valid_tcs,
+            "tool_calls": normalized_tcs,
         }
         current_messages.append(assistant_turn_msg)
 
-        def _exec_single_tool(tc: dict[str, Any], iter_idx: int = iteration) -> dict[str, Any]:
+        def _exec_single_tool(tc: dict[str, Any]) -> dict[str, Any]:
             def _execute() -> dict[str, Any]:
-                tc_id = tc.get("id") or f"call_{iter_idx}_{_gen_token()}"
-                if len(tc_id) > max_tool_call_id_chars:
-                    tc_id = tc_id[:max_tool_call_id_chars]
-                fn = tc.get("function") or {}
-                fn_name = str(fn.get("name") or "unknown_tool")[:80]
-                fn_args = fn.get("arguments") or "{}"
-                if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
-                    fn_args = "{}"
-
-                tool_output = execute_mistral_tool_call(fn_name, fn_args)
+                tc_id = tc["id"]
+                fn = tc["function"]
+                fn_name = fn["name"]
+                fn_args = fn["arguments"]
+                try:
+                    tool_output = execute_mistral_tool_call(fn_name, fn_args)
+                    tool_content = _serialize_tool_result(tool_output)
+                except Exception as tool_err:
+                    # Mirror the Mistral twin: one failing tool must not abort
+                    # the whole agent loop or leak implementation details into
+                    # the model prompt.
+                    logger.warning(
+                        "OpenAI tool execution error for %s error_type=%s",
+                        fn_name,
+                        type(tool_err).__name__,
+                    )
+                    tool_content = _serialize_tool_result(
+                        {"error": "ツールの実行に失敗しました"}
+                    )
                 return {
                     "role": "tool",
                     "tool_call_id": tc_id,
                     "name": fn_name,
-                    "content": _serialize_tool_result(tool_output),
+                    "content": tool_content,
                 }
 
             if flask_app is not None:
@@ -1437,14 +1504,14 @@ def call_openai_chat_with_tools(
                     return _execute()
             return _execute()
 
-        if len(valid_tcs) > 1:
+        if len(normalized_tcs) > 1:
             with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(valid_tcs), 4)
+                max_workers=min(len(normalized_tcs), 4)
             ) as executor:
-                tool_messages = list(executor.map(_exec_single_tool, valid_tcs))
+                tool_messages = list(executor.map(_exec_single_tool, normalized_tcs))
             current_messages.extend(tool_messages)
         else:
-            for tc in valid_tcs:
+            for tc in normalized_tcs:
                 current_messages.append(_exec_single_tool(tc))
 
     # If loop finishes without direct answer, call one last synthesis

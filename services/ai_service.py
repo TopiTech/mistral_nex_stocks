@@ -567,6 +567,24 @@ def _build_mistral_cache_key(
     return f"mistral_chat_{digest}"
 
 
+def _error_body_status_code(err: dict[str, Any]) -> int:
+    """Return a numeric error-body ``status_code`` without trusting its type.
+
+    Provider/proxy error bodies are untrusted JSON: ``status_code`` may be a
+    string, a float or an arbitrary value. This classifier runs inside the SDK
+    exception handler, so a coercion error here would escape as an unhandled
+    500 and skip the circuit/backoff bookkeeping instead of returning the
+    structured error response.
+    """
+    raw = err.get("status_code")
+    if raw is None or isinstance(raw, bool):
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _is_mistral_capacity_error(err_payload):
     """429や容量制限エラーかどうかを判定。"""
     err = (err_payload or {}).get("error", {})
@@ -575,7 +593,7 @@ def _is_mistral_capacity_error(err_payload):
     return (
         err.get("type") == "service_tier_capacity_exceeded"
         or str(err.get("code")) == "3505"
-        or int(err.get("status_code") or 0) == 429
+        or _error_body_status_code(err) == 429
     )
 
 

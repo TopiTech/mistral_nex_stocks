@@ -1266,17 +1266,22 @@ def error_response(
             pass
     if message is None:
         message = get_error_message(ec_int, lang="ja")
+    # The envelope owner must sanitize every string leaf, including the
+    # top-level message/error pair. Callers such as /api/stock-history pass an
+    # upstream failure string here; sanitizing only details/extra_fields left
+    # provider credentials in the primary error field.
+    safe_message = _sanitize_error_message(message)
     sanitized_details: dict[str, Any] = {}
     if details:
         for k, v in details.items():
             sanitized_details[k] = _sanitize_error_value(v)
     body: dict[str, Any] = {
         "ok": False,
-        "error": message,
+        "error": safe_message,
         "error_flag": True,
         "code": str(error_code) if error_code is not None else None,
         "error_code": ec_int,
-        "message": message,
+        "message": safe_message,
         "details": sanitized_details,
     }
     if extra_fields:

@@ -1112,11 +1112,11 @@ def _chat_error_response(
             err_type,
             exc_str,
         )
-        msg = (
-            f"チャット処理に失敗しました ({exc_str[:120]})"
-            if exc_str
-            else "チャット処理に失敗しました"
-        )
+        # 想定外の内部例外の本文はクライアントへ返さない。詳細は上の
+        # logger.error が request_id 付きで保持しており、レスポンスは
+        # SSE 経路と同じ固定文言 + details.error_type に揃える
+        # (内部パスやSDK内部状態の露出を防ぐ)。
+        msg = "チャット処理に失敗しました"
         status_code = 500
 
     payload["reply"] = msg

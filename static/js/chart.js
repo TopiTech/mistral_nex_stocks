@@ -887,14 +887,22 @@ function _evictChartPrefCache() {
   }
 }
 
+// Single insertion point: the cap must hold no matter which call path adds an
+// entry. Reads (getChartPref) lazily insert too, so eviction cannot live only
+// in the write path.
+function _storeChartPrefEntry(key, val) {
+  if (!_chartPrefCache.has(key)) _evictChartPrefCache();
+  _chartPrefCache.set(key, val);
+}
+
 function _loadChartPrefIntoCache(key, defaultValue) {
   try {
     const raw = localStorage.getItem(key);
     const val = raw !== null ? raw : defaultValue;
-    _chartPrefCache.set(key, val);
+    _storeChartPrefEntry(key, val);
     return val;
   } catch {
-    _chartPrefCache.set(key, defaultValue);
+    _storeChartPrefEntry(key, defaultValue);
     return defaultValue;
   }
 }
@@ -946,8 +954,7 @@ function getChartPref(stockKey, pref, defaultVal) {
  */
 function setChartPref(stockKey, pref, val) {
   const key = `chart_${pref}_${stockKey}`;
-  if (!_chartPrefCache.has(key)) _evictChartPrefCache();
-  _chartPrefCache.set(key, val);
+  _storeChartPrefEntry(key, val);
   _chartPrefDirtyKeys.add(key);
   _scheduleChartPrefPersist();
 }

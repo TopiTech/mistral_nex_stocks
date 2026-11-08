@@ -657,12 +657,18 @@ function updatePortfolioModalTotalCost() {
 
   if (isUs) {
     const fxVal = parseFloat(fxInput?.value);
+    const stateRate =
+      typeof state !== "undefined" ? Number(state.exchangeRate) : NaN;
+    const windowStateRate =
+      typeof window !== "undefined" ? Number(window.State?.exchangeRate) : NaN;
     const fxRate =
       !isNaN(fxVal) && fxVal > 0
         ? fxVal
-        : (typeof state !== "undefined" && state.exchangeRate) ||
-          (typeof window !== "undefined" && window.State?.exchangeRate) ||
-          150;
+        : Number.isFinite(stateRate) && stateRate > 1.0
+          ? stateRate
+          : Number.isFinite(windowStateRate) && windowStateRate > 1.0
+            ? windowStateRate
+            : 150;
     const jpyEstimated = Math.round(total * fxRate);
     const usdFormatted = total.toLocaleString(undefined, {
       minimumFractionDigits: 2,

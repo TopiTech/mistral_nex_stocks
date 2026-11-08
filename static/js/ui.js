@@ -1834,7 +1834,10 @@ function drawPortfolioSummaryChart(holdings) {
   const chartAnimationControl = resolvePortfolioChartAnimationControl();
 
   // 最新レートを取得 (state経由)
-  const usdJpyRate = portfolioFixedExchangeRate || state.exchangeRate || null;
+  const rawUsdJpy = portfolioFixedExchangeRate ?? state.exchangeRate;
+  const numUsdJpy = Number(rawUsdJpy);
+  const usdJpyRate =
+    Number.isFinite(numUsdJpy) && numUsdJpy > 1.0 ? numUsdJpy : null;
   const isMixedCurrency =
     holdings.some((s) => s.currency === "USD") &&
     holdings.some((s) => s.currency === "JPY");
@@ -2002,10 +2005,12 @@ function calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate) {
   let totalCostJPY = 0;
   let totalTodayPlJPY = 0;
 
+  const numCurFx = Number(currentFxRate);
   const validCurrentFx =
-    Number.isFinite(currentFxRate) && currentFxRate > 0 ? currentFxRate : 1.0;
+    Number.isFinite(numCurFx) && numCurFx > 1.0 ? numCurFx : 150.0;
+  const numPrevFx = Number(prevFxRate);
   const validPrevFx =
-    Number.isFinite(prevFxRate) && prevFxRate > 0 ? prevFxRate : validCurrentFx;
+    Number.isFinite(numPrevFx) && numPrevFx > 1.0 ? numPrevFx : validCurrentFx;
 
   holdings.forEach((stock) => {
     const shares = toFiniteNumber(stock.shares, 0);
@@ -2057,8 +2062,9 @@ function updatePortfolioHeader(
     return;
   }
 
+  const numUsdJpy = Number(usdJpyRate);
   const currentFxRate =
-    Number.isFinite(usdJpyRate) && usdJpyRate > 0 ? usdJpyRate : 1.0;
+    Number.isFinite(numUsdJpy) && numUsdJpy > 1.0 ? numUsdJpy : 150.0;
   const usdJpyChange = toFiniteNumber(state.indices?.USDJPY?.change, 0);
   const rawPrevFx = currentFxRate - usdJpyChange;
   const prevFxRate = rawPrevFx > 0 ? rawPrevFx : currentFxRate;

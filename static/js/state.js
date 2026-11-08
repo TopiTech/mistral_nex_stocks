@@ -92,7 +92,7 @@ class StateManager {
       : true;
     this._isAnalyzing = false;
     this._isLoadingNews = false;
-    this._exchangeRate = 1.0;
+    this._exchangeRate = null;
     this._isYfinanceRateLimited = false;
 
     // Listener registry: property -> Set of callback functions
@@ -294,12 +294,12 @@ class StateManager {
     this.indices = data;
     if (data?.USDJPY) {
       const price = Number(data.USDJPY.price) || null;
-      if (price !== null && !isNaN(price)) {
+      if (price !== null && !isNaN(price) && price > 0) {
         this.exchangeRate = price;
-      } else if (!this.exchangeRate || this.exchangeRate === 1.0) {
+      } else if (!this.exchangeRate || this.exchangeRate <= 1.0) {
         this.exchangeRate = 150.0;
       }
-    } else if (!this.exchangeRate || this.exchangeRate === 1.0) {
+    } else if (!this.exchangeRate || this.exchangeRate <= 1.0) {
       this.exchangeRate = 150.0;
     }
   }

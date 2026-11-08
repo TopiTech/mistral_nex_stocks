@@ -3426,16 +3426,26 @@ SDKの環境ガード、テストが `app_state` を初期化する正当なパ�
    - **根本原因**: バックエンドAPIレスポンスのUI側消費漏れ。
    - **修正内容**: `static/js/ai_portfolio.js` において、`fallback_warning` が存在する場合にトースト警告 (`showToast("⚠️ " + warning, "#f59e0b")`) を表示し、ポートフォリオ概要 (`ai-pf-commentary-text`) の先頭に `【⚠️ 注意】...` バナーを安全な `textContent` 経由で付与。
 
-3. **[誤検知として除外] APIクレデンシャル更新時の空文字列挙動**
+3. **[修正済・根本解決] フロントエンド為替レート初期値 `1.0` によるUSDポートフォリオ評価額歪みおよび待機ガードバイパス**
+   - **症状**: `static/js/state.js` のコンストラクタで `this._exchangeRate = 1.0;` と初期化されていたため、USD/JPYレート未取得時（起動直後やインデックス未ロード時）にUSD保有銘柄を含むポートフォリオを表示すると、`1 USD = 1 JPY` で計算されてしまい極端に過小な評価額・取得原価（例: $1,500 の保有が「約1,500円」）が表示されていた。また、`ui.js` に用意されていた為替レート未取得時のローディングガード（`if (usdJpyRate == null && hasUsdHoldings)`）が `1.0`（truthy）によりバイパスされていた。加えて、`chart.js` でAPIからの文字列レート（例: `"154.5"`) が渡された際に `Number.isFinite` が `false` を返し、`1.0` にフォールバックする問題があった。
+   - **根本原因**: 未初期化状態を表すシグナルとして `null` ではなく現実離れしたダミー数値 `1.0` を設定していたこと、および型変換（`Number(val)`）を伴わない厳格チェックの欠落。
+   - **修正内容**: `static/js/state.js` で `this._exchangeRate = null;` に初期化し、`updateIndices` でのフォールバックを `150.0` に適正化。`chart.js`, `index_main.js`, `ui.js` において `Number(...)` による数値変換と `> 1.0` 境界値判定を導入し、未取得時は安全に待機表示（「為替データ取得中...」）および現実的なフォールバック（`150.0`）を適用。
+
+4. **[修正済・根本解決] AIポートフォリオ エラー詳細メッセージの伝播・表示漏れ**
+   - **症状**: `static/js/ai_portfolio.js` において、API呼び出しエラー時に `getApiErrorMessage(data, ...)` から返される詳細エラーメッセージ（例: APIキー未設定や銘柄不足）が `Error` オブジェクトに保持されていたが、catch ブロック内でハードコードされた固定文字列（`"AIポートフォリオの取得に失敗しました。"`）が渡され、ユーザーに根本原因が表示されていなかった。
+   - **根本原因**: catch 節での `err.message` 伝播の欠落。
+   - **修正内容**: `err?.message` を優先して `showAiPortfolioError` および `showAiPortfolioFailure` に引き渡すよう修正。
+
+5. **[誤検知として除外] APIクレデンシャル更新時の空文字列挙動**
    - **評価**: 空文字 `""` 送信時に既存APIキーを削除せず保持する挙動は、HTMLフォームの未変更フィールド保持を目的とした意図的仕様（`test_save_api_credentials_preserves_protected_langsearch_when_blank` で担保）。クレデンシャル削除は `DELETE /api/credentials` で明示的に実行する設計であり、変更不要と判定。
 
-4. **[誤検知として除外] Chrome拡張機能 manifest.json における content_scripts 未定義**
+6. **[誤検知として除外] Chrome拡張機能 manifest.json における content_scripts 未定義**
    - **評価**: manifest v3 の最小権限原則（Least Privilege）に基づき、全ページへの静的スクリプト注入を避け、`activeTab` + `scripting` によるユーザー明示トリガー時のオンデマンド注入 (`chrome.scripting.executeScript({ files: ["content.js"] })`) を採用している堅牢なセキュリティ仕様であり、変更不要と判定。
 
-5. **[誤検知として除外] Windows psutil 不在時のプロセスシグナル処理**
+7. **[誤検知として除外] Windows psutil 不在時のプロセスシグナル処理**
    - **評価**: Windowsで `psutil` 不在時に `os.kill` を呼ぶと強制終了 (`TerminateProcess`) となりリソースが正常解放されないため、意図的にフォールバックをスキップする設計（`tests/test_review_2026_10_31_lifecycle.py` で担保）。また本番環境では `pyproject.toml` に `psutil>=5.9.8` が必須依存関係としてロックされており実害なしと判定。
 
-6. **[安全確認] DOM書き込みおよびXSS・CSP Nonce検証**
+8. **[安全確認] DOM書き込みおよびXSS・CSP Nonce検証**
    - **評価**: `static/js/` 配下の全28ファイルにおいて `innerHTML` / `outerHTML` / `insertAdjacentHTML` は0件。すべて `document.createElement`, `textContent`, `setAttribute` で安全に構築されている。また `tradingview_manager.js` の動的スクリプト生成も `getAttribute("nonce")` ではなくプロパティ `document.querySelector("script[nonce]")?.nonce` を使用しており、DOM Clobbering / CSP Nonceハイジャック耐性を確認。
 
 ### M.3 追加されたテスト
@@ -3448,13 +3458,16 @@ SDKの環境ガード、テストが `app_state` を初期化する正当なパ�
   - `test_sanitize_ai_portfolio_preserves_fallback_warning`: データ層でのフォールバック警告保持検証
   - `test_sanitize_ai_portfolio_strips_html_from_fallback_warning`: フォールバック警告内の悪意あるHTML・スクリプト除去検証
   - `test_ai_portfolio_frontend_displays_fallback_warning`: フロントエンド `ai_portfolio.js` の構文・警告ハンドリング検証
+  - `test_state_exchange_rate_initialization_and_update`: `state.js` の為替レート初期値（null）および更新・フォールバック処理の検証
+  - `test_portfolio_exchange_rate_and_cost_fallback`: ポートフォリオ計算・モーダル原価計算における為替レートフォールバックおよび文字列耐性検証
+  - `test_ai_portfolio_error_message_propagation`: AIポートフォリオにおける詳細エラーメッセージ伝播検証
 
 ### M.4 最終検証結果マトリクス
 
 | 検査種別 | コマンド / 対象 | 結果 |
 |---|---|---|
-| Python テストスイート | `pytest` | **4,100 passed**, 3 skipped (POSIX専用), 47 subtests passed (24.75s) |
-| 単体回帰テスト | `pytest tests/test_code_review_audit_2026_11_comprehensive.py` | **7 passed** (2.89s) |
+| Python テストスイート | `pytest` | **4,103 passed**, 3 skipped (POSIX専用), 47 subtests passed (26.15s) |
+| 単体回帰テスト | `pytest tests/test_code_review_audit_2026_11_comprehensive.py` | **10 passed** (3.29s) |
 | スタートアップ検証 | `python tests/startup_smoke_runner.py` | **exit 0** クリーン起動・初期化完了 |
 | ネイティブホスト検証 | `native_host/validate_native_host_windows.ps1` | **[ OK ]** 構造的完全性確認 |
 | Ruff リント | `ruff check . --line-length=100` | **All checks passed!** (0 issues) |
@@ -3464,4 +3477,4 @@ SDKの環境ガード、テストが `app_state` を初期化する正当なパ�
 | Bandit セキュリティ解析 | `bandit --configfile pyproject.toml -r . --severity-level medium` | **No issues identified** (43,862 lines scanned, 0 issues) |
 | Pip Audit 脆弱性スキャン | `pip-audit --strict` | **No known vulnerabilities found** |
 | フロントエンド統合ビルド | `npm run build` (tsc, compile, verify-generated, eslint, prettier) | **exit 0** すべてPASS |
-| Git ワークツリー整合性 | `git status` / `git diff --check` | 変更ファイル3点＋新規テスト1点＋本ドキュメントのみ、不要成果物・デバッグ痕跡0 |
+| Git ワークツリー整合性 | `git status` / `git diff --check` | 修正ファイル5点＋包括回帰テスト1点＋本ドキュメントのみ、不要成果物・デバッグ痕跡0 |

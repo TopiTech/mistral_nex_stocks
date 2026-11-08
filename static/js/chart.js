@@ -1118,7 +1118,15 @@ function setActiveTab(tab) {
 
   if (tab === "portfolio") {
     // ポートフォリオタブを開いた瞬間の為替レートを固定する (視認性向上のため)
-    portfolioFixedExchangeRate = state.indices?.USDJPY?.price || null;
+    const rawPrice = state.indices?.USDJPY?.price;
+    const numPrice = Number(rawPrice);
+    const validStateRate =
+      Number.isFinite(Number(state.exchangeRate)) &&
+      Number(state.exchangeRate) > 1.0
+        ? Number(state.exchangeRate)
+        : null;
+    portfolioFixedExchangeRate =
+      Number.isFinite(numPrice) && numPrice > 1.0 ? numPrice : validStateRate;
     renderPortfolio();
   }
 

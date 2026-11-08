@@ -234,3 +234,184 @@ def test_ai_portfolio_frontend_displays_fallback_warning():
         check=False,
     )
     assert res.returncode == 0, f"Node script execution failed: {res.stderr}\n{res.stdout}"
+
+
+# ---------------------------------------------------------------------------
+# 3. Frontend Portfolio & FX Rate Validation Tests
+# ---------------------------------------------------------------------------
+
+
+def test_state_exchange_rate_initialization_and_update():
+    """Verify that state.js initializes exchangeRate to null (not 1.0) and updates cleanly."""
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("Node.js is required for executing frontend JavaScript test scripts")
+
+    script = """
+    const fs = require('fs');
+    const path = require('path');
+    const vm = require('vm');
+    const assert = require('assert');
+
+    global.APP_CONFIG = {};
+    global.DEFAULT_SYMBOLS = { us: [], jp: [], idx: [] };
+    global.document = {
+        documentElement: {}
+    };
+    global.window = {
+        document: global.document,
+        addEventListener: () => {},
+        matchMedia: () => ({ matches: false }),
+        getComputedStyle: () => ({ getPropertyValue: () => '' })
+    };
+    global.localStorage = {
+        getItem: () => null,
+        setItem: () => {}
+    };
+
+    const code = fs.readFileSync(path.join(process.cwd(), 'static/js/state.js'), 'utf8');
+    vm.runInThisContext(code);
+
+    assert(typeof state !== 'undefined' && state !== null, 'state must be defined');
+    assert.strictEqual(state.exchangeRate, null, 'Initial exchangeRate must be null, not 1.0');
+
+    // Update with valid numeric price
+    state.updateIndices({ USDJPY: { price: 154.5 } });
+    assert.strictEqual(state.exchangeRate, 154.5, 'exchangeRate should update to 154.5');
+
+    // Update with string price
+    state.updateIndices({ USDJPY: { price: "155.2" } });
+    assert.strictEqual(state.exchangeRate, 155.2, 'exchangeRate should parse numeric strings');
+
+    // Reset and test empty indices fallback
+    const freshState = new StateManager();
+    assert.strictEqual(freshState.exchangeRate, null);
+    freshState.updateIndices({});
+    assert.strictEqual(freshState.exchangeRate, 150.0, 'Fallback when missing USDJPY must be 150.0, not 1.0');
+    console.log('state.js exchangeRate tests passed');
+    """
+
+    res = subprocess.run(
+        [node_bin, "-e", script],
+        cwd=str(ROOT_DIR),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, f"Node test failed: {res.stderr}\n{res.stdout}"
+
+
+def test_portfolio_exchange_rate_and_cost_fallback():
+    """Verify that index_main.js and ui.js fallback safely when exchange rate is null/unloaded."""
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("Node.js is required for executing frontend JavaScript test scripts")
+
+    script = """
+    const fs = require('fs');
+    const path = require('path');
+    const vm = require('vm');
+    const assert = require('assert');
+
+    // Mock DOM and environment
+    const elements = {};
+    function mockElement(id) {
+        return {
+            id,
+            value: '',
+            textContent: '',
+            style: {},
+            classList: { toggle: () => {}, add: () => {}, remove: () => {} },
+            toggleAttribute: () => {},
+            addEventListener: () => {},
+            removeEventListener: () => {}
+        };
+    }
+
+    elements['pf-shares-input'] = mockElement('pf-shares-input');
+    elements['pf-price-input'] = mockElement('pf-price-input');
+    elements['pf-fx-rate-input'] = mockElement('pf-fx-rate-input');
+    elements['pf-modal-total-cost'] = mockElement('pf-modal-total-cost');
+    elements['pf-total-value'] = mockElement('pf-total-value');
+    elements['pf-summary-loading'] = mockElement('pf-summary-loading');
+    elements['pf-summary-canvas'] = mockElement('pf-summary-canvas');
+
+    global.APP_CONFIG = {};
+    global.DEFAULT_SYMBOLS = { us: [], jp: [], idx: [] };
+    global.DOM = {
+        get: (id) => elements[id] || null
+    };
+    global.document = {
+        documentElement: {},
+        getElementById: (id) => elements[id] || null,
+        querySelectorAll: () => [],
+        querySelector: () => null,
+        addEventListener: () => {}
+    };
+    global.window = {
+        document: global.document,
+        addEventListener: () => {},
+        matchMedia: () => ({ matches: false }),
+        getComputedStyle: () => ({ getPropertyValue: () => '' })
+    };
+    global.localStorage = {
+        getItem: () => null,
+        setItem: () => {}
+    };
+
+    // Load state.js first
+    const stateCode = fs.readFileSync(path.join(process.cwd(), 'static/js/state.js'), 'utf8');
+    vm.runInThisContext(stateCode);
+
+    // Load utils.js
+    const utilsCode = fs.readFileSync(path.join(process.cwd(), 'static/js/utils.js'), 'utf8');
+    vm.runInThisContext(utilsCode);
+
+    // Load ui.js
+    const uiCode = fs.readFileSync(path.join(process.cwd(), 'static/js/ui.js'), 'utf8');
+    vm.runInThisContext(uiCode);
+
+    assert(typeof calculatePortfolioMetrics === 'function');
+    const holdings = [
+        { symbol: 'AAPL', market: 'us', currency: 'USD', shares: 10, price: 100, avg_price: 100, change: 0 }
+    ];
+
+    // Calling calculatePortfolioMetrics with null or invalid rate falls back to 150.0, NOT 1.0
+    const metrics = calculatePortfolioMetrics(holdings, null, null);
+    assert.strictEqual(metrics.totalValue, 10 * 100 * 150, 'Value should use 150 JPY/USD fallback, not 1.0');
+    assert.strictEqual(metrics.totalCost, 10 * 100 * 150, 'Cost should use 150 JPY/USD fallback, not 1.0');
+
+    // Calling with valid rate (e.g. 154.5) uses that rate
+    const metricsValid = calculatePortfolioMetrics(holdings, 154.5, 154.5);
+    assert.strictEqual(metricsValid.totalValue, 10 * 100 * 154.5);
+
+    // Calling with string rate '155.0' cleanly converts
+    const metricsStr = calculatePortfolioMetrics(holdings, '155.0', '155.0');
+    assert.strictEqual(metricsStr.totalValue, 10 * 100 * 155.0);
+
+    console.log('Portfolio FX metrics tests passed');
+    """
+
+    res = subprocess.run(
+        [node_bin, "-e", script],
+        cwd=str(ROOT_DIR),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, f"Node test failed: {res.stderr}\n{res.stdout}"
+
+
+def test_ai_portfolio_error_message_propagation():
+    """Verify that ai_portfolio.js propagates detailed error messages."""
+    node_bin = shutil.which("node")
+    if not node_bin:
+        pytest.skip("Node.js is required for executing frontend JavaScript test scripts")
+
+    js_file = ROOT_DIR / "static" / "js" / "ai_portfolio.js"
+    content = js_file.read_text(encoding="utf-8")
+
+    # Verify that errorMsg or err?.message is passed to showAiPortfolioError and showAiPortfolioFailure
+    assert "const errorMsg = err?.message ||" in content or "const errorMsg =" in content
+    assert "showAiPortfolioError(errorMsg" in content
+    assert "showAiPortfolioFailure(errorMsg" in content

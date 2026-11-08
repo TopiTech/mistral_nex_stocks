@@ -754,10 +754,9 @@
         return;
       }
       console.error("loadAiPortfolio error:", err);
-      showAiPortfolioError("AIポートフォリオの取得に失敗しました。", () =>
-        loadAiPortfolio(presetOrTheme),
-      );
-      showAiPortfolioFailure("AIポートフォリオの取得に失敗しました");
+      const errorMsg = err?.message || "AIポートフォリオの取得に失敗しました。";
+      showAiPortfolioError(errorMsg, () => loadAiPortfolio(presetOrTheme));
+      showAiPortfolioFailure(errorMsg);
     } finally {
       if (isCurrentAiPortfolioRequest(requestGeneration)) {
         showLoadingState(false);
@@ -912,10 +911,9 @@
         return;
       }
       console.error("rebalanceAiPortfolio error:", err);
-      showAiPortfolioError("AIリバランスに失敗しました。", () =>
-        rebalanceAiPortfolio(theme),
-      );
-      showAiPortfolioFailure("AIリバランスに失敗しました");
+      const errorMsg = err?.message || "AIリバランスに失敗しました。";
+      showAiPortfolioError(errorMsg, () => rebalanceAiPortfolio(theme));
+      showAiPortfolioFailure(errorMsg);
     } finally {
       if (isCurrentAiPortfolioRequest(requestGeneration)) {
         showLoadingState(false);

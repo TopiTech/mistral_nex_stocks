@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 # Create a temporary directory for test-run files (to avoid corrupting workspace/user directories)
 # Set environment variables BEFORE any other imports, so config_store and other modules
@@ -201,6 +202,7 @@ def reset_app_state():
             Path(test_temp_dir.name) / "ai_portfolios.json",
             Path(test_temp_dir.name) / "config.json",
             Path(test_temp_dir.name) / "user_stocks.json",
+            Path(test_temp_dir.name) / "native_host_rate_limit.json",
         ):
             try:
                 _f.unlink(missing_ok=True)
@@ -215,9 +217,17 @@ def reset_app_state():
         # LIFECYCLE-11: the native host caches its verified caller-ancestry
         # verdict process-wide; reset it per test so tests that patch
         # ``_get_ancestor_process_names`` keep observing per-call evaluation.
-        _nh = sys.modules.get("native_host.native_host")
+        _nh: Any = sys.modules.get("native_host.native_host")
         if _nh is not None:
             _nh._reset_caller_ancestry_cache()
+            with _nh._rate_limit_lock:
+                _nh._rate_limit_timestamps.clear()
+                _nh._token_action_timestamps.clear()
+            _nh._rate_limit_ledger_disabled = False
+            try:
+                _nh._RATE_LIMIT_LEDGER_PATH.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     _clear_persisted_state()
     yield

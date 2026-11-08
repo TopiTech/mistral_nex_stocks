@@ -353,7 +353,7 @@ def _sliding_window_allow(bucket: str, timestamps: list, max_events: int, window
     now = time.time()
     cutoff = now - window
     with _rate_limit_lock:
-        timestamps[:] = [t for t in timestamps if t > cutoff]
+        timestamps[:] = [t for t in timestamps if cutoff < t <= now + 1.0]
         merged = list(timestamps)
         fd = -1
         locked = False
@@ -381,7 +381,7 @@ def _sliding_window_allow(bucket: str, timestamps: list, max_events: int, window
                     merged.extend(
                         float(value)
                         for value in stored
-                        if isinstance(value, (int, float)) and value > cutoff
+                        if isinstance(value, (int, float)) and cutoff < value <= now + 1.0
                     )
             else:
                 logger.warning("Rate-limit ledger lock timed out; using the in-process window only")

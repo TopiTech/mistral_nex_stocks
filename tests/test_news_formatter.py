@@ -38,6 +38,11 @@ class CoerceNewsSectionTextTestCase(unittest.TestCase):
         self.assertIn("Market News", result)
         self.assertIn("Markets are up", result)
 
+    def test_json_repair_preserves_brace_text_inside_values(self):
+        """Trailing-comma repair must not delete text inside quoted values."""
+        raw = '{"topic": "決算は増収, } ただし利益は減益",}'
+        self.assertEqual(NewsFormatter._flatten(raw), "決算は増収, } ただし利益は減益")
+
 
 class CoerceNewsSectionTextV2TestCase(unittest.TestCase):
     """NewsFormatter._coerce_news_section_text_v2 tests"""

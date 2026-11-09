@@ -149,6 +149,44 @@ def test_is_market_open_success_probe_cached_under_valid_key(monkeypatch):
     assert calls["n"] == 1
 
 
+def test_is_market_open_does_not_negative_cache_in_flight_fetch(monkeypatch):
+    """CACHE_FETCHING means another thread is fetching, not that the probe failed.
+
+    Negative-caching the sentinel suppressed the live result the concurrent
+    fetch was about to store for the whole 60s TTL (same class as R3 in
+    get_cached_context_with_negative_cache).
+    """
+    from utils import market_utils
+    from utils.caching import CACHE_FETCHING
+
+    monkeypatch.setattr(market_utils, "_has_cached_key", lambda *_a, **_k: False)
+    monkeypatch.setattr(market_utils, "get_cached", lambda *_a, **_k: CACHE_FETCHING)
+    writes = []
+    monkeypatch.setattr(
+        market_utils, "_set_cached_value", lambda key, value, duration=None: writes.append(key)
+    )
+
+    result = market_utils.is_market_open("us", ignore_weekend=True)
+
+    assert isinstance(result, bool), "the time-based heuristic must still answer"
+    assert "market_state_us__negative" not in writes
+
+
+def test_is_market_open_still_negative_caches_genuine_failure(monkeypatch):
+    from utils import market_utils
+
+    monkeypatch.setattr(market_utils, "_has_cached_key", lambda *_a, **_k: False)
+    monkeypatch.setattr(market_utils, "get_cached", lambda *_a, **_k: None)
+    writes = []
+    monkeypatch.setattr(
+        market_utils, "_set_cached_value", lambda key, value, duration=None: writes.append(key)
+    )
+
+    market_utils.is_market_open("us", ignore_weekend=True)
+
+    assert "market_state_us__negative" in writes
+
+
 # ---------------------------------------------------------------------------
 # M21/M22: fallback provider numeric hardening and no-fake OHLC
 # ---------------------------------------------------------------------------

@@ -66,7 +66,11 @@ def _flatten(item, current_depth=0, max_depth=5):
         except (json.JSONDecodeError, ValueError):
             # 末尾カンマ等を考慮した extract_json_payload のロジックの一部を適用
             if txt.startswith(("{", "[")):
-                fixed_txt = re.sub(r",\s*([\]}])", r"\1", txt)
+                # String-aware repair: a regex also stripped ", }" / ", ]"
+                # inside quoted values and corrupted the news text.
+                from utils.validators import strip_trailing_commas
+
+                fixed_txt = strip_trailing_commas(txt)
                 try:
                     return _flatten(json.loads(fixed_txt), current_depth + 1, max_depth)
                 except (json.JSONDecodeError, ValueError):

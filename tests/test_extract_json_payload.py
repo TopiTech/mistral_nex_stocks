@@ -55,6 +55,23 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         self.assertIn("1行目", parsed["summary"])
         self.assertEqual(parsed["trend_bias"], "Bullish")
 
+    def test_preserves_closing_brace_inside_string_value(self):
+        """Trailing-comma repair must not rewrite text inside JSON strings."""
+        payload = '{"summary":"売上は増加, } ただし利益は減少","trend_bias":"Bullish"}'
+        parsed = json.loads(extract_json_payload(payload))
+        self.assertEqual(parsed["summary"], "売上は増加, } ただし利益は減少")
+        self.assertEqual(parsed["trend_bias"], "Bullish")
+
+    def test_preserves_closing_bracket_inside_string_value(self):
+        payload = '{"summary":"値は , ] 続く","recommendation":"Buy"}'
+        parsed = json.loads(extract_json_payload(payload))
+        self.assertEqual(parsed["summary"], "値は , ] 続く")
+
+    def test_removes_structural_trailing_commas(self):
+        payload = '{"summary":"ok","lines":[1,2,],}'
+        parsed = json.loads(extract_json_payload(payload))
+        self.assertEqual(parsed, {"summary": "ok", "lines": [1, 2]})
+
     def test_extracts_large_json_payload_without_truncation(self):
         # Verify payloads > 50,000 chars are extracted completely without premature truncation
         large_data = {"summary": "A" * 60000, "recommendation": "Buy"}

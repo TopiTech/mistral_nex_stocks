@@ -494,6 +494,81 @@ class TestResolveStocksForResponse(unittest.TestCase):
         self.assertEqual(result["us"], [])
         self.assertEqual(result["idx"], [{"symbol": "AAPL"}])
 
+    def test_non_string_symbol_row_does_not_abort_realtime_merge(self):
+        """One malformed row must not drop realtime prices for every other row."""
+        from unittest.mock import patch
+
+        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.target_stocks_cache = {
+            "us": [{"symbol": None, "price": 100.0}, {"symbol": "AAPL", "price": 100.0}],
+            "jp": [],
+            "idx": [],
+        }
+        snapshot = {"AAPL": {"price": 123.0, "change": 23.0, "change_percent": 23.0}}
+        with (
+            patch(
+                "services.realtime_engine.realtime_market_engine.get_market_snapshot",
+                return_value=snapshot,
+            ),
+            patch(
+                "services.realtime_engine.realtime_market_engine.get_pts_snapshot",
+                return_value={},
+            ),
+        ):
+            result = _resolve_stocks_for_response()
+
+        self.assertIsNone(result["us"][0]["symbol"])
+        self.assertEqual(result["us"][0]["price"], 100.0)
+        self.assertEqual(result["us"][1]["price"], 123.0)
+
+    def test_non_dict_row_is_preserved_without_aborting_realtime_merge(self):
+        from unittest.mock import patch
+
+        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.target_stocks_cache = {
+            "us": ["malformed", {"symbol": "AAPL", "price": 100.0}],
+            "jp": [],
+            "idx": [],
+        }
+        with (
+            patch(
+                "services.realtime_engine.realtime_market_engine.get_market_snapshot",
+                return_value={"AAPL": {"price": 124.0}},
+            ),
+            patch(
+                "services.realtime_engine.realtime_market_engine.get_pts_snapshot",
+                return_value={},
+            ),
+        ):
+            result = _resolve_stocks_for_response()
+
+        self.assertEqual(result["us"][0], "malformed")
+        self.assertEqual(result["us"][1]["price"], 124.0)
+
+    def test_non_dict_realtime_entry_is_ignored(self):
+        """A malformed snapshot value must not abort the merge via .get()."""
+        from unittest.mock import patch
+
+        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.target_stocks_cache = {
+            "us": [{"symbol": "AAPL", "price": 100.0}],
+            "jp": [],
+            "idx": [],
+        }
+        with (
+            patch(
+                "services.realtime_engine.realtime_market_engine.get_market_snapshot",
+                return_value={"AAPL": "not-a-quote"},
+            ),
+            patch(
+                "services.realtime_engine.realtime_market_engine.get_pts_snapshot",
+                return_value={},
+            ),
+        ):
+            result = _resolve_stocks_for_response()
+
+        self.assertEqual(result["us"][0]["price"], 100.0)
+
 
 class TestResolveIndicesForResponse(unittest.TestCase):
     def setUp(self):

@@ -10,7 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app_state import app_state
-from utils.caching import _has_cached_key, _set_cached_value, get_cached
+from utils.caching import CACHE_FETCHING, _has_cached_key, _set_cached_value, get_cached
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +356,12 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
                 duration=300,
                 valid_func=lambda value: value in ("REGULAR", "CLOSED"),
             )
-            if live_state not in ("REGULAR", "CLOSED"):
+            # A timed-out waiter receives CACHE_FETCHING because another
+            # thread is still fetching. That is not a failure: the in-flight
+            # fetch may succeed immediately afterwards, and writing the
+            # negative entry would suppress live market state for the whole
+            # 60s TTL. Mirrors get_cached_context_with_negative_cache (R3).
+            if live_state is not CACHE_FETCHING and live_state not in ("REGULAR", "CLOSED"):
                 _set_cached_value(negative_key, True, duration=60)
         else:
             live_state = None

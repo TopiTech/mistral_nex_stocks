@@ -935,6 +935,26 @@ def _attach_portfolio_fields(row: Any, holding: Any, market: str | None = None) 
     return merged
 
 
+def _realtime_lookup_keys(raw_symbol: Any, *, dash_variant: bool = True) -> tuple[str, ...]:
+    """Return candidate realtime-snapshot keys for a stock row symbol.
+
+    Cache rows are data, not trusted code: a malformed row can carry a null or
+    non-string ``symbol``. Returning no keys for those rows keeps the merge
+    per-row so one bad entry cannot abort realtime enrichment for every other
+    stock in the response.
+    """
+    if not isinstance(raw_symbol, str):
+        return ()
+    symbol = raw_symbol.strip()
+    if not symbol:
+        return ()
+    clean_symbol = symbol.replace(".T", "").replace(".t", "")
+    keys = (symbol, f"{clean_symbol}.T", clean_symbol)
+    if dash_variant:
+        return (*keys, symbol.replace("-", "."))
+    return keys
+
+
 def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_only: bool = False):
     """Resolve stock cache for API response (current > target > empty, or target > current if real_data_only=True).
 
@@ -1003,19 +1023,24 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                         continue
                     m_rows = []
                     for row in resolved[m_key]:
+                        if not isinstance(row, dict):
+                            # Preserve the row as-is instead of raising from
+                            # dict(row) and losing the whole market's merge.
+                            m_rows.append(row)
+                            continue
                         r_copy = dict(row)
                         if include_portfolio and m_key in ("jp", "idx"):
                             # Defend the response boundary against stale rows
                             # produced by a pre-fix process or cache.
                             r_copy.pop("avg_fx_rate", None)
-                        sym = r_copy.get("symbol", "")
-                        clean_sym = sym.replace(".T", "").replace(".t", "")
-                        rt_info = (
-                            market_snapshot.get(sym)
-                            or market_snapshot.get(f"{clean_sym}.T")
-                            or market_snapshot.get(clean_sym)
-                            or market_snapshot.get(sym.replace("-", "."))
-                        )
+                        sym = r_copy.get("symbol")
+                        rt_info = None
+                        for lookup_key in _realtime_lookup_keys(sym):
+                            rt_info = market_snapshot.get(lookup_key)
+                            if rt_info:
+                                break
+                        if not isinstance(rt_info, dict):
+                            rt_info = None
                         if (
                             rt_info
                             and rt_info.get("price") is not None
@@ -1052,7 +1077,7 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                                 or not isinstance(cur_vol, (int, float))
                                 or cur_vol <= 0
                             ):
-                                yf_vol = get_stock_volume(sym)
+                                yf_vol = get_stock_volume(sym) if isinstance(sym, str) else None
                                 if yf_vol is not None and yf_vol > 0:
                                     r_copy["volume"] = yf_vol
                             if rt_info.get("source"):
@@ -1085,22 +1110,25 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
             if resolved.get("jp"):
                 jp_rows = []
                 for row in resolved["jp"]:
+                    if not isinstance(row, dict):
+                        jp_rows.append(row)
+                        continue
                     r_copy = dict(row)
-                    sym = r_copy.get("symbol", "")
-                    clean_sym = sym.replace(".T", "").replace(".t", "")
-                    pts_info = (
-                        pts_snapshot.get(sym)
-                        or pts_snapshot.get(f"{clean_sym}.T")
-                        or pts_snapshot.get(clean_sym)
-                    )
+                    sym = r_copy.get("symbol")
+                    pts_info = None
+                    for lookup_key in _realtime_lookup_keys(sym, dash_variant=False):
+                        pts_info = pts_snapshot.get(lookup_key)
+                        if pts_info:
+                            break
+                    if not isinstance(pts_info, dict):
+                        pts_info = None
                     if pts_info and pts_info.get("price"):
                         r_copy["pts_price"] = pts_info.get("price")
                         r_copy["pts_change"] = pts_info.get("change")
                         r_copy["pts_trading"] = pts_info.get("pts_trading", False)
                         r_copy["pts_time"] = pts_info.get("pts_time", "")
-                    else:
-                        if sym:
-                            realtime_market_engine.register_symbol(sym, "jp")
+                    elif isinstance(sym, str) and sym:
+                        realtime_market_engine.register_symbol(sym, "jp")
                     jp_rows.append(r_copy)
                 resolved["jp"] = jp_rows
         except Exception as exc:

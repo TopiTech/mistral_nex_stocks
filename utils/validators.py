@@ -17,6 +17,51 @@ from utils.normalization import is_bool_like
 
 logger = logging.getLogger(__name__)
 
+
+def strip_trailing_commas(text: str) -> str:
+    r"""Remove commas before a closing brace/bracket, outside string literals only.
+
+    A regex like ``re.sub(r",\s*([\]}])", r"\1", text)`` also rewrites text
+    inside JSON string values: ``{"summary": "売上は増加, } ただし..."}``
+    silently lost its `` , } `` sequence. Track string/escape state in one
+    linear pass so only structural trailing commas are removed.
+
+    Shared by every ad-hoc JSON repair path so the behaviour cannot drift.
+    """
+    out: list[str] = []
+    in_str = False
+    escape = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] in "}]":
+                i += 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 _CHAT_CONTENT_PROVIDER_ERROR = "(AIサービスから有効な応答を取得できませんでした)"
 _CHAT_CONTENT_FAILURE_PREFIXES = (
     _CHAT_CONTENT_PROVIDER_ERROR,
@@ -687,7 +732,7 @@ def extract_json_payload(content, required_fields=None):
     def _clean_json_str(s: str) -> str:
         s = s.strip()
         # 末尾カンマの削除 (..., } -> ... }, ..., ] -> ... ])
-        s = re.sub(r",\s*([\]}])", r"\1", s)
+        s = strip_trailing_commas(s)
         # 制御文字コードの除去
         s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", s)
         return s

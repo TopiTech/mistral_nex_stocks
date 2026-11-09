@@ -305,11 +305,15 @@ def repair_news_json_with_llm(api_key, raw_content):
 MISTRAL_REASONING_MODELS = {
     "mistral-small-2603",
     "mistral-small-4",
+    "mistral-small-4-0-26-03",
     "mistral-small-latest",
     "mistral-medium-2604",
     "mistral-medium-3.5",
     "mistral-medium-3-5",
     "mistral-medium-latest",
+    "mistral-large-4",
+    "mistral-large-4-0",
+    "mistral-large-2610",
 }
 
 
@@ -326,6 +330,7 @@ def _supports_reasoning_effort(model_name: str) -> bool:
     if (
         name in MISTRAL_REASONING_MODELS
         or name.startswith(("mistral-small", "mistral-medium", "magistral"))
+        or name.startswith(("mistral-large-4", "mistral-large-2610"))
         or "reasoning" in name
         or "thinking" in name
     ):

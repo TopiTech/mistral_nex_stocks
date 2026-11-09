@@ -107,6 +107,14 @@ class ModelCatalogTestCase(unittest.TestCase):
         self.assertEqual(
             resolve_model_target("ministral-14b-latest")["name"], "ministral-14b-latest"
         )
+        # Test newly added models from official docs
+        self.assertEqual(resolve_model_target("9")["name"], "mistral-large-4-0")
+        self.assertEqual(resolve_model_target("mistral-large-4")["name"], "mistral-large-4-0")
+        self.assertEqual(resolve_model_target("10")["name"], "mistral-ocr-latest")
+        self.assertEqual(resolve_model_target("ocr-4-1")["name"], "mistral-ocr-4-1")
+        self.assertEqual(resolve_model_target("zai-glm-5-3")["name"], "zai-glm-5-3")
+        self.assertEqual(resolve_model_target("voxtral-mini-transcribe-3-0")["name"], "voxtral-mini-transcribe-3-0")
+        self.assertEqual(resolve_model_target("timestral-1-0-209m")["name"], "timestral-1-0-209m")
         self.assertIsNone(resolve_model_target("completely-fake-model"))
 
 

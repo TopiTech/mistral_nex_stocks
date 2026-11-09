@@ -329,8 +329,15 @@ def _supports_reasoning_effort(model_name: str) -> bool:
     name = model_name.strip().lower()
     if (
         name in MISTRAL_REASONING_MODELS
-        or name.startswith(("mistral-small", "mistral-medium", "magistral"))
-        or name.startswith(("mistral-large-4", "mistral-large-2610"))
+        or name.startswith(
+            (
+                "mistral-small",
+                "mistral-medium",
+                "magistral",
+                "mistral-large-4",
+                "mistral-large-2610",
+            )
+        )
         or "reasoning" in name
         or "thinking" in name
     ):

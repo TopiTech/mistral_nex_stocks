@@ -113,8 +113,15 @@ def get_mistral_embeddings_batch(
                     _EMBEDDINGS_CACHE[target_hash] = emb
         return results
 
-    if app_state.market.is_circuit_open("mistral"):
-        logger.warning("Mistral circuit is open; skipping batch embedding call.")
+    circuit_st = app_state.market.get_circuit_state("mistral")
+    if app_state.market.is_circuit_open("mistral") or circuit_st.get("status") in (
+        "OPEN",
+        "HALF_OPEN",
+    ):
+        logger.warning(
+            "Mistral circuit is open or in recovery (status=%s); skipping batch embedding call.",
+            circuit_st.get("status", "OPEN"),
+        )
         return results
 
     # Step 2: Query Mistral API in chunks for uncached texts

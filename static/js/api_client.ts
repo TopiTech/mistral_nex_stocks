@@ -639,6 +639,7 @@ class APIClient {
   }
 
   private _teardownSSE(): void {
+    this._reconnecting = false;
     this._stopSleepWatchdog();
     if (this._visibilityTimeout) {
       clearTimeout(this._visibilityTimeout);

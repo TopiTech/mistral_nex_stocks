@@ -43,6 +43,7 @@ from credential_manager import (
 from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.networking import validate_outbound_base_url
+from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
@@ -1289,7 +1290,7 @@ def call_openai_chat_with_tools(
     cache_key_override: str | None = None,
 ) -> dict[str, Any]:
     """Execute OpenAI Chat Completion with autonomous tool calling agent loop."""
-    import concurrent.futures
+
 
     _proxy: Any = current_app
     flask_app: Any = _proxy._get_current_object() if has_app_context() else None
@@ -1505,8 +1506,8 @@ def call_openai_chat_with_tools(
             return _execute()
 
         if len(normalized_tcs) > 1:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(normalized_tcs), 4)
+            with DaemonThreadPoolExecutor(
+                max_workers=min(len(normalized_tcs), 4), thread_name_prefix="openai-tool-exec"
             ) as executor:
                 tool_messages = list(executor.map(_exec_single_tool, normalized_tcs))
             current_messages.extend(tool_messages)

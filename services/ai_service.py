@@ -1,5 +1,4 @@
 import asyncio
-import concurrent.futures
 import copy
 import hashlib
 import json
@@ -54,6 +53,7 @@ from mistral_compat import (
 )
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.text_utils import _token_fingerprint
+from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
@@ -448,7 +448,7 @@ def _run_coro_sync(coro: Any, timeout_sec: float | None = None) -> Any:
                 asyncio.wait_for(coro, timeout=timeout_sec) if timeout_sec else coro
             )
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        executor = DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-coro-sync")
 
         def _runner():
             new_loop = asyncio.new_event_loop()
@@ -1772,10 +1772,11 @@ def call_mistral_chat_with_tools(
             return _execute()
 
         if len(valid_tcs) > 1:
-            import concurrent.futures
+            
 
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(valid_tcs), 4)
+            with DaemonThreadPoolExecutor(
+                max_workers=min(len(valid_tcs), 4),
+                thread_name_prefix="mistral-tool-exec",
             ) as executor:
                 tool_messages = list(executor.map(_exec_single_tool, valid_tcs))
             current_messages.extend(tool_messages)

@@ -740,7 +740,7 @@
     typeof window.addEventListener === "function"
   ) {
     window.addEventListener("resize", syncStaticColspanPlaceholders);
-    window.addEventListener("beforeunload", () => {
+    const cleanupScreenerResources = () => {
       if (fetchTimeout) {
         clearTimeout(fetchTimeout);
         fetchTimeout = null;
@@ -749,6 +749,8 @@
         screenerAbortController.abort();
         screenerAbortController = null;
       }
-    });
+    };
+    window.addEventListener("beforeunload", cleanupScreenerResources);
+    window.addEventListener("pagehide", cleanupScreenerResources);
   }
 })();

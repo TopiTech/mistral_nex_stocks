@@ -38,6 +38,7 @@ from utils.caching import (
     legacy_history_frame_disk_key,
 )
 from utils.normalization import is_jp_stock_code, normalize_history_frame
+from utils.threading import DaemonThreadPoolExecutor
 from utils.tradingview_mapper import get_ticker_exchange, resolve_exchange_prefix
 
 logger = logging.getLogger("services.stock_provider")
@@ -766,7 +767,9 @@ class YFinanceProvider(BaseStockProvider):
                         "Falling back to parallel fetches for %d remaining missed symbols",
                         len(remaining_miss),
                     )
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                    with DaemonThreadPoolExecutor(
+                        max_workers=3, thread_name_prefix="stock-parallel-hist"
+                    ) as pool:
                         futures = {
                             pool.submit(self._fetch_single_history, sym, period, m_state): sym
                             for sym in remaining_miss

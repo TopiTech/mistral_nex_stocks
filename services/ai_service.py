@@ -2408,10 +2408,12 @@ def stream_mistral_chat(
                 stop_sentinel = object()
                 consumer_abort = threading.Event()
 
+                text_delta_cls = getattr(mistral_agents, "TextDelta", None) if mistral_agents else None
+
                 def on_event(event: Any) -> None:
                     if consumer_abort.is_set():
                         raise _AgentConsumerAborted()
-                    if isinstance(event, mistral_agents.TextDelta) if mistral_agents else False:
+                    if isinstance(text_delta_cls, type) and isinstance(event, text_delta_cls):
                         t = getattr(event, "text", "")
                         if t:
                             event_queue.put({"type": "delta", "text": t})

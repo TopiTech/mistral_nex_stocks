@@ -302,6 +302,8 @@ def test_issue04_api_credentials_verify_backend_endpoint():
     with (
         patch("credential_manager.get_agent_id", return_value=""),
         patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client),
+        patch("routes.system.credentials.HAS_AGENTS_SDK", True),
+        patch("routes.system.credentials.mistral_agents", MagicMock()),
     ):
         resp = client.post(
             "/api/credentials/verify",

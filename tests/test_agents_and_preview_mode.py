@@ -166,6 +166,8 @@ def test_agents_mode_does_not_require_agent_id(client):
     assert get_model_badge() == "Agents SDK"
 
 
+@patch("services.ai_service.mistral_agents", MagicMock())
+@patch("services.ai_service.HAS_AGENTS_SDK", True)
 @patch("services.ai_service.load_sdk_agent")
 def test_agents_api_completion_routing(mock_load_agent):
     """Test call_mistral_chat routes to agent.run in Agents SDK mode."""
@@ -199,6 +201,8 @@ def test_agents_api_completion_routing(mock_load_agent):
     mock_agent.run.assert_called_once()
 
 
+@patch("services.ai_service.mistral_agents", MagicMock())
+@patch("services.ai_service.HAS_AGENTS_SDK", True)
 @patch("services.ai_service.load_sdk_agent")
 def test_agents_api_streaming_routing(mock_load_agent):
     """Test stream_mistral_chat receives streaming events via Agents SDK."""
@@ -264,7 +268,11 @@ def test_agents_api_verify_beta_get(client):
     mock_agent.name = "Test Financial Agent"
     mock_agent.model = "mistral-large-latest"
 
-    with patch("routes.system.credentials.load_sdk_agent", return_value=mock_agent) as mock_load:
+    with (
+        patch("routes.system.credentials.HAS_AGENTS_SDK", True),
+        patch("routes.system.credentials.mistral_agents", MagicMock()),
+        patch("routes.system.credentials.load_sdk_agent", return_value=mock_agent) as mock_load,
+    ):
         res = client.post(
             "/api/credentials/verify",
             json={
@@ -297,7 +305,11 @@ def test_agents_api_verify_without_agent_id(client):
     mock_client = MagicMock()
     mock_client.models.list.return_value = MagicMock(data=[MagicMock(id="mistral-small-latest")])
 
-    with patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client):
+    with (
+        patch("routes.system.credentials.HAS_AGENTS_SDK", True),
+        patch("routes.system.credentials.mistral_agents", MagicMock()),
+        patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client),
+    ):
         res = client.post(
             "/api/credentials/verify",
             json={
@@ -326,6 +338,8 @@ def test_agents_api_verify_unsupported_sdk(client):
 
     with (
         patch("app_state.app_state.ai.get_or_create_mistral_client", return_value=mock_client),
+        patch("routes.system.credentials.HAS_AGENTS_SDK", False),
+        patch("routes.system.credentials.mistral_agents", None),
         patch("mistral_compat.HAS_AGENTS_SDK", False),
         patch("mistral_compat.mistral_agents", None),
     ):
@@ -344,6 +358,8 @@ def test_agents_api_verify_unsupported_sdk(client):
         assert "サポートされていません" in data["error"]
 
 
+@patch("services.ai_service.mistral_agents", MagicMock())
+@patch("services.ai_service.HAS_AGENTS_SDK", True)
 @patch("services.ai_service.load_sdk_agent")
 def test_agents_api_structured_output_json_schema(mock_load_agent):
     """Test structured Pydantic models with Agents SDK passes output_type and extracts output."""

@@ -388,7 +388,13 @@ def _sliding_window_allow(bucket: str, timestamps: list, max_events: int, window
         merged = sorted(set(merged))
         allowed = len(merged) < max_events
         if allowed:
-            merged.append(now)
+            # Coarse clock resolution (e.g. Windows) can produce identical time.time()
+            # values in tight loops; ensure strictly monotonic timestamps so set()
+            # deduplication does not collapse distinct events.
+            event_ts = now
+            if merged and event_ts <= merged[-1]:
+                event_ts = merged[-1] + 0.0001
+            merged.append(event_ts)
         timestamps[:] = merged
         if locked:
             try:

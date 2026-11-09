@@ -111,80 +111,88 @@ class TestLeaderElectionAndCacheSync(unittest.TestCase):
 
     def test_warm_payload_cache_from_disk_updates_current_stocks_cache(self):
         with app.app_context():
-            # Clear caches first
-            with app_state.cache.sse_data_lock:
-                app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-                app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+            from utils.disk_cache import StockDiskCache
 
-            # Set up target stock symbol and mock payload
-            symbol = "TESTCOLLECT"
-            market = "us"
-            key = f"payload_{symbol}_{market}"
-            payload = {
-                "symbol": symbol,
-                "name": "Test Collector Inc",
-                "price": 123.45,
-                "change": 1.23,
-                "market": market,
-                "snapshot_ts_ms": int(time.time() * 1000),
-            }
+            isolated_cache = StockDiskCache(
+                cache_dir=Path(self.temp_dir) / "isolated_payloads",
+                max_entries=256,
+                default_ttl=3600,
+            )
+            with patch.object(app_state, "payload_disk_cache", isolated_cache):
+                # Clear caches first
+                with app_state.cache.sse_data_lock:
+                    app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+                    app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
 
-            # Save mock payload to disk cache
-            app_state.payload_disk_cache.set(key, payload)
+                # Set up target stock symbol and mock payload
+                symbol = "TESTCOLLECT"
+                market = "us"
+                key = f"payload_{symbol}_{market}"
+                payload = {
+                    "symbol": symbol,
+                    "name": "Test Collector Inc",
+                    "price": 123.45,
+                    "change": 1.23,
+                    "market": market,
+                    "snapshot_ts_ms": int(time.time() * 1000),
+                }
 
-            # Mock load_user_stocks and set up in-memory user stocks
-            with patch("app_bg.load_user_stocks"):
-                with app_state.market.user_stocks_lock:
-                    original_user_us = app_state.market.user_us
-                    app_state.market.user_us = {symbol: "Test Collector Inc"}
+                # Save mock payload to isolated disk cache
+                isolated_cache.set(key, payload)
 
-                try:
-                    # 1. First warm-up: current cache is empty, so it should be populated
-                    app_bg._warm_payload_cache_from_disk()
-
-                    with app_state.cache.sse_data_lock:
-                        self.assertEqual(len(app_state.market.current_stocks_cache["us"]), 1)
-                        self.assertEqual(
-                            app_state.market.current_stocks_cache["us"][0]["symbol"], symbol
-                        )
-                        self.assertEqual(
-                            app_state.market.current_stocks_cache["us"][0]["price"], 123.45
-                        )
-
-                    # 2. Modify disk cache with a new price (simulating master update)
-                    updated_payload = copy.deepcopy(payload)
-                    updated_payload["price"] = 999.99
-                    app_state.payload_disk_cache.set(key, updated_payload)
-
-                    # Clear last loaded mtimes to force reload
-                    app_bg._last_loaded_mtimes.clear()
-
-                    # 3. Second warm-up: current cache is cleared to simulate the
-                    # empty-seed path. _warm_payload_cache_from_disk must seed
-                    # current_stocks_cache from the freshly warmed target when current
-                    # is empty. It must NOT clobber a non-empty current cache (that is
-                    # owned by the interpolation loop).
-                    with app_state.cache.sse_data_lock:
-                        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-
-                    app_bg._warm_payload_cache_from_disk()
-
-                    with app_state.cache.sse_data_lock:
-                        self.assertEqual(len(app_state.market.current_stocks_cache["us"]), 1)
-                        self.assertEqual(
-                            app_state.market.current_stocks_cache["us"][0]["symbol"], symbol
-                        )
-                        # Verify it seeded the updated price from disk target
-                        self.assertEqual(
-                            app_state.market.current_stocks_cache["us"][0]["price"], 999.99
-                        )
-                finally:
-                    # Restore original user stocks
+                # Mock load_user_stocks and set up in-memory user stocks
+                with patch("app_bg.load_user_stocks"):
                     with app_state.market.user_stocks_lock:
-                        app_state.market.user_us = original_user_us
-                    # Clean up disk cache
-                    app_state.payload_disk_cache.delete(key)
-                    app_bg._last_loaded_mtimes.clear()
+                        original_user_us = app_state.market.user_us
+                        app_state.market.user_us = {symbol: "Test Collector Inc"}
+
+                    try:
+                        # 1. First warm-up: current cache is empty, so it should be populated
+                        app_bg._warm_payload_cache_from_disk()
+
+                        with app_state.cache.sse_data_lock:
+                            self.assertEqual(len(app_state.market.current_stocks_cache["us"]), 1)
+                            self.assertEqual(
+                                app_state.market.current_stocks_cache["us"][0]["symbol"], symbol
+                            )
+                            self.assertEqual(
+                                app_state.market.current_stocks_cache["us"][0]["price"], 123.45
+                            )
+
+                        # 2. Modify disk cache with a new price (simulating master update)
+                        updated_payload = copy.deepcopy(payload)
+                        updated_payload["price"] = 999.99
+                        isolated_cache.set(key, updated_payload)
+
+                        # Clear last loaded mtimes to force reload
+                        app_bg._last_loaded_mtimes.clear()
+
+                        # 3. Second warm-up: current cache is cleared to simulate the
+                        # empty-seed path. _warm_payload_cache_from_disk must seed
+                        # current_stocks_cache from the freshly warmed target when current
+                        # is empty. It must NOT clobber a non-empty current cache (that is
+                        # owned by the interpolation loop).
+                        with app_state.cache.sse_data_lock:
+                            app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+
+                        app_bg._warm_payload_cache_from_disk()
+
+                        with app_state.cache.sse_data_lock:
+                            self.assertEqual(len(app_state.market.current_stocks_cache["us"]), 1)
+                            self.assertEqual(
+                                app_state.market.current_stocks_cache["us"][0]["symbol"], symbol
+                            )
+                            # Verify it seeded the updated price from disk target
+                            self.assertEqual(
+                                app_state.market.current_stocks_cache["us"][0]["price"], 999.99
+                            )
+                    finally:
+                        # Restore original user stocks
+                        with app_state.market.user_stocks_lock:
+                            app_state.market.user_us = original_user_us
+                        # Clean up disk cache
+                        isolated_cache.delete(key)
+                        app_bg._last_loaded_mtimes.clear()
 
 
 if __name__ == "__main__":

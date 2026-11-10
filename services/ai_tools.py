@@ -243,6 +243,22 @@ def _bounded_tool_text(value: Any, max_length: int = _TOOL_TEXT_MAX_LENGTH) -> s
     return str(value or "")[:max_length]
 
 
+def _market_news_query_tokens(query: str) -> tuple[str, ...]:
+    """Split a normalized news query into the tokens used for headline matching.
+
+    ``collect_market_news_items_fast`` returns market-level headlines, so the
+    caller-supplied query is a search phrase, not a fragment to find verbatim.
+    Matching the whole phrase as one contiguous substring returned nothing for
+    ordinary multi-word queries (``"トヨタ 決算"``, ``"Apple earnings"``) or a bare
+    ticker code, and the tool then answered with a well-formed ``count: 0`` that
+    a model reports to the user as "no news available". Tokens keep the phrase
+    requirement while allowing the individual words to spread across the
+    headline and its snippet. Token order and duplicates are dropped so the
+    match set stays deterministic.
+    """
+    return tuple(dict.fromkeys(tok for tok in query.lower().split() if tok))
+
+
 def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
     symbol, market = _normalize_market_symbol(args)
     input_error = _validate_symbol_market(symbol, market, {"us", "jp", "idx"})
@@ -527,8 +543,11 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
         )
         market = "jp" if is_jp else "us"
         raw_items = ts.collect_market_news_items_fast(market)
+        tokens = _market_news_query_tokens(query)
         items: list[dict[str, Any]] = []
+        checked = 0
         for item in raw_items:
+            checked += 1
             title = getattr(item, "title", None) or (
                 item.get("title") if isinstance(item, dict) else ""
             )
@@ -543,7 +562,8 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
             title_str = _bounded_tool_text(title)
             snippet_str = _bounded_tool_text(snippet)
             source_str = _bounded_tool_text(source, max_length=200)
-            if query.lower() in title_str.lower() or query.lower() in snippet_str.lower():
+            haystack = f"{title_str}\n{snippet_str}".lower()
+            if any(tok in haystack for tok in tokens):
                 items.append(
                     {
                         "title": title_str,
@@ -553,7 +573,22 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
                 )
             if len(items) >= limit:
                 break
-        return {"query": query, "count": len(items), "news": items}
+        result: dict[str, Any] = {
+            "query": query,
+            "count": len(items),
+            "news": items,
+            "matched_query": bool(items),
+        }
+        if not items and checked:
+            # Headlines were available but none mentioned the query terms. Say so
+            # explicitly (and never substitute unrelated headlines) so the model
+            # reports "no matching headlines" instead of "no news exists".
+            result["checked_count"] = checked
+            result["note"] = (
+                f"{checked}件の市場ニュースを確認しましたが、クエリの語を含む見出しは"
+                "ありませんでした（無関係な見出しの代替掲載は行いません）。"
+            )
+        return result
     except Exception as exc:
         logger.warning(
             "Market news tool failed query_length=%d error_type=%s",

@@ -1111,10 +1111,32 @@ def _screener_query_error_from_validation(exc: ValidationError) -> tuple[Respons
                 },
                 status_code=400,
             )
-        if "q" in loc or "200" in msg or "string_too_long" in err.get("type", ""):
+        # string_too_long はフィールド非依存に拾うと sector(100 文字上限)にも
+        # 検索ワードのメッセージを返してしまう。上限は pydantic の ctx から引き、
+        # 利用者の目にする語彙だけフィールド別に寄せる。
+        if err.get("type", "") == "string_too_long":
+            ctx = err.get("ctx")
+            max_length = ctx.get("max_length") if isinstance(ctx, dict) else None
+            if field_name == "q":
+                reason = "検索ワードは200文字以内で入力してください"
+            elif field_name == "sector":
+                reason = "sector は100文字以内で入力してください"
+            elif isinstance(max_length, int):
+                reason = f"{field_name} は{max_length}文字以内で入力してください"
+            else:
+                reason = f"{field_name} が長すぎます"
             return error_response(
                 ErrorCode.INVALID_INPUT,
-                details={"reason": "検索ワードは200文字以内で入力してください"},
+                details={"reason": reason, "fields": [field_name]},
+                status_code=400,
+            )
+        if "q" in loc:
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": "検索ワードは200文字以内で入力してください",
+                    "fields": [field_name or "q"],
+                },
                 status_code=400,
             )
         if "market" in loc:

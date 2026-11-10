@@ -508,6 +508,42 @@ function getSortOrder(market) {
 }
 
 /**
+ * 銘柄カードの描画対象フィールドから変更検知ハッシュを作る。
+ *
+ * SSE 差分ゲート(api.js)と DOM スロットリング(ui.js)は同じ入力に対して
+ * 同じハッシュを算出しなければならない。片方だけフィールドが狭いと、
+ * 安値・高値・出来高・保有株数だけが動いたフレームが「変化なし」と
+ * 誤判定されて描画から落ちる。
+ * @param {Object} stock - 銘柄スナップショット
+ * @returns {string}
+ */
+function stockRenderHash(stock) {
+  if (!stock || typeof stock !== "object") return "";
+  const chartData = Array.isArray(stock.chart_data) ? stock.chart_data : [];
+  const lastPoint =
+    chartData.length > 0 ? chartData[chartData.length - 1] : null;
+  const lastChartTs =
+    lastPoint && typeof lastPoint === "object" ? (lastPoint.x ?? "") : "";
+  return `${stock.price}|${stock.change}|${stock.change_percent}|${stock.shares}|${stock.avg_price}|${lastChartTs}|${stock.volume}|${stock.high}|${stock.low}|${stock.pts_price}`;
+}
+
+/**
+ * SSE 差分ゲート用のシグネチャ。
+ *
+ * リアルタイム delta フレームは snapshot_ts_ms を含まないことがあるため、
+ * タイムスタンプだけに依存すると更新を取りこぼす。描画ハッシュと併記し、
+ * どちらか一方でも変化していれば描画対象として扱う。
+ * @param {Object} stock - 銘柄スナップショット
+ * @returns {string}
+ */
+function stockUpdateSignature(stock) {
+  if (!stock || typeof stock !== "object") return "";
+  const ts = stock.snapshot_ts_ms;
+  const tsPart = ts === undefined || ts === null ? "" : String(ts);
+  return `${tsPart}|${stockRenderHash(stock)}`;
+}
+
+/**
  * ブラウザに保存されているレガシーAPI認証情報を消去する
  * @param {{mistral?: boolean, langsearch?: boolean, tavily?: boolean}} options - 削除するキーの種類
  */

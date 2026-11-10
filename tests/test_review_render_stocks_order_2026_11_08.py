@@ -133,6 +133,34 @@ const context = {
 context.window.window = context.window;
 context.window.document = document;
 vm.createContext(context);
+
+// ui.js の updateStockUI は api.js の SSE 差分ゲートと同じ描画ハッシュ
+// (utils.js の stockRenderHash)を使う。ここでスタブを置くと本物の計算量が
+// 検証されないため、utils.js から関数本体を抽出して評価する。
+function extractFunctionSource(source, name) {
+  const marker = `function ${name}(`;
+  const start = source.indexOf(marker);
+  if (start === -1) throw new Error(`utils.js no longer defines ${name}()`);
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    else if (source[index] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  throw new Error(`utils.js has unbalanced braces in ${name}()`);
+}
+
+const utilsSource = fs.readFileSync("static/js/utils.js", "utf8");
+vm.runInContext(
+  [
+    extractFunctionSource(utilsSource, "stockRenderHash"),
+    extractFunctionSource(utilsSource, "stockUpdateSignature"),
+  ].join("\n"),
+  context,
+);
 vm.runInContext(fs.readFileSync("static/js/ui.js", "utf8"), context);
 
 context.applySortOrder = (market, stocks) => stocks;

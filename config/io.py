@@ -38,6 +38,28 @@ def _config_cache_key() -> tuple[int, int] | Literal["missing"]:
         return "missing"
 
 
+def _sync_legacy_preferences_into_runtime(action: str) -> None:
+    """Seed non-secret preferences from the legacy config and remove it.
+
+    Used only when a runtime config already exists, so the runtime stays
+    authoritative for secrets (``_MERGE_PROTECTED_KEYS``) and removing the
+    legacy file cannot lose credentials. A missing runtime config is migrated
+    wholesale by ``_migrate_legacy_runtime_file`` instead.
+
+    Raises ``RuntimeError`` when the merge did not complete so callers keep a
+    single place that decides what happens to the legacy file.
+    """
+    if not _merge_configs(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE):
+        raise RuntimeError(f"legacy config {action} did not complete")
+    try:
+        config_store.LEGACY_CONFIG_FILE.unlink()
+        logger.info(
+            "Removed legacy config after %s: %s", action, config_store.LEGACY_CONFIG_FILE
+        )
+    except OSError as rm_exc:
+        logger.debug("Could not remove legacy config after %s: %s", action, rm_exc)
+
+
 def load_config() -> dict[str, Any]:
     """設定ファイルを読み込む。存在しない場合は初期化。
 
@@ -55,74 +77,56 @@ def load_config() -> dict[str, Any]:
         # Guard with CONFIG_FILE.parent == APP_DATA_DIR to prevent merging local
         # legacy config into mocked configs during testing.
         if not config_store._LEGACY_MERGE_DONE:
-            legacy_merge_succeeded = True
             if (
                 config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
                 and config_store.LEGACY_CONFIG_FILE.exists()
             ):
                 if not config_store.CONFIG_FILE.exists():
-                    try:
-                        merged = _merge_configs(
-                            config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
+                    # No runtime config yet: the legacy file is this
+                    # installation's only source of truth, so migrate it
+                    # wholesale (secrets, generated tokens and mns_master_key
+                    # included). The preference-only merge must NOT run here:
+                    # it writes nothing but _MERGE_SEED_KEYS, and the legacy
+                    # file is then deleted, so every _MERGE_PROTECTED_KEYS
+                    # entry would be lost — the next start would generate a
+                    # fresh master key and orphan every previously encrypted
+                    # value (user_stocks.json, chat history, portfolios).
+                    if _migrate_legacy_runtime_file(
+                        config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
+                    ):
+                        logger.info(
+                            "Migrated legacy config into runtime config: %s",
+                            config_store.CONFIG_FILE,
                         )
-                        # Remove the legacy config only after a successful merge so the
-                        # project root does not accumulate runtime state that could
-                        # be accidentally bundled or expose secrets.
-                        if not merged:
-                            legacy_merge_succeeded = False
-                            raise RuntimeError("legacy config merge did not complete")
+                    elif config_store.CONFIG_FILE.exists():
+                        # A concurrent process won the O_EXCL race and owns the
+                        # migration: reconcile the seeded preferences so the
+                        # legacy copy is still cleaned up.
                         try:
-                            config_store.LEGACY_CONFIG_FILE.unlink()
-                            logger.info(
-                                "Removed legacy config after migration: %s",
-                                config_store.LEGACY_CONFIG_FILE,
-                            )
-                        except OSError as rm_exc:
-                            logger.debug(
-                                "Could not remove legacy config after migration: %s",
-                                rm_exc,
-                            )
-                    except Exception as exc:
-                        legacy_merge_succeeded = False
-                        logger.warning("Failed to migrate legacy config: %s", exc)
+                            _sync_legacy_preferences_into_runtime("sync")
+                        except Exception as exc:
+                            logger.warning("Failed to sync legacy config: %s", exc)
+                    else:
+                        # The copy failed. Keep the legacy file (still the only
+                        # copy of the secrets) so a later start can retry
+                        # instead of leaving the runtime config on defaults.
+                        logger.warning(
+                            "Could not migrate legacy config %s; keeping it for a later retry",
+                            config_store.LEGACY_CONFIG_FILE,
+                        )
                 else:
                     try:
                         if (
                             config_store.LEGACY_CONFIG_FILE.stat().st_mtime_ns
                             > config_store.CONFIG_FILE.stat().st_mtime_ns
                         ):
-                            merged = _merge_configs(
-                                config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
-                            )
-                            if not merged:
-                                legacy_merge_succeeded = False
-                                raise RuntimeError("legacy config sync did not complete")
-                            try:
-                                config_store.LEGACY_CONFIG_FILE.unlink()
-                                logger.info(
-                                    "Removed legacy config after sync: %s",
-                                    config_store.LEGACY_CONFIG_FILE,
-                                )
-                            except OSError as rm_exc:
-                                logger.debug(
-                                    "Could not remove legacy config after sync: %s",
-                                    rm_exc,
-                                )
+                            _sync_legacy_preferences_into_runtime("sync")
                         else:
                             _remove_stale_legacy_config(
                                 config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
                             )
                     except Exception as exc:
-                        legacy_merge_succeeded = False
                         logger.warning("Failed to sync newer legacy config: %s", exc)
-            if (
-                config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
-                and not config_store.CONFIG_FILE.exists()
-                and legacy_merge_succeeded
-            ):
-                _migrate_legacy_runtime_file(
-                    config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
-                )
             config_store._LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
 
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する

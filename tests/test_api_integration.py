@@ -378,8 +378,8 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
         finally:
             app_state.ai.mistral_429_streak = old_streak
 
-    def test_mistral_429_backoff_caps_wait_and_returns_429(self):
-        """A 300s cooldown waits only the 30s cap, then returns retryable 429."""
+    def test_mistral_429_cooldown_beyond_cap_fails_fast_without_sleeping(self):
+        """A 300s cooldown exceeds the 30s cap, so return retryable 429 immediately."""
         from app_state import app_state
         from services.ai_service import call_mistral_chat
 
@@ -412,9 +412,10 @@ class RateLimitingBoundaryTestCase(APIIntegrationTestCase):
                         use_cache=False,
                     )
 
-                # R7: one bounded wait, then the caller must see a retryable
-                # 429 instead of sleeping through the full backoff.
-                self.assertEqual(sleep_called_with, [30.0])
+                # R7: the cooldown exceeds the cap, so no wait can fit inside the
+                # request budget. Sleeping the cap first changed nothing about the
+                # outcome and only delayed the retryable 429 by 30s.
+                self.assertEqual(sleep_called_with, [])
                 self.assertEqual(result["error"]["status_code"], 429)
                 client.chat.complete.assert_not_called()
         finally:

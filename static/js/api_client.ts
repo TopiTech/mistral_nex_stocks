@@ -394,6 +394,14 @@ class APIClient {
       _log.info(
         `SSE: Reconnect attempt ${this.sseReconnectAttempt} in ${Math.round(delayMs)}ms...`,
       );
+      // _teardownSSE() above cleared the pending-reconnect timer *and* the
+      // _reconnecting flag that guards re-entrant calls. Re-assert the flag
+      // here, where the replacement timer is installed, so the guard keeps
+      // meaning "a reconnect is already scheduled": without it a second
+      // trigger during the wait (up to 60s under the slow-retry policy) would
+      // tear the pending timer down and restart the backoff from scratch.
+      // The timer callback and every early exit below clear it again.
+      this._reconnecting = true;
       this.ssePendingReconnectTimeout = setTimeout(() => {
         this._reconnecting = false;
         if (!this._lastSSEParams) return;

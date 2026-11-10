@@ -152,6 +152,9 @@ export default [
         portfolioFixedExchangeRate: "writable",
         buildLocalDateKey: "readonly",
         getSortOrder: "readonly",
+        // SSE 差分ゲート/描画側で共有する描画ハッシュ(utils.js)
+        stockRenderHash: "readonly",
+        stockUpdateSignature: "readonly",
         orderIndex: "readonly",
         formatMarketCap: "readonly",
         isBlankDetailValue: "readonly",
@@ -268,6 +271,9 @@ export default [
         clearInterval: "readonly",
         URL: "readonly",
         Buffer: "readonly",
+        // Node 11+ のグローバル(実装は node:util)。スクリプトは Node 実行。
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
       },
     },
     rules: {

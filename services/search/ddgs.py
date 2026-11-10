@@ -1,8 +1,10 @@
 import logging
 import os
+import queue
 import random
 import threading
 import time
+from concurrent.futures import Future
 from typing import Any
 
 from ddgs import DDGS
@@ -475,9 +477,19 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
             return out
 
         pool = _get_ddgs_search_pool()
-        futures = [
-            pool.submit(_collect_one, idx, q) for idx, q in enumerate(target_queries)
-        ]
+        # A bounded pool raises ``queue.Full`` once its queue is saturated and
+        # ``RuntimeError`` after a concurrent shutdown.  Submit one query at a
+        # time so a refusal costs only that query instead of discarding the
+        # results of every query submitted before it.
+        futures: list[tuple[int, Future[list[dict[str, Any]]]]] = []
+        for idx, q in enumerate(target_queries):
+            try:
+                futures.append((idx, pool.submit(_collect_one, idx, q)))
+            except (queue.Full, RuntimeError) as exc:
+                logger.info(
+                    "DDGS context collection query not scheduled error_type=%s",
+                    type(exc).__name__,
+                )
         # M14 (2026-11-07 review): merging in as_completed order made the
         # survivor of a duplicate (ts.dedupe keeps the FIRST occurrence) and
         # the final item order depend on network timing — the same query set
@@ -486,7 +498,7 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
         # so they cannot keep running on the shared 3-worker pool.
         results_by_index: dict[int, list] = {}
         early_exit = False
-        for idx, fut in enumerate(futures):
+        for idx, fut in futures:
             try:
                 collected = fut.result()
             except Exception as exc:
@@ -505,7 +517,7 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
         if early_exit:
             # Mirror the old early-exit: the not-yet-consumed stragglers are
             # cancelled so they cannot keep occupying the shared pool.
-            for pending in futures:
+            for _, pending in futures:
                 pending.cancel()
         for idx in range(len(target_queries)):
             items.extend(results_by_index.get(idx, []))

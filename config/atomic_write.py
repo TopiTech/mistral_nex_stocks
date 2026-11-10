@@ -21,15 +21,55 @@ _FCNTL_LOCK_MAX_RETRIES = 100
 _FCNTL_LOCK_RETRY_DELAY_SEC = 0.025
 
 
-def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
+def _fsync_directory(directory: Path) -> None:
+    """Best-effort fsync of ``directory`` so a rename/unlink survives a crash.
+
+    Only the directory entry's durability is at stake (the file data is already
+    fsynced by the caller), and ``O_DIRECTORY`` does not exist on Windows, so a
+    platform without directory handles simply skips it.
+    """
+    o_dir = getattr(os, "O_DIRECTORY", None)
+    if o_dir is None:
+        return
+    try:
+        dir_fd = os.open(str(directory), o_dir)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
+def _is_complete_json_object(path: Path) -> bool:
+    """Return ``True`` when ``path`` already holds a complete JSON object."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return isinstance(json.load(handle), dict)
+    except (OSError, ValueError):
+        # ValueError covers JSONDecodeError and UnicodeDecodeError.
+        return False
+
+
+def _migrate_legacy_runtime_file(source: Path, target: Path) -> bool:
     """Copy a legacy source-tree file into the runtime directory if needed.
 
     After a successful copy the source file is removed so the project root
     does not accumulate runtime state that could be accidentally bundled,
     committed, or exposed.
+
+    Returns ``True`` when ``target`` holds the migrated content after the call
+    (copied here, or already created by a concurrent process that won the
+    ``O_EXCL`` race) and ``False`` when nothing was migrated: the source is
+    missing, the copy failed, or the target could not be created. Callers rely
+    on that distinction to decide whether deleting the source is safe — the
+    previous ``None`` return made a failed copy indistinguishable from a
+    successful one.
     """
     if not source.exists():
-        return
+        return False
     _ensure_runtime_dir()
     try:
         # O_EXCL makes the existence check atomic: two processes starting
@@ -40,16 +80,30 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
         # config (CFG-11).
         fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
-        return
+        # A peer process created the target first and owns the migration. It may
+        # still be streaming the copy, so success is reported only when the
+        # target already holds a complete JSON object: an empty or half-written
+        # target used to be reported as migrated, which made the caller log the
+        # success and stop retrying while the legacy file (the only complete
+        # copy) stayed in place for the wrong reason.
+        return _is_complete_json_object(target)
     except OSError as exc:
         logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
-        return
+        return False
     try:
         with os.fdopen(fd, "wb") as dst, open(source, "rb") as src:
             shutil.copyfileobj(src, dst)
+            # Match the durability of the other writers in this module: without
+            # it a crash between the copy and the source unlink can leave an
+            # empty or partial target while the only complete copy is gone.
+            dst.flush()
+            os.fsync(dst.fileno())
         logger.info("Migrated legacy runtime file %s -> %s", source, target)
         try:
             source.unlink()
+            # Make the removal durable like the writers below make their
+            # replacements durable (DATA-4 family).
+            _fsync_directory(source.parent)
             logger.info("Removed legacy runtime file after migration: %s", source)
         except OSError as rm_exc:
             logger.warning("Failed to remove legacy runtime file %s: %s", source, rm_exc)
@@ -60,6 +114,8 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> None:
             target.unlink()
         except OSError:
             pass
+        return False
+    return True
 
 
 def _write_and_replace_with_lock(
@@ -123,16 +179,8 @@ def _durable_write_json(path: Path, data: dict) -> None:
             finally:
                 os.umask(old_umask)
         os.replace(tmp, path)
-        o_dir = getattr(os, "O_DIRECTORY", None)
-        if not config_store._is_windows() and o_dir is not None:
-            try:
-                dir_fd = os.open(str(path.parent), o_dir)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except OSError:
-                pass
+        if not config_store._is_windows():
+            _fsync_directory(path.parent)
         if not config_store._is_windows() and path.exists():
             try:
                 os.chmod(path, 0o600)
@@ -201,16 +249,7 @@ def _write_and_replace_with_fcntl_lock(
                     time.sleep(_FCNTL_LOCK_RETRY_DELAY_SEC)
             _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
-            o_dir = getattr(os, "O_DIRECTORY", None)
-            if o_dir is not None:
-                try:
-                    dir_fd = os.open(str(target_file.parent), o_dir)
-                    try:
-                        os.fsync(dir_fd)
-                    finally:
-                        os.close(dir_fd)
-                except OSError:
-                    pass
+            _fsync_directory(target_file.parent)
             # Capture the cache key while the lock is held: the content just
             # swapped in cannot be replaced by another process before this
             # stat, so a caller caching its payload can key it exactly.
@@ -228,16 +267,7 @@ def _write_and_replace_with_fcntl_lock(
         logger.debug("fcntl is unavailable, writing without lock: %s", exc)
         _safe_write_json(tmp_file, data)
         os.replace(tmp_file, target_file)
-        o_dir = getattr(os, "O_DIRECTORY", None)
-        if o_dir is not None:
-            try:
-                dir_fd = os.open(str(target_file.parent), o_dir)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except OSError:
-                pass
+        _fsync_directory(target_file.parent)
         return _target_stat_key(target_file)
 
 
@@ -284,16 +314,7 @@ def _write_and_replace_with_msvcrt_lock(
                     pass
             _safe_write_json(tmp_file, data)
             os.replace(tmp_file, target_file)
-            o_dir = getattr(os, "O_DIRECTORY", None)
-            if o_dir is not None:
-                try:
-                    dir_fd = os.open(str(target_file.parent), o_dir)
-                    try:
-                        os.fsync(dir_fd)
-                    finally:
-                        os.close(dir_fd)
-                except OSError:
-                    pass
+            _fsync_directory(target_file.parent)
             # Capture the cache key while the write lock is still held (see
             # _write_and_replace_with_lock).
             return _target_stat_key(target_file)
@@ -314,16 +335,7 @@ def _write_and_replace_with_msvcrt_lock(
         # so a lock-free write is the last-resort fallback.
         _safe_write_json(tmp_file, data)
         os.replace(tmp_file, target_file)
-        o_dir = getattr(os, "O_DIRECTORY", None)
-        if o_dir is not None:
-            try:
-                dir_fd = os.open(str(target_file.parent), o_dir)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except OSError:
-                pass
+        _fsync_directory(target_file.parent)
         return _target_stat_key(target_file)
     except RuntimeError as exc:
         # Lock contention after retries: do NOT write lock-free (would risk a

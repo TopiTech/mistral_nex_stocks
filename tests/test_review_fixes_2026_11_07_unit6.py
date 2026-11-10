@@ -441,7 +441,12 @@ def test_ddgs_context_merge_is_ordered(monkeypatch):
 def test_ddgs_source_collects_in_submission_order():
     src = (ROOT / "services" / "search" / "ddgs.py").read_text(encoding="utf-8")
     assert "results_by_index" in src
-    assert "for idx, fut in enumerate(futures):" in src
+    # Futures are carried as (index, future) pairs and merged by query index;
+    # an as_completed() merge would make duplicate survival depend on network
+    # timing instead of query order.
+    assert "for idx, fut in futures:" in src
+    assert "as_completed(" not in src
+    assert "import as_completed" not in src
 
 
 # ---------------------------------------------------------------------------

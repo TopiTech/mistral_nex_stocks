@@ -4,7 +4,7 @@
   "scripts": {
     "build": "npm run typecheck && npm run compile && npm run verify-generated && npm run lint && npx prettier --check \"static/js/**/*.js\" \"chrome_extension/**/*.js\"",
     "compile": "tsc -p tsconfig.json && prettier --write static/js/api_client.js",
-    "verify-generated": "node scripts/verify_generated_frontend.mjs",
+    "verify-generated": "node scripts/verify_generated_frontend.mjs && node scripts/verify_ui_drawer_contract.mjs && node scripts/verify_stock_update_signature.mjs && node scripts/verify_chat_stream_idle_timeout.mjs",
     "format": "prettier --write \"static/js/**/*.js\" \"chrome_extension/**/*.js\" \"scripts/**/*.mjs\"",
     "lint": "eslint \"static/js/**/*.js\" \"chrome_extension/**/*.js\" \"scripts/**/*.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"

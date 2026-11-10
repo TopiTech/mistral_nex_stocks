@@ -892,8 +892,8 @@ class TestR7RateLimitMaxWaitCap:
         assert status == "ready"
         assert chunks == [5.0]
 
-    def test_r7_long_cooldown_waits_only_the_cap_then_reports_limited(self):
-        """A 300s cooldown must sleep at most 30s and report rate_limited."""
+    def test_r7_long_cooldown_fails_fast_without_sleeping(self):
+        """An above-cap cooldown is rejected before sleeping (R7-b)."""
         import services.ai_service as ai_svc
 
         self._restore_slot_state()
@@ -904,7 +904,9 @@ class TestR7RateLimitMaxWaitCap:
         ):
             status = ai_svc._wait_for_rate_limit_slot(300.0)
         assert status == "rate_limited"
-        assert chunks == [ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC]
+        # Sleeping the cap could never make this slot ready, so no time may be
+        # spent on it (the old order held the request thread for 30 s).
+        assert chunks == []
 
     def test_r7_exact_cap_wait_is_ready(self):
         """A cooldown equal to the cap is consumed completely and is ready."""
@@ -919,7 +921,7 @@ class TestR7RateLimitMaxWaitCap:
         assert status == "ready"
         assert chunks == [ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC]
 
-    def test_r7_shutdown_signal_aborts_at_cap(self):
+    def test_r7_shutdown_signal_aborts_within_cap(self):
         """If shutdown_event.wait returns True, the helper reports shutdown."""
         import services.ai_service as ai_svc
 
@@ -931,10 +933,33 @@ class TestR7RateLimitMaxWaitCap:
             return True  # shutdown signaled
 
         with patch("app_state.app_state.execution.shutdown_event.wait", side_effect=fake_wait):
+            status = ai_svc._wait_for_rate_limit_slot(5.0)
+        assert status == "shutdown"
+        assert call_count == 1
+
+    def test_r7_shutdown_wins_over_above_cap_rejection(self):
+        """An above-cap cooldown must still report shutdown, without sleeping."""
+        import services.ai_service as ai_svc
+
+        with (
+            patch(
+                "app_state.app_state.execution.shutdown_event.is_set",
+                return_value=True,
+            ),
+            patch("app_state.app_state.execution.shutdown_event.wait") as mock_wait,
+        ):
             status = ai_svc._wait_for_rate_limit_slot(120.0)
         assert status == "shutdown"
-        # The first call must observe the cap (not the full 120s).
-        assert call_count == 1
+        mock_wait.assert_not_called()
+
+    def test_r7_non_finite_wait_is_rate_limited(self):
+        """NaN/inf waits cannot be slept on and must fail closed."""
+        import services.ai_service as ai_svc
+
+        with patch("app_state.app_state.execution.shutdown_event.wait") as mock_wait:
+            assert ai_svc._wait_for_rate_limit_slot(float("nan")) == "rate_limited"
+            assert ai_svc._wait_for_rate_limit_slot(float("inf")) == "rate_limited"
+        mock_wait.assert_not_called()
 
     def test_r7_no_wait_returns_ready_immediately(self):
         """A zero wait returns ready without calling shutdown_event."""
@@ -972,7 +997,7 @@ class TestR7RateLimitMaxWaitCap:
             )
 
         assert result["error"]["status_code"] == 429
-        mock_wait.assert_any_call(ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
+        mock_wait.assert_not_called()
         client.chat.complete.assert_not_called()
 
     def test_r7_stream_returns_retryable_429_after_long_cooldown(self):
@@ -1014,7 +1039,7 @@ class TestR7RateLimitMaxWaitCap:
                 "status_code": 429,
             }
         ]
-        mock_wait.assert_any_call(ai_svc._MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
+        mock_wait.assert_not_called()
         client.chat.stream.assert_not_called()
 
     def test_r7_embeddings_stops_with_partial_result_after_long_cooldown(self):
@@ -1037,7 +1062,7 @@ class TestR7RateLimitMaxWaitCap:
             )
 
         assert result == [None]
-        mock_wait.assert_any_call(30.0)
+        mock_wait.assert_not_called()
         client.embeddings.create.assert_not_called()
 
 

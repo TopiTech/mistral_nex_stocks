@@ -147,6 +147,7 @@ def test_svc02_shutdown_abort_rolls_back_reservation(mistral_pacing_state):
     client = MagicMock()
     shutdown_event = MagicMock()
     shutdown_event.wait.return_value = True
+    shutdown_event.is_set.return_value = True
     with (
         patch("services.ai_service.is_openai_provider", return_value=False),
         patch.object(app_state.market, "is_circuit_open", return_value=False),

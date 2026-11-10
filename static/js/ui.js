@@ -411,14 +411,12 @@ function updateStockUI(wrapper, stock) {
 
   // Skip update if identical to avoid DOM thrashing
   // Check price AND chart freshness (for sparkline updates when price is static)
-  const lastChartTs =
-    Array.isArray(stock.chart_data) && stock.chart_data.length > 0
-      ? stock.chart_data[stock.chart_data.length - 1].x
-      : "";
   const oldDataStr = wrapper.dataset.lastDataHash;
   // 変更検知ハッシュは描画する全フィールドを覆う(価格が静止している間も
   // volume/high/low/pts_price の変化でドローワー等が更新されるように)。
-  const newDataStr = `${stock.price}|${stock.change}|${stock.change_percent}|${stock.shares}|${stock.avg_price}|${lastChartTs}|${stock.volume}|${stock.high}|${stock.low}|${stock.pts_price}`;
+  // 組成は utils.js の stockRenderHash に一元化し、api.js の SSE 差分ゲートと
+  // 共有する(時々で片方だけ狭くなると更新の取りこぼしが再発する)。
+  const newDataStr = stockRenderHash(stock);
 
   if (oldDataStr === newDataStr) return;
   wrapper.dataset.lastDataHash = newDataStr;
@@ -2514,22 +2512,52 @@ function triggerPriceFlash(priceEl, flashClass) {
   priceEl.classList.add(flashClass);
 }
 
-function clearChartError(wrapper) {
-  const container =
+// (L16 と同じ契約) ドロワーがこの銘柄で開いている間は .chart-container が
+// #drawerTabChartContent 配下へ移動済みのため、ラッパー直下の問い合わせは
+// null を返し、チャートのエラー/情報バナーが不可視のインラインパネルにしか
+// 出せなかった。ラッパー → 開いているドロワーの順で設置先を解決する。
+function chartErrorHosts(wrapper) {
+  const hosts = [];
+  const inline =
     wrapper.querySelector(".chart-container") ||
     wrapper.querySelector(".chart-canvas-container");
-  if (!container) return;
-  const err = container.querySelector(".chart-error");
-  if (err) err.remove();
+  if (inline) hosts.push(inline);
+
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const stockKey = wrapper.dataset.stockKey;
+  const isDrawerActive =
+    (typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === wrapper) ||
+    Boolean(
+      stockKey &&
+      drawerEl?.classList.contains("open") &&
+      drawerEl.dataset.stockKey === stockKey,
+    );
+  if (isDrawerActive && drawerEl) {
+    const moved =
+      drawerEl.querySelector(".chart-container") ||
+      drawerEl.querySelector(".chart-canvas-container");
+    if (moved && moved !== inline) hosts.push(moved);
+  }
+  return hosts;
+}
+
+function clearChartError(wrapper) {
+  // ドロワー開閉でコンテナが移動するため、両側に残ったバナーを掃除する。
+  chartErrorHosts(wrapper).forEach((host) => {
+    const err = host.querySelector(".chart-error");
+    if (err) err.remove();
+  });
 }
 
 function showChartError(wrapper, msg, type = "error") {
-  const container =
-    wrapper.querySelector(".chart-container") ||
-    wrapper.querySelector(".chart-canvas-container");
+  const [container] = chartErrorHosts(wrapper);
   if (!container) return;
 
-  destroyChart(wrapper.querySelector(".chart-canvas"));
+  destroyChart(
+    container.querySelector(".chart-canvas") ||
+      wrapper.querySelector(".chart-canvas"),
+  );
   clearChartError(wrapper);
 
   const errDiv = document.createElement("div");

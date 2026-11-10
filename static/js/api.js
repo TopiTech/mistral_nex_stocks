@@ -1162,13 +1162,11 @@ function updateStocksFromSseData(data) {
       (state.stocks[market] || []).forEach((stock) => {
         const stockKey = makeStockKey(market, stock.symbol);
         const lastTs = stockHashMap.get(stockKey);
-        const currentTs =
-          stock.snapshot_ts_ms ||
-          stock.price +
-            "|" +
-            stock.change +
-            "|" +
-            (stock.chart_data || []).length;
+        // 差分ゲートは ui.js の描画ハッシュと同じ組成(utils.js の
+        // stockUpdateSignature)を使う。snapshot_ts_ms だけに頼ると、
+        // そのフィールドを含まないリアルタイム delta フレームで
+        // volume/high/low/pts_price の変化を取りこぼす。
+        const currentTs = stockUpdateSignature(stock);
         if (lastTs === currentTs) return;
         stockHashMap.set(stockKey, currentTs);
         findAllWrappersByStockKey(stockKey).forEach((wrapper) =>
@@ -1945,6 +1943,36 @@ async function addStock(symbol, name, market) {
 const CHAT_POLL_MAX_ATTEMPTS = 25; // 25 attempts * 2s = 50s (+8s initial wait = 58s total window, matching server 60s cache TTL)
 const CHAT_POLL_INTERVAL_MS = 2000;
 
+// チャット SSE は delta と delta の間に keepalive を送らないため、モデル推論中の
+// 沈黙は正常。ただし読み取りに上限が無いと、TCP 半断やワーカー再起動で
+// reader.read() が永久に待機し、呼び出し元の finally(input/sendBtn の
+// disabled 解除)に到達しないまま UI が固まる。沈黙に上限を設け、値を超えたら
+// isStreamFallback 付きで失敗させて既存のポーリング経路に回復させる。
+const CHAT_STREAM_IDLE_TIMEOUT_MS = 120000;
+
+/**
+ * reader.read() に無応答タイムアウトを付ける。
+ * @param {{read: () => Promise<Object>}} reader - ストリームリーダー
+ * @param {number} idleTimeoutMs - チャンク間の最大待機時間(0 以下で無効)
+ * @returns {Promise<Object>} ReadableStreamReadResult
+ */
+function readStreamChunk(reader, idleTimeoutMs) {
+  if (!idleTimeoutMs || idleTimeoutMs <= 0) return reader.read();
+  let timerId = null;
+  const idle = new Promise((_resolve, reject) => {
+    timerId = setTimeout(() => {
+      const err = new Error("ストリームが無応答のため中断しました");
+      err.name = "TimeoutError";
+      err.isStreamFallback = true;
+      err.isStreamIdleTimeout = true;
+      reject(err);
+    }, idleTimeoutMs);
+  });
+  return Promise.race([reader.read(), idle]).finally(() => {
+    if (timerId !== null) clearTimeout(timerId);
+  });
+}
+
 function createRequestToken() {
   const webCrypto = globalThis.crypto;
   if (typeof webCrypto?.randomUUID === "function") {
@@ -2032,7 +2060,10 @@ async function streamChatReply(payload, onDelta) {
   let sawDoneFrame = false;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamChunk(
+        reader,
+        CHAT_STREAM_IDLE_TIMEOUT_MS,
+      );
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       let sep;

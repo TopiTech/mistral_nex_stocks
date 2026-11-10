@@ -3478,3 +3478,141 @@ SDKの環境ガード、テストが `app_state` を初期化する正当なパ�
 | Pip Audit 脆弱性スキャン | `pip-audit --strict` | **No known vulnerabilities found** |
 | フロントエンド統合ビルド | `npm run build` (tsc, compile, verify-generated, eslint, prettier) | **exit 0** すべてPASS |
 | Git ワークツリー整合性 | `git status` / `git diff --check` | 修正ファイル5点＋包括回帰テスト1点＋本ドキュメントのみ、不要成果物・デバッグ痕跡0 |
+
+## Appendix N — 2026-11-10 全層再レビュー(修正 11 件)
+
+### N.1 対象と方法
+
+- **対象範囲**: リポジトリ全体。Python 125 ファイル(app / app_factory / bg / routes / services / config / schemas / utils / native_host / scripts)、`static/js` 全ファイル、`templates`、`scripts/*.mjs`、`chrome_extension`。
+- **層**: フロントエンド(SSE クライアント、差分描画、ドロワー) / ルート・API 境界(pydantic バリデーション、エラー封筒) / サービス(LLM・検索・ストリーム) / 設定・データ層(`config_store`, `config/*` の原子的書き込みと移行) / ビルド・検証スクリプト。
+- **観点**: 正常系・エッジケース異常系・非同期競合(レースコンディション)・リソース/メモリリーク・セキュリティ・パフォーマンス。
+- **方針**: 症状ではなく根本原因を修正する。型定義の弱体化(`Any` 化・不当な型アサーション)、抑制コメント、テストの skip、アサーションの妥協は行わない。各修正には「旧実装へ戻すと失敗する」負例を実測して回帰テストの有効性を確認した。
+- **ベースライン**: HEAD `5e06bd9` の時点で `pytest` 4170 passed / failure 0、ruff・flake8・mypy・pyrefly・pylint(CI 引数)・bandit(`pyproject.toml` 指定)・`npm run build` がすべて PASS であることを確認したうえで、差分を評価した。
+
+### N.2 修正一覧
+
+1. **[修正済・根本解決] SSE 再接続ガードの再表明漏れ(無限再接続)**
+   - **症状**: ストリームが `onerror` で落ちた後、再接続中のガードが効かず `_connect()` が再入し、切断と再接続が繰り返された。
+   - **根本原因**: `_handleReconnect()` がガードフラグを立て直さずに `_connect()` を呼んでいたため、`_connect()` 側の「既に接続済みなら戻る」判定が無効化されていた。
+   - **修正内容**: `static/js/api_client.ts::_handleReconnect()` で `this._reconnecting = true;` を再表明し、`_connect()` 呼び出し前にガードを確定させる。`static/js/api_client.js` は `npm run compile` の生成物として追随。
+   - **回帰テスト**: `scripts/verify_generated_frontend.mjs::verifySseReconnectGuard()`。旧実装に戻すと当該検証が exit 1 になることを実測。
+
+2. **[修正済・根本解決] レガシー config 移行で暗号化 secrets が失われる経路**
+   - **症状**: ランタイム config が存在しない状態で旧 config(`LEGACY_CONFIG_FILE`)が残っていると、移行が「マージ → 旧ファイル削除」で走り、ランタイム側に無い secrets(API キー等)が旧ファイルごと消えることがあった。逆に移行失敗時も旧ファイルが消え、次回起動で既定値のまま起動し得た。
+   - **根本原因**: (a) `_migrate_legacy_runtime_file` が `None` を返しており、コピー失敗とコピー成功を呼び出し側が区別できなかった。(b) `O_EXCL` 競合時に「他プロセスが作成中」と「完全な JSON が存在」を区別せず、成功として旧ファイルを削除していた。(c) 設定のマージ API(`_merge_configs`)は secrets を保護キーとして温存する設計だが、ランタイム config が空のときに全体コピーではなくマージ経路を通していた。
+   - **修正内容**:
+     - `config/atomic_write.py`: `_migrate_legacy_runtime_file(...) -> bool` に変更し、「移行後の target が完全な JSON object か」を返す契約にした。`except FileExistsError: return _is_complete_json_object(target)`。コピー後の `flush()` + `os.fsync()`、`source.unlink()` 後のディレクトリ fsync を追加。
+     - `config/io.py`: ランタイム config 不在時は**全体コピー優先**(secrets を保持したまま移行)。`O_EXCL` 競合で他プロセスが勝った場合は `_sync_legacy_preferences_into_runtime("sync")` で非 secret 設定のみ seed して旧ファイルを掃除。コピー自体が失敗した場合は**旧ファイルを温存**して次回起動の再試行に回す(唯一の完全なコピーを失わない)。
+     - fsync の重複実装を `config/atomic_write.py::_fsync_directory()` に集約(4 箇所のコピペを解消)。
+   - **回帰テスト**: `tests/test_config_legacy_migration_secrets.py`(16 テスト)。secrets 保持、`O_EXCL` 競合、部分書き込み target、コピー失敗時の旧ファイル温存、fsync 経路を含む。
+
+3. **[修正済・根本解決] ドロワー表示中にチャートのエラー/情報バナーが出ない**
+   - **症状**: 銘柄ドロワーを開いた状態でチャート読み込み失敗や「データなし」を通知しても、ユーザーには何も表示されなかった。
+   - **根本原因**: ドロワー展開時に `.chart-container` が `#drawerTabChartContent` 配下へ移動するため、`wrapper.querySelector(...)` が `null` を返し、`showChartError` が即 `return` していた。加えて `clearChartError` も同じ経路で掃除できず、古いバナーが残留し得た。
+   - **修正内容**: `static/js/ui.js` に `chartErrorHosts(wrapper)` を新設し、「ラッパー直下」→「開いているドロワー配下(同一 `stockKey` かつ `currentDrawerActiveWrapper` 一致時)」の順で設置先を解決。`showChartError` は先頭ホストへ、`clearChartError` は両ホストのバナーを掃除する。チャート破棄はコンテナ側の canvas を優先。
+   - **回帰テスト**: `scripts/verify_ui_drawer_contract.mjs`(7 シナリオ)。負例 4 件(旧実装相当)で失敗することを実測。
+
+4. **[修正済・根本解決] agents SSE のバックプレッシャで producer スレッドが永久停留**
+   - **症状**: クライアント切断やコンシューマ例外で消費が止まると、`on_event` 内の `event_queue.put()` が満杯キューで無限ブロックし、SDK のワーカースレッド・その asyncio イベントループ・プロバイダ HTTP ストリームが残留した。
+   - **根本原因**: `queue.Queue.put` は満杯時に無期限ブロックし、`on_event` は同期コールバックなので abort イベントを観測できない。`join(timeout=5.0)` だけでは、`put()` 内で停留中のスレッドは abort を見られず、タイムアウトしてもスレッドが残る。また drain せずに join していたため、producer が満杯キューで前進できなかった。
+   - **修正内容**: `services/ai_service.py` に `_AGENT_QUEUE_PUT_POLL_SEC = 0.25` と `_put_with_abort(q, item, abort) -> bool`(短いタイムアウトで `put` し abort を観測、未達ならドロップして `False`)、`_drain_queue(q) -> int` を追加。`on_event` 内の全 enqueue を `_put_with_abort` 経由にし、ドロップ時は `_AgentConsumerAborted` を送出。コンシューマの `finally` は **abort set → drain → join(5.0) → `is_alive()` 警告** の順に変更(join 先行だと必ずタイムアウトしスレッドが残る)。
+   - **回帰テスト**: `tests/test_ai_service_agent_stream_backpressure.py`(5 テスト)。満杯キュー + abort、ドロップ時の例外伝播、drain 後の join 完了、残留時の警告を含む。
+
+5. **[修正済・根本解決] DDGS 共有プール飽和で既に投入したクエリの結果を全損**
+   - **症状**: 有界プール(`_get_ddgs_search_pool`)が飽和していると `pool.submit` が `queue.Full` / `RuntimeError` を送出し、例外が `_collect_ddgs_items` 全体を抜けて、それ以前に投入済みのクエリ結果まで捨てられていた。
+   - **根本原因**: 全クエリを一括で `submit` する総括リスト内包 + 例外をクエリ単位で隔離しない構造。
+   - **修正内容**: `services/search/ddgs.py` で `futures: list[tuple[int, Future[list[dict[str, Any]]]]]` として 1 クエリずつ `submit` し、`except (queue.Full, RuntimeError)` で当該クエリのみスキップ(INFO ログ)。後段の `as_completed` 相当ループと `cancel()` はタプル形式に追随。投入順インデックスを保持するため重複排除・並び順の決定性(M14)は維持。
+   - **回帰テスト**: `tests/test_ddgs_pool_saturation.py`(3 テスト)。飽和時の部分結果保持、指数の維持、`tests/test_review_fixes_2026_11_07_unit6.py` を新契約へ追随。
+
+6. **[修正済・根本解決] Mistral rate-limit の sleep-then-fail(30 秒待ってから同じ 429)**
+   - **症状**: クールダウンが上限(30 秒)を超えている場合でも、まず上限まで sleep してから `rate_limited` を返していた。プロキシ/SSE クライアントのタイムアウトと同程度の待ちを挟んだうえで、結果は待つ前と同一の再試行可能 429 だった。
+   - **根本原因**: 「待つ → 比較する」という順序。上限超のクールダウンは待っても ready にならないため、その sleep は純粋な遅延。
+   - **修正内容**: `services/ai_service.py::_wait_for_rate_limit_slot` を fail-fast 化。`math.isfinite` でない値(NaN/inf は `Event.wait` が例外を投げ、安全性も証明できない)は `rate_limited`、上限超は sleep せず `shutdown_event.is_set()` で `shutdown` / `rate_limited` を分岐。上限以内の待機は従来どおり `wait()` の戻り値で shutdown を観測。
+   - **回帰テスト**: `tests/test_review_goal_fixes.py` の該当 4 テストを新契約へ改廃(`sleep_called_with == []` を assert)、`tests/test_review_2026_10_31_services.py`・`tests/test_api_integration.py`(`test_mistral_429_cooldown_beyond_cap_fails_fast_without_sleeping`)を追随。
+
+7. **[修正済・根本解決] 市場ニュースツールの逐語一致フィルタで常に 0 件**
+   - **症状**: `"トヨタ 決算"` や `"Apple earnings"` のような通常の複数語クエリ、あるいはティッカー単独指定で、市場ニュースが必ず 0 件になり、モデルが「ニュースはありません」と回答していた。
+   - **根本原因**: `collect_market_news_items_fast` が返すのは市場レベルの見出しであり、クエリは検索語句であって見出し内の連続部分文字列ではない。クエリ全体の `in` 判定は語順・語間を要求するため実質的に一致しなかった。さらに 0 件時に「見出しは存在したが語が一致しなかった」ことを示す情報が無く、モデルが「ニュース無し」と誤って要約していた。
+   - **修正内容**: `services/ai_tools.py` に `_market_news_query_tokens(query)` を追加(lower + 空白分割 + 順序保持の重複排除)し、`any(tok in f"{title}\n{snippet}".lower() ...)` で判定。戻り値に `matched_query: bool` を追加し、見出しはあったが不一致の場合は `checked_count` と「代替掲載は行わない」旨の `note` を返す(無関係な見出しの捏造代替はしない)。
+   - **回帰テスト**: `tests/test_ai_tools_market_news_matching.py`(11 テスト)。複数語・大小文字・ティッカー・不一致時の `note`/`checked_count`・`limit` 打ち切りを含む。
+
+8. **[修正済・根本解決] 原子的書き込みの耐久性不足と重複実装**
+   - **症状**: ディレクトリ fsync の実装が 5 箇所にコピペされ、レガシー移行経路だけ fsync が無かった。クラッシュ時に「空/部分的な target + 完全なコピーが消えた source」という状態が成立し得た。
+   - **根本原因**: `_migrate_legacy_runtime_file` が他ライタと同じ耐久性契約(`flush` + `fsync` + ディレクトリ fsync)を満たしていなかった。また `O_EXCL` 競合時の「完全性」判定が存在しなかった。
+   - **修正内容**: `_fsync_directory()` に集約(`O_DIRECTORY` 非対応プラットフォームは skip)、`_is_complete_json_object()` を追加。移行経路に `flush` + `fsync` + unlink 後ディレクトリ fsync を追加。
+   - **回帰テスト**: `tests/test_config_legacy_migration_secrets.py` に 4 種追加(計 16)。空 target・部分 JSON・完全 JSON の 3 状態を区別できることを検証。
+
+9. **[修正済・根本解決] SSE 差分ゲートと DOM スロットリングのハッシュ不一致による更新取りこぼし**
+   - **症状**: 価格が静止したまま `high` / `low` / `volume` / `shares` だけが動いたフレームが「変化なし」と判定され、描画から落ちていた。またリアルタイム delta フレームは `snapshot_ts_ms` を含まないことがあり、タイムスタンプのみの比較では更新を検知できなかった。
+   - **根本原因**: 変更検知ハッシュが 2 箇所(`ui.js` の `newDataStr` と `api.js` の `currentTs`)に別々に実装され、対象フィールドが一致していなかった。片方だけを広げるともう片方で落ちるため、組成を共有する必要があった。
+   - **修正内容**: `static/js/utils.js` に `stockRenderHash(stock)`(描画対象 10 フィールド + `chart_data` 最終点の `x`、`Array.isArray` ガード付き)と `stockUpdateSignature(stock)`(`String(snapshot_ts_ms)` 正規化 + `|` + `stockRenderHash`)を新設。`ui.js::updateStockUI` と `api.js` の SSE 差分ゲートの双方をこれに置換し、単一の真実源にした。
+   - **回帰テスト**: `scripts/verify_stock_update_signature.mjs`(8 チェック)。負例 2 種(旧 `currentTs` / 旧 `newDataStr`)で exit 1 を実測。`tests/test_review_render_stocks_order_2026_11_08.py` は実装をスタブ化せず `static/js/utils.js` から関数本体を抽出して評価する `extractFunctionSource()` 方式へ改修(テストの二重実装を排除)。
+
+10. **[修正済・根本解決] チャット SSE の無応答で無限ハング**
+    - **症状**: サーバがチャンクを送らないまま接続を保持すると、`reader.read()` が永久に pending となり UI が「生成中」で固まっていた。
+    - **根本原因**: ストリーム読み取りにアイドルタイムアウトが無く、接続断(チャンク到着の停止)と正常な長時間生成を区別できなかった。
+    - **修正内容**: `static/js/api.js` に `CHAT_STREAM_IDLE_TIMEOUT_MS = 120000` と `readStreamChunk(reader, idleTimeoutMs)` を追加し、`streamChatReply` の読み取りを置換。タイムアウト時は既存のエラー封筒経路で再試行可能なエラーとして扱う。
+    - **回帰テスト**: `scripts/verify_chat_stream_idle_timeout.mjs`(9 チェック、`CHECK_TIMEOUT_MS = 10000` のウォッチドッグ付き)。旧 `await reader.read()` に差し戻すと `check hung (no settlement within 10000ms)` で exit 1 になることを実測し、復元後に 9 チェックの通過を再確認。
+
+11. **[修正済・根本解決] screener の文字数超過エラーでフィールド取り違え**
+    - **症状**: `sector`(上限 100 文字)を超過した際に「検索ワードは200文字以内で入力してください」という無関係なメッセージが返り、`fields` 情報も欠けていた。
+    - **根本原因**: エラー種別判定が `"200" in msg or "string_too_long" in type` という文字列マッチで、フィールド非依存だった。
+    - **修正内容**: `route_helpers.py::_screener_query_error_from_validation` を `err.get("type", "") == "string_too_long"` の分岐に変更。`q` は既存文言、`sector` は「sector は100文字以内で入力してください」、その他は pydantic の `ctx["max_length"]` から生成、上限不明時は「`{field} が長すぎます`」。`details` に `reason` と `fields` を含める。型エラー用の `if "q" in loc:` 分岐は残置。
+    - **回帰テスト**: `tests/test_screener_length_error_fields.py`(5 テスト)。負例(旧ブロック)で 3 failed / 2 passed を実測し、復元後に全通過を確認。
+
+### N.3 横断展開
+
+- **同種アンチパターンの全件検索**: 「変更検知ハッシュの重複実装」→ `dataset.lastDataHash` の全参照を確認し `stockRenderHash` に一本化。「無期限ブロックする enqueue」→ `event_queue.put(` の全件を確認し、abort を観測する必要がある経路のみ `_put_with_abort` に置換。「ディレクトリ fsync のコピペ」→ 5 箇所すべてを `_fsync_directory()` に統合。
+- **ビルド構成の追随**: `eslint.config.mjs` の frontend globals に `stockRenderHash` / `stockUpdateSignature`、`scripts/**/*.mjs` に `TextEncoder` / `TextDecoder` を追加(グローバル未定義の誤検知を設定側で正しく解消、`eslint-disable` は不使用)。`package.json` の `verify-generated` に新規 3 スクリプトを追加し CI の `npm run build` で常時実行されるようにした。
+
+### N.4 追加・更新されたテスト
+
+- `tests/test_config_legacy_migration_secrets.py`(新規 16): secrets 保持、`O_EXCL` 競合、部分書き込み target の非成功扱い、コピー失敗時の旧ファイル温存、`_is_complete_json_object` の 3 状態。
+- `tests/test_ai_service_agent_stream_backpressure.py`(新規 5): 満杯キュー + abort、`_AgentConsumerAborted` の伝播、drain → join の完了、残留時の警告。
+- `tests/test_ddgs_pool_saturation.py`(新規 3): `queue.Full` / `RuntimeError` 発生時の部分結果保持と投入順の維持。
+- `tests/test_ai_tools_market_news_matching.py`(新規 11): トークン分割、大小文字、ティッカー、不一致時の `note` / `checked_count`、`limit` 打ち切り。
+- `tests/test_screener_length_error_fields.py`(新規 5): 長さ超過の `q` / `sector` / その他 / 上限不明 / 型エラーとの非干渉。
+- `scripts/verify_ui_drawer_contract.mjs`(新規 7 シナリオ)、`scripts/verify_stock_update_signature.mjs`(新規 8 チェック)、`scripts/verify_chat_stream_idle_timeout.mjs`(新規 9 チェック)。
+- 既存テストの追随(旧挙動の前提を新契約へ): `tests/test_api_integration.py`、`tests/test_review_2026_10_31_services.py`、`tests/test_review_fixes_2026_11_07_unit6.py`、`tests/test_review_goal_fixes.py`、`tests/test_review_render_stocks_order_2026_11_08.py`。
+
+### N.5 除外・据え置きの判断
+
+1. **[除外] POSIX における native_host 呼び出し元認可**(`native_host/native_host.py::_get_posix_ancestor_process_names` の argv[0] basename 依存)
+   - **評価**: Windows 側は canonical path + Authenticode 検証で担保済み。POSIX の祖先プロセス名は manifest の origin allow-list に対する defense-in-depth であり、`REVIEW_FINDINGS.md` の既存項目(783 行目)で除外済み。fail-closed 化は正当な Linux/macOS 利用者を壊すリスクがあり、本環境では実機検証できないため追加修正しない。
+
+2. **[据え置き] `app_factory/boot.py` の cold-start `time.sleep(0.5)`**
+   - **評価**: `_app_bootstrap_lock` 内だが起動時に 1 回だけ。ロック解放は二重起動リスクを生むため、遅延 0.5 秒と引き換えにしない。
+
+3. **[据え置き] `route_helpers.py::cleanup_history_circuit_state` の期限切れ OPEN 残留**
+   - **評価**: `open_until <= now - 600` 条件により期限切れ状態が最大 10 分残るが、判定結果は正しく、メモリも銘柄数で有界。実害なし。
+
+4. **[仕様として除外] `error_handlers.py` / `app_factory/hooks.py` のフォールバック応答**
+   - **評価**: いずれもドキュメント化された意図的な縮退動作(エラー封筒の一貫性維持)。変更すると API 契約の後方互換性を損なう。
+
+5. **[情報提供のみ] `services/**` のキャッシュ provenance**
+   - **評価**: 取得元メタデータが一部経路で欠落するが、表示・判断に影響しないため LOW として記録のみ。
+
+### N.6 最終検証結果マトリクス
+
+| 検査種別 | コマンド / 対象 | 結果 |
+|---|---|---|
+| Python テストスイート | `pytest tests/ -n auto --dist=loadfile --color=no` | **4,162 passed**, 3 skipped(POSIX 専用), 47 subtests passed (23.50s / 最終再実行) |
+| スタートアップ検証 | `MNS_SKIP_BOOTSTRAP=0 python tests/startup_smoke_runner.py` | **exit 0** |
+| Ruff リント | `ruff check . --line-length=100` | **All checks passed!** |
+| Flake8 | `flake8 --select=E9,F63,F7,F82` | **0** (exit 0) |
+| Mypy 型チェック | `mypy . --exclude .venv --exclude node_modules` | **Success: no issues found in 125 source files** |
+| Pyrefly 型チェック | `pyrefly check` / `pyrefly check --python-platform win32` | **0 errors** (19 suppressed, 50 warnings) |
+| Pylint(CI 同一引数) | `pylint --errors-only --disable=import-error app.py app_factory/ bg/ app_bg.py wsgi.py gunicorn.conf.py shutdown_manager.py config/ config_store.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/ scripts/` | **exit 0** |
+| Bandit セキュリティ解析 | `bandit --configfile pyproject.toml -r . --severity-level medium` | **No issues identified** (44,171 lines, Low/Medium/High 0) |
+| Pip Audit 脆弱性スキャン | `pip-audit --strict` | **No known vulnerabilities found** |
+| フロントエンド統合ビルド | `npm run build`(tsc / compile / verify-generated 4 本 / eslint / prettier) | **exit 0** すべて PASS |
+| 差分整合性 | `git diff --check` | **exit 0**(空白エラーなし) |
+| 抑制コメント・デバッグ痕跡 | 追加行限定 grep(`git diff -U0`)+ 全変更ファイル目視 | `type: ignore` / `noqa` / `eslint-disable` / `as any` / `@ts-ignore` / skip・xfail の新規追加 0、`print(` 0、`console.log` は検証スクリプトの CLI 成功出力 1 行のみ(デバッグ痕跡 0) |
+
+**既知の注意点(デグレではない)**: 引数なしの `pylint --errors-only $(git ls-files '*.py')` は HEAD `5e06bd9` のワークツリーでも同一の 24 件(Windows の `fcntl`、`dict.assert_called_with` 等のテスト側 false positive)を報告する。`git worktree add` で HEAD を展開して `Compare-Object` した結果は **NO_PYLINT_DELTA**。同様に `bandit -x .venv,node_modules`(configfile 指定なし)は `.venv` を走査して Medium 682 / High 61 を報告するが、これは CI と引数が異なるためであり、CI 同一指定では 0 件。
+
+### N.7 変更ファイル
+
+- **変更(19)**: `config/atomic_write.py`, `config/io.py`, `eslint.config.mjs`, `package.json`, `route_helpers.py`, `scripts/verify_generated_frontend.mjs`, `services/ai_service.py`, `services/ai_tools.py`, `services/search/ddgs.py`, `static/js/api.js`, `static/js/api_client.js`(compile 生成物), `static/js/api_client.ts`, `static/js/ui.js`, `static/js/utils.js`, `tests/test_api_integration.py`, `tests/test_review_2026_10_31_services.py`, `tests/test_review_fixes_2026_11_07_unit6.py`, `tests/test_review_goal_fixes.py`, `tests/test_review_render_stocks_order_2026_11_08.py`
+- **新規(8)**: `scripts/verify_ui_drawer_contract.mjs`, `scripts/verify_stock_update_signature.mjs`, `scripts/verify_chat_stream_idle_timeout.mjs`, `tests/test_ai_service_agent_stream_backpressure.py`, `tests/test_ai_tools_market_news_matching.py`, `tests/test_config_legacy_migration_secrets.py`, `tests/test_ddgs_pool_saturation.py`, `tests/test_screener_length_error_fields.py`
+- `git diff --stat`: 19 files changed, 621 insertions(+), 171 deletions(-)。未追跡の一時ファイル・デバッグ用スクリプトは 0(検証用の負例パッチャはすべてリポジトリ外の `%TEMP%` で実行)。

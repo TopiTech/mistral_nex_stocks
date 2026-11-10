@@ -58,6 +58,11 @@ from utils.validators import extract_chat_content, extract_json_payload
 
 logger = logging.getLogger(__name__)
 
+# Poll interval for the agents-SSE producer's bounded enqueue. ``queue.Queue.put``
+# blocks indefinitely on a full queue and cannot observe the consumer's abort
+# event while parked there, so the producer polls instead (M4 follow-up).
+_AGENT_QUEUE_PUT_POLL_SEC = 0.25
+
 _MISTRAL_COMMUNICATION_ERRORS = (
     MistralError,
     SDKError,
@@ -783,20 +788,37 @@ _MistralWaitStatus = Literal["ready", "shutdown", "rate_limited"]
 
 
 def _wait_for_rate_limit_slot(wait_before: float) -> _MistralWaitStatus:
-    """Wait at most ``_MISTRAL_RATE_LIMIT_MAX_WAIT_SEC`` for the slot.
+    """Spend at most ``_MISTRAL_RATE_LIMIT_MAX_WAIT_SEC`` of sleep on the slot.
 
-    Returns ``"ready"`` when the requested wait completed within the cap,
-    ``"shutdown"`` when shutdown was signaled, and ``"rate_limited"`` when the
-    cooldown is longer than the cap. The caller must translate the last state
-    into its own retryable error/partial-result path; this helper never hides
-    a still-active cooldown by claiming readiness.
+    Returns ``"ready"`` when the requested wait was consumed inside the cap,
+    ``"shutdown"`` when shutdown is in effect, and ``"rate_limited"`` when the
+    cooldown outlives the cap. The caller must translate the last state into its
+    own retryable error/partial-result path; this helper never hides a
+    still-active cooldown by claiming readiness.
+
+    An above-cap cooldown is rejected *before* sleeping (R7-b). The previous
+    order slept ``min(wait_before, cap)`` and only then compared, so a long
+    cooldown always held the request thread for the whole 30 s cap — the same
+    order as the proxy/SSE client timeout — and still returned the identical
+    retryable 429. Sleeping cannot make an above-cap cooldown ready, so that
+    wait was pure added latency. ``shutdown`` keeps precedence via
+    ``is_set()`` for this path; sub-cap waits still observe it by returning
+    ``True`` from ``shutdown_event.wait``.
     """
+    if not math.isfinite(wait_before):
+        # NaN/inf cannot be slept on (``Event.wait`` raises) and cannot be
+        # proven safe, so fail closed onto the retryable path.
+        logger.warning("Non-finite Mistral rate-limit wait rejected: %r", wait_before)
+        return "rate_limited"
     if wait_before <= 0.0:
         return "ready"
-    waited = min(wait_before, _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC)
-    if app_state.execution.shutdown_event.wait(waited):
+    if wait_before > _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC:
+        if app_state.execution.shutdown_event.is_set():
+            return "shutdown"
+        return "rate_limited"
+    if app_state.execution.shutdown_event.wait(wait_before):
         return "shutdown"
-    return "rate_limited" if wait_before > _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC else "ready"
+    return "ready"
 
 
 def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
@@ -2112,6 +2134,42 @@ def analyze_chart_image_with_mistral(
         return {"error": "チャート画像の分析に失敗しました"}
 
 
+def _put_with_abort(q: "queue.Queue[Any]", item: Any, abort: threading.Event) -> bool:
+    """Enqueue ``item`` unless the consumer has already aborted.
+
+    ``queue.Queue.put`` blocks forever on a full queue and cannot observe
+    ``abort`` while parked inside the call, so a consumer that leaves without
+    draining would strand the producer thread (and the asyncio loop, and the
+    provider HTTP stream) permanently. Polling with a short timeout keeps the
+    abort channel live even when the queue is full.
+
+    Returns ``False`` when the item was dropped because the consumer left.
+    """
+    while not abort.is_set():
+        try:
+            q.put(item, timeout=_AGENT_QUEUE_PUT_POLL_SEC)
+            return True
+        except queue.Full:
+            continue
+    return False
+
+
+def _drain_queue(q: "queue.Queue[Any]") -> int:
+    """Discard everything queued and return how many items were dropped.
+
+    Called by the consumer before waiting for the producer so a producer parked
+    in ``put()`` can complete that put and then observe the abort flag instead
+    of blocking until the provider closes the stream.
+    """
+    drained = 0
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            return drained
+        drained += 1
+
+
 def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | None:
     """Extract the incremental text from one streaming chunk.
 
@@ -2429,24 +2487,33 @@ def stream_mistral_chat(
                     if isinstance(text_delta_cls, type) and isinstance(event, text_delta_cls):
                         t = getattr(event, "text", "")
                         if t:
-                            event_queue.put({"type": "delta", "text": t})
+                            delivered = _put_with_abort(
+                                event_queue, {"type": "delta", "text": t}, consumer_abort
+                            )
+                            if not delivered:
+                                raise _AgentConsumerAborted()
                     elif getattr(event, "text", None):
-                        event_queue.put({"type": "delta", "text": event.text})
+                        delivered = _put_with_abort(
+                            event_queue,
+                            {"type": "delta", "text": event.text},
+                            consumer_abort,
+                        )
+                        if not delivered:
+                            raise _AgentConsumerAborted()
 
                 def _enqueue_unlocked(item: Any) -> None:
-                    """Put without blocking when the consumer has already left."""
-                    try:
-                        event_queue.put(item)
-                    except queue.Full:
-                        pass
+                    """Enqueue a terminal item; drop it if the consumer already left."""
+                    _put_with_abort(event_queue, item, consumer_abort)
 
                 def _stream_worker():
                     new_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(new_loop)
                     try:
-                        # The SDK bounds its own run (run accepts timeout=),
-                        # so an abandoned worker cannot outlive the call
-                        # timeout budget even if it never sees another event.
+                        # The SDK bounds its own run (run accepts timeout=), but
+                        # that timeout cannot fire while the synchronous on_event
+                        # callback is parked in put(), so on_event itself must
+                        # stay abort-aware. _put_with_abort polls the abort event
+                        # and raises _AgentConsumerAborted on drop.
                         res = new_loop.run_until_complete(
                             agent.run(
                                 prompt_content,
@@ -2551,9 +2618,19 @@ def stream_mistral_chat(
                 finally:
                     # Consumer exit (normal end, error, or Flask closing the
                     # generator on client disconnect): cooperatively abort the
-                    # run and reclaim the worker within a bounded window.
+                    # run and reclaim the worker within a bounded window. The
+                    # drain runs BEFORE the join so a producer parked in put()
+                    # on a full queue can make progress and then observe the
+                    # abort flag; joining first would always time out and leave
+                    # the thread, its event loop and the provider stream alive.
                     consumer_abort.set()
+                    _drain_queue(event_queue)
                     stream_thread.join(timeout=5.0)
+                    if stream_thread.is_alive():
+                        logger.warning(
+                            "Agent SDK worker did not stop within the abort window; "
+                            "it will exit on the next provider event."
+                        )
 
                 app_state.market.report_circuit_result("mistral", success=True)
                 circuit_probe_claimed = False

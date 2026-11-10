@@ -212,8 +212,11 @@ async function moveStock(market, symbol, direction) {
   if (stocksMoveInFlight.has(moveKey)) return;
   stocksMoveInFlight.add(moveKey);
   try {
-    const order = getSortOrder(market);
     const stocksObj = await fetchStocksForMarket(market);
+    // Read the order AFTER the await: two moves for different symbols can be
+    // in flight concurrently, and a pre-await snapshot would make the second
+    // save overwrite the first move with the same old order.
+    const order = getSortOrder(market);
     const userStocks = (stocksObj || []).filter(
       (s) => !DEFAULT_SYMBOLS[market].includes(s.symbol),
     );

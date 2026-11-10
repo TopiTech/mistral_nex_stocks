@@ -101,6 +101,39 @@ def agents_stream_patches():
     return _apply
 
 
+def test_cancelled_agent_run_reports_error_not_empty_done(agents_stream_patches) -> None:
+    """``asyncio.CancelledError`` is a BaseException; it must not look like success."""
+
+    class _CancelledAgent:
+        async def run(self, content, *, on_event=None, timeout=None):
+            raise asyncio.CancelledError()
+
+    reports: list[dict] = []
+
+    def _record_report(*args, **kwargs):
+        reports.append(kwargs)
+
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        for patcher in agents_stream_patches(_CancelledAgent()):
+            stack.enter_context(patcher)
+        stack.enter_context(
+            patch.object(
+                app_state.market,
+                "report_circuit_result",
+                side_effect=_record_report,
+            )
+        )
+        events = list(
+            ai_service.stream_mistral_chat("k", [{"role": "user", "content": "x"}])
+        )
+
+    assert any(event.get("type") == "error" for event in events)
+    assert not any(event.get("type") == "done" for event in events)
+    assert not any(report.get("success") is True for report in reports)
+
+
 def test_consumer_close_reclaims_flooding_worker(agents_stream_patches) -> None:
     """Closing the SSE generator must stop a producer parked on a full queue.
 

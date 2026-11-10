@@ -36,5 +36,11 @@ def apply_baseline_test_env(temp_dir_name: str) -> None:
         "MNS_ADMIN_TOKEN",
         "MNS_API_TOKEN",
         "MNS_MASTER_KEY",
+        # Ambient agent-harness variables are not application configuration.
+        # The Mistral Agents SDK reads the generic ``AGENT`` env var through
+        # pydantic-settings and fails to import when a harness sets it to a
+        # non-object value (e.g. ``AGENT=1``), which would make the SDK tests
+        # environment-dependent.
+        "AGENT",
     ):
         os.environ.pop(key, None)

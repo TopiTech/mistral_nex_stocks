@@ -899,11 +899,22 @@ class YFinanceSessionManager:
         with self._lock:
             return self._adaptive_interval_sec
 
-    def clear_rate_limit(self, key="default"):
-        """Clear rate limit state for a key."""
+    def clear_rate_limit(self, key="default", expected_until: float | None = None) -> bool:
+        """Clear rate limit state for a key.
+
+        ``expected_until`` makes the clear conditional: when supplied, the
+        window is cleared only if it still equals the value the caller
+        observed.  A concurrent 429 that extended the window in the meantime
+        is therefore never erased by a success from an older request.
+        Returns ``True`` when the window was cleared.
+        """
         with self._lock:
-            if key in self._excluded_until:
-                self._excluded_until[key] = 0
+            if key not in self._excluded_until:
+                return False
+            if expected_until is not None and self._excluded_until[key] != expected_until:
+                return False
+            self._excluded_until[key] = 0
+            return True
 
     def reset_consecutive_401_count(self):
         """Reset the consecutive 401 streak counter (e.g., after a successful request)."""

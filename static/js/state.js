@@ -287,6 +287,28 @@ class StateManager {
   }
 
   /**
+   * Replace one stock object in place and keep the O(1) lookup index coherent.
+   *
+   * Direct ``state.stocks[market][idx] = updated`` assignments bypass the
+   * ``stocks`` setter and leave ``getStockByKey()`` pointing at the old object;
+   * the portfolio modal then re-saves stale holdings. Use this method for any
+   * single-row replacement.
+   * @param {string} market
+   * @param {string} symbol
+   * @param {Object} updated
+   * @returns {boolean} true when the row was found and replaced.
+   */
+  replaceStock(market, symbol, updated) {
+    const list = this._stocks?.[market];
+    if (!Array.isArray(list)) return false;
+    const idx = list.findIndex((s) => s && s.symbol === symbol);
+    if (idx === -1) return false;
+    list[idx] = updated;
+    _invalidateStockKeyIndex();
+    return true;
+  }
+
+  /**
    * Updates index data (Nikkei, Dow, FX, etc.).
    * @param {Object} data - Index information object from API.
    */
@@ -326,6 +348,10 @@ const compactLayoutTransitionCleanupMap = new WeakMap();
 // Registry for O(1) wrapper lookups: stockKey -> Set<wrapper element>
 // Avoids repeated querySelectorAll('.stock-wrapper[data-stock-key=...]') on every SSE tick
 const wrapperRegistryMap = new Map();
+// Incremented whenever a card wrapper is registered/unregistered. Consumers
+// that cache DOM lookups per symbol (realtime_client.js) use this to notice a
+// newly-added wrapper for the same symbol without re-querying on every frame.
+let _wrapperRegistryVersion = 0;
 let historyPrefetchTimer = null;
 let historyPrefetchLastRunAt = 0;
 let historyPrefetchJobTimers = [];
@@ -605,6 +631,7 @@ function registerWrapper(stockKey, wrapper) {
   if (!wrapperRegistryMap.has(stockKey))
     wrapperRegistryMap.set(stockKey, new Set());
   wrapperRegistryMap.get(stockKey).add(wrapper);
+  _wrapperRegistryVersion++;
 }
 
 function unregisterWrapper(stockKey, wrapper) {
@@ -615,6 +642,7 @@ function unregisterWrapper(stockKey, wrapper) {
     if (wrappers.size === 0) {
       wrapperRegistryMap.delete(stockKey);
     }
+    _wrapperRegistryVersion++;
   }
 }
 
@@ -800,4 +828,5 @@ if (typeof window !== "undefined") {
   window.CONSTANTS = CONSTANTS;
   window.hasAiAccess = () => HAS_MISTRAL_API_KEY;
   window._hasAiAccess = _hasAiAccess;
+  window.getWrapperRegistryVersion = () => _wrapperRegistryVersion;
 }

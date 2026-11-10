@@ -1188,7 +1188,11 @@ def api_news():
         force_refresh,
     )
 
-    inflight_key = f"news_{strategy}"
+    # A forced refresh must not join the stale-while-revalidate job: that job
+    # was started with ``force_refresh=False`` and would return the same cached
+    # bundle the user explicitly asked to bypass. Non-forced requests keep the
+    # shared key so they still deduplicate with each other.
+    inflight_key = f"news_{strategy}_force" if force_refresh else f"news_{strategy}"
     latest_cache_key = f"news_bundle_latest_{strategy}"
 
     from constants import CACHE_DURATION_NEWS

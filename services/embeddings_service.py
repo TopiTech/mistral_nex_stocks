@@ -155,12 +155,32 @@ def get_mistral_embeddings_batch(
             if resp and getattr(resp, "data", None):
                 with _EMBEDDINGS_CACHE_LOCK:
                     for data_idx, data_item in enumerate(resp.data):
-                        if data_idx >= len(chunk_indices):
-                            break
-                        emb = getattr(data_item, "embedding", None)
+                        if isinstance(data_item, dict):
+                            raw_index = data_item.get("index")
+                            emb = data_item.get("embedding")
+                        else:
+                            raw_index = getattr(data_item, "index", None)
+                            emb = getattr(data_item, "embedding", None)
+                        # The response carries ``index`` precisely because the
+                        # provider may return items in a different order than
+                        # the inputs. Mapping positionally would cache an
+                        # embedding under the wrong text hash and poison every
+                        # later lookup. Fall back to the list position only for
+                        # a missing/invalid index.
+                        if (
+                            isinstance(raw_index, bool)
+                            or not isinstance(raw_index, int)
+                            or raw_index < 0
+                            or raw_index >= len(chunk_indices)
+                        ):
+                            resolved_idx = data_idx
+                        else:
+                            resolved_idx = raw_index
+                        if resolved_idx >= len(chunk_indices):
+                            continue
                         if emb and isinstance(emb, list):
-                            target_orig_idx = chunk_indices[data_idx]
-                            target_hash = chunk_hashes[data_idx]
+                            target_orig_idx = chunk_indices[resolved_idx]
+                            target_hash = chunk_hashes[resolved_idx]
                             results[target_orig_idx] = emb
                             _EMBEDDINGS_CACHE[target_hash] = emb
 

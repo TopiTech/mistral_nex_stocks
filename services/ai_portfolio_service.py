@@ -147,10 +147,16 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                     continue
                 if (
                     not math.isfinite(target_price)
-                    or target_price <= 0.0
+                    or target_price < 0.0
                     or target_price > PORTFOLIO_AVG_PRICE_MAX
                 ):
                     continue
+                # The schema accepts 0.0 as a valid "unknown/no target" value.
+                # Persist it as null instead of dropping the whole item; a
+                # dropped item can turn a valid portfolio into an empty one and
+                # overwrite the user's saved portfolio on rebalance.
+                if target_price == 0.0:
+                    target_price = None
             risk_level = str(it.get("risk_level") or "mid").strip().lower()
             if risk_level not in ("low", "mid", "high"):
                 risk_level = "mid"
@@ -1001,10 +1007,19 @@ def generate_ai_portfolio_by_theme(
                 # Mark the portfolio as AI-generated (distinct from the fallback path).
                 parsed_result["generated_by"] = "ai"
 
-                # Persist generated portfolio in JSON database
+                # Persist generated portfolio in JSON database. An empty
+                # canonical result is not a usable portfolio: persisting it
+                # would replace an existing saved portfolio (same id) with no
+                # items. Fall through to the existing/fallback path instead.
                 canonical_result = sanitize_ai_portfolio(parsed_result)
-                _persist_generated_ai_portfolio(canonical_result)
-                return canonical_result
+                if canonical_result.get("items"):
+                    _persist_generated_ai_portfolio(canonical_result)
+                    return canonical_result
+                logger.warning(
+                    "AI portfolio response contained no usable items after sanitization; "
+                    "keeping the existing portfolio or using the fallback for theme=%s",
+                    search_theme,
+                )
 
         except PortfolioStorageError:
             raise

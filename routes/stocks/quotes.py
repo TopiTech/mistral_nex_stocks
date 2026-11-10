@@ -408,13 +408,22 @@ def api_stock_history() -> Any:
                         exc,
                     )
                 if not submitted:
-                    # Duplicate inflight (already probing via another request)
-                    # must not count as a failure: the running probe will
-                    # report its own result. Only a real submission failure
-                    # re-opens the circuit.
+                    # A duplicate inflight job is not necessarily a probe: the
+                    # circuit key is per symbol while the inflight key is per
+                    # period/interval, so a slow non-probe fetch for this key
+                    # can already be running. That job never reports a circuit
+                    # result (its task only reports when ``probe=True``), so
+                    # leaving our just-claimed probe set would keep the circuit
+                    # in HALF_OPEN/probing forever and every later request would
+                    # return the fetching placeholder. Release the claim; the
+                    # next request can probe once the non-probe job finishes.
                     with app_state.history_fetch_lock:
                         still_inflight = cache_key in app_state.history_fetch_inflight
-                    if not still_inflight:
+                    if still_inflight:
+                        app_state.market.release_circuit_probe(
+                            "yfinance_history", symbol=circuit_key
+                        )
+                    else:
                         app_state.market.report_circuit_result(
                             "yfinance_history",
                             success=False,

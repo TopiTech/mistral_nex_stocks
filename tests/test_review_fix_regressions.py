@@ -106,7 +106,7 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
             self.assertFalse(state["probing"])
             self.assertGreater(state["open_until"], 0)
 
-    def test_route_keeps_half_open_when_probe_already_inflight(self):
+    def test_route_releases_probe_when_duplicate_inflight_is_not_a_probe(self):
         from app import app
         from app_state import app_state
         from market_state import CircuitState
@@ -132,10 +132,13 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             with app_state.market.history_circuit_lock:
                 state = app_state.market.history_circuit_state[circuit_key]
-                # Duplicate inflight means the running probe still owns the
-                # recovery attempt: the route must neither re-open nor close.
+                # The circuit key is per symbol while the inflight key is per
+                # period/interval, so a duplicate inflight job may be a normal
+                # fetch that will never report a probe result. The route must
+                # release its claim instead of leaving the circuit stuck in
+                # HALF_OPEN/probing forever.
                 self.assertEqual(state["status"], "HALF_OPEN")
-                self.assertTrue(state["probing"])
+                self.assertFalse(state["probing"])
         finally:
             with app_state.history_fetch_lock:
                 app_state.history_fetch_inflight.discard(cache_key)

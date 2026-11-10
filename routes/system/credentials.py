@@ -418,7 +418,14 @@ def api_credentials_verify():
         else:
             openai_key = str(openai_key).strip()
 
-        base_url = data.get("openai_base_url") or data.get("base_url") or get_openai_base_url()
+        raw_base_url = data.get("openai_base_url") or data.get("base_url")
+        if raw_base_url is not None and not isinstance(raw_base_url, str):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "openai_base_url must be a string"},
+                status_code=400,
+            )
+        base_url = raw_base_url or get_openai_base_url()
         res_dict = verify_openai_connection(base_url=base_url, api_key=openai_key)
         if not res_dict.get("ok"):
             # API-9: never forward the raw service dict / unsanitized upstream

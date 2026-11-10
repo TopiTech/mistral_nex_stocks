@@ -440,6 +440,16 @@ class SQLiteChatHistoryStore:
                     pass
                 raise
             finally:
+                # ``except Exception`` does not catch BaseException
+                # (KeyboardInterrupt / SystemExit / CancelledError).  This
+                # connection is reused for the thread's lifetime, so an open
+                # transaction left by such an abort makes the next BEGIN fail
+                # with "cannot start a transaction within a transaction".
+                try:
+                    if conn.in_transaction:
+                        conn.rollback()
+                except sqlite3.Error:
+                    pass
                 try:
                     cursor.close()
                 except Exception:

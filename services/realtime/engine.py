@@ -10,6 +10,7 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
+from constants import SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC
 from services.realtime.scrapers import (
     MinkabuScraper,
     Nikkei225JPScraper,
@@ -321,8 +322,20 @@ class RealtimeMarketEngine:
                 pending.add(symbol)
             self._notify_all_clients()
 
-    def _purge_stale_clients(self, ttl_seconds: float = 120.0) -> None:
-        """Purge client cursors that have been inactive for > 2 minutes."""
+    def _purge_stale_clients(self, ttl_seconds: float | None = None) -> None:
+        """Purge client cursors that have been inactive for longer than the TTL.
+
+        Liveness is refreshed by the periodic full snapshot, whose supported
+        interval can be as high as ``SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC``.
+        A fixed 120s TTL would purge an active client exactly when that
+        interval is configured to its maximum, so the TTL must stay strictly
+        above the snapshot interval (plus a grace window for scheduling jitter).
+        """
+        if ttl_seconds is None:
+            ttl_seconds = max(
+                120.0,
+                float(SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC) + 60.0,
+            )
         now = time.time()
         with self.store_lock:
             stale_ids = [

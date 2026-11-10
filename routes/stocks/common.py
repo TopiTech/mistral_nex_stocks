@@ -280,8 +280,20 @@ def _announce_watchlist_state() -> None:
     announce_real_market_state()
 
 
-def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]) -> None:
-    """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。"""
+def _fetch_heatmap_cached(
+    cache_key: str,
+    market: str,
+    symbols: list[str],
+    fetch_token: float | None = None,
+) -> None:
+    """バックグラウンドexecutorから呼ばれ、ヒートマップを取得してキャッシュに格納する。
+
+    ``fetch_token`` is the start timestamp recorded by the request that
+    submitted this job.  A stale job whose 30s timeout was already reclaimed by
+    a newer request must not clear the newer request's inflight marker; only
+    the owner of the currently recorded token may do that.  Background
+    pre-warm callers pass ``None`` and never own a request marker.
+    """
     try:
         res = _caching_mod.get_cached(
             cache_key,
@@ -298,6 +310,8 @@ def _fetch_heatmap_cached(cache_key: str, market: str, symbols: list[str]) -> No
     except Exception:
         logger.exception("Failed to fetch heatmap cached for key %s", cache_key)
     finally:
-        with app_state.heatmap_fetch_lock:
-            app_state.heatmap_fetch_inflight.discard(cache_key)
-            app_state.heatmap_fetch_start_times.pop(cache_key, None)
+        if fetch_token is not None:
+            with app_state.heatmap_fetch_lock:
+                if app_state.heatmap_fetch_start_times.get(cache_key) == fetch_token:
+                    app_state.heatmap_fetch_inflight.discard(cache_key)
+                    app_state.heatmap_fetch_start_times.pop(cache_key, None)

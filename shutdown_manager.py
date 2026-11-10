@@ -93,6 +93,25 @@ class ShutdownTokenManager:
         self.shutdown_token_used = False
         self._lock = threading.Lock()
 
+    def _ensure_runtime_state_dir(self) -> None:
+        """Create the token directory and keep it owner-only on POSIX.
+
+        The manager can be constructed before ``config_store._ensure_runtime_dir``
+        runs during bootstrap, and ``mkdir(mode=...)`` does not tighten an
+        existing directory.  The token file itself is 0o600, but a
+        world-traversable parent still exposes its name and metadata.
+        """
+        self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            try:
+                os.chmod(self.runtime_state_dir, 0o700)
+            except OSError as exc:
+                self.logger.warning(
+                    "Could not restrict shutdown token directory %s to 0o700: %s",
+                    self.runtime_state_dir,
+                    exc,
+                )
+
     def get_or_create_shutdown_token(self) -> str:
         with self._lock:
             if self.shutdown_token and not self.used_marker.exists():
@@ -149,7 +168,7 @@ class ShutdownTokenManager:
             self.shutdown_token = token
             self.shutdown_token_used = False
             try:
-                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+                self._ensure_runtime_state_dir()
                 protected = protect_data(token, "shutdown_token")
                 # R6: Atomic 0o600 creation - avoid window with default perms.
                 _write_atomic_restricted(self.token_file, json.dumps(protected))
@@ -179,13 +198,13 @@ class ShutdownTokenManager:
         """
         try:
             if not self.token_file.exists() and self._legacy_token_file.exists():
-                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+                self._ensure_runtime_state_dir()
                 self._legacy_token_file.replace(self.token_file)
         except OSError:
             pass
         try:
             if not self.used_marker.exists() and self._legacy_used_marker.exists():
-                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+                self._ensure_runtime_state_dir()
                 self._legacy_used_marker.replace(self.used_marker)
         except OSError:
             pass
@@ -292,7 +311,7 @@ class ShutdownTokenManager:
             # fresh install on Windows (no `%LOCALAPPDATA%/MistralNeXStocks`
             # yet) does not fail with FileNotFoundError on the first rotate.
             try:
-                self.runtime_state_dir.mkdir(parents=True, exist_ok=True)
+                self._ensure_runtime_state_dir()
             except OSError as exc:
                 self.logger.error("Cannot create runtime state dir for rotation: %s", exc)
                 raise RuntimeError(

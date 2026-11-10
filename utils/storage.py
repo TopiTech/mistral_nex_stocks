@@ -118,6 +118,25 @@ def _normalize_idx_holding_fields(holdings: dict) -> dict:
     return normalized
 
 
+def _fsync_directory_strict(directory: Path) -> None:
+    """Fsync a directory entry, raising ``OSError`` when the platform supports it.
+
+    ``config.atomic_write._fsync_directory`` is deliberately best-effort for
+    callers that cannot act on a failure.  The legacy migration deletes its
+    source immediately afterwards, so it must be able to distinguish "the
+    target is durable" from "the directory fsync failed" and keep the source
+    in the latter case.
+    """
+    o_dir = getattr(os, "O_DIRECTORY", None)
+    if o_dir is None:
+        return
+    dir_fd = os.open(str(directory), o_dir)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
 def _migrate_legacy_user_stocks() -> bool:
     """Migrate the legacy plaintext store and report whether it is safe to load.
 
@@ -142,12 +161,18 @@ def _migrate_legacy_user_stocks() -> bool:
         encoded = json.dumps(data, ensure_ascii=False, indent=2)
         master_key = config_store.get_or_create_master_key()
         protected = protect_data(encoded, key_name="user_stocks", master_key=master_key)
-        config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        config_store._ensure_runtime_dir()
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp_file = target.with_suffix(f".{uuid.uuid4().hex}.tmp")
         content = json.dumps(protected, ensure_ascii=False, indent=2)
         if _is_windows():
-            tmp_file.write_text(content, encoding="utf-8")
+            with tmp_file.open("w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
         else:
             old_umask = os.umask(0o077)
             try:
@@ -155,6 +180,11 @@ def _migrate_legacy_user_stocks() -> bool:
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         f.write(content)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except OSError:
+                            pass
                 except Exception:
                     try:
                         os.close(fd)
@@ -174,6 +204,11 @@ def _migrate_legacy_user_stocks() -> bool:
                 raise
         if not _is_windows():
             os.chmod(target, 0o600)
+        # The target file's data is durable; make its directory entry durable
+        # before removing the only other complete copy.  A crash in this window
+        # used to leave a zero-length target and no legacy file.
+        if not _is_windows():
+            _fsync_directory_strict(target.parent)
         logger.info("Migrated and encrypted legacy user stocks file %s -> %s", legacy, target)
         # The legacy file was plaintext. Remove it now that the encrypted copy
         # is in place so the raw portfolio data does not linger unencrypted on
@@ -342,7 +377,7 @@ def load_user_stocks(force=False):
         # swapped file (the save bumps user_stocks_rev, so last_loaded_rev
         # stays stale and even non-force loads refresh).
         return
-    config_store.APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    config_store._ensure_runtime_dir()
     _remove_stale_user_stocks_tmp_files()
     migration_ok = _migrate_legacy_user_stocks()
     if not os.path.exists(USER_STOCKS_FILE):
@@ -362,6 +397,14 @@ def load_user_stocks(force=False):
         # counter is the authoritative "newer than cached" signal; mtime is a
         # secondary hint only.
         with app_state.market.user_stocks_lock:
+            # Re-check under the same lock that save_user_stocks() uses to
+            # increment the counter.  The early check above is only an
+            # optimization: a save can start during the file-system work
+            # between that check and this acquisition, and publishing the
+            # pre-save disk snapshot here would revert the mutation the save
+            # is about to persist.
+            if getattr(app_state.market, "user_stocks_save_pending", 0) > 0:
+                return
             if not force and app_state.market.user_stocks_rev == app_state.market.last_loaded_rev:
                 return
 

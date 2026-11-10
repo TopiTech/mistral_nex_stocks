@@ -1665,7 +1665,15 @@ def get_openai_embeddings_batch(
                     if not isinstance(item, dict):
                         continue
                     pos = item.get("index")
-                    if not isinstance(pos, int) or pos < 0 or pos >= len(chunk):
+                    # bool is a subclass of int: ``index: true`` must not be
+                    # accepted as position 1 and map an embedding to the wrong
+                    # input text.
+                    if (
+                        isinstance(pos, bool)
+                        or not isinstance(pos, int)
+                        or pos < 0
+                        or pos >= len(chunk)
+                    ):
                         pos = fallback_idx
                     if 0 <= pos < len(chunk):
                         orig_idx = chunk[pos][0]

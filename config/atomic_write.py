@@ -21,24 +21,28 @@ _FCNTL_LOCK_MAX_RETRIES = 100
 _FCNTL_LOCK_RETRY_DELAY_SEC = 0.025
 
 
-def _fsync_directory(directory: Path) -> None:
+def _fsync_directory(directory: Path) -> bool:
     """Best-effort fsync of ``directory`` so a rename/unlink survives a crash.
 
     Only the directory entry's durability is at stake (the file data is already
     fsynced by the caller), and ``O_DIRECTORY`` does not exist on Windows, so a
-    platform without directory handles simply skips it.
+    platform without directory handles simply skips it.  Returns ``True`` when
+    the directory entry is durable (or the platform cannot fsync it) and
+    ``False`` when an OS error prevented the fsync, so callers that are about
+    to delete the only other copy can keep it.
     """
     o_dir = getattr(os, "O_DIRECTORY", None)
     if o_dir is None:
-        return
+        return True
     try:
         dir_fd = os.open(str(directory), o_dir)
     except OSError:
-        return
+        return False
     try:
         os.fsync(dir_fd)
+        return True
     except OSError:
-        pass
+        return False
     finally:
         os.close(dir_fd)
 
@@ -99,6 +103,17 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> bool:
             dst.flush()
             os.fsync(dst.fileno())
         logger.info("Migrated legacy runtime file %s -> %s", source, target)
+        # The target's data is fsynced, but its directory entry is not durable
+        # until the containing directory is fsynced.  Deleting the source before
+        # that would leave no complete copy if the machine crashes here.
+        if not _fsync_directory(target.parent):
+            logger.warning(
+                "Could not fsync runtime directory %s after migrating %s; "
+                "keeping the legacy source for crash recovery.",
+                target.parent,
+                source,
+            )
+            return True
         try:
             source.unlink()
             # Make the removal durable like the writers below make their

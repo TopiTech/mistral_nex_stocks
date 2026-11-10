@@ -821,6 +821,9 @@ def _wait_for_rate_limit_slot(wait_before: float) -> _MistralWaitStatus:
     return "ready"
 
 
+_mistral_reservation_local = threading.local()
+
+
 def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
     """Reserve the global Mistral rate-limit slot and return the wait in seconds.
 
@@ -849,10 +852,34 @@ def _acquire_mistral_call_slot(min_interval_sec: float) -> float:
             )
             wait_before = mandatory_wait + max(0.0, discretionary_wait)
         app_state.ai.mistral_last_call_ts = now_ts + wait_before
+        # Record this thread's reservation while still under the lock. Reading
+        # the shared timestamp after returning would race a newer reservation
+        # from another thread and make the conditional rollback erase it.
+        _mistral_reservation_local.reserved_ts = app_state.ai.mistral_last_call_ts
         return wait_before
 
 
-def _release_mistral_call_slot() -> None:
+def _acquire_mistral_call_slot_with_reservation(
+    min_interval_sec: float,
+) -> tuple[float, float]:
+    """Reserve a pacing slot and return ``(wait_before, reserved_timestamp)``.
+
+    The timestamp identifies this caller's reservation so an abort can roll
+    back only its own slot.  Without it, a caller that aborts after another
+    thread has already reserved a later slot would erase that newer
+    reservation and let a third caller bypass the minimum interval.
+    """
+    # Clear any stale value from a previous call in this thread so a patched
+    # ``_acquire_mistral_call_slot`` falls back to the shared timestamp.
+    _mistral_reservation_local.reserved_ts = None
+    wait_before = _acquire_mistral_call_slot(min_interval_sec)
+    reserved_ts = getattr(_mistral_reservation_local, "reserved_ts", None)
+    if reserved_ts is None:
+        reserved_ts = app_state.ai.mistral_last_call_ts
+    return wait_before, reserved_ts
+
+
+def _release_mistral_call_slot(reserved_ts: float | None = None) -> None:
     """Roll back an unused pacing reservation (SVC-02).
 
     ``_acquire_mistral_call_slot`` advances ``mistral_last_call_ts`` before the
@@ -860,11 +887,17 @@ def _release_mistral_call_slot() -> None:
     (rate-limit cooldown above the wait cap, or shutdown) the reservation must
     not stand, or recovery traffic waits behind a slot that never produces a
     call. The rollback keeps at least ``mistral_next_allowed_ts`` (a real 429
-    cooldown is authoritative pacing) and never advances the timestamp; a later
-    caller that already reserved a slot keeps its reservation whenever it is
-    earlier than the rolled-back value.
+    cooldown is authoritative pacing) and never advances the timestamp.
+
+    When ``reserved_ts`` is supplied, the rollback is conditional: a newer
+    reservation made by another thread is left intact.
     """
     with app_state.ai.mistral_cooldown_lock:
+        if (
+            reserved_ts is not None
+            and app_state.ai.mistral_last_call_ts > reserved_ts + 1e-9
+        ):
+            return
         app_state.ai.mistral_last_call_ts = min(
             app_state.ai.mistral_last_call_ts,
             max(app_state.ai.mistral_next_allowed_ts, time.time()),
@@ -1059,7 +1092,9 @@ def call_mistral_chat(
 
     circuit_probe_claimed = False
     try:
-        wait_before = _acquire_mistral_call_slot(min_interval_sec)
+        wait_before, reserved_ts = _acquire_mistral_call_slot_with_reservation(
+            min_interval_sec
+        )
 
         # R7: the helper waits at most the documented cap. A longer 429
         # cooldown must fail retryably instead of holding this request thread.
@@ -1068,7 +1103,7 @@ def call_mistral_chat(
             # Shutdown signalled while waiting for the rate-limit slot:
             # abort instead of issuing a request during teardown. The pacing
             # reservation was never used, so roll it back (SVC-02).
-            _release_mistral_call_slot()
+            _release_mistral_call_slot(reserved_ts)
             return {
                 "error": {
                     "message": "AI service is shutting down",
@@ -1079,7 +1114,7 @@ def call_mistral_chat(
             # Abort without issuing a request: roll the unused pacing
             # reservation back so recovery traffic is not delayed by a
             # phantom slot (SVC-02).
-            _release_mistral_call_slot()
+            _release_mistral_call_slot(reserved_ts)
             logger.warning(
                 "Mistral rate-limit cooldown exceeds %.1fs cap; returning retryable 429",
                 _MISTRAL_RATE_LIMIT_MAX_WAIT_SEC,
@@ -1098,7 +1133,7 @@ def call_mistral_chat(
                 # was reserved above but no request is issued; roll it back so
                 # gated traffic does not accumulate phantom min-interval
                 # delays and surface a misleading 429 on the next attempt.
-                _release_mistral_call_slot()
+                _release_mistral_call_slot(reserved_ts)
                 return {
                     "error": {
                         "message": "AI service is temporarily unavailable (circuit open)",
@@ -1113,7 +1148,7 @@ def call_mistral_chat(
                     logger.warning(
                         "Mistral circuit recovery probe already in progress. Skipping API call."
                     )
-                    _release_mistral_call_slot()
+                    _release_mistral_call_slot(reserved_ts)
                     return {
                         "error": {
                             "message": "AI service is temporarily unavailable (circuit recovery probe in progress)",
@@ -1735,7 +1770,49 @@ def call_mistral_chat_with_tools(
         if any(not isinstance(tc, dict) for tc in tool_calls):
             logger.warning("Mistral agent loop rejected a malformed tool call list")
             return _tool_loop_error("AIツール呼び出しの形式が不正です")
-        valid_tcs: list[dict[str, Any]] = tool_calls
+
+        # Normalize the assistant tool_calls ONCE and use the same ids/names in
+        # both the assistant turn and the tool results.  A synthesized id (or a
+        # repaired function object) applied only to the tool result leaves the
+        # assistant message referencing the provider's original/missing id, and
+        # the next request is rejected with HTTP 400 because the tool message
+        # does not match the assistant tool_call.
+        valid_tcs: list[dict[str, Any]] = []
+        invalid_tc_ids: set[str] = set()
+        for tc in tool_calls:
+            raw_id = tc.get("id")
+            if (
+                isinstance(raw_id, str)
+                and raw_id
+                and len(raw_id) <= max_tool_call_id_chars
+            ):
+                tc_id = raw_id
+            else:
+                tc_id = f"call_{secrets.token_hex(4)}"
+            raw_fn = tc.get("function")
+            fn_name = "unknown_tool"
+            fn_args: dict[str, Any] | str = {}
+            invalid = not isinstance(raw_fn, dict)
+            if isinstance(raw_fn, dict):
+                raw_name = raw_fn.get("name")
+                if isinstance(raw_name, str) and raw_name.strip():
+                    fn_name = raw_name.strip()[:80]
+                else:
+                    invalid = True
+                raw_args = raw_fn.get("arguments")
+                if isinstance(raw_args, (dict, str)):
+                    fn_args = raw_args
+                else:
+                    invalid = True
+            if invalid:
+                invalid_tc_ids.add(tc_id)
+            valid_tcs.append(
+                {
+                    "id": tc_id,
+                    "type": "function",
+                    "function": {"name": fn_name, "arguments": fn_args},
+                }
+            )
 
         # Reject oversized fields before appending the model message to the
         # next request.  This bounds prompt growth even when a provider returns
@@ -1756,15 +1833,21 @@ def call_mistral_chat_with_tools(
             logger.warning("Mistral agent loop rejected an oversized tool call payload")
             return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
 
-        current_messages.append(msg)
+        normalized_msg = dict(msg)
+        normalized_msg["tool_calls"] = valid_tcs
+        current_messages.append(normalized_msg)
 
-        def _exec_single_tool(tc: dict[str, Any]) -> dict[str, Any]:
+        def _exec_single_tool(
+            tc: dict[str, Any], invalid_ids: set[str] = invalid_tc_ids
+        ) -> dict[str, Any]:
             def _execute() -> dict[str, Any]:
                 tc_id = tc.get("id")
                 if not isinstance(tc_id, str) or not tc_id or len(tc_id) > max_tool_call_id_chars:
                     tc_id = f"call_{secrets.token_hex(4)}"
                 fn_name = "unknown_tool"
                 try:
+                    if tc_id in invalid_ids:
+                        raise TypeError("tool function payload is malformed")
                     fn = tc.get("function")
                     if not isinstance(fn, dict):
                         raise TypeError("tool function must be an object")
@@ -2383,14 +2466,16 @@ def stream_mistral_chat(
         }
         return
 
-    wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
+    wait_before, reserved_ts = _acquire_mistral_call_slot_with_reservation(
+        MISTRAL_MIN_INTERVAL_SEC
+    )
     # R7: the helper waits at most the documented cap. A longer 429 cooldown
     # must produce a retryable error instead of holding this stream thread.
     wait_status = _wait_for_rate_limit_slot(wait_before)
     if wait_status != "ready":
         # Abort without issuing a stream request: roll the unused pacing
         # reservation back so recovery traffic is not delayed (SVC-02).
-        _release_mistral_call_slot()
+        _release_mistral_call_slot(reserved_ts)
         if circuit_probe_claimed:
             app_state.market.release_circuit_probe("mistral")
             circuit_probe_claimed = False
@@ -2524,8 +2609,15 @@ def stream_mistral_chat(
                         _enqueue_unlocked({"type": "done", "result": res})
                     except _AgentConsumerAborted:
                         logger.info("Agent SDK run aborted: SSE consumer disconnected.")
-                    except Exception as e:
+                    except BaseException as e:
+                        # asyncio.CancelledError (SDK timeout/cancellation) is a
+                        # BaseException, not an Exception. Without this branch
+                        # the worker only enqueues the sentinel, the consumer
+                        # treats it as a normal completion, reports circuit
+                        # success, and yields an empty "done" answer.
                         _enqueue_unlocked({"type": "error", "exception": e})
+                        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                            raise
                     finally:
                         try:
                             event_queue.put_nowait(stop_sentinel)

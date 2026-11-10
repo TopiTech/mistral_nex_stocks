@@ -165,14 +165,35 @@ def with_yfinance_retry(
 
                     if not already_rate_limited and not is_currently_rate_limited:
                         if m_state:
+                            # Re-check under the same lock mark_yf_429() uses.
+                            # The check above happened before this critical
+                            # section, so a concurrent 429 could have extended
+                            # the window in between; clearing unconditionally
+                            # here would shorten that cooldown and resume
+                            # hammering Yahoo. The expected-until guard also
+                            # protects against a session-manager block that is
+                            # recorded without taking m_state.yfinance_lock.
                             with m_state.yfinance_lock:
+                                if m_state.is_yf_rate_limited():
+                                    return res
+                                observed_until = _shim().yf_session_manager.get_rate_limit_until(
+                                    "yfinance"
+                                )
                                 m_state.is_yfinance_rate_limited = False
                                 m_state.yfinance_429_streak = 0
-                        try:
-                            _shim().yf_session_manager.clear_rate_limit("yfinance")
-                            _shim().yf_session_manager.reset_consecutive_401_count()
-                        except Exception:  # nosec B110
-                            pass
+                                try:
+                                    _shim().yf_session_manager.clear_rate_limit(
+                                        "yfinance", expected_until=observed_until
+                                    )
+                                    _shim().yf_session_manager.reset_consecutive_401_count()
+                                except Exception:  # nosec B110
+                                    pass
+                        else:
+                            try:
+                                _shim().yf_session_manager.clear_rate_limit("yfinance")
+                                _shim().yf_session_manager.reset_consecutive_401_count()
+                            except Exception:  # nosec B110
+                                pass
                     return res
                 except (TimeoutError, RequestsTimeout, CurlRequestsTimeout) as exc:
                     if isinstance(exc, TimeoutError) and "server overloaded" in str(exc):

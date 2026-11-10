@@ -836,7 +836,9 @@ function openPortfolioModal(stockKey) {
             } else {
               delete updated.avg_fx_rate;
             }
-            list[idx] = updated;
+            // Keep the O(1) lookup index pointing at the replacement object;
+            // a bare list[idx] assignment leaves getStockByKey() stale.
+            state.replaceStock(market, stock.symbol, updated);
           }
         }
         // Force refresh data
@@ -1031,10 +1033,17 @@ window.addEventListener("keydown", (e) => {
 function showBrowserNotification(title, body) {
   if (!("Notification" in window)) return;
   if (Notification.permission === "granted") {
-    new Notification(title, {
-      body: body,
-      icon: "/static/favicon.ico",
-    });
+    try {
+      new Notification(title, {
+        body: body,
+        icon: "/static/favicon.ico",
+      });
+    } catch (e) {
+      // Some platforms expose Notification/permission but make the
+      // constructor illegal (e.g. Chrome on Android). A best-effort alert
+      // must never abort the caller's price/UI update.
+      console.warn("Browser notification could not be shown:", e);
+    }
   }
 }
 

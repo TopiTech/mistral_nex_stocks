@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import queue
@@ -884,7 +885,11 @@ def api_copy_ai_portfolio_to_my() -> Any:
             if avg_fx_val is not None:
                 holding_entry["avg_fx_rate"] = avg_fx_val
             container[symbol] = holding_entry
-            written_entries.append((symbol, market, holding_entry))
+            # Freeze the value this request wrote. A concurrent portfolio
+            # update mutates the same holding dict in place, so comparing the
+            # live object would still match and the rollback would delete the
+            # other request's already-persisted update.
+            written_entries.append((symbol, market, copy.deepcopy(holding_entry)))
             added_symbols.append((symbol, market, target_price, shares, avg_fx_val))
             added_count += 1
 

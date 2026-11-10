@@ -51,9 +51,14 @@
     }
 
     _getElements(symbol) {
+      const registryVersion =
+        typeof window.getWrapperRegistryVersion === "function"
+          ? window.getWrapperRegistryVersion()
+          : 0;
       let cached = this.domCache.get(symbol);
       const isStale =
         !cached ||
+        cached.registryVersion !== registryVersion ||
         cached.wrappers.length === 0 ||
         cached.wrappers.some((el) => !el.isConnected) ||
         cached.ptsElements.some((el) => !el.isConnected);
@@ -109,6 +114,7 @@
           cleanCode,
           wrappers,
           ptsElements,
+          registryVersion,
         };
         this.domCache.set(symbol, cached);
       }

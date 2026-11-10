@@ -637,7 +637,7 @@ def api_heatmap() -> Any:
     if not already_fetching:
         try:
             app_state.execution.data_executor.submit(
-                _fetch_heatmap_cached, cache_key, market, symbols
+                _fetch_heatmap_cached, cache_key, market, symbols, now
             )
         except queue.Full:
             with app_state.heatmap_fetch_lock:

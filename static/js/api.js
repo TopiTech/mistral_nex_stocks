@@ -1181,15 +1181,23 @@ function updateStocksFromSseData(data) {
 }
 
 let _loadIndicesInterval = null;
+let _indicesFetchGeneration = 0;
 
 async function loadIndicesLoop() {
   stopLoadIndicesLoop();
   const fetchIndices = async () => {
+    const generation = ++_indicesFetchGeneration;
     try {
       const { data } = await apiFetch("/api/indices", {}, { showToast: false });
+      // A response slower than the 30s interval can resolve after a newer
+      // tick. Only the newest request may publish, otherwise an older index
+      // payload (and its FX rate) regresses the bar.
+      if (generation !== _indicesFetchGeneration) return;
       updateIndicesBar(data);
     } catch (e) {
-      $logger.warn("Index fetch error:", e);
+      if (generation === _indicesFetchGeneration) {
+        $logger.warn("Index fetch error:", e);
+      }
     }
   };
   fetchIndices();
@@ -1197,6 +1205,7 @@ async function loadIndicesLoop() {
 }
 
 function stopLoadIndicesLoop() {
+  _indicesFetchGeneration++;
   if (_loadIndicesInterval) {
     clearInterval(_loadIndicesInterval);
     _loadIndicesInterval = null;

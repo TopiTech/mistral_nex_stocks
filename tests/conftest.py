@@ -44,7 +44,20 @@ import pytest
 
 def pytest_configure(config):
     """Print diagnostic environment & collection startup info."""
+    import glob
     import platform
+
+    new_args: list[str] = []
+    for arg in config.args:
+        if "*" in arg or "?" in arg:
+            expanded = glob.glob(arg)
+            if expanded:
+                new_args.extend(expanded)
+            else:
+                new_args.append(arg)
+        else:
+            new_args.append(arg)
+    config.args = new_args
 
     print(
         f"\n[MNS TEST DIAGNOSTIC] Python {sys.version} on {platform.system()} ({platform.platform()})",

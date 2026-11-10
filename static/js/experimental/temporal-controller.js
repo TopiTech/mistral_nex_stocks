@@ -25,6 +25,7 @@
       this.isProcessingFrame = false;
       this.playTimer = null;
       this.retryTimers = new Set();
+      this._unsubState = null;
 
       this.bindEvents();
       this.bindState();
@@ -207,7 +208,7 @@
     }
 
     bindState() {
-      this.state.subscribe((key, val, data) => {
+      this._unsubState = this.state.subscribe((key, val, data) => {
         if (key === "selectedSymbol" || key === "timeGranularity") {
           this.stopTimelapse();
           this.fetchHistoryForSymbol(data.selectedSymbol, data.timeGranularity);
@@ -226,6 +227,10 @@
     }
 
     destroy() {
+      if (typeof this._unsubState === "function") {
+        this._unsubState();
+        this._unsubState = null;
+      }
       this.stopTimelapse();
       for (const timerId of this.retryTimers) {
         clearTimeout(timerId);

@@ -19,6 +19,7 @@
       this._abortController = null;
       this._newsAbortController = null;
       this._returnFocusTarget = null;
+      this._unsubState = null;
 
       this.bindEvents();
       this.bindState();
@@ -48,7 +49,7 @@
 
     bindState() {
       this._lastOpenKey = "closed";
-      this.state.subscribe((key, val, data) => {
+      this._unsubState = this.state.subscribe((key, val, data) => {
         if (key === "aiDiveOpen" || key === "aiDiveSymbol") {
           // openAiDive()/closeAiDive() は 1 回のトランジションで 2 つのキーを
           // 個別に通知する。サブスクライバがどちらのキーでも full open 扱いに
@@ -71,6 +72,10 @@
     }
 
     destroy() {
+      if (typeof this._unsubState === "function") {
+        this._unsubState();
+        this._unsubState = null;
+      }
       if (this._abortController) {
         this._abortController.abort();
       }
@@ -155,8 +160,11 @@
       const grid = document.createElement("div");
       grid.className = "metric-stat-grid";
 
-      const chgSign = stock.changePercent >= 0 ? "+" : "";
-      const chgClass = stock.changePercent >= 0 ? "text-pos" : "text-neg";
+      const chg = Number.isFinite(stock.changePercent)
+        ? stock.changePercent
+        : 0;
+      const chgSign = chg >= 0 ? "+" : "";
+      const chgClass = chg >= 0 ? "text-pos" : "text-neg";
       const priceStr =
         stock.price > 0
           ? global.ObservatoryDataAdapter.formatPrice(stock.price, stock)
@@ -166,7 +174,7 @@
         { label: "現在株価", value: priceStr },
         {
           label: "前日比",
-          value: `${chgSign}${stock.changePercent.toFixed(2)}%`,
+          value: `${chgSign}${chg.toFixed(2)}%`,
           cls: chgClass,
         },
         {

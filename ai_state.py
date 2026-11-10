@@ -199,13 +199,14 @@ class AIState:
             # cost always matches the reported token totals.
             residual_prompt = self.mistral_total_prompt_tokens - by_model_prompt
             residual_completion = self.mistral_total_completion_tokens - by_model_completion
-            if residual_prompt > 0 or residual_completion > 0:
+            residual_calls = self.mistral_call_count - by_model_calls
+            if residual_prompt > 0 or residual_completion > 0 or residual_calls > 0:
                 residual_cost = (max(0, residual_prompt) / 1_000_000.0 * 0.10) + (
                     max(0, residual_completion) / 1_000_000.0 * 0.30
                 )
                 total_cost_usd += residual_cost
                 by_model_out["unknown"] = {
-                    "calls": max(0, self.mistral_call_count - by_model_calls),
+                    "calls": max(0, residual_calls),
                     "prompt_tokens": max(0, residual_prompt),
                     "completion_tokens": max(0, residual_completion),
                     "total_tokens": max(0, residual_prompt) + max(0, residual_completion),
@@ -233,15 +234,34 @@ class AIState:
         """Return a thread-safe snapshot of the cumulative usage counters for OpenAI-compatible models."""
         with self.openai_usage_lock:
             by_model_out: dict[str, dict[str, Any]] = {}
+            by_model_prompt = 0
+            by_model_completion = 0
+            by_model_calls = 0
+
             for m_name, m_data in self.openai_model_usage.items():
                 p_toks = m_data["prompt_tokens"]
                 c_toks = m_data["completion_tokens"]
+                by_model_prompt += p_toks
+                by_model_completion += c_toks
+                by_model_calls += m_data["calls"]
                 by_model_out[m_name] = {
                     "calls": m_data["calls"],
                     "prompt_tokens": p_toks,
                     "completion_tokens": c_toks,
                     "total_tokens": p_toks + c_toks,
                 }
+
+            residual_prompt = self.openai_total_prompt_tokens - by_model_prompt
+            residual_completion = self.openai_total_completion_tokens - by_model_completion
+            residual_calls = self.openai_call_count - by_model_calls
+            if residual_prompt > 0 or residual_completion > 0 or residual_calls > 0:
+                by_model_out["unknown"] = {
+                    "calls": max(0, residual_calls),
+                    "prompt_tokens": max(0, residual_prompt),
+                    "completion_tokens": max(0, residual_completion),
+                    "total_tokens": max(0, residual_prompt) + max(0, residual_completion),
+                }
+
             return {
                 "call_count": self.openai_call_count,
                 "prompt_tokens": self.openai_total_prompt_tokens,

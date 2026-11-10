@@ -177,7 +177,8 @@
     }
 
     setTimeCursor(cursor) {
-      const clamped = Math.max(cursor, 0);
+      const num = Number(cursor);
+      const clamped = Number.isFinite(num) ? Math.max(num, 0) : 0;
       if (this.data.timeCursor === clamped) return;
       this.data.timeCursor = clamped;
       this.notify("timeCursor", clamped);

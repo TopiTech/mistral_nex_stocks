@@ -724,8 +724,11 @@
       ctx.fillText(stock.symbol, x, isCenter ? y - 7 : y - 4);
 
       // Price / Change Pill
-      const chgSign = stock.changePercent >= 0 ? "+" : "";
-      const chgStr = `${chgSign}${stock.changePercent.toFixed(1)}%`;
+      const chg = Number.isFinite(stock.changePercent)
+        ? stock.changePercent
+        : 0;
+      const chgSign = chg >= 0 ? "+" : "";
+      const chgStr = `${chgSign}${chg.toFixed(1)}%`;
       ctx.fillStyle = colors.main;
       ctx.font = `600 ${Math.max(8, fontSize - 2)}px 'Inter', sans-serif`;
       ctx.fillText(chgStr, x, isCenter ? y + 8 : y + 7);
@@ -896,14 +899,13 @@
       ctx.font = "bold 13px 'Inter', sans-serif";
       ctx.fillText(priceStr, posX + 10, posY + 46);
 
-      const chgSign = stock.changePercent >= 0 ? "+" : "";
+      const chg = Number.isFinite(stock.changePercent)
+        ? stock.changePercent
+        : 0;
+      const chgSign = chg >= 0 ? "+" : "";
       ctx.fillStyle = colors.main;
       ctx.font = "bold 11px 'Inter', sans-serif";
-      ctx.fillText(
-        `${chgSign}${stock.changePercent.toFixed(2)}%`,
-        posX + 90,
-        posY + 48,
-      );
+      ctx.fillText(`${chgSign}${chg.toFixed(2)}%`, posX + 90, posY + 48);
 
       // Hint line
       ctx.fillStyle = "rgba(148, 163, 184, 0.7)";

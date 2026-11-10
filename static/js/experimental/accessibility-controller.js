@@ -13,6 +13,7 @@
       this.state = state;
       this.els = elements || {};
       this._modalReturnFocusTarget = null;
+      this._unsubState = null;
 
       this.bindEvents();
       this.bindState();
@@ -79,7 +80,7 @@
     }
 
     bindState() {
-      this.state.subscribe((key, val, data) => {
+      this._unsubState = this.state.subscribe((key, val, data) => {
         if (key === "stocks" || key === "selectedSymbol") {
           this.updateScreenReaderTable(data);
           if (key === "selectedSymbol") {
@@ -94,6 +95,10 @@
     }
 
     destroy() {
+      if (typeof this._unsubState === "function") {
+        this._unsubState();
+        this._unsubState = null;
+      }
       window.removeEventListener("keydown", this._keydownHandler);
       if (this._motionMediaQuery && this._motionListener) {
         try {
@@ -411,8 +416,9 @@
             : "--";
 
         const tdChg = document.createElement("td");
-        const sign = st.changePercent >= 0 ? "+" : "";
-        tdChg.textContent = `${sign}${st.changePercent.toFixed(2)}%`;
+        const chg = Number.isFinite(st.changePercent) ? st.changePercent : 0;
+        const sign = chg >= 0 ? "+" : "";
+        tdChg.textContent = `${sign}${chg.toFixed(2)}%`;
 
         const tdCap = document.createElement("td");
         tdCap.textContent =

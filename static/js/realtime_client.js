@@ -40,6 +40,41 @@
     return rounded;
   }
 
+  /**
+   * Calculate exponential backoff delay with full jitter for reconnection.
+   * Prevents thundering herd when server recovers or network reconnects.
+   *
+   * @param {number} [attempt=0] - Reconnect attempt count (0-based)
+   * @param {number} [baseDelay=1000] - Base delay in milliseconds
+   * @param {number} [maxDelay=30000] - Maximum delay cap in milliseconds
+   * @returns {number} Delay in milliseconds with jitter applied
+   */
+  function calculateReconnectDelay(
+    attempt = 0,
+    baseDelay = 1000,
+    maxDelay = 30000,
+  ) {
+    const safeAttempt = Math.max(
+      0,
+      Number.isFinite(attempt) ? Math.floor(attempt) : 0,
+    );
+    const safeBase = Math.max(
+      50,
+      Number.isFinite(baseDelay) ? baseDelay : 1000,
+    );
+    const safeMax = Math.max(
+      safeBase,
+      Number.isFinite(maxDelay) ? maxDelay : 30000,
+    );
+
+    const calculatedDelay = Math.min(
+      safeBase * Math.pow(2, safeAttempt),
+      safeMax,
+    );
+    const jitter = 0.5 + Math.random() * 0.5;
+    return Math.round(calculatedDelay * jitter);
+  }
+
   class RealtimeStockClient {
     constructor() {
       // Previous prices are per-card UI state, not a symbol registry. They are
@@ -48,6 +83,76 @@
       // instead of leaving it in a map that grows for the whole session and
       // makes a re-added card flash against a price it never displayed.
       this.domCache = new Map();
+      this.reconnectAttempt = 0;
+      this.reconnectTimer = null;
+      this.baseReconnectDelay = 1000;
+      this.maxReconnectDelay = 30000;
+    }
+
+    /**
+     * Compute reconnection backoff with full jitter for the given attempt.
+     * @param {number} [attempt] - Reconnection attempt (defaults to internal counter)
+     * @param {number} [baseDelay] - Base delay in milliseconds
+     * @param {number} [maxDelay] - Maximum delay in milliseconds
+     * @returns {number} Reconnection delay in ms with jitter applied
+     */
+    calculateReconnectDelay(attempt, baseDelay, maxDelay) {
+      const att = attempt !== undefined ? attempt : this.reconnectAttempt;
+      const base =
+        baseDelay !== undefined ? baseDelay : this.baseReconnectDelay;
+      const max = maxDelay !== undefined ? maxDelay : this.maxReconnectDelay;
+      return calculateReconnectDelay(att, base, max);
+    }
+
+    /**
+     * Get next reconnection delay with jitter and increment internal attempt counter.
+     * @param {number} [baseDelay]
+     * @param {number} [maxDelay]
+     * @returns {number}
+     */
+    getNextReconnectDelay(baseDelay, maxDelay) {
+      const delay = this.calculateReconnectDelay(
+        this.reconnectAttempt,
+        baseDelay,
+        maxDelay,
+      );
+      this.reconnectAttempt++;
+      return delay;
+    }
+
+    /**
+     * Reset reconnection state and clear any pending reconnection timer.
+     */
+    resetReconnect() {
+      this.reconnectAttempt = 0;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+    }
+
+    /**
+     * Schedule a reconnection callback with full jitter exponential backoff.
+     * @param {Function} reconnectFn - Function to execute on reconnect
+     * @param {Function} [onScheduled] - Optional callback receiving the calculated delay
+     * @returns {number} The scheduled delay in ms
+     */
+    scheduleReconnect(reconnectFn, onScheduled) {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      const delay = this.getNextReconnectDelay();
+      if (typeof onScheduled === "function") {
+        onScheduled(delay, this.reconnectAttempt);
+      }
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (typeof reconnectFn === "function") {
+          reconnectFn();
+        }
+      }, delay);
+      return delay;
     }
 
     _getElements(symbol) {
@@ -357,6 +462,10 @@
   }
 
   const initRealtimeStockClient = () => {
+    if (typeof window !== "undefined") {
+      window.RealtimeStockClient = RealtimeStockClient;
+      window.calculateReconnectDelay = calculateReconnectDelay;
+    }
     if (window.realtimeClient) return;
     window.realtimeClient = new RealtimeStockClient();
     // Single-entry dispatch used by api.js (connectSSE) for realtime_update events.

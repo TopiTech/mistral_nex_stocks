@@ -13,6 +13,7 @@
       this.state = state;
       this.els = elements || {};
       this._abortController = null;
+      this._unsubState = null;
 
       this.bindEvents();
       this.bindState();
@@ -40,7 +41,7 @@
     }
 
     bindState() {
-      this.state.subscribe((key, val, data) => {
+      this._unsubState = this.state.subscribe((key, val, data) => {
         if (key === "isConnectMode" || key === "connectedSymbols") {
           this.renderHUD(data);
         }
@@ -48,6 +49,10 @@
     }
 
     destroy() {
+      if (typeof this._unsubState === "function") {
+        this._unsubState();
+        this._unsubState = null;
+      }
       if (this._abortController) {
         this._abortController.abort();
         this._abortController = null;
@@ -147,8 +152,9 @@
         {
           label: "騰落率",
           get: (s) => {
-            const sign = s.changePercent >= 0 ? "+" : "";
-            return `${sign}${s.changePercent.toFixed(2)}%`;
+            const chg = Number.isFinite(s.changePercent) ? s.changePercent : 0;
+            const sign = chg >= 0 ? "+" : "";
+            return `${sign}${chg.toFixed(2)}%`;
           },
           isChange: true,
         },
@@ -325,10 +331,11 @@
           .map((s) => this.state.state.stocks.get(s))
           .filter(Boolean);
         const dataSummary = stockObjs
-          .map(
-            (s) =>
-              `- ${s.symbol} (${s.name || ""}): 価格=${s.price}, 騰落率=${s.changePercent.toFixed(2)}%, セクター=${s.sector}, PER=${s.peRatio || "N/A"}, 時価総額=${s.marketCap}`,
-          )
+          .map((s) => {
+            const chg = Number.isFinite(s.changePercent) ? s.changePercent : 0;
+            const sign = chg >= 0 ? "+" : "";
+            return `- ${s.symbol} (${s.name || ""}): 価格=${s.price}, 騰落率=${sign}${chg.toFixed(2)}%, セクター=${s.sector}, PER=${s.peRatio || "N/A"}, 時価総額=${s.marketCap}`;
+          })
           .join("\n");
 
         const prompt = `以下の銘柄群の市場データに基づいて、相対的な強み・弱み・セクター内でのポジショニングを簡潔に比較分析してください。\n\n【対象銘柄データ】\n${dataSummary}\n\n投資助言ではなく、客観的な財務指標と市場パフォーマンスの違いに焦点を当てて200字程度でまとめてください。`;

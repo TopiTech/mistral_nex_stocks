@@ -246,9 +246,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (elements.centerChange) {
-      const chgSign = stock.changePercent >= 0 ? "+" : "";
-      elements.centerChange.textContent = `${chgSign}${stock.changePercent.toFixed(2)}%`;
-      elements.centerChange.className = `center-stat-change ${stock.changePercent >= 0 ? "text-pos" : "text-neg"}`;
+      const chg = Number.isFinite(stock.changePercent)
+        ? stock.changePercent
+        : 0;
+      const chgSign = chg >= 0 ? "+" : "";
+      elements.centerChange.textContent = `${chgSign}${chg.toFixed(2)}%`;
+      elements.centerChange.className = `center-stat-change ${chg >= 0 ? "text-pos" : "text-neg"}`;
     }
   }
 
@@ -340,9 +343,10 @@ document.addEventListener("DOMContentLoaded", () => {
           : "--";
 
       const chgSpan = document.createElement("span");
-      const sign = st.changePercent >= 0 ? "+" : "";
-      chgSpan.className = `search-res-change ${st.changePercent >= 0 ? "text-pos" : "text-neg"}`;
-      chgSpan.textContent = `${sign}${st.changePercent.toFixed(2)}%`;
+      const chg = Number.isFinite(st.changePercent) ? st.changePercent : 0;
+      const sign = chg >= 0 ? "+" : "";
+      chgSpan.className = `search-res-change ${chg >= 0 ? "text-pos" : "text-neg"}`;
+      chgSpan.textContent = `${sign}${chg.toFixed(2)}%`;
 
       right.appendChild(priceSpan);
       right.appendChild(chgSpan);

@@ -499,7 +499,93 @@
   }
 
   const TradingViewManager = {
+    hasSwitched: false,
+    currentSymbol: null,
+    fallbackState: new Map(),
     mapTickerToTvSymbol,
+    /**
+     * Reset the fallback flag for a specific symbol or globally.
+     * Ensures fallback state does not persist across symbol switches.
+     * @param {string} [symbol] - Optional symbol to reset fallback for
+     */
+    resetFallbackFlag(symbol) {
+      this.hasSwitched = false;
+      if (symbol) {
+        const clean = String(symbol).trim().toUpperCase();
+        const base = clean.includes(":") ? clean.split(":")[1] : clean;
+        this.fallbackState.delete(clean);
+        this.fallbackState.delete(base);
+      } else {
+        this.fallbackState.clear();
+      }
+    },
+
+    /**
+     * Check if a symbol or current chart is in fallback state.
+     * @param {string} [symbol]
+     * @returns {boolean}
+     */
+    isFallbackActive(symbol) {
+      if (symbol) {
+        const clean = String(symbol).trim().toUpperCase();
+        const base = clean.includes(":") ? clean.split(":")[1] : clean;
+        return (
+          this.fallbackState.get(clean) === true ||
+          this.fallbackState.get(base) === true
+        );
+      }
+      return this.hasSwitched;
+    },
+
+    /**
+     * Load a new symbol into the TradingView chart, resetting the fallback flag
+     * and fallback state so each symbol can independently attempt rendering.
+     * Supports both loadSymbol(symbol, exchange, options) and
+     * loadSymbol(containerId, symbol, exchange, options).
+     *
+     * @param {string} containerOrSymbol - Container ID or ticker symbol
+     * @param {string} [tickerOrContainer] - Ticker symbol or container ID
+     * @param {string} [exchange] - Exchange name
+     * @param {object} [options] - Additional render options
+     */
+    loadSymbol(containerOrSymbol, tickerOrContainer, exchange, options = {}) {
+      let targetContainer = "tradingview-chart-container";
+      let targetTicker = containerOrSymbol;
+      let targetExchange = exchange;
+      let targetOptions = options;
+
+      if (
+        typeof containerOrSymbol === "string" &&
+        typeof tickerOrContainer === "string"
+      ) {
+        if (
+          document.getElementById(containerOrSymbol) ||
+          containerOrSymbol.toLowerCase().includes("container")
+        ) {
+          targetContainer = containerOrSymbol;
+          targetTicker = tickerOrContainer;
+        } else {
+          targetTicker = containerOrSymbol;
+          targetContainer = tickerOrContainer;
+        }
+      } else if (
+        typeof tickerOrContainer === "string" &&
+        exchange === undefined
+      ) {
+        targetExchange = tickerOrContainer;
+      }
+
+      this.resetFallbackFlag(targetTicker);
+      this.currentSymbol = String(targetTicker).trim().toUpperCase();
+
+      return this.renderAdvancedChart(
+        targetContainer,
+        targetTicker,
+        targetExchange,
+        targetOptions,
+      );
+    },
+
     /**
      * Clear container element safely.
      * @param {string|HTMLElement} container
@@ -520,6 +606,7 @@
         window.removeEventListener("message", activeMessageHandler);
         activeMessageHandler = null;
         activeMessageHandlerOwner = null;
+        this.hasSwitched = false;
       }
       if (el) {
         el.replaceChildren();
@@ -614,6 +701,12 @@
         ? String(ticker).split(":")[1]
         : String(ticker).trim().toUpperCase();
 
+      // Reset fallback flag for new symbol loads (unless this is an internal autoFallback re-render)
+      if (!options.autoFallback) {
+        this.resetFallbackFlag(baseTicker);
+        this.currentSymbol = baseTicker;
+      }
+
       const meta = resolveTvSymbolMetaJS(ticker, exchange);
       let currentTvSymbol = options.forceTvSymbol || meta.tvSymbol;
       const isDark = !document.body.classList.contains("light-mode");
@@ -672,6 +765,7 @@
         btn.onclick = () => {
           const newTvSym = `${exName}:${baseTicker}`;
           KNOWN_US_STOCK_TV_MAP[baseTicker] = newTvSym;
+          this.resetFallbackFlag(baseTicker);
           this.renderAdvancedChart(containerId, baseTicker, exName, {
             forceTvSymbol: newTvSym,
           });
@@ -712,6 +806,8 @@
       const doExchangeFallbackSwitch = (reason) => {
         if (hasSwitched) return;
         hasSwitched = true;
+        this.hasSwitched = true;
+        this.fallbackState.set(baseTicker, true);
         // 現在のプレフィックスから見て自動リカバリ先を決める
         // (NYSE推定の誤り → NASDAQ へ、それ以外 → NYSE へ)。
         const targetPrefix = currentPrefix === "NYSE" ? "NASDAQ" : "NYSE";
@@ -868,7 +964,7 @@
             }
           };
           document.head.appendChild(tvScript);
-        } else if (!tvScript.dataset.loadFailed) {
+        } else if (!tvScript.dataset?.loadFailed) {
           // 読み込み中スクリプトへの古い待ち閉包を除去してから積む
           // (同一要素に複数のloadリスナーが溜まるのを防ぐ)。
           if (tvScript._pendingMountHandler) {

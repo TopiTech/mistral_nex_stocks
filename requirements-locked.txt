@@ -126,7 +126,7 @@ idna==3.19
     #   httpx
     #   httpx2
     #   requests
-importlib-metadata==9.0.1 ; python_full_version < '3.12'
+importlib-metadata==10.1.0 ; python_full_version < '3.12'
     # via keyring
 itsdangerous==2.2.0
     # via

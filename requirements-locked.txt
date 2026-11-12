@@ -50,7 +50,7 @@ cffi==2.1.1
     #   curl-cffi
 charset-normalizer==3.4.9
     # via requests
-click==8.5.0
+click==8.5.1
     # via
     #   ddgs
     #   flask

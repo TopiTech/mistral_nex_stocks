@@ -266,7 +266,7 @@ opentelemetry-sdk==1.45.1 ; python_full_version >= '3.12'
     #   mistralai-workflows
     #   opentelemetry-exporter-otlp-common
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-semantic-conventions==0.66b1
+opentelemetry-semantic-conventions==0.66b2
     # via
     #   mistralai
     #   opentelemetry-instrumentation

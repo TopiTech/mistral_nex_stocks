@@ -334,7 +334,7 @@ python-multipart==0.0.33
     # via mcp
 pytrends-modern==0.2.13
     # via mistral-nex-stocks
-pytz==2026.3.post1
+pytz==2026.6
     # via yfinance
 pywin32==312 ; sys_platform == 'win32'
     # via mcp

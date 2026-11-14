@@ -934,6 +934,18 @@ def test_nh_native_host_posix_flock_eagain_retries_and_mode_check(tmp_path):
         LOCK_UN=8,
         flock=MagicMock(side_effect=fake_flock),
     )
+
+    # Only the token file reports the permissive mode. Patching Path.stat with a
+    # blanket return value would also make Path.exists() report the ".used"
+    # marker as present on Python <= 3.13 (where exists() delegates to stat()),
+    # short-circuiting the code path under test.
+    real_stat = Path.stat
+
+    def fake_stat(self, *args, **kwargs):
+        if self == token_file:
+            return SimpleNamespace(st_mode=0o100640)
+        return real_stat(self, *args, **kwargs)
+
     with (
         patch.object(
             native_host,
@@ -949,7 +961,7 @@ def test_nh_native_host_posix_flock_eagain_retries_and_mode_check(tmp_path):
         patch.object(native_host, "_get_ancestor_process_names", return_value=["chrome.exe"]),
         patch("config_store.APP_DATA_DIR", tmp_path),
         patch("os.name", "posix"),
-        patch.object(Path, "stat", return_value=SimpleNamespace(st_mode=0o100640)),
+        patch.object(Path, "stat", fake_stat),
         patch.object(Path, "chmod") as mock_chmod,
         patch("time.sleep", return_value=None),
         patch.dict(sys.modules, {"fcntl": fake_fcntl}),

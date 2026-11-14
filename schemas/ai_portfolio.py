@@ -114,8 +114,8 @@ class AIPortfolioGenerateRequest(BaseModel):
 class AIPortfolioRebalanceRequest(BaseModel):
     """Canonical contract for ``POST /api/ai-portfolio/rebalance``.
 
-    An absent theme falls back to ``"tech"``; a blank or over-long theme is
-    a malformed request, matching the running endpoint.
+    An absent or blank theme falls back to ``"tech"`` (the endpoint's
+    backward-compatible behavior); an over-long theme is a malformed request.
     """
 
     theme: str = Field(default="tech", max_length=120, description="Investment theme to rebalance")

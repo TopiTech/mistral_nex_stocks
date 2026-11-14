@@ -26,6 +26,7 @@ code, not a stylistic preference:
 from __future__ import annotations
 
 import contextlib
+import datetime
 import json
 import math
 import os
@@ -34,6 +35,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 import requests
@@ -511,3 +513,364 @@ def test_config_first_run_initialization_uses_update_lock():
     lock = source.index("with config_store.config_update_lock():", marker)
     save = source.index("config_store.save_config(config_store.DEFAULT_CONFIG)", marker)
     assert lock < save
+
+
+def test_us_early_close_schedule_matches_nyse_calendar():
+    from utils.market_utils import _us_early_close_date
+
+    assert _us_early_close_date(datetime.date(2026, 11, 27)) is True
+    assert _us_early_close_date(datetime.date(2026, 12, 24)) is True
+    assert _us_early_close_date(datetime.date(2025, 7, 3)) is True
+    assert _us_early_close_date(datetime.date(2025, 11, 28)) is True
+    assert _us_early_close_date(datetime.date(2027, 11, 26)) is True
+    # July 3, 2026 is the observed Independence Day holiday, not a half day.
+    assert _us_early_close_date(datetime.date(2026, 7, 3)) is False
+    # July 3, 2027 is a Saturday.
+    assert _us_early_close_date(datetime.date(2027, 7, 3)) is False
+    # Christmas 2027 falls on Saturday: Dec 24 is the observed full holiday.
+    assert _us_early_close_date(datetime.date(2027, 12, 24)) is False
+    assert _us_early_close_date(datetime.date(2026, 11, 26)) is False
+    assert _us_early_close_date(datetime.date(2026, 12, 25)) is False
+    assert _us_early_close_date(datetime.date(2027, 7, 5)) is False
+    assert _us_early_close_date(datetime.date(2026, 11, 28)) is False
+
+
+@pytest.mark.parametrize(
+    ("target_date", "hour", "minute", "expected"),
+    [
+        (datetime.date(2026, 11, 27), 12, 59, True),
+        (datetime.date(2026, 11, 27), 13, 0, False),
+        (datetime.date(2026, 11, 27), 15, 0, False),
+        (datetime.date(2026, 12, 24), 14, 0, False),
+        # A regular Wednesday before Thanksgiving still closes at 16:00 ET.
+        (datetime.date(2026, 11, 25), 15, 0, True),
+    ],
+)
+def test_us_session_honors_early_close(monkeypatch, target_date, hour, minute, expected):
+    from utils import market_utils
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(
+                target_date.year,
+                target_date.month,
+                target_date.day,
+                hour,
+                minute,
+                tzinfo=ZoneInfo("America/New_York"),
+            )
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(market_utils, "_fetch_live_market_state", lambda market: None)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert (
+        market_utils.is_market_open("us", bypass_cache=True, ignore_weekend=True) is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("year", "month", "day", "utc_hour", "utc_minute", "expected"),
+    [
+        # July 3, 2025 is EDT (UTC-4): 16:59 UTC = 12:59 ET, 17:00 UTC = 13:00 ET.
+        (2025, 7, 3, 16, 59, True),
+        (2025, 7, 3, 17, 0, False),
+        # November 27, 2026 is EST (UTC-5): 17:59 UTC = 12:59 ET, 18:00 UTC = 13:00 ET.
+        (2026, 11, 27, 17, 59, True),
+        (2026, 11, 27, 18, 0, False),
+        (2026, 11, 27, 13, 0, False),
+    ],
+)
+def test_us_early_close_respects_utc_and_dst_boundaries(
+    monkeypatch, year, month, day, utc_hour, utc_minute, expected
+):
+    from utils import market_utils
+
+    fixed_utc = datetime.datetime(year, month, day, utc_hour, utc_minute, tzinfo=datetime.UTC)
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_utc.astimezone(tz) if tz is not None else fixed_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(market_utils, "_fetch_live_market_state", lambda market: None)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert (
+        market_utils.is_market_open("us", bypass_cache=True, ignore_weekend=True) is expected
+    )
+
+
+def test_us_market_is_closed_on_weekend(monkeypatch):
+    from utils import market_utils
+
+    fixed = datetime.datetime(2026, 11, 28, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert market_utils.is_market_open("us", bypass_cache=True) is False
+
+
+@pytest.mark.parametrize(
+    ("year", "month", "day", "utc_hour", "utc_minute", "expected"),
+    [
+        # DST starts Sunday, 2026-03-08 at 02:00 ET. The first case is the
+        # weekend; the next two pin the UTC->EDT offset on the following Monday.
+        (2026, 3, 8, 7, 0, False),
+        (2026, 3, 9, 13, 15, False),  # 09:15 EDT, before the 09:30 open
+        (2026, 3, 9, 13, 30, True),   # 09:30 EDT, exact open
+    ],
+)
+def test_us_market_dst_spring_forward_utc(
+    monkeypatch, year, month, day, utc_hour, utc_minute, expected
+):
+    from utils import market_utils
+
+    fixed_utc = datetime.datetime(year, month, day, utc_hour, utc_minute, tzinfo=datetime.UTC)
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_utc.astimezone(tz) if tz is not None else fixed_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(market_utils, "_fetch_live_market_state", lambda market: None)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert (
+        market_utils.is_market_open("us", bypass_cache=True, ignore_weekend=True) is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("year", "month", "day", "utc_hour", "utc_minute", "expected"),
+    [
+        # DST ends Sunday, 2026-11-01. 13:30 UTC is 08:30 EST on Monday,
+        # before the 09:30 open; treating the instant as EDT would pass.
+        (2026, 11, 1, 6, 0, False),
+        (2026, 11, 2, 13, 30, False),
+    ],
+)
+def test_us_market_dst_fall_back_utc(
+    monkeypatch, year, month, day, utc_hour, utc_minute, expected
+):
+    from utils import market_utils
+
+    fixed_utc = datetime.datetime(year, month, day, utc_hour, utc_minute, tzinfo=datetime.UTC)
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_utc.astimezone(tz) if tz is not None else fixed_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(market_utils, "_fetch_live_market_state", lambda market: None)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert (
+        market_utils.is_market_open("us", bypass_cache=True, ignore_weekend=True) is expected
+    )
+
+
+def test_us_market_observed_independence_day_is_closed_utc(monkeypatch):
+    from utils import market_utils
+
+    # July 4, 2026 is Saturday, so NYSE observes the holiday on Friday July 3.
+    fixed_utc = datetime.datetime(2026, 7, 3, 14, 30, tzinfo=datetime.UTC)
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_utc.astimezone(tz) if tz is not None else fixed_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(market_utils, "_fetch_live_market_state", lambda market: None)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert market_utils.is_market_open("us", bypass_cache=True, ignore_weekend=True) is False
+
+
+def test_us_market_regular_day_without_early_close_utc(monkeypatch):
+    from utils import market_utils
+
+    # Wednesday before Thanksgiving 2027: a full 16:00 ET session.
+    fixed_utc = datetime.datetime(2027, 11, 24, 20, 0, tzinfo=datetime.UTC)
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_utc.astimezone(tz) if tz is not None else fixed_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(market_utils, "_fetch_live_market_state", lambda market: None)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert market_utils._us_early_close_date(datetime.date(2027, 11, 24)) is False
+    assert market_utils.is_market_open("us", bypass_cache=True, ignore_weekend=True) is True
+
+
+@pytest.mark.parametrize(("hour", "minute", "expected"), [(12, 59, True), (13, 0, False)])
+def test_cached_regular_state_cannot_outlive_early_close(monkeypatch, hour, minute, expected):
+    from utils import market_utils
+
+    fixed = datetime.datetime(
+        2026, 11, 27, hour, minute, tzinfo=ZoneInfo("America/New_York")
+    )
+
+    class FixedDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
+    fetch = MagicMock(return_value="REGULAR")
+    monkeypatch.setattr(market_utils, "datetime", FixedDateTime)
+    monkeypatch.setattr(market_utils, "_has_cached_key", lambda *args, **kwargs: False)
+    monkeypatch.setattr(market_utils, "get_cached", lambda *args, **kwargs: "REGULAR")
+    monkeypatch.setattr(market_utils, "_fetch_live_market_state", fetch)
+    monkeypatch.setattr(app_state.market, "update_market_status", lambda *args, **kwargs: None)
+
+    assert market_utils.is_market_open("us", ignore_weekend=True) is expected
+    fetch.assert_not_called()
+
+
+def test_initial_snapshot_cache_hit_reuses_payload_outside_sse_data_lock(monkeypatch):
+    import routes.stocks.stream as stream_mod
+
+    lock_owned: list[bool] = []
+    build_stocks = MagicMock(return_value={"us": [], "jp": [], "idx": []})
+
+    def fake_is_market_open(market):
+        lock_owned.append(app_state.cache.sse_data_lock._is_owned())
+        return market == "us"
+
+    monkeypatch.setattr(stream_mod, "is_market_open", fake_is_market_open)
+    monkeypatch.setattr(stream_mod, "_sse_data_generation", lambda: 11)
+    monkeypatch.setattr(stream_mod, "resolve_stocks_for_response", build_stocks)
+    monkeypatch.setattr(stream_mod, "resolve_indices_for_response", dict)
+    monkeypatch.setattr(stream_mod, "get_tradingview_ticker_tape_symbols", lambda **kwargs: [])
+    monkeypatch.setattr(app_state.market, "is_yf_rate_limited", lambda: False)
+    with stream_mod._initial_snapshot_lock:
+        stream_mod._initial_snapshot_cache[1] = (
+            11,
+            False,
+            True,
+            False,
+            '{"cached": true}',
+        )
+    try:
+        payload = stream_mod._initial_snapshot_for_mode(1)
+    finally:
+        with stream_mod._initial_snapshot_lock:
+            stream_mod._initial_snapshot_cache.pop(1, None)
+
+    assert payload == '{"cached": true}'
+    build_stocks.assert_not_called()
+    assert lock_owned == [False, False]
+
+
+def test_initial_snapshot_probe_error_does_not_hold_sse_data_lock(monkeypatch):
+    import routes.stocks.stream as stream_mod
+
+    lock_owned: list[bool] = []
+
+    def failing_probe(market):
+        lock_owned.append(app_state.cache.sse_data_lock._is_owned())
+        raise RuntimeError("market probe failed")
+
+    monkeypatch.setattr(stream_mod, "is_market_open", failing_probe)
+
+    with pytest.raises(RuntimeError, match="market probe failed"):
+        stream_mod._initial_snapshot_for_mode(1)
+
+    assert lock_owned == [False]
+    acquired = app_state.cache.sse_data_lock.acquire(blocking=False)
+    assert acquired is True
+    app_state.cache.sse_data_lock.release()
+
+
+def test_initial_snapshot_concurrent_connections_never_probe_under_lock(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    import routes.stocks.stream as stream_mod
+
+    lock_owned: list[bool] = []
+    barrier = threading.Barrier(2)
+
+    def fake_is_market_open(market):
+        lock_owned.append(app_state.cache.sse_data_lock._is_owned())
+        barrier.wait(timeout=5)
+        return market == "us"
+
+    monkeypatch.setattr(stream_mod, "is_market_open", fake_is_market_open)
+    monkeypatch.setattr(stream_mod, "_sse_data_generation", lambda: 12)
+    monkeypatch.setattr(
+        stream_mod,
+        "resolve_stocks_for_response",
+        lambda **kwargs: {"us": [], "jp": [], "idx": []},
+    )
+    monkeypatch.setattr(stream_mod, "resolve_indices_for_response", dict)
+    monkeypatch.setattr(stream_mod, "get_tradingview_ticker_tape_symbols", lambda **kwargs: [])
+    monkeypatch.setattr(app_state.market, "is_yf_rate_limited", lambda: False)
+    with stream_mod._initial_snapshot_lock:
+        stream_mod._initial_snapshot_cache.pop(1, None)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            payloads = list(
+                pool.map(lambda _: stream_mod._initial_snapshot_for_mode(1), range(2))
+            )
+    finally:
+        with stream_mod._initial_snapshot_lock:
+            stream_mod._initial_snapshot_cache.pop(1, None)
+
+    assert len(payloads) == 2
+    assert all(json.loads(payload)["stream_event"] == "initial_snapshot" for payload in payloads)
+    # Each connection probes US and JP, so two concurrent connections make
+    # four probe calls, all of which must run outside the data lock.
+    assert len(lock_owned) == 4
+    assert not any(lock_owned)
+
+
+def test_initial_snapshot_market_probe_runs_outside_sse_data_lock(monkeypatch):
+    import routes.stocks.stream as stream_mod
+
+    lock_owned: list[bool] = []
+
+    def fake_is_market_open(market):
+        # RLock.acquire(blocking=False) succeeds for the thread that already
+        # owns it, so it cannot prove that the lock was released. ``_is_owned``
+        # detects the owning thread and therefore fails if this call regresses
+        # back inside the ``with sse_data_lock`` block.
+        lock_owned.append(app_state.cache.sse_data_lock._is_owned())
+        return market == "us"
+
+    monkeypatch.setattr(stream_mod, "is_market_open", fake_is_market_open)
+    monkeypatch.setattr(
+        stream_mod,
+        "resolve_stocks_for_response",
+        lambda **kwargs: {"us": [], "jp": [], "idx": []},
+    )
+    monkeypatch.setattr(stream_mod, "resolve_indices_for_response", dict)
+    monkeypatch.setattr(
+        stream_mod, "get_tradingview_ticker_tape_symbols", lambda **kwargs: []
+    )
+    with stream_mod._initial_snapshot_lock:
+        stream_mod._initial_snapshot_cache.pop(1, None)
+    try:
+        payload = stream_mod._initial_snapshot_for_mode(1)
+    finally:
+        with stream_mod._initial_snapshot_lock:
+            stream_mod._initial_snapshot_cache.pop(1, None)
+
+    assert json.loads(payload)["is_us_market_open"] is True
+    # Both probes must run before the data lock is taken; otherwise a live
+    # Yahoo metadata fetch would block every stock producer and SSE reader.
+    assert lock_owned == [False, False]

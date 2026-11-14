@@ -85,6 +85,101 @@ def _sse_data_generation() -> int:
         return 0
 
 
+def _initial_snapshot_market_flags() -> tuple[bool, bool]:
+    """Return the US/JP market-open flags for an initial snapshot.
+
+    Called before ``sse_data_lock`` is acquired. ``is_market_open`` may perform
+    a live Yahoo metadata request on a cache miss; holding the process-wide SSE
+    data lock across that network I/O would stall every stock producer and
+    every other SSE connection behind it.
+    """
+    return bool(is_market_open("us")), bool(is_market_open("jp"))
+
+
+def _build_initial_snapshot_payload(
+    sse_mode: int,
+    *,
+    snapshot_us_open: bool,
+    snapshot_jp_open: bool,
+) -> str:
+    """Serialize the shared initial snapshot for *sse_mode*.
+
+    Must be called while holding ``app_state.cache.sse_data_lock`` so the
+    stock/index caches cannot change while the payload is being assembled.
+    """
+    stocks_payload = resolve_stocks_for_response(
+        include_portfolio=False, real_data_only=(sse_mode == 2)
+    )
+    for market in ("us", "jp", "idx"):
+        if market in stocks_payload and isinstance(stocks_payload[market], list):
+            for s in stocks_payload[market]:
+                if isinstance(s, dict) and "symbol" in s:
+                    s["tv_symbol"] = s.get("tv_symbol") or get_tradingview_symbol(
+                        s["symbol"], exchange=s.get("exchange")
+                    )
+
+    indices_payload = resolve_indices_for_response()
+    us_stocks = stocks_payload.get("us")
+    jp_stocks = stocks_payload.get("jp")
+    all_stocks_list = (us_stocks if isinstance(us_stocks, list) else []) + (
+        jp_stocks if isinstance(jp_stocks, list) else []
+    )
+    tv_ticker_tape = get_tradingview_ticker_tape_symbols(
+        indices=indices_payload,
+        stocks=all_stocks_list,
+    )
+
+    return json.dumps(
+        _json_safe(
+            {
+                "stream_event": "initial_snapshot",
+                "sse_mode": sse_mode,
+                "stocks": stocks_payload,
+                "indices": indices_payload,
+                "tv_ticker_tape": tv_ticker_tape,
+                "is_us_market_open": snapshot_us_open,
+                "is_jp_market_open": snapshot_jp_open,
+            }
+        ),
+        allow_nan=False,
+    )
+
+
+def _initial_snapshot_for_mode(sse_mode: int) -> str:
+    """Return a cached or freshly built initial payload for *sse_mode*."""
+    # Probe the network-backed market state BEFORE taking the data lock. The
+    # resolved stock/index generation is checked under the lock so a payload is
+    # only reused for the exact data generation it was built from.
+    snapshot_us_open, snapshot_jp_open = _initial_snapshot_market_flags()
+    with app_state.cache.sse_data_lock:
+        snapshot_gen = _sse_data_generation()
+        snapshot_yf = bool(app_state.market.is_yf_rate_limited())
+        with _initial_snapshot_lock:
+            cached_snapshot = _initial_snapshot_cache.get(sse_mode)
+        if cached_snapshot is not None and cached_snapshot[:4] == (
+            snapshot_gen,
+            snapshot_yf,
+            snapshot_us_open,
+            snapshot_jp_open,
+        ):
+            return cached_snapshot[4]
+
+        initial_payload = _build_initial_snapshot_payload(
+            sse_mode,
+            snapshot_us_open=snapshot_us_open,
+            snapshot_jp_open=snapshot_jp_open,
+        )
+        with _initial_snapshot_lock:
+            _initial_snapshot_cache[sse_mode] = (
+                snapshot_gen,
+                snapshot_yf,
+                snapshot_us_open,
+                snapshot_jp_open,
+                initial_payload,
+            )
+        return initial_payload
+
+
 @stream_bp.route("/api/stocks/stream/ticket", methods=["POST"])
 @rate_limit(max_requests=30, window_seconds=60)
 def api_create_sse_ticket() -> Any:
@@ -222,68 +317,7 @@ def api_stocks_stream() -> Any:
                     )
 
                     if send_initial:
-                        with app_state.cache.sse_data_lock:
-                            snapshot_gen = _sse_data_generation()
-                            snapshot_yf = bool(app_state.market.is_yf_rate_limited())
-                            snapshot_us_open = bool(is_market_open("us"))
-                            snapshot_jp_open = bool(is_market_open("jp"))
-                            with _initial_snapshot_lock:
-                                cached_snapshot = _initial_snapshot_cache.get(sse_mode)
-                            if (
-                                cached_snapshot is not None
-                                and cached_snapshot[:4]
-                                == (snapshot_gen, snapshot_yf, snapshot_us_open, snapshot_jp_open)
-                            ):
-                                initial_payload = cached_snapshot[4]
-                            else:
-                                stocks_payload = resolve_stocks_for_response(
-                                    include_portfolio=False, real_data_only=(sse_mode == 2)
-                                )
-                                for market in ("us", "jp", "idx"):
-                                    if market in stocks_payload and isinstance(
-                                        stocks_payload[market], list
-                                    ):
-                                        for s in stocks_payload[market]:
-                                            if isinstance(s, dict) and "symbol" in s:
-                                                s["tv_symbol"] = s.get(
-                                                    "tv_symbol"
-                                                ) or get_tradingview_symbol(
-                                                    s["symbol"], exchange=s.get("exchange")
-                                                )
-
-                                indices_payload = resolve_indices_for_response()
-                                us_stocks = stocks_payload.get("us")
-                                jp_stocks = stocks_payload.get("jp")
-                                all_stocks_list = (
-                                    us_stocks if isinstance(us_stocks, list) else []
-                                ) + (jp_stocks if isinstance(jp_stocks, list) else [])
-                                tv_ticker_tape = get_tradingview_ticker_tape_symbols(
-                                    indices=indices_payload,
-                                    stocks=all_stocks_list,
-                                )
-
-                                initial_payload = json.dumps(
-                                    _json_safe(
-                                        {
-                                            "stream_event": "initial_snapshot",
-                                            "sse_mode": sse_mode,
-                                            "stocks": stocks_payload,
-                                            "indices": indices_payload,
-                                            "tv_ticker_tape": tv_ticker_tape,
-                                            "is_us_market_open": snapshot_us_open,
-                                            "is_jp_market_open": snapshot_jp_open,
-                                        }
-                                    ),
-                                    allow_nan=False,
-                                )
-                                with _initial_snapshot_lock:
-                                    _initial_snapshot_cache[sse_mode] = (
-                                        snapshot_gen,
-                                        snapshot_yf,
-                                        snapshot_us_open,
-                                        snapshot_jp_open,
-                                        initial_payload,
-                                    )
+                        initial_payload = _initial_snapshot_for_mode(sse_mode)
                         initial_frame = f"retry: 3000\ndata: {initial_payload}\n\n"
                         initial_seq = sse_event_log.emit(sse_mode, "frame", initial_frame)
                         yield f"id: {initial_seq}\n{initial_frame}"

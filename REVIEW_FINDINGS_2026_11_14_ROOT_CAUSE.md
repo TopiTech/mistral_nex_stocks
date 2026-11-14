@@ -59,6 +59,9 @@ DB・データ層 / 共通モジュール・設定 / API 境界）を対象に�
 | FE-13 | UI/メモリ | Low | `static/js/state.js` | `purgeStockKeyCaches` が `historyPrefetchCache` の `stockKey|period|interval` キーを削除できていなかった | プレフィックス走査で全期間・全 interval を削除 | 同上 |
 | FE-14 | UI/チャート | Low | `static/js/chart.js` | animation 無効時に AI テクニカルラインが初回描画されなかった | ライン設定後に `chart.update("none")` | 同上 |
 | FE-15 | UI/鮮度 | Low | `static/js/state.js`, `ui.js` | `stockDetailsCache` に TTL がなく、開きっぱなしのタブで PER/時価総額が更新されなかった | 15 分 TTL と `stockDetailsCacheAt` を追加 | 同上 |
+| RC-26 | SSE/並行性 | High | `routes/stocks/stream.py` | 初期スナップショットが `sse_data_lock` 保持中に `is_market_open()` を呼び、キャッシュミス時の Yahoo メタデータ取得で全 SSE/在庫更新をブロックしていた | 市場フラグをロック外で取得し、ロック内は世代確認とスナップショット構築だけに限定 | `test_initial_snapshot_market_probe_runs_outside_sse_data_lock`、キャッシュヒット/例外/同時接続の各テスト |
+| RC-27 | 市場判定 | Medium | `utils/market_utils.py` | 米国時間フォールバックが NYSE の 13:00 ET 早期閉場を考慮せず、さらに 5 分キャッシュの `REGULAR` が閉場後も残り得た | `_us_early_close_date()` を追加し、早期閉場の時刻判定とキャッシュされた `REGULAR` の閉場後補正を実装 | `test_us_early_close_schedule_matches_nyse_calendar`、UTC/DST/週末/observed holiday/キャッシュ遷移テスト |
+| RC-28 | API/文書 | Low | `schemas/ai_portfolio.py` | rebalance の空テーマに関する docstring が、後方互換の `tech` フォールバック実装と矛盾していた | 実行時挙動は維持し、docstring を実装契約に一致させた | 既存 schema contract テスト |
 
 ## 3. 誤検知・意図された仕様として除外した項目
 
@@ -86,8 +89,8 @@ DB・データ層 / 共通モジュール・設定 / API 境界）を対象に�
 
 | チェック | 結果 |
 | :--- | :--- |
-| pytest 全件 | 4344 tests collected / 全パス（`-n auto --dist=loadfile --timeout=120`） |
-| 新規回帰テスト | `tests/test_review_2026_11_14_root_cause_fixes.py` 21 件 全パス（xdist / 非 xdist 両方） |
+| pytest 全件 | 4414 tests collected / exit 0（`-n auto --dist=loadfile --timeout=120`、POSIX限定5件はskip） |
+| 新規回帰テスト | `tests/test_review_2026_11_14_root_cause_fixes.py` 46 件 全パス（xdist / 非 xdist 両方） |
 | ruff | All checks passed |
 | flake8 (E9,F63,F7,F82) | 0 |
 | mypy (pinned 2.4.1) | Success: no issues found in 125 source files |
@@ -96,8 +99,18 @@ DB・データ層 / 共通モジュール・設定 / API 境界）を対象に�
 | bandit (medium+) | No issues identified |
 | npm run build (tsc + verify-generated + eslint + prettier) | exit 0 |
 | npm audit (high+) | 0 vulnerabilities |
+| coverage (CI 75% gate) | 82%台（実測 82.39%、4409 passed / 5 POSIX-only skipped） |
+| SRI check (CDN script integrity) | pass |
 | startup smoke (`tests/startup_smoke_runner.py`, `MNS_SKIP_BOOTSTRAP=0`) | 成功 |
 | git diff --check | whitespace error 0 |
+| git status | 意図したソース/テスト/文書の変更のみ。未追跡の調査用ファイルなし |
+
+回帰テストの感度は一時的な変異で確認した。SSE の市場フラグ取得を再び
+`sse_data_lock` 内へ戻すと4テスト、早期閉場の close 時刻を16:00へ戻すと5テスト、
+キャッシュされた `REGULAR` の補正を無効化すると1テストが、それぞれ失敗する。
+加えて、UTC->ET 変換の無効化で DST 2テスト、週末ガードの反転で1テスト、
+祝日判定の無効化で1テスト、早期閉場判定の常時 True 化で1テストが失敗することを
+確認した。変異はすべて元のツリーへ復元済みで、最終検証は上記のツリーで実施している。
 
 ## 5. 残存する既知の制約（欠陥ではなく設計課題）
 

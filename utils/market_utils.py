@@ -171,7 +171,8 @@ def is_us_market_holiday(target_date: Any = None) -> bool:
         Thanksgiving, Christmas Day.
 
     Early-close (half-day) sessions are NOT covered here: a half day is still a
-    trading day and is handled by the session-hours check in ``is_market_open``.
+    trading day and is handled by ``_us_early_close_date`` in
+    ``is_market_open``.
     """
     if target_date is None:
         try:
@@ -214,6 +215,27 @@ def is_us_market_holiday(target_date: Any = None) -> bool:
     holidays.add(_us_observed_holiday(year + 1, 1, 1))
 
     return target_date in holidays
+
+
+def _us_early_close_date(target_date: dt_date) -> bool:
+    """Return True when NYSE closes at 13:00 ET on *target_date*.
+
+    NYSE early closes are the Friday after Thanksgiving, Christmas Eve when it
+    is a weekday and not the observed holiday, and July 3 when it is a weekday
+    and the Independence Day observance does not already close the market.
+    Weekend and full-holiday dates return False; they are not trading days at
+    all. Times are the regular-session equity close (options close at 13:15).
+    """
+    if target_date.weekday() >= 5 or is_us_market_holiday(target_date):
+        return False
+    if (target_date.month, target_date.day) in ((7, 3), (12, 24)):
+        return True
+    thanksgiving = dt_date(
+        target_date.year,
+        11,
+        _get_nth_weekday_of_month(target_date.year, 11, 3, 4),
+    )
+    return target_date == thanksgiving + dt_timedelta(days=1)
 
 
 def _is_market_session_open(
@@ -323,6 +345,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
     Priority:
     1. Weekend check (immediate False unless ``ignore_weekend`` is set)
     2. Yahoo Finance live metadata (REGULAR/CLOSED) with 5-minute caching
+       (a cached REGULAR state cannot outlive a scheduled 13:00 early close)
     3. Time-based heuristic (JST for JP, ET for US)
 
     Args:
@@ -384,6 +407,23 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         else:
             live_state = None
 
+    # The 5-minute cache can still report REGULAR for a few minutes after a
+    # scheduled NYSE early close. The exchange calendar is authoritative for
+    # that transition, so do not let a stale cached REGULAR state keep the
+    # market marked open until the TTL expires. A direct (bypass_cache) probe
+    # is left untouched: the caller explicitly asked for the live state.
+    if (
+        not bypass_cache
+        and live_state == "REGULAR"
+        and market_type in ("us", "idx")
+    ):
+        try:
+            ny_live = now_utc.astimezone(ZoneInfo("America/New_York"))
+        except Exception:
+            ny_live = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
+        if _us_early_close_date(ny_live.date()) and ny_live.time() >= dt_time(13, 0):
+            live_state = "CLOSED"
+
     if live_state in ("REGULAR", "CLOSED"):
         app_state.market.update_market_status(market_type, live_state)
         return live_state == "REGULAR"
@@ -418,7 +458,10 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         if is_us_market_holiday(ny.date()):
             app_state.market.update_market_status(market_type, "CLOSED")
             return False
-        is_open = _is_market_session_open(ny.time(), dt_time(9, 30), dt_time(16, 0))
+        close_time = (
+            dt_time(13, 0) if _us_early_close_date(ny.date()) else dt_time(16, 0)
+        )
+        is_open = _is_market_session_open(ny.time(), dt_time(9, 30), close_time)
         app_state.market.update_market_status(market_type, "REGULAR" if is_open else "CLOSED")
         return is_open
 

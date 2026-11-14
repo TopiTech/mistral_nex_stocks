@@ -384,6 +384,8 @@ def get_cached_context_with_negative_cache(
         return ""
     text = result if isinstance(result, str) else ""
     if text.strip():
+        if bypass_negative_cache:
+            clear_cache_key(neg_key)
         return text
 
     if not bypass_negative_cache and negative_ttl > 0:

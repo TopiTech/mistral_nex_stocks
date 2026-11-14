@@ -217,6 +217,7 @@ async function ensureStockDetails(wrapper) {
     banner.appendChild(label);
 
     const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
     retryBtn.textContent = "再試行";
     retryBtn.className = "detail-error-retry-btn";
     retryBtn.addEventListener("click", (evt) => {
@@ -499,7 +500,13 @@ function updateStockUI(wrapper, stock) {
     if (ptsEl.textContent !== ptsTxt) {
       ptsEl.textContent = ptsTxt;
     }
-    ptsEl.hidden = !ptsTxt;
+    if (ptsTxt) {
+      ptsEl.hidden = false;
+      ptsEl.removeAttribute("aria-hidden");
+    } else {
+      ptsEl.hidden = true;
+      ptsEl.setAttribute("aria-hidden", "true");
+    }
   }
 
   if (isPortfolioTab) {
@@ -1217,7 +1224,11 @@ function createStockCard(stock, marketContext) {
     ptsTxt = `PTS ${stock.pts_price}`;
   }
   const ptsEl = createEl("div", "compact-pts", ptsTxt);
-  if (!ptsTxt) {
+  if (ptsTxt) {
+    ptsEl.hidden = false;
+    ptsEl.removeAttribute("aria-hidden");
+  } else {
+    ptsEl.hidden = true;
     ptsEl.setAttribute("aria-hidden", "true");
   }
   right.appendChild(ptsEl);
@@ -1593,7 +1604,10 @@ function toggleDetail(wrapper) {
       const period = isPortfolio
         ? "3mo"
         : getChartPref(stockKey, "period", "3mo");
-      refreshStockChart(wrapper, period);
+      const interval = isPortfolio
+        ? "auto"
+        : getChartPref(stockKey, "interval", "auto");
+      refreshStockChart(wrapper, period, interval);
       ensureStockDetails(wrapper);
     }
   } else {
@@ -1825,6 +1839,10 @@ function computeHoldingsHash(holdings) {
     .join("|");
 }
 
+function isUsdHolding(stock) {
+  return Boolean(stock && (stock.currency === "USD" || stock.market === "us"));
+}
+
 function drawPortfolioSummaryChart(holdings) {
   const canvas = DOM.get("pf-summary-canvas");
   if (!canvas) return;
@@ -1837,10 +1855,9 @@ function drawPortfolioSummaryChart(holdings) {
   const usdJpyRate =
     Number.isFinite(numUsdJpy) && numUsdJpy > 1.0 ? numUsdJpy : null;
   const isMixedCurrency =
-    holdings.some((s) => s.currency === "USD") &&
-    holdings.some((s) => s.currency === "JPY");
+    holdings.some(isUsdHolding) && holdings.some((s) => !isUsdHolding(s));
 
-  if (holdings.some((s) => s.currency === "USD") && !usdJpyRate) {
+  if (holdings.some(isUsdHolding) && !usdJpyRate) {
     document
       .getElementById("pf-summary-loading")
       ?.style.setProperty("display", "block");
@@ -1879,7 +1896,7 @@ function drawPortfolioSummaryChart(holdings) {
       days: dayMap,
       shares: toFiniteNumber(stock.shares, 0),
       avgPrice: toFiniteNumber(stock.avg_price, 0),
-      rate: stock.currency === "USD" ? usdJpyRate : 1.0,
+      rate: isUsdHolding(stock) ? usdJpyRate : 1.0,
     });
   });
 
@@ -1894,8 +1911,17 @@ function drawPortfolioSummaryChart(holdings) {
     return;
   }
 
-  // 2. 日付ごとに全銘柄の「時価 - コスト」を合算。データ欠損時は前方補填。
+  // 2. 日付ごとに全銘柄の時価を合算。データ欠損時は初回終値（開始前休場）と直近値（前方補填）で補填。
   const lastPrices = new Map(); // stockKey -> price
+  holdings.forEach((stock) => {
+    const stockKey = makeStockKey(stock.market, stock.symbol);
+    const info = stockHistoryMap.get(stockKey);
+    if (!info || info.days.size === 0) return;
+    const firstDate = sortedDates.find((d) => info.days.has(d));
+    if (firstDate) {
+      lastPrices.set(stockKey, info.days.get(firstDate));
+    }
+  });
 
   const dataPoints = sortedDates.map((dateStr) => {
     let totalValue = 0;
@@ -1907,7 +1933,7 @@ function drawPortfolioSummaryChart(holdings) {
 
       let price = info.days.get(dateStr);
       if (price === undefined) {
-        price = lastPrices.get(stockKey) || 0; // 前方の有効な値を採用
+        price = lastPrices.get(stockKey) ?? 0; // 開始前休場・欠損日は有効な終値で補填
       } else {
         lastPrices.set(stockKey, price);
       }
@@ -2016,7 +2042,7 @@ function calculatePortfolioMetrics(holdings, currentFxRate, prevFxRate) {
     const currentPrice = toFiniteNumber(stock.price, 0);
     const changeLocal = toFiniteNumber(stock.change, 0);
 
-    const isUSD = stock.currency === "USD" || stock.market === "us";
+    const isUSD = isUsdHolding(stock);
     const curRate = isUSD ? validCurrentFx : 1.0;
     const prvRate = isUSD ? validPrevFx : 1.0;
 
@@ -2053,7 +2079,7 @@ function updatePortfolioHeader(
 ) {
   // USD を含む保有では為替レート欠損時に「1.0」で誤った JPY 合計を出さない。
   // mixed 判定でなく「USD を含むか」で待機表示にする(全USD構成でも同様)。
-  const hasUsdHoldings = holdings.some((s) => s.currency === "USD");
+  const hasUsdHoldings = holdings.some(isUsdHolding);
   if (usdJpyRate == null && hasUsdHoldings) {
     const valEl = DOM.get("pf-total-value");
     if (valEl) valEl.textContent = "為替データ取得中...";
@@ -2124,7 +2150,7 @@ function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
       const sector = stock.sector || "Other";
       const shares = toFiniteNumber(stock.shares, 0);
       const price = toFiniteNumber(stock.price, 0);
-      const rate = stock.currency === "USD" ? usdJpyRate : 1.0;
+      const rate = isUsdHolding(stock) ? usdJpyRate : 1.0;
       const value = shares * price * rate;
       if (value > 0) {
         sectorMap[sector] = (sectorMap[sector] || 0) + value;
@@ -2708,8 +2734,15 @@ let aiDrawerTrigger = null;
 // 送信ごとに単調増加する生成トークン。古いリクエストの finally が
 // 新しいセッションの入力状態を上書きするのを防ぐ(FE-ui3-1)。
 let aiDrawerSendGeneration = 0;
+let aiDrawerAbortController = null;
 
 function openAiDrawer(symbol, name, market) {
+  aiDrawerSendGeneration += 1;
+  if (aiDrawerAbortController) {
+    aiDrawerAbortController.abort();
+    aiDrawerAbortController = null;
+  }
+
   aiDrawerTrigger =
     document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -2723,6 +2756,7 @@ function openAiDrawer(symbol, name, market) {
   const nameEl = document.getElementById("ai-drawer-name");
   const messagesEl = document.getElementById("ai-drawer-chat-messages");
   const inputEl = document.getElementById("aiDrawerInput");
+  const sendBtn = document.getElementById("sendAiDrawerBtn");
 
   if (symEl) symEl.textContent = currentDrawerSymbol;
   if (nameEl) nameEl.textContent = currentDrawerName;
@@ -2768,7 +2802,12 @@ function openAiDrawer(symbol, name, market) {
       lockBodyScroll();
     }
   }
+  if (sendBtn) {
+    sendBtn.disabled = false;
+    sendBtn.textContent = "送信";
+  }
   if (inputEl) {
+    inputEl.disabled = false;
     inputEl.value = "";
     setTimeout(() => {
       // Do not restore focus into an inert, already-closed drawer when the
@@ -2821,10 +2860,19 @@ async function sendAiDrawerMessage() {
     return;
   }
   const generation = ++aiDrawerSendGeneration;
+  if (aiDrawerAbortController) {
+    aiDrawerAbortController.abort();
+  }
+  const requestController = new AbortController();
+  aiDrawerAbortController = requestController;
 
   inputEl.disabled = true;
   if (sendBtn) sendBtn.disabled = true;
-  const originalBtnText = sendBtn ? sendBtn.textContent : "";
+  const originalBtnText = sendBtn
+    ? sendBtn.textContent && sendBtn.textContent !== "送信中..."
+      ? sendBtn.textContent
+      : "送信"
+    : "";
   if (sendBtn) sendBtn.textContent = "送信中...";
 
   const userMsg = document.createElement("div");
@@ -2839,6 +2887,9 @@ async function sendAiDrawerMessage() {
   loadingMsg.textContent = "考え中...";
   messagesEl.appendChild(loadingMsg);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  const isCurrentGeneration = () =>
+    generation === aiDrawerSendGeneration && !requestController.signal.aborted;
 
   try {
     // M-5: token generation is centralized in createRequestToken (single
@@ -2864,6 +2915,7 @@ async function sendAiDrawerMessage() {
     // AI replies. Split on real newlines and render as separate text nodes so
     // \n becomes visual line breaks without ever passing through HTML parsing.
     const renderReply = (replyText) => {
+      if (!isCurrentGeneration()) return;
       loadingMsg.replaceChildren();
       const headerStrong = document.createElement("strong");
       headerStrong.textContent = "【AI回答】";
@@ -2880,18 +2932,23 @@ async function sendAiDrawerMessage() {
       }
     };
 
-    // C-2: ストリーミングを試み、非対応/失敗時はポーリングへフォールバック。
+    // C-2: ストリーミングを試み、非対応/フォールバック対象失敗時はポーリングへ移行。
     let reply = null;
     let streamApiError = null;
     if (typeof streamChatReply === "function") {
       try {
-        reply = await streamChatReply(payload, (partial) => {
-          renderReply(partial);
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        });
+        reply = await streamChatReply(
+          payload,
+          (partial) => {
+            if (!isCurrentGeneration()) return;
+            renderReply(partial);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          },
+          { signal: requestController.signal },
+        );
       } catch (streamErr) {
-        if (streamErr && streamErr.isMistralError) {
-          // サーバーからの明示的なAPIエラー：メッセージをそのまま表示。
+        if (!streamErr || !streamErr.isStreamFallback) {
+          // サーバーからの明示的なHTTP/APIエラーや中断：ポーリングによる二重POSTを行わない。
           streamApiError = streamErr;
         } else {
           reply = null;
@@ -2899,10 +2956,13 @@ async function sendAiDrawerMessage() {
       }
     }
     if (streamApiError) throw streamApiError;
+    if (!isCurrentGeneration()) return;
 
     if (reply === null) {
       if (typeof chatPollingReply === "function") {
-        reply = await chatPollingReply(payload);
+        reply = await chatPollingReply(payload, {
+          signal: requestController.signal,
+        });
       } else {
         // フォールバック: 従来のインライン・ポーリング
         let data = {};
@@ -2930,12 +2990,14 @@ async function sendAiDrawerMessage() {
                   return { response: res, data: json };
                 };
         for (let attempt = 0; attempt <= pollMax; attempt++) {
+          if (!isCurrentGeneration()) return;
           const { response: res, data: fetched } = await fetchFn("/api/chat", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify(payload),
+            signal: requestController.signal,
           });
           data = fetched || {};
           if (!res.ok) {
@@ -2951,11 +3013,32 @@ async function sendAiDrawerMessage() {
             resOk = true;
             break;
           }
-          if (typeof sleep === "function") {
-            await sleep(pollInterval);
-          } else {
-            await new Promise((resolve) => setTimeout(resolve, pollInterval));
-          }
+          await new Promise((resolve, reject) => {
+            if (requestController.signal.aborted) {
+              const abortErr = new Error("Aborted");
+              abortErr.name = "AbortError";
+              reject(abortErr);
+              return;
+            }
+            let timer = null;
+            const onAbort = () => {
+              if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
+              }
+              const abortErr = new Error("Aborted");
+              abortErr.name = "AbortError";
+              reject(abortErr);
+            };
+            requestController.signal.addEventListener("abort", onAbort, {
+              once: true,
+            });
+            timer = setTimeout(() => {
+              timer = null;
+              requestController.signal.removeEventListener("abort", onAbort);
+              resolve();
+            }, pollInterval);
+          });
         }
         if (!resOk) {
           throw new Error("AI応答の生成がタイムアウトしました");
@@ -2963,10 +3046,23 @@ async function sendAiDrawerMessage() {
         reply = data.reply || data.summary || "応答を取得できませんでした";
       }
     }
+    if (!isCurrentGeneration()) return;
     renderReply(reply);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   } catch (err) {
+    if (
+      generation !== aiDrawerSendGeneration ||
+      err?.name === "AbortError" ||
+      requestController.signal.aborted
+    ) {
+      return;
+    }
     loadingMsg.textContent = `エラー: ${err.message || "接続エラーが発生しました。"}`;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   } finally {
+    if (aiDrawerAbortController === requestController) {
+      aiDrawerAbortController = null;
+    }
     // 現行の送信だけが入力状態を復元する(古い完了が新しいセッションの
     // 「送信中...」表示を壊すのを防ぐ)。
     if (generation === aiDrawerSendGeneration) {
@@ -2981,9 +3077,9 @@ async function sendAiDrawerMessage() {
       if (!overlay || !overlay.classList.contains("hidden")) {
         inputEl.focus();
       }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
   }
-  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function updateTabCounts() {
@@ -3075,8 +3171,13 @@ function initAiDrawerEvents() {
   overlay?.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
-      e.preventDefault();
-      closeAiDrawer();
+      if (typeof window.closeTopmostOverlayOnEscape === "function") {
+        window.closeTopmostOverlayOnEscape(e);
+      } else {
+        e.preventDefault();
+        if (typeof e.stopPropagation === "function") e.stopPropagation();
+        closeAiDrawer();
+      }
     } else if (e.key === "Tab") {
       trapDrawerFocus(e, overlay);
     }
@@ -3101,8 +3202,13 @@ function initStockDetailDrawerEvents() {
   overlay?.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
-      e.preventDefault();
-      closeStockDetailDrawer();
+      if (typeof window.closeTopmostOverlayOnEscape === "function") {
+        window.closeTopmostOverlayOnEscape(e);
+      } else {
+        e.preventDefault();
+        if (typeof e.stopPropagation === "function") e.stopPropagation();
+        closeStockDetailDrawer();
+      }
     } else if (e.key === "Tab") {
       trapDrawerFocus(e, overlay);
     }
@@ -3302,6 +3408,12 @@ function openStockDetailDrawer(stock, wrapper) {
       if (chartControls) chartContent.appendChild(chartControls);
       if (chartContainer) chartContent.appendChild(chartContainer);
       if (pnlContainer) chartContent.appendChild(pnlContainer);
+      if (
+        wrapper?.__aiTechnicalLines &&
+        typeof renderAiTechnicalLinesSummary === "function"
+      ) {
+        renderAiTechnicalLinesSummary(wrapper, wrapper.__aiTechnicalLines);
+      }
     }
 
     if (aiContent) {
@@ -3379,13 +3491,16 @@ function openStockDetailDrawer(stock, wrapper) {
     const period = isPortfolio
       ? "3mo"
       : getChartPref(stockKey, "period", "3mo");
+    const interval = isPortfolio
+      ? "auto"
+      : getChartPref(stockKey, "interval", "auto");
 
     if (stockDetailDrawerRefreshTimer !== null) {
       clearTimeout(stockDetailDrawerRefreshTimer);
     }
     stockDetailDrawerRefreshTimer = setTimeout(() => {
       stockDetailDrawerRefreshTimer = null;
-      refreshStockChart(wrapper, period);
+      refreshStockChart(wrapper, period, interval);
       ensureStockDetails(wrapper);
     }, 50);
   }
@@ -3662,7 +3777,7 @@ async function triggerAiTechnicalLines(wrapper) {
     showToast("✨ AIテクニカル線の描画を適用しました", "success");
 
     renderAiTechnicalLinesSummary(targetWrapper, data);
-    refreshStockChart(targetWrapper, period);
+    refreshStockChart(targetWrapper, period, interval);
 
     // If Fullscreen modal is open, redraw it too
     const fsModal = document.getElementById("chart-fullscreen-modal");
@@ -3670,7 +3785,7 @@ async function triggerAiTechnicalLines(wrapper) {
       const fsCanvas = document.getElementById("fs-chart-canvas");
       if (fsCanvas) {
         const freshHistory =
-          getFreshPrefetchedHistory(stockKey, period) || prefetch;
+          getFreshPrefetchedHistory(stockKey, period, interval) || prefetch;
         if (freshHistory) {
           drawChart(
             targetWrapper,
@@ -3679,6 +3794,8 @@ async function triggerAiTechnicalLines(wrapper) {
             {
               targetCanvas: fsCanvas,
               aiTechnicalLines: data,
+              period,
+              interval,
             },
           );
         }
@@ -4167,8 +4284,13 @@ function openFullscreenChart(wrapper) {
   modal._keydownHandler = (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
-      e.preventDefault();
-      closeFsChartModal();
+      if (typeof window.closeTopmostOverlayOnEscape === "function") {
+        window.closeTopmostOverlayOnEscape(e);
+      } else {
+        e.preventDefault();
+        if (typeof e.stopPropagation === "function") e.stopPropagation();
+        closeFsChartModal();
+      }
       return;
     }
     if (e.key !== "Tab") return;
@@ -4211,6 +4333,10 @@ function closeFsChartModal() {
     modal.setAttribute("aria-hidden", "true");
     modal.setAttribute("inert", "");
     delete modal.dataset.stockKey;
+    const fsCanvasWrapper = document.getElementById("fs-chart-canvas-wrapper");
+    fsCanvasWrapper
+      ?.querySelectorAll(".chart-error")
+      .forEach((el) => el.remove());
     const fsCanvas = document.getElementById("fs-chart-canvas");
     if (fsCanvas) destroyChart(fsCanvas);
     const tvContainer = document.getElementById("tradingview-chart-container");

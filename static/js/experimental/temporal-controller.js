@@ -43,6 +43,7 @@
       // 2. Timeline slider UI
       if (this.els.timeSlider) {
         this._sliderHandler = (e) => {
+          this.stopTimelapse();
           const val = parseInt(e.target.value, 10);
           const historyKey = `${this.state.state.selectedSymbol}:${this.state.state.timeGranularity}`;
           const history = this.historyCache.get(historyKey) || [];
@@ -59,15 +60,7 @@
 
       // 3. Granularity button pills
       if (this.els.granularityGroup) {
-        const initBtns =
-          this.els.granularityGroup.querySelectorAll("[data-granularity]");
-        initBtns.forEach((btn) => {
-          const gran = btn.getAttribute("data-granularity");
-          const isActive = gran === this.state.state.timeGranularity;
-          btn.classList.toggle("active", isActive);
-          btn.setAttribute("aria-pressed", String(isActive));
-          btn.setAttribute("tabindex", isActive ? "0" : "-1");
-        });
+        this.syncGranularityUI(this.state.state.timeGranularity);
 
         this._granularityHandler = (e) => {
           const btn = e.target.closest("[data-granularity]");
@@ -232,10 +225,7 @@
         this._unsubState = null;
       }
       this.stopTimelapse();
-      for (const timerId of this.retryTimers) {
-        clearTimeout(timerId);
-      }
-      this.retryTimers.clear();
+      this.clearRetryTimers();
       for (const controller of this.inFlightRequests.values()) {
         controller.abort();
       }
@@ -316,6 +306,9 @@
       const cleanSymbol = String(symbol).trim().toUpperCase();
       const period = granularity || "3mo";
       const cacheKey = `${cleanSymbol}:${period}`;
+      if (this.activeHistoryKey !== cacheKey) {
+        this.clearRetryTimers();
+      }
       this.activeHistoryKey = cacheKey;
 
       // A new symbol/period supersedes every other pending history request.
@@ -348,12 +341,28 @@
 
       try {
         const stock = this.state.state.stocks.get(cleanSymbol);
-        const market = stock?.market || this.state.state.market || "us";
+        const candidateMarket = String(
+          stock?.market || this.state.state.market || "",
+        ).toLowerCase();
+        const market =
+          candidateMarket === "us" ||
+          candidateMarket === "jp" ||
+          candidateMarket === "idx"
+            ? candidateMarket
+            : /\.T$/i.test(cleanSymbol)
+              ? "jp"
+              : cleanSymbol.startsWith("^") || cleanSymbol.includes("=X")
+                ? "idx"
+                : "us";
         const url = `/api/stock-history?symbol=${encodeURIComponent(cleanSymbol)}&market=${encodeURIComponent(market)}&period=${encodeURIComponent(period)}`;
 
-        const res = await (global.apiFetch || fetch)(url, {
-          signal: controller.signal,
-        });
+        const res = global.apiFetch
+          ? await global.apiFetch(
+              url,
+              { signal: controller.signal },
+              { showToast: false },
+            )
+          : await fetch(url, { signal: controller.signal });
         const data =
           res && typeof res.json === "function"
             ? await res.json().catch(() => null)
@@ -433,12 +442,33 @@
           if (this.els.timeSlider) {
             this.els.timeSlider.disabled = true;
           }
+          this.syncGranularityUI(this.state.state.timeGranularity);
         }
       } finally {
         if (this.inFlightRequests.get(cacheKey) === controller) {
           this.inFlightRequests.delete(cacheKey);
         }
       }
+    }
+
+    clearRetryTimers() {
+      for (const timerId of this.retryTimers) {
+        clearTimeout(timerId);
+      }
+      this.retryTimers.clear();
+    }
+
+    syncGranularityUI(granularity) {
+      if (!this.els.granularityGroup) return;
+      const btns =
+        this.els.granularityGroup.querySelectorAll("[data-granularity]");
+      btns.forEach((btn) => {
+        const gran = btn.getAttribute("data-granularity");
+        const isActive = gran === granularity;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-pressed", String(isActive));
+        btn.setAttribute("tabindex", isActive ? "0" : "-1");
+      });
     }
 
     isCurrentHistoryContext(symbol, period) {
@@ -464,6 +494,7 @@
       if (this.els.timeSlider) {
         this.els.timeSlider.disabled = true;
       }
+      this.syncGranularityUI(this.state.state.timeGranularity);
     }
 
     applyHistoricalData(symbol, period, history) {
@@ -500,6 +531,7 @@
     }
 
     updateTimelineUI(stateData, hasHistory = true, activeHistory = null) {
+      this.syncGranularityUI(stateData.timeGranularity);
       const historyKey = `${stateData.selectedSymbol}:${stateData.timeGranularity}`;
       const history = activeHistory || this.historyCache.get(historyKey) || [];
 
@@ -603,19 +635,6 @@
             centerChangeEl.className = `center-stat-change ${liveChg >= 0 ? "text-pos" : "text-neg"}`;
           }
         }
-      }
-
-      // Update granularity buttons active state
-      if (this.els.granularityGroup) {
-        const btns =
-          this.els.granularityGroup.querySelectorAll("[data-granularity]");
-        btns.forEach((btn) => {
-          const gran = btn.getAttribute("data-granularity");
-          const isActive = gran === stateData.timeGranularity;
-          btn.classList.toggle("active", isActive);
-          btn.setAttribute("aria-pressed", String(isActive));
-          btn.setAttribute("tabindex", isActive ? "0" : "-1");
-        });
       }
     }
   }

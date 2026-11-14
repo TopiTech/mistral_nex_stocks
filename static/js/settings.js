@@ -235,6 +235,13 @@ async function moveStock(market, symbol, direction) {
     [ordered[idx], ordered[target]] = [ordered[target], ordered[idx]];
     saveSortOrder(market, ordered);
     renderList(market, userStocks);
+    const listEl = document.getElementById(`${market}-list`);
+    if (listEl) {
+      const btnSelector = direction < 0 ? ".stock-move-up" : ".stock-move-down";
+      const items = Array.from(listEl.querySelectorAll(".stock-item"));
+      const movedItem = items.find((el) => el.dataset?.symbol === symbol);
+      movedItem?.querySelector(btnSelector)?.focus?.();
+    }
     showSettingsMessage(
       `${symbol} を${direction < 0 ? "上" : "下"}に移動しました`,
       false,
@@ -599,11 +606,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderModelOptions(container, models, currentModelName, meta = {}) {
     container.textContent = "";
+    const resolvedMeta =
+      typeof meta === "boolean" ? { modelSelectable: meta } : meta || {};
 
     const isAgentsMode =
-      (meta.apiMode === "agents" && Boolean(meta.agentId)) ||
-      meta.modelSelectable === false;
-    const isPreview = !!meta.previewMode;
+      (resolvedMeta.apiMode === "agents" && Boolean(resolvedMeta.agentId)) ||
+      resolvedMeta.modelSelectable === false;
+    const isPreview = !!resolvedMeta.previewMode;
 
     if (isAgentsMode) {
       const notice = document.createElement("div");
@@ -626,13 +635,13 @@ document.addEventListener("DOMContentLoaded", () => {
         "モデルおよび推論設定は、Mistral AI Console上のAgent設定にあらかじめ指定されています。アプリ側でのモデル選択はできません。";
       notice.appendChild(p);
 
-      if (meta.agentId) {
+      if (resolvedMeta.agentId) {
         const idInfo = document.createElement("p");
         idInfo.style.fontSize = "0.85rem";
         idInfo.style.opacity = "0.9";
         idInfo.textContent = "現在のAgent ID: ";
         const code = document.createElement("code");
-        code.textContent = meta.agentId;
+        code.textContent = resolvedMeta.agentId;
         idInfo.appendChild(code);
         notice.appendChild(idInfo);
       }
@@ -1457,6 +1466,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
         _currentCredentialsData = data;
         updateConnectionModeDisplay(data);
+        if (modelGrid) {
+          renderModelOptions(
+            modelGrid,
+            data.available_models,
+            data.mistral_model,
+            {
+              apiMode: data.api_mode,
+              agentId: data.agent_id,
+              modelSelectable: data.model_selectable,
+              previewMode: data.preview_mode,
+            },
+          );
+        }
         if (alphaStatus) alphaStatus.textContent = "✓ 保存しました";
         if (mistralInput) {
           mistralInput.value = "";
@@ -1552,7 +1574,7 @@ function togglePasswordVisibility(inputId) {
   );
   const icon = btn.querySelector(".toggle-icon");
   if (icon) {
-    icon.textContent = isPassword ? "\u{1F441}" : "\u{1F576}";
+    icon.textContent = isPassword ? "\u{1F576}" : "\u{1F441}";
   }
 }
 

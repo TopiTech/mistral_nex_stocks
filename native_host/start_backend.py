@@ -6,8 +6,10 @@ import os
 import socket
 import subprocess  # nosec B404
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, cast
 
@@ -48,13 +50,50 @@ MIN_BACKEND_PORT = 1
 MAX_BACKEND_PORT = 65535
 EXPECTED_HEALTH_APP = "Mistral NeX Stocks"
 
+_LOG_FORMAT = "[%(asctime)s] %(levelname)s %(name)s: %(message)s"
+
+
+class _RestrictiveRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler keeping log files owner-only on POSIX rotations."""
+
+    def _open(self):
+        stream = super()._open()
+        if os.name != "nt":
+            try:
+                os.chmod(self.baseFilename, 0o600)
+            except OSError:
+                pass
+        return stream
+
+
+def _build_backend_log_handler(log_path: Path) -> logging.Handler:
+    """Create an OSError-safe rotating log handler with temp/stderr fallback."""
+    candidates = [
+        log_path,
+        Path(tempfile.gettempdir()) / "mistral_nex_stocks" / log_path.name,
+    ]
+    formatter = logging.Formatter(_LOG_FORMAT)
+    for candidate in candidates:
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            handler = _RestrictiveRotatingFileHandler(
+                str(candidate),
+                maxBytes=2 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            handler.setFormatter(formatter)
+            return handler
+        except OSError:
+            continue
+    stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler.setFormatter(formatter)
+    return stream_handler
+
+
 logger = logging.getLogger("native_host.start_backend")
 if not logger.handlers:
-    file_handler = logging.FileHandler(LOG, encoding="utf-8")
-    file_handler.setFormatter(
-        logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s")
-    )
-    logger.addHandler(file_handler)
+    logger.addHandler(_build_backend_log_handler(LOG))
 logger.setLevel(logging.INFO)
 logger.propagate = False
 

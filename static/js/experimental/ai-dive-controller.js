@@ -12,6 +12,21 @@
 (function (global) {
   "use strict";
 
+  const RECOMMENDATION_CLASS_MAP = {
+    STRONG_BUY: "rec-strong-buy",
+    "STRONG BUY": "rec-strong-buy",
+    強い買い: "rec-strong-buy",
+    BUY: "rec-buy",
+    買い: "rec-buy",
+    HOLD: "rec-hold",
+    中立: "rec-hold",
+    SELL: "rec-sell",
+    売り: "rec-sell",
+    STRONG_SELL: "rec-sell",
+    "STRONG SELL": "rec-sell",
+    強い売り: "rec-sell",
+  };
+
   class AiDiveController {
     constructor(state, elements) {
       this.state = state;
@@ -23,6 +38,33 @@
 
       this.bindEvents();
       this.bindState();
+      this.syncProviderLabel();
+    }
+
+    _resolveProviderLabel() {
+      if (typeof getAiProviderLabel === "function") {
+        return getAiProviderLabel();
+      }
+      if (typeof global.getAiProviderLabel === "function") {
+        return global.getAiProviderLabel();
+      }
+      const cfg =
+        typeof APP_CONFIG !== "undefined" ? APP_CONFIG : global.APP_CONFIG;
+      return cfg?.ai_provider === "openai_compatible"
+        ? "OpenAI互換 AI"
+        : "Mistral AI";
+    }
+
+    syncProviderLabel() {
+      const labelEl =
+        this.els.tier4ProviderLabel ||
+        (typeof document !== "undefined" &&
+        typeof document.getElementById === "function"
+          ? document.getElementById("ai-dive-provider-label")
+          : null);
+      if (labelEl) {
+        labelEl.textContent = this._resolveProviderLabel();
+      }
     }
 
     bindEvents() {
@@ -125,6 +167,7 @@
       this.fetchAndRenderNews(stock);
 
       // Reset Tier 4: AI Analysis to idle
+      this.syncProviderLabel();
       this.resetTier4Ai();
     }
 
@@ -268,15 +311,26 @@
       try {
         let data = null;
         for (let attempt = 0; attempt < 20; attempt += 1) {
-          const res = await (global.apiFetch || fetch)("/api/news", {
+          const newsReqInit = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             signal: newsAbortController.signal,
-          });
+          };
+          const res = global.apiFetch
+            ? await global.apiFetch("/api/news", newsReqInit, {
+                showToast: false,
+              })
+            : await fetch("/api/news", newsReqInit);
           data =
             res && typeof res.json === "function"
               ? await res.json().catch(() => null)
               : (res?.data ?? res);
+          if (
+            newsAbortController !== this._newsAbortController ||
+            !this.isCurrentAiDiveSymbol(stock.symbol)
+          ) {
+            return;
+          }
           if (!data?.fetching) break;
           if (data?.message && loading) {
             const sec = data.elapsed_sec ? ` (${data.elapsed_sec}s)` : "";
@@ -330,7 +384,11 @@
 
         container.appendChild(ul);
       } catch (err) {
-        if (err.name !== "AbortError") {
+        if (
+          err?.name !== "AbortError" &&
+          newsAbortController === this._newsAbortController &&
+          this.isCurrentAiDiveSymbol(stock.symbol)
+        ) {
           container.textContent = "";
           const errDiv = document.createElement("div");
           errDiv.className = "news-empty";
@@ -425,13 +483,7 @@
         container.textContent = "";
         const placeholder = document.createElement("div");
         placeholder.className = "ai-dive-placeholder";
-        const providerLabel =
-          typeof getAiProviderLabel === "function"
-            ? getAiProviderLabel()
-            : typeof APP_CONFIG !== "undefined" &&
-                APP_CONFIG?.ai_provider === "openai_compatible"
-              ? "OpenAI互換 AI"
-              : "Mistral AI";
+        const providerLabel = this._resolveProviderLabel();
         placeholder.textContent = `上のボタンを押すと、${providerLabel} による構造化ファンダメンタル・テクニカル深層分析を実行します。`;
         container.appendChild(placeholder);
       }
@@ -457,13 +509,7 @@
         const spinner = document.createElement("span");
         spinner.className = "loading-spinner";
         loadingDiv.appendChild(spinner);
-        const providerLabel =
-          typeof getAiProviderLabel === "function"
-            ? getAiProviderLabel()
-            : typeof APP_CONFIG !== "undefined" &&
-                APP_CONFIG?.ai_provider === "openai_compatible"
-              ? "OpenAI互換 AI"
-              : "Mistral AI";
+        const providerLabel = this._resolveProviderLabel();
         loadingDiv.appendChild(
           document.createTextNode(
             ` ${providerLabel} が銘柄構造化データを分析中...`,
@@ -475,7 +521,12 @@
       if (this._abortController) {
         this._abortController.abort();
       }
-      this._abortController = new AbortController();
+      const abortController = new AbortController();
+      this._abortController = abortController;
+      const isCurrentRequest = () =>
+        abortController === this._abortController &&
+        !abortController.signal.aborted &&
+        this.isCurrentAiDiveSymbol(stock.symbol);
 
       // payload 構築(= createRequestToken 呼び出し)も try 内に置く。トークン
       // 生成は Web Crypto 不在時に意図的に throw する(M-5)が、try 外だと
@@ -500,13 +551,20 @@
         const maxAttempts = 30;
 
         for (let attempt = 0; attempt <= maxAttempts; attempt++) {
-          const fetchFn = global.apiFetch || global.csrfFetch || fetch;
-          const res = await fetchFn("/api/analyze-v2", {
+          if (!isCurrentRequest()) return;
+          const reqInit = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
-            signal: this._abortController.signal,
-          });
+            signal: abortController.signal,
+          };
+          const res = global.apiFetch
+            ? await global.apiFetch("/api/analyze-v2", reqInit, {
+                showToast: false,
+              })
+            : await (global.csrfFetch || fetch)("/api/analyze-v2", reqInit);
+
+          if (!isCurrentRequest()) return;
 
           data =
             (res && typeof res.json === "function"
@@ -525,7 +583,7 @@
             resOk = true;
             break;
           }
-          if (startBtn) {
+          if (startBtn && isCurrentRequest()) {
             // 経過時間のフォールバックは実際のポーリング間隔(2 秒)に一致
             // させる(server が elapsed_sec を出す場合はそちらを優先)。
             const elapsed = data.elapsed_sec
@@ -534,7 +592,11 @@
             const msg = data.message || "AI分析・思考中...";
             startBtn.textContent = `⏳ ${msg} (${elapsed})`;
           }
-          await this.waitForNewsRetry(2000, this._abortController?.signal);
+          await this.waitForNewsRetry(2000, abortController.signal);
+        }
+
+        if (!isCurrentRequest()) {
+          return;
         }
 
         if (!resOk) {
@@ -553,12 +615,16 @@
           throw new Error(data.error || "AIの応答を構造化できませんでした");
         }
 
-        if (this._abortController?.signal.aborted) {
+        if (this._abortController?.signal.aborted || !isCurrentRequest()) {
           return;
         }
         this.renderAiAnalysisResult(data);
       } catch (err) {
-        if (err.name !== "AbortError") {
+        if (
+          err?.name !== "AbortError" &&
+          abortController === this._abortController &&
+          this.isCurrentAiDiveSymbol(stock.symbol)
+        ) {
           if (container) {
             container.textContent = "";
             const errDiv = document.createElement("div");
@@ -573,7 +639,11 @@
           }
         }
       } finally {
-        if (startBtn) {
+        if (
+          startBtn &&
+          abortController === this._abortController &&
+          this.isCurrentAiDiveSymbol(stock.symbol)
+        ) {
           startBtn.disabled = false;
           startBtn.textContent = "🔄 AI分析を再実行";
         }
@@ -594,8 +664,13 @@
       recHeader.className = "ai-rec-header";
 
       const recBadge = document.createElement("span");
-      const rec = String(data.recommendation || "HOLD").toUpperCase();
-      recBadge.className = `ai-rec-badge rec-${rec.toLowerCase().replace(/\s+/g, "-")}`;
+      const rawRec = String(data.recommendation || "HOLD").trim();
+      const rec = rawRec ? rawRec.toUpperCase() : "HOLD";
+      const recClass =
+        RECOMMENDATION_CLASS_MAP[rawRec] ||
+        RECOMMENDATION_CLASS_MAP[rec] ||
+        `rec-${rec.toLowerCase().replace(/[\s_]+/g, "-")}`;
+      recBadge.className = `ai-rec-badge ${recClass}`;
       recBadge.textContent = rec;
       recHeader.appendChild(recBadge);
 

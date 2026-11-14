@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -13,7 +14,45 @@ from constants import (
     MISTRAL_API_KEY_MIN_LENGTH,
     TAVILY_API_KEY_MIN_LENGTH,
 )
+from utils.networking import inspect_outbound_base_url
 from utils.text_utils import _is_valid_api_key
+
+
+def validate_openai_base_url_setting(raw_url: str) -> tuple[str | None, str | None]:
+    """Validate and normalize an OpenAI-compatible base URL setting.
+
+    Returns ``(normalized_url, None)`` on success (with ``""`` preserved to
+    clear a stored override) or ``(None, error_code)`` on rejection.
+    """
+    target_url = raw_url.strip().rstrip("/")
+    if not target_url:
+        return "", None
+    ok, error_code, _reason = inspect_outbound_base_url(target_url)
+    if not ok:
+        return None, error_code
+    return target_url, None
+
+
+def normalize_openai_base_url_for_compare(raw_url: str) -> str:
+    """Return canonical scheme://host[:port]/path form for URL equality checks."""
+    cleaned = raw_url.strip()
+    if not cleaned:
+        return ""
+    try:
+        parsed = urlsplit(cleaned)
+        port = parsed.port
+    except ValueError:
+        return cleaned.rstrip("/")
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return cleaned.rstrip("/")
+    if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+        port = None
+    formatted_host = f"[{host}]" if ":" in host else host
+    netloc = f"{formatted_host}:{port}" if port is not None else formatted_host
+    path = parsed.path.rstrip("/")
+    return urlunsplit((scheme, netloc, path, parsed.query, ""))
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 DEFAULT_LOG_LEVEL: LogLevel = "INFO"
@@ -146,9 +185,12 @@ class CredentialsSaveRequest(BaseModel):
         url_text = raw_url if isinstance(raw_url, str) else None
         if raw_url is not None and url_text is None:
             raise ValueError("url_not_string")
-        target_url = url_text.strip().rstrip("/") if url_text is not None else None
-        if target_url and not target_url.startswith(("http://", "https://")):
-            raise ValueError("url_bad_scheme")
+        if url_text is not None:
+            target_url, url_err = validate_openai_base_url_setting(url_text)
+            if url_err is not None:
+                raise ValueError(url_err)
+        else:
+            target_url = None
         raw_openai_model = data.get("openai_model")
         openai_model_text = raw_openai_model if isinstance(raw_openai_model, str) else None
         if raw_openai_model is not None and openai_model_text is None:

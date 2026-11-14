@@ -254,9 +254,9 @@ def _market_state_from_metadata(metadata):
             return "CLOSED"
 
     current_period = metadata.get("currentTradingPeriod")
-    if isinstance(current_period, dict):
+    if isinstance(current_period, (dict, Mapping)):
         regular_period = current_period.get("regular")
-        if isinstance(regular_period, dict):
+        if isinstance(regular_period, (dict, Mapping)):
             regular_start_raw = regular_period.get("start")
             regular_end_raw = regular_period.get("end")
             if regular_start_raw is None or regular_end_raw is None:
@@ -379,13 +379,15 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         if is_jp_market_holiday(jst.date()):
             app_state.market.update_market_status(market_type, "CLOSED")
             return False
-        return _is_market_session_open(
+        is_open = _is_market_session_open(
             jst.time(),
             dt_time(9, 0),
             dt_time(11, 30),
             dt_time(12, 30),
             dt_time(15, 30),
         )
+        app_state.market.update_market_status(market_type, "REGULAR" if is_open else "CLOSED")
+        return is_open
 
     if market_type in ("us", "idx"):
         try:
@@ -398,7 +400,9 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         if is_us_market_holiday(ny.date()):
             app_state.market.update_market_status(market_type, "CLOSED")
             return False
-        return _is_market_session_open(ny.time(), dt_time(9, 30), dt_time(16, 0))
+        is_open = _is_market_session_open(ny.time(), dt_time(9, 30), dt_time(16, 0))
+        app_state.market.update_market_status(market_type, "REGULAR" if is_open else "CLOSED")
+        return is_open
 
     return True
 

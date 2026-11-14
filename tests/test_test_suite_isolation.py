@@ -75,5 +75,63 @@ class EnvironmentIsolationVerificationTestCase(unittest.TestCase):
             app.config["TESTING"] = orig_testing
 
 
+class KeyringIsolationPrecursorTestCase(unittest.TestCase):
+    """Mutate keyring backend and stored credentials to verify cross-test cleanup."""
+
+    def test_01_deliberately_swap_keyring_and_store_password(self):
+        import keyring
+        from keyring.backends.fail import Keyring as FailKeyring
+
+        from tests.test_support import get_shared_memory_keyring
+
+        mem_keyring = get_shared_memory_keyring()
+        mem_keyring.set_password("mistral-nex-stocks", "leaked-key", "leaked-secret")
+        fail_keyring = FailKeyring()
+        keyring.set_keyring(fail_keyring)
+
+        self.assertIs(keyring.get_keyring(), fail_keyring)
+        self.assertEqual(
+            mem_keyring.get_password("mistral-nex-stocks", "leaked-key"),
+            "leaked-secret",
+        )
+
+
+class KeyringIsolationVerificationTestCase(unittest.TestCase):
+    """Verify reset_app_state restores the shared MemoryKeyring and clears secrets."""
+
+    def test_02_verify_keyring_backend_and_passwords_restored(self):
+        import keyring
+
+        from tests.test_support import get_shared_memory_keyring
+
+        mem_keyring = get_shared_memory_keyring()
+        self.assertIs(
+            keyring.get_keyring(),
+            mem_keyring,
+            "Swapped keyring backend leaked across test fixture boundary!",
+        )
+        self.assertEqual(mem_keyring.passwords, {})
+        self.assertIsNone(keyring.get_password("mistral-nex-stocks", "leaked-key"))
+
+    def test_03_reset_app_state_internals_restores_swapped_failing_keyring(self):
+        """reset_app_state_internals must restore MemoryKeyring before credential cleanup."""
+        import keyring
+        from keyring.backends.fail import Keyring as FailKeyring
+
+        from tests.test_support import get_shared_memory_keyring, reset_app_state_internals
+
+        mem_keyring = get_shared_memory_keyring()
+        mem_keyring.set_password("mistral-nex-stocks", "temp-key", "temp-secret")
+        fail_keyring = FailKeyring()
+        keyring.set_keyring(fail_keyring)
+        self.assertIs(keyring.get_keyring(), fail_keyring)
+
+        reset_app_state_internals()
+
+        self.assertIs(keyring.get_keyring(), mem_keyring)
+        self.assertEqual(mem_keyring.passwords, {})
+        self.assertIsNone(keyring.get_password("mistral-nex-stocks", "temp-key"))
+
+
 if __name__ == "__main__":
     unittest.main()

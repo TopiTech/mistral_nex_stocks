@@ -14,6 +14,8 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 
+from utils.threading import restrictive_umask_lock
+
 
 class _RestrictiveRotatingFileHandler(RotatingFileHandler):
     """RotatingFileHandler that keeps the live file 0o600 after rollover.
@@ -318,22 +320,23 @@ def init_logging(app) -> None:
     # Log content is sanitized, but the files themselves live next to
     # secrets-adjacent runtime state; create them 0o600 like the config /
     # user_stocks / DB files so other local users cannot read them.
-    _old_umask = os.umask(0o077)
-    try:
-        rotating_handler = _RestrictiveRotatingFileHandler(
-            str(log_file),
-            maxBytes=5 * 1024 * 1024,  # 5MB
-            backupCount=3,
-            encoding="utf-8",
-        )
-        error_handler = _RestrictiveRotatingFileHandler(
-            str(error_log_file),
-            maxBytes=2 * 1024 * 1024,  # 2MB
-            backupCount=5,
-            encoding="utf-8",
-        )
-    finally:
-        os.umask(_old_umask)
+    with restrictive_umask_lock():
+        _old_umask = os.umask(0o077)
+        try:
+            rotating_handler = _RestrictiveRotatingFileHandler(
+                str(log_file),
+                maxBytes=5 * 1024 * 1024,  # 5MB
+                backupCount=3,
+                encoding="utf-8",
+            )
+            error_handler = _RestrictiveRotatingFileHandler(
+                str(error_log_file),
+                maxBytes=2 * 1024 * 1024,  # 2MB
+                backupCount=5,
+                encoding="utf-8",
+            )
+        finally:
+            os.umask(_old_umask)
     rotating_handler.setLevel(LOG_LEVEL)
     # Pass the configured level so DEBUG records survive when LOG_LEVEL=DEBUG;
     # with the default (INFO) the filter still drops all DEBUG output.

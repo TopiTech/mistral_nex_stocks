@@ -420,11 +420,13 @@ def test_restart_keeps_symbol_registration_usable():
 def test_watchdog_restarts_dead_realtime_engine():
     import app_bg
 
+    stop_alive = threading.Event()
+
     class FakeEngine:
         def __init__(self):
             self.restarted = False
             self.dead = threading.Thread(target=lambda: None)
-            self.alive = threading.Thread(target=lambda: time.sleep(30), daemon=True)
+            self.alive = threading.Thread(target=lambda: stop_alive.wait(timeout=30.0), daemon=True)
             self.alive.start()
 
         def worker_threads(self):
@@ -434,16 +436,21 @@ def test_watchdog_restarts_dead_realtime_engine():
             self.restarted = True
 
     fake = FakeEngine()
-    restarted = app_bg._watchdog_restart_dead_realtime_engine(fake)
-    assert restarted == [fake.dead.name]
-    assert fake.restarted is True
-
-    # All-healthy case: no restart.
     fake2 = FakeEngine()
-    fake2.dead = fake2.alive
-    restarted2 = app_bg._watchdog_restart_dead_realtime_engine(fake2)
-    assert restarted2 == []
-    assert fake2.restarted is False
+    try:
+        restarted = app_bg._watchdog_restart_dead_realtime_engine(fake)
+        assert restarted == [fake.dead.name]
+        assert fake.restarted is True
+
+        # All-healthy case: no restart.
+        fake2.dead = fake2.alive
+        restarted2 = app_bg._watchdog_restart_dead_realtime_engine(fake2)
+        assert restarted2 == []
+        assert fake2.restarted is False
+    finally:
+        stop_alive.set()
+        fake.alive.join(timeout=2.0)
+        fake2.alive.join(timeout=2.0)
 
 
 def test_tv_ws_batched_heartbeat_and_qsd():

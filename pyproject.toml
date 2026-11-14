@@ -95,11 +95,14 @@ ignore = [
 "tests/*" = ["SIM117"]            # Allow nested with statements in test mock contexts
 
 [tool.mypy]
+# mistralai>=3.7.0 uses Python 3.12+ PEP 695 syntax, so mypy targets 3.12+.
 python_version = "3.12"
 ignore_missing_imports = true
 strict_equality = true
 warn_unused_configs = true
 exclude = ["^tests/"]
+# unused-ignore is suppressed so cross-platform (fcntl/msvcrt) and dual
+# mypy+pyrefly `# type: ignore[...]` comments stay green on every OS.
 disable_error_code = ["no-any-return", "unused-ignore"]
 files = [
   "app.py",
@@ -135,7 +138,7 @@ files = [
   "utils",
   "native_host",
 ]
-warn_unused_ignores = true
+warn_unused_ignores = false
 warn_redundant_casts = true
 warn_return_any = true
 no_implicit_optional = true

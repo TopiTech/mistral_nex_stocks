@@ -10,7 +10,6 @@ import os
 import shutil
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +18,51 @@ from app_state import app_state
 from constants import DEFAULT_USDJPY_RATE
 from crypto_utils import _is_windows, protect_data, unprotect_data
 from utils.normalization import is_bool_like, normalize_symbol_for_market
+from utils.threading import restrictive_umask_lock
 
 logger = logging.getLogger(__name__)
 
-USER_STOCKS_FILE = str(config_store.USER_STOCKS_FILE)
-LEGACY_USER_STOCKS_FILE = str(config_store.BASE_DIR / "user_stocks.json")
+_DEFAULT_USER_STOCKS_FILE = str(config_store.USER_STOCKS_FILE)
+_DEFAULT_LEGACY_USER_STOCKS_FILE = str(config_store.BASE_DIR / "user_stocks.json")
+USER_STOCKS_FILE = _DEFAULT_USER_STOCKS_FILE
+LEGACY_USER_STOCKS_FILE = _DEFAULT_LEGACY_USER_STOCKS_FILE
 _USER_STOCKS_READ_FAILED = object()
+_LEGACY_MIGRATION_LOCK = threading.Lock()
+
+
+def _get_user_stocks_path() -> Path:
+    """Resolve user_stocks path dynamically unless monkeypatched on module."""
+    if USER_STOCKS_FILE != _DEFAULT_USER_STOCKS_FILE:
+        return Path(USER_STOCKS_FILE)
+    return Path(config_store.USER_STOCKS_FILE)
+
+
+def _get_legacy_user_stocks_path() -> Path:
+    """Resolve legacy user_stocks path dynamically unless monkeypatched."""
+    if LEGACY_USER_STOCKS_FILE != _DEFAULT_LEGACY_USER_STOCKS_FILE:
+        return Path(LEGACY_USER_STOCKS_FILE)
+    return Path(config_store.BASE_DIR / "user_stocks.json")
+
+
+def _update_market_usdjpy_rate(rate: float, ts: float | None = None) -> None:
+    market = app_state.market
+    updater = getattr(market, "update_usdjpy_rate", None)
+    if callable(updater):
+        updater(rate, ts)
+    else:
+        market.last_usdjpy_rate = rate
+        if ts is not None:
+            market.last_usdjpy_rate_ts = ts
+
+
+def _snapshot_market_usdjpy_rate() -> tuple[float, float]:
+    market = app_state.market
+    snapshot_fn = getattr(market, "get_usdjpy_rate_snapshot", None)
+    if callable(snapshot_fn):
+        return snapshot_fn()
+    raw_rate = getattr(market, "last_usdjpy_rate", DEFAULT_USDJPY_RATE)
+    raw_ts = getattr(market, "last_usdjpy_rate_ts", 0.0)
+    return raw_rate, raw_ts
 
 # A-2 (cross-cutting twin of DATA-4): bounded POSIX write-lock retry budget for
 # the user_stocks persistence path — ~2.5 s worst case, mirroring the bounded
@@ -137,6 +175,113 @@ def _fsync_directory_strict(directory: Path) -> None:
         os.close(dir_fd)
 
 
+def _acquire_exclusive_lock_fd(lock_file: Path) -> int:
+    """Acquire an advisory cross-process exclusive lock on *lock_file*."""
+    if os.name == "nt":
+        import msvcrt
+
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o600)
+        locked = False
+        max_retries = 20
+        try:
+            for attempt in range(max_retries):
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                    locked = True
+                    break
+                except OSError as err:
+                    if attempt < max_retries - 1:
+                        time.sleep(0.05 * (attempt + 1))
+                        continue
+                    raise UserStocksPersistError(
+                        f"user_stocks.json lock busy on Windows after {max_retries} retries: {lock_file}"
+                    ) from err
+            if os.fstat(fd).st_size < 1:
+                os.write(fd, b"L")
+                os.lseek(fd, 0, os.SEEK_SET)
+            return fd
+        except Exception:
+            if locked:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                except OSError:
+                    pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    else:
+        import errno as _errno
+        import fcntl
+
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_RDWR, 0o600)
+        locked = False
+        try:
+            for attempt in range(_STORAGE_FCNTL_LOCK_MAX_RETRIES):
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                    locked = True
+                    break
+                except OSError as fl_err:
+                    if getattr(fl_err, "errno", None) not in (
+                        _errno.EAGAIN,
+                        _errno.EWOULDBLOCK,
+                    ):
+                        raise
+                    if attempt == _STORAGE_FCNTL_LOCK_MAX_RETRIES - 1:
+                        raise BlockingIOError(
+                            _errno.EWOULDBLOCK, "user_stocks lock busy"
+                        ) from fl_err
+                    time.sleep(_STORAGE_FCNTL_LOCK_RETRY_DELAY_SEC)
+            return fd
+        except Exception:
+            if locked:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                except OSError:
+                    pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+
+
+def _release_lock_fd(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+    except OSError:
+        pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _open_exclusive_with_retry(target: Path) -> int:
+    """Create *target* via ``O_EXCL``, retrying transient Windows AV locks."""
+    for attempt in range(4):
+        try:
+            return os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            raise
+        except PermissionError:
+            if attempt >= 3:
+                raise
+            time.sleep(0.015 * (attempt + 1))
+    raise PermissionError(f"Failed to exclusively open {target}")
+
+
 def _migrate_legacy_user_stocks() -> bool:
     """Migrate the legacy plaintext store and report whether it is safe to load.
 
@@ -145,38 +290,36 @@ def _migrate_legacy_user_stocks() -> bool:
     genuinely absent store: treating a failed migration as an empty portfolio
     would allow the next save to overwrite the only recoverable copy.
     """
-    legacy = Path(LEGACY_USER_STOCKS_FILE)
-    target = Path(USER_STOCKS_FILE)
-    if target.exists() or not legacy.exists():
-        return True
-    tmp_file: Path | None = None
-    try:
-        with legacy.open("r", encoding="utf-8") as source:
-            data = json.load(source)
-        if not isinstance(data, dict):
-            raise TypeError("legacy user stocks payload must be a JSON object")
+    legacy = _get_legacy_user_stocks_path()
+    target = _get_user_stocks_path()
+    with _LEGACY_MIGRATION_LOCK:
+        if target.exists() or not legacy.exists():
+            return True
+        lock_fd: int | None = None
+        created_target = False
+        try:
+            with legacy.open("r", encoding="utf-8") as source:
+                data = json.load(source)
+            if not isinstance(data, dict):
+                raise TypeError("legacy user stocks payload must be a JSON object")
 
-        # Legacy files were plaintext.  Never copy them into the active store:
-        # convert the complete payload to the current Fernet envelope first.
-        encoded = json.dumps(data, ensure_ascii=False, indent=2)
-        master_key = config_store.get_or_create_master_key()
-        protected = protect_data(encoded, key_name="user_stocks", master_key=master_key)
-        config_store._ensure_runtime_dir()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = target.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        content = json.dumps(protected, ensure_ascii=False, indent=2)
-        if _is_windows():
-            with tmp_file.open("w", encoding="utf-8") as f:
-                f.write(content)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except OSError:
-                    pass
-        else:
-            old_umask = os.umask(0o077)
-            try:
-                fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            # Legacy files were plaintext.  Never copy them into the active store:
+            # convert the complete payload to the current Fernet envelope first.
+            encoded = json.dumps(data, ensure_ascii=False, indent=2)
+            master_key = config_store.get_or_create_master_key()
+            protected = protect_data(encoded, key_name="user_stocks", master_key=master_key)
+            config_store._ensure_runtime_dir()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            content = json.dumps(protected, ensure_ascii=False, indent=2)
+
+            lock_file = target.with_suffix(".lock")
+            lock_fd = _acquire_exclusive_lock_fd(lock_file)
+            if target.exists():
+                return True
+
+            if _is_windows():
+                fd = _open_exclusive_with_retry(target)
+                created_target = True
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         f.write(content)
@@ -191,42 +334,56 @@ def _migrate_legacy_user_stocks() -> bool:
                     except OSError:
                         pass
                     raise
-            finally:
-                os.umask(old_umask)
-        for attempt in range(4):
+            else:
+                with restrictive_umask_lock():
+                    old_umask = os.umask(0o077)
+                    try:
+                        fd = os.open(
+                            str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                        )
+                        created_target = True
+                        try:
+                            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                                f.write(content)
+                                f.flush()
+                                try:
+                                    os.fsync(f.fileno())
+                                except OSError:
+                                    pass
+                        except Exception:
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                            raise
+                    finally:
+                        os.umask(old_umask)
+                os.chmod(target, 0o600)
+                _fsync_directory_strict(target.parent)
+            logger.info("Migrated and encrypted legacy user stocks file %s -> %s", legacy, target)
+            # The legacy file was plaintext. Remove it now that the encrypted copy
+            # is in place so the raw portfolio data does not linger unencrypted on
+            # disk (migration is a one-way hardening step).
             try:
-                os.replace(tmp_file, target)
-                break
-            except PermissionError:
-                if _is_windows() and attempt < 3:
-                    time.sleep(0.015 * (attempt + 1))
-                    continue
-                raise
-        if not _is_windows():
-            os.chmod(target, 0o600)
-        # The target file's data is durable; make its directory entry durable
-        # before removing the only other complete copy.  A crash in this window
-        # used to leave a zero-length target and no legacy file.
-        if not _is_windows():
-            _fsync_directory_strict(target.parent)
-        logger.info("Migrated and encrypted legacy user stocks file %s -> %s", legacy, target)
-        # The legacy file was plaintext. Remove it now that the encrypted copy
-        # is in place so the raw portfolio data does not linger unencrypted on
-        # disk (migration is a one-way hardening step).
-        try:
-            legacy.unlink()
-            logger.info("Removed legacy plaintext user stocks file %s", legacy)
-        except OSError as rm_exc:
-            logger.warning("Failed to remove legacy plaintext file %s: %s", legacy, rm_exc)
-        return True
-    except (OSError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
-        try:
-            if tmp_file is not None:
-                tmp_file.unlink(missing_ok=True)
-        except OSError:
-            pass
-        logger.warning("Failed to migrate legacy user stocks file %s: %s", legacy, exc)
-        return False
+                legacy.unlink()
+                logger.info("Removed legacy plaintext user stocks file %s", legacy)
+            except OSError as rm_exc:
+                logger.warning("Failed to remove legacy plaintext file %s: %s", legacy, rm_exc)
+            return True
+        except FileExistsError:
+            # Another thread/process atomically won O_EXCL creation; leave it intact.
+            return True
+        except (OSError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
+            if created_target:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            logger.warning("Failed to migrate legacy user stocks file %s: %s", legacy, exc)
+            return False
+        finally:
+            if lock_fd is not None:
+                _release_lock_fd(lock_fd)
 
 
 def _locked_read_user_stocks(lock_file: Path):
@@ -267,7 +424,7 @@ def _locked_read_user_stocks(lock_file: Path):
                     os.write(fd, b"L")
                     os.lseek(fd, 0, os.SEEK_SET)
 
-                with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                with open(_get_user_stocks_path(), "r", encoding="utf-8") as f:
                     return json.load(f)
             finally:
                 if locked:
@@ -309,7 +466,7 @@ def _locked_read_user_stocks(lock_file: Path):
                         time.sleep(0.05 * (_attempt + 1))
                 if not locked:
                     raise OSError("user_stocks read lock busy")
-                with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                with open(_get_user_stocks_path(), "r", encoding="utf-8") as f:
                     return json.load(f)
             finally:
                 if locked:
@@ -353,7 +510,7 @@ def _remove_stale_user_stocks_tmp_files() -> None:
     """
     threshold = time.time() - 600.0
     try:
-        for tmp_entry in Path(USER_STOCKS_FILE).parent.glob("user_stocks.*.tmp"):
+        for tmp_entry in _get_user_stocks_path().parent.glob("user_stocks.*.tmp"):
             try:
                 if tmp_entry.stat().st_mtime < threshold:
                     tmp_entry.unlink()
@@ -380,7 +537,8 @@ def load_user_stocks(force=False):
     config_store._ensure_runtime_dir()
     _remove_stale_user_stocks_tmp_files()
     migration_ok = _migrate_legacy_user_stocks()
-    if not os.path.exists(USER_STOCKS_FILE):
+    user_stocks_path = _get_user_stocks_path()
+    if not os.path.exists(user_stocks_path):
         # A legacy file that could not be migrated is not equivalent to an
         # absent portfolio.  Preserve the in-memory state and fail closed so a
         # later mutation cannot replace the recoverable plaintext file with an
@@ -408,7 +566,7 @@ def load_user_stocks(force=False):
             if not force and app_state.market.user_stocks_rev == app_state.market.last_loaded_rev:
                 return
 
-            lock_file = Path(USER_STOCKS_FILE).with_suffix(".lock")
+            lock_file = user_stocks_path.with_suffix(".lock")
             raw_data = _locked_read_user_stocks(lock_file)
 
             if raw_data is _USER_STOCKS_READ_FAILED:
@@ -421,7 +579,7 @@ def load_user_stocks(force=False):
                         "Locked read of user_stocks.json failed after retry; reading without lock as last resort"
                     )
                     try:
-                        with open(USER_STOCKS_FILE, "r", encoding="utf-8") as f:
+                        with open(user_stocks_path, "r", encoding="utf-8") as f:
                             raw_data = json.load(f)
                     except (OSError, json.JSONDecodeError) as exc:
                         logger.error("Unlocked read of user_stocks.json also failed: %s", exc)
@@ -486,11 +644,9 @@ def load_user_stocks(force=False):
             app_state.market.user_idx = idx
             snapshot_us_keys = list(us.keys())
             snapshot_jp_keys = list(jp.keys())
-            app_state.market.last_usdjpy_rate = _coerce_positive_fx_rate(
-                data.get("last_usdjpy_rate")
-            )
-            app_state.market.last_usdjpy_rate_ts = _coerce_fx_rate_timestamp(
-                data.get("last_usdjpy_rate_ts")
+            _update_market_usdjpy_rate(
+                _coerce_positive_fx_rate(data.get("last_usdjpy_rate")),
+                _coerce_fx_rate_timestamp(data.get("last_usdjpy_rate_ts")),
             )
             app_state.market.last_loaded_rev = app_state.market.user_stocks_rev
         # register_symbols acquires yahoojp_scraper.lock which can deadlock
@@ -540,12 +696,12 @@ def _backup_unreadable_user_stocks() -> None:
     so the on-disk file is the only recoverable artifact. Copy it to a .bak so
     the user can recover once the master key / keyring is fixed.
     """
-    target_path = Path(USER_STOCKS_FILE)
+    target_path = _get_user_stocks_path()
     backup_path = target_path.with_suffix(
         ".bak." + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
     )
     try:
-        shutil.copy2(USER_STOCKS_FILE, backup_path)
+        shutil.copy2(target_path, backup_path)
         logger.info("Backed up unreadable user_stocks.json to %s", backup_path)
         _rotate_user_stocks_backups(target_path.parent)
     except OSError as exc:
@@ -693,25 +849,26 @@ def _write_user_stocks_with_lock(
                                 _errno.EWOULDBLOCK, "user_stocks write lock busy"
                             ) from fl_err
                         time.sleep(_STORAGE_FCNTL_LOCK_RETRY_DELAY_SEC)
-                old_umask = os.umask(0o077)
-                try:
-                    fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with restrictive_umask_lock():
+                    old_umask = os.umask(0o077)
                     try:
-                        with os.fdopen(fd, "w", encoding="utf-8") as f:
-                            f.write(data_encoded)
-                            f.flush()
+                        fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                        try:
+                            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                                f.write(data_encoded)
+                                f.flush()
+                                try:
+                                    os.fsync(f.fileno())
+                                except OSError:
+                                    pass
+                        except Exception:
                             try:
-                                os.fsync(f.fileno())
+                                os.close(fd)
                             except OSError:
                                 pass
-                    except Exception:
-                        try:
-                            os.close(fd)
-                        except OSError:
-                            pass
-                        raise
-                finally:
-                    os.umask(old_umask)
+                            raise
+                    finally:
+                        os.umask(old_umask)
                 # Promote inside the lock (no TOCTOU window).
                 for attempt in range(4):
                     try:
@@ -811,12 +968,9 @@ def save_user_stocks():
                 app_state.market.user_idx.clear()
                 app_state.market.user_idx.update(normalized_idx)
 
-                rate_ts = _coerce_fx_rate_timestamp(
-                    getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
-                )
-                rate_val = _coerce_positive_fx_rate(
-                    getattr(app_state.market, "last_usdjpy_rate", DEFAULT_USDJPY_RATE)
-                )
+                raw_rate_val, raw_rate_ts = _snapshot_market_usdjpy_rate()
+                rate_ts = _coerce_fx_rate_timestamp(raw_rate_ts)
+                rate_val = _coerce_positive_fx_rate(raw_rate_val)
                 data = {
                     "us": copy.deepcopy(app_state.market.user_us),
                     "jp": copy.deepcopy(app_state.market.user_jp),
@@ -840,17 +994,18 @@ def save_user_stocks():
             encoded_data = json.dumps(protected, ensure_ascii=False, indent=2)
             import uuid
 
-            tmp_file = Path(USER_STOCKS_FILE).with_suffix(f".{uuid.uuid4().hex}.tmp")
-            lock_file = Path(USER_STOCKS_FILE).with_suffix(".lock")
+            user_stocks_path = _get_user_stocks_path()
+            tmp_file = user_stocks_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+            lock_file = user_stocks_path.with_suffix(".lock")
 
-            _write_user_stocks_with_lock(encoded_data, tmp_file, Path(USER_STOCKS_FILE), lock_file)
+            _write_user_stocks_with_lock(encoded_data, tmp_file, user_stocks_path, lock_file)
 
             if not _is_windows():
                 try:
-                    os.chmod(USER_STOCKS_FILE, 0o600)
+                    os.chmod(user_stocks_path, 0o600)
                 except OSError as exc:
                     logger.debug(
-                        "Failed to set restrictive permissions on %s: %s", USER_STOCKS_FILE, exc
+                        "Failed to set restrictive permissions on %s: %s", user_stocks_path, exc
                     )
 
             with app_state.market.user_stocks_lock:
@@ -862,11 +1017,11 @@ def save_user_stocks():
                 # because callers would then roll back in-memory state that the
                 # disk already reflects.
                 try:
-                    app_state.market.last_modified_ns = os.stat(USER_STOCKS_FILE).st_mtime_ns
+                    app_state.market.last_modified_ns = os.stat(user_stocks_path).st_mtime_ns
                 except OSError as stat_exc:
                     logger.debug(
                         "Saved user stocks but could not read mtime for %s: %s",
-                        USER_STOCKS_FILE,
+                        user_stocks_path,
                         stat_exc,
                     )
 

@@ -223,17 +223,19 @@ def test_modal_escape_key_and_tabindex_handling():
       throw new Error('alertModal missing tabindex="-1"');
     }
 
-    // 2. Check static/js/index_main.js global Escape handler includes alertModal and portfolioModal
-    const indexMainJs = fs.readFileSync('static/js/index_main.js', 'utf8');
-    if (!indexMainJs.includes('alertModal.classList.contains("show")')) {
-      throw new Error('index_main.js Escape handler missing alertModal check');
+    // 2. Check unified Escape handler in static/js/utils.js handles alertModal and portfolioModal
+    const utilsJs = fs.readFileSync('static/js/utils.js', 'utf8');
+    if (!utilsJs.includes('closeTopmostOverlayOnEscape(e)')) {
+      throw new Error('utils.js missing unified closeTopmostOverlayOnEscape keydown registration');
     }
-    if (!indexMainJs.includes('portfolioModal.classList.contains("show")')) {
-      throw new Error('index_main.js Escape handler missing portfolioModal check');
+    if (!utilsJs.includes('const alertModal = document.getElementById("alertModal")')) {
+      throw new Error('utils.js Escape handler missing alertModal check');
+    }
+    if (!utilsJs.includes('const portfolioModal = document.getElementById("portfolioModal")')) {
+      throw new Error('utils.js Escape handler missing portfolioModal check');
     }
 
     // 3. Check static/js/utils.js openModal ensures tabindex
-    const utilsJs = fs.readFileSync('static/js/utils.js', 'utf8');
     if (!utilsJs.includes('modal.setAttribute("tabindex", "-1")')) {
       throw new Error('utils.js openModal does not ensure tabindex="-1"');
     }

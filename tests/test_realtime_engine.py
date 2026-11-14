@@ -1581,10 +1581,13 @@ def test_yahoo_jp_scraper_worker_loop_concurrent_batch():
         scraper.running = True
         t = threading.Thread(target=scraper._worker_loop, daemon=True)
         t.start()
-        deadline = time.time() + 3.0
-        while len(received) < 3 and time.time() < deadline:
-            time.sleep(0.01)
-        scraper.running = False
+        try:
+            deadline = time.time() + 3.0
+            while len(received) < 3 and time.time() < deadline:
+                time.sleep(0.01)
+        finally:
+            scraper.running = False
+            t.join(timeout=2.0)
     assert len(received) >= 3
 
 

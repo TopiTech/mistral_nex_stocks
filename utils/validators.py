@@ -1054,11 +1054,15 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
             if alias in res and res[alias] is not None:
                 res["target_price_3m"] = res[alias]
                 break
-    if "upside_3m" not in res or not res["upside_3m"]:
+    if (
+        "upside_3m" not in res
+        or res["upside_3m"] is None
+        or (isinstance(res["upside_3m"], str) and not res["upside_3m"].strip())
+    ):
         for alias in ("upside", "upside_percent", "expected_upside", "expected_return"):
             if alias in res and res[alias] is not None:
                 val = res[alias]
-                if isinstance(val, (int, float)):
+                if isinstance(val, (int, float)) and not is_bool_like(val) and math.isfinite(val):
                     sign = "+" if val > 0 else ""
                     res["upside_3m"] = f"{sign}{val}%"
                 else:

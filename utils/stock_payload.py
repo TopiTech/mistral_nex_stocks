@@ -612,12 +612,7 @@ def get_current_usdjpy_rate(
     # 3. Check app_state last known rate with freshness check
     now = time.time()
     try:
-        raw_rate = getattr(app_state.market, "last_usdjpy_rate", 0.0)
-        raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
-        if is_bool_like(raw_rate) or is_bool_like(raw_ts):
-            raise TypeError("bool not allowed")
-        last_rate = float(raw_rate or 0.0)
-        last_ts = float(raw_ts or 0.0)
+        last_rate, last_ts = _read_market_usdjpy_snapshot()
         if (
             math.isfinite(last_rate)
             and last_rate > 0
@@ -650,15 +645,44 @@ def get_current_usdjpy_rate(
     # 5. Expired / fallback
     fallback_rate = default_rate
     try:
-        raw_last = getattr(app_state.market, "last_usdjpy_rate", 0.0)
-        if not is_bool_like(raw_last):
-            last_rate = float(raw_last or 0.0)
-            if math.isfinite(last_rate) and last_rate > 0:
-                fallback_rate = last_rate
+        last_rate, _ = _read_market_usdjpy_snapshot()
+        if math.isfinite(last_rate) and last_rate > 0:
+            fallback_rate = last_rate
     except (ValueError, TypeError, OverflowError):
         pass
 
     return fallback_rate, True
+
+
+def _read_market_usdjpy_snapshot() -> tuple[float, float]:
+    """Read ``(last_usdjpy_rate, last_usdjpy_rate_ts)`` atomically under lock."""
+    market_state = app_state.market
+    snapshot_fn = getattr(market_state, "get_usdjpy_rate_snapshot", None)
+    if callable(snapshot_fn):
+        return snapshot_fn()
+    raw_rate = getattr(market_state, "last_usdjpy_rate", 0.0)
+    raw_ts = getattr(market_state, "last_usdjpy_rate_ts", 0.0)
+    if is_bool_like(raw_rate) or is_bool_like(raw_ts):
+        raise TypeError("bool not allowed")
+    rate_val = float(raw_rate or 0.0)
+    ts_val = float(raw_ts or 0.0)
+    return (
+        rate_val if math.isfinite(rate_val) else 0.0,
+        ts_val if math.isfinite(ts_val) else 0.0,
+    )
+
+
+def _is_finite_market_number(value: Any, *, positive: bool = False) -> bool:
+    if (
+        value is None
+        or not isinstance(value, (int, float))
+        or is_bool_like(value)
+    ):
+        return False
+    num = float(value)
+    if not math.isfinite(num):
+        return False
+    return num > 0 if positive else True
 
 
 def _build_portfolio_metrics(shares, avg_price, avg_fx_rate, currency, current_price):
@@ -699,12 +723,19 @@ def build_stock_payload(
             short_cache_key = f"info_short_{symbol}"
             with app_state.yfinance_short_cache_lock:
                 cached_short = app_state.yfinance_short_cache.get(short_cache_key)
-            if isinstance(cached_short, dict):
+            if isinstance(cached_short, dict) and not (
+                cached_short.get("failed") or cached_short.get("error")
+            ):
                 info = dict(cached_short)
             else:
                 try:
                     cached_disk = app_state.stock_disk_cache.get(f"info_disk_{symbol}", ttl=86400)
-                    if isinstance(cached_disk, dict) and cached_disk:
+                    if (
+                        isinstance(cached_disk, dict)
+                        and cached_disk
+                        and not cached_disk.get("failed")
+                        and not cached_disk.get("error")
+                    ):
                         info = dict(cached_disk)
                 except (OSError, TypeError):
                     pass
@@ -1041,42 +1072,19 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                                 break
                         if not isinstance(rt_info, dict):
                             rt_info = None
-                        if (
-                            rt_info
-                            and rt_info.get("price") is not None
-                            and isinstance(rt_info["price"], (int, float))
-                            and not is_bool_like(rt_info["price"])
-                            and rt_info["price"] > 0
-                        ):
+                        if rt_info and _is_finite_market_number(rt_info.get("price"), positive=True):
                             r_copy["price"] = rt_info["price"]
-                            if (
-                                rt_info.get("change") is not None
-                                and isinstance(rt_info["change"], (int, float))
-                                and not is_bool_like(rt_info["change"])
-                            ):
+                            if _is_finite_market_number(rt_info.get("change")):
                                 r_copy["change"] = rt_info["change"]
-                            if (
-                                rt_info.get("change_percent") is not None
-                                and isinstance(rt_info["change_percent"], (int, float))
-                                and not is_bool_like(rt_info["change_percent"])
-                            ):
+                            if _is_finite_market_number(rt_info.get("change_percent")):
                                 r_copy["change_percent"] = rt_info["change_percent"]
                             # Volume is strictly sourced from yfinance, never from scrapers
-                            if (
-                                rt_info.get("source") == "tradingview"
-                                and rt_info.get("volume") is not None
-                                and isinstance(rt_info["volume"], (int, float))
-                                and not is_bool_like(rt_info["volume"])
-                                and rt_info["volume"] > 0
+                            if rt_info.get("source") == "tradingview" and _is_finite_market_number(
+                                rt_info.get("volume"), positive=True
                             ):
                                 r_copy["volume"] = rt_info["volume"]
                             cur_vol = r_copy.get("volume")
-                            if (
-                                cur_vol is None
-                                or is_bool_like(cur_vol)
-                                or not isinstance(cur_vol, (int, float))
-                                or cur_vol <= 0
-                            ):
+                            if not _is_finite_market_number(cur_vol, positive=True):
                                 yf_vol = get_stock_volume(sym) if isinstance(sym, str) else None
                                 if yf_vol is not None and yf_vol > 0:
                                     r_copy["volume"] = yf_vol

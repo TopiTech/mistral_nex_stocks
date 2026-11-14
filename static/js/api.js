@@ -402,11 +402,16 @@ const INDEX_BAR_CONFIG = [
 const formatIndexNumber = (value) =>
   value != null ? Number(value).toLocaleString() : "--";
 
-function buildIndexChip(label, key) {
+function buildIndexChip(label, key, isDuplicateCopy = false) {
   const chip = document.createElement("span");
   chip.className = "index-chip";
   chip.dataset.indexKey = key;
-  chip.tabIndex = 0;
+  if (isDuplicateCopy) {
+    chip.tabIndex = -1;
+    chip.setAttribute("aria-hidden", "true");
+  } else {
+    chip.tabIndex = 0;
+  }
 
   const strong = document.createElement("strong");
   strong.textContent = label;
@@ -493,8 +498,9 @@ function ensureIndicesBarStructure(bar) {
   if (!bar || bar.dataset.initialized === "true") return;
   const fragment = document.createDocumentFragment();
   for (let copy = 0; copy < 2; copy++) {
+    const isDuplicateCopy = copy > 0;
     INDEX_BAR_CONFIG.forEach(({ label, key }) => {
-      fragment.appendChild(buildIndexChip(label, key));
+      fragment.appendChild(buildIndexChip(label, key, isDuplicateCopy));
     });
   }
   bar.replaceChildren(fragment);
@@ -1515,6 +1521,34 @@ function _buildNewsMetaStatsEl(
 }
 
 // #region News & Trends
+function abortableSleep(ms, signal) {
+  if (signal?.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    return Promise.reject(err);
+  }
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const onAbort = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      const err = new Error("Aborted");
+      err.name = "AbortError";
+      reject(err);
+    };
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      if (signal) signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+  });
+}
+
 async function loadNews(forceRefresh = false) {
   if (state.isLoadingNews || !HAS_MISTRAL_API_KEY) {
     if (!HAS_MISTRAL_API_KEY) showToast("❌ APIキーが未設定です", "#ff7d7d");
@@ -1575,12 +1609,12 @@ async function loadNews(forceRefresh = false) {
       while (attempt < maxAttempts) {
         attempt += 1;
         const backoff = Math.min(1000 + attempt * 200, 3000);
-        await new Promise((resolve) => setTimeout(resolve, backoff));
+        await abortableSleep(backoff, newsRequestController.signal);
         // 初回リクエストと同じ AbortController の signal を引き継ぐことで、
         // NEWS_REQUEST タイムアウトがポーリング全体をカバーする(signal なしの
         // ループはユーザーが中断できない最長2〜3分の固まりになっていた)。
         const poll = await apiFetch(
-          "/api/news",
+          newsUrl,
           {
             method: "POST",
             headers,
@@ -1686,9 +1720,18 @@ async function loadNews(forceRefresh = false) {
     if (newsMetaStatsEl) {
       newsMetaStatsEl.textContent = "";
       if (e?.name === "AbortError") {
+        const loadingPlaceholder = "最新情報を検索・分析中...";
+        const hasPartial = [usBox, jpBox, trendsBox].some(
+          (box) =>
+            box &&
+            box.textContent?.trim() &&
+            box.textContent.trim() !== loadingPlaceholder,
+        );
         const timeoutSpan = document.createElement("span");
         timeoutSpan.style.cssText = "color:#E67E22;font-weight:bold;";
-        timeoutSpan.textContent = "⏱ タイムアウト: 部分結果を表示しています";
+        timeoutSpan.textContent = hasPartial
+          ? "⏱ タイムアウト: 部分結果を表示しています"
+          : "⏱ タイムアウト: 更新ボタンで再試行してください";
         newsMetaStatsEl.appendChild(timeoutSpan);
       } else {
         newsMetaStatsEl.textContent = "表示件数: 取得失敗";
@@ -1710,6 +1753,18 @@ async function loadNews(forceRefresh = false) {
         trendsBox.classList.add("show");
       }
     } else {
+      const loadingPlaceholder = "最新情報を検索・分析中...";
+      const timeoutPlaceholder =
+        "タイムアウトしました。更新ボタンで再試行してください。";
+      [usBox, jpBox, trendsBox].forEach((box) => {
+        if (!box) return;
+        if (
+          !box.textContent?.trim() ||
+          box.textContent.trim() === loadingPlaceholder
+        ) {
+          box.textContent = timeoutPlaceholder;
+        }
+      });
       requestAnimationFrame(() => {
         usBox?.classList.add("show");
         jpBox?.classList.add("show");
@@ -1965,20 +2020,46 @@ const CHAT_STREAM_IDLE_TIMEOUT_MS = 120000;
  * @param {number} idleTimeoutMs - チャンク間の最大待機時間(0 以下で無効)
  * @returns {Promise<Object>} ReadableStreamReadResult
  */
-function readStreamChunk(reader, idleTimeoutMs) {
-  if (!idleTimeoutMs || idleTimeoutMs <= 0) return reader.read();
+function readStreamChunk(reader, idleTimeoutMs, signal = null) {
+  if (signal?.aborted) {
+    const abortErr = new Error("Aborted");
+    abortErr.name = "AbortError";
+    return Promise.reject(abortErr);
+  }
+  if ((!idleTimeoutMs || idleTimeoutMs <= 0) && !signal) {
+    return reader.read();
+  }
   let timerId = null;
-  const idle = new Promise((_resolve, reject) => {
-    timerId = setTimeout(() => {
-      const err = new Error("ストリームが無応答のため中断しました");
-      err.name = "TimeoutError";
-      err.isStreamFallback = true;
-      err.isStreamIdleTimeout = true;
-      reject(err);
-    }, idleTimeoutMs);
-  });
-  return Promise.race([reader.read(), idle]).finally(() => {
+  let onAbort = null;
+  const racers = [reader.read()];
+  if (idleTimeoutMs && idleTimeoutMs > 0) {
+    racers.push(
+      new Promise((_resolve, reject) => {
+        timerId = setTimeout(() => {
+          const err = new Error("ストリームが無応答のため中断しました");
+          err.name = "TimeoutError";
+          err.isStreamFallback = true;
+          err.isStreamIdleTimeout = true;
+          reject(err);
+        }, idleTimeoutMs);
+      }),
+    );
+  }
+  if (signal) {
+    racers.push(
+      new Promise((_resolve, reject) => {
+        onAbort = () => {
+          const abortErr = new Error("Aborted");
+          abortErr.name = "AbortError";
+          reject(abortErr);
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    );
+  }
+  return Promise.race(racers).finally(() => {
     if (timerId !== null) clearTimeout(timerId);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
   });
 }
 
@@ -2033,19 +2114,47 @@ function ensureChatDisclaimer(log) {
 /**
  * Stream a chat reply over SSE (/api/chat with stream:true).
  * Calls onDelta(partialReply) for every received chunk and resolves with the
- * full reply text. Throws with err.isStreamFallback=true when the server
- * answered with a plain JSON response (validation error / fetching:True /
- * legacy backend) so the caller can fall back to polling.
+ * full reply text. Throws with err.isStreamFallback=true when an HTTP 200
+ * response is plain JSON / lacks body / stalls / ends without a done frame.
+ * HTTP error responses (!resp.ok) throw with err.isMistralError=true and do NOT
+ * trigger polling fallback.
  */
-async function streamChatReply(payload, onDelta) {
-  const resp = await csrfFetch("/api/chat", {
+async function streamChatReply(payload, onDelta, options) {
+  const signal = options?.signal;
+  const fetchOptions = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...payload, stream: true }),
-  });
-  const contentType = resp.headers.get("content-type") || "";
-  if (!resp.ok || !contentType.includes("text/event-stream")) {
-    // サーバーが通常のJSONで応答した（検証エラー/fetching:True/旧バックエンド）。
+  };
+  if (signal) {
+    fetchOptions.signal = signal;
+  }
+  const resp = await csrfFetch("/api/chat", fetchOptions);
+  if (!resp.ok) {
+    let errData = null;
+    if (typeof resp.json === "function") {
+      try {
+        errData = await resp.json();
+      } catch (_e) {
+        errData = null;
+      }
+    }
+    const detailReason = errData?.details?.reason
+      ? String(errData.details.reason)
+      : "";
+    const errMsg =
+      detailReason ||
+      String(errData?.message || errData?.error || `HTTP ${resp.status}`);
+    const err = new Error(errMsg);
+    err.status = resp.status;
+    err.response = resp;
+    err.data = errData;
+    err.isMistralError = true;
+    throw err;
+  }
+  const contentType = resp.headers?.get("content-type") || "";
+  if (!contentType.includes("text/event-stream")) {
+    // サーバーがHTTP 200の通常JSONで応答した（fetching:True / 旧バックエンド）。
     // 呼び出し元はポーリングへフォールバックする。
     const err = new Error("not-stream");
     err.response = resp;
@@ -2072,6 +2181,7 @@ async function streamChatReply(payload, onDelta) {
       const { done, value } = await readStreamChunk(
         reader,
         CHAT_STREAM_IDLE_TIMEOUT_MS,
+        signal,
       );
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -2132,36 +2242,30 @@ async function streamChatReply(payload, onDelta) {
  * Poll /api/chat until the background AI job finishes (fetching:True path).
  * Returns the final reply text.
  */
-async function chatPollingReply(payload) {
+async function chatPollingReply(payload, options = {}) {
+  const signal = options?.signal;
   let data = {};
   let resOk = false;
   for (let attempt = 0; attempt <= CHAT_POLL_MAX_ATTEMPTS; attempt++) {
-    const { response: res, data: fetched } = await apiFetch(
-      "/api/chat",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
+    const fetchOptions = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-      { showToast: false },
-    );
-    data = fetched || {};
-    if (!res.ok) {
-      const detailReason = data?.details?.reason
-        ? String(data.details.reason)
-        : "";
-      const errMsg =
-        detailReason ||
-        String(data.message || data.error || `HTTP ${res.status}`);
-      throw new Error(errMsg);
+      body: JSON.stringify(payload),
+    };
+    if (signal) {
+      fetchOptions.signal = signal;
     }
+    const { data: fetched } = await apiFetch("/api/chat", fetchOptions, {
+      showToast: false,
+    });
+    data = fetched || {};
     if (!data.fetching) {
       resOk = true;
       break;
     }
-    await sleep(CHAT_POLL_INTERVAL_MS);
+    await abortableSleep(CHAT_POLL_INTERVAL_MS, signal);
   }
   if (!resOk) {
     throw new Error("AI応答の生成がタイムアウトしました");
@@ -2283,8 +2387,8 @@ async function sendChat(wrapper, inputEl = null) {
         log.scrollTop = log.scrollHeight;
       });
     } catch (streamErr) {
-      if (streamErr && streamErr.isMistralError) {
-        // サーバーからの明示的なAPIエラー：メッセージをそのまま表示。
+      if (!streamErr || !streamErr.isStreamFallback) {
+        // サーバーからの明示的なHTTP/APIエラーや中断：ポーリングによる二重POSTを行わない。
         throw streamErr;
       }
       reply = await chatPollingReply(payload);
@@ -2416,7 +2520,7 @@ function applyAnalysisResult(wrapper, stock, data) {
         upsideEl.style.color = "#9ca3af";
       } else {
         upsideEl.style.color =
-          upside.includes("+") || upsideNum > 0 ? "#7dffb0" : "#ff7d7d";
+          String(upside).includes("+") || upsideNum > 0 ? "#7dffb0" : "#ff7d7d";
       }
     }
 
@@ -2433,7 +2537,10 @@ function applyAnalysisResult(wrapper, stock, data) {
     if (riskEl) riskEl.textContent = risksText;
 
     const aiSlider = aiSection.querySelector(".ai-slider");
-    if (aiSlider && (data.confidence || data.latest_news_impact)) {
+    if (
+      aiSlider &&
+      (data.analyzed_at || data.confidence || data.latest_news_impact)
+    ) {
       aiSlider.querySelectorAll(".ai-extra-card").forEach((c) => c.remove());
 
       if (data.analyzed_at) {
@@ -2720,11 +2827,13 @@ async function requestStockAnalysis(
 
 async function analyzeStock(btnEl, wrapper) {
   const stockKey = wrapper.dataset.stockKey;
-  if (state.isAnalyzing || !HAS_MISTRAL_API_KEY) {
-    if (!HAS_MISTRAL_API_KEY) {
-      applyAnalysisError(wrapper, "APIキーが未設定です");
-      showToast("❌ APIキーが未設定です", "#ff7d7d");
-    }
+  if (state.isAnalyzing) {
+    showToast("⏳ 他のAI分析を実行中です。完了までお待ちください", "#ffcc66");
+    return;
+  }
+  if (!HAS_MISTRAL_API_KEY) {
+    applyAnalysisError(wrapper, "APIキーが未設定です");
+    showToast("❌ APIキーが未設定です", "#ff7d7d");
     return;
   }
   setButtonLoading(btnEl, "AI分析中...");

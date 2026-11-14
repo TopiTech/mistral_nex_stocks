@@ -15,7 +15,7 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
     - Ensure your code is well-commented.
 4.  **Add Tests:** Add unit tests for your changes in the `tests/` directory.
 5.  **Run Tests:** Ensure all tests pass before submitting. The supported Python policy is
-    Python 3.12–3.14; CI runs the test matrix on each of these versions.
+    Python 3.11–3.14; CI runs the test matrix on each of these versions.
     ```bash
     uv sync --locked --group test
     uv run --locked --group test pytest -q
@@ -24,7 +24,7 @@ Thank you for your interest in contributing to Mistral NeX Stocks! We welcome co
 
 ## Coding Standards
 
-- **Python Version:** 3.12+
+- **Python Version:** 3.11+
 - **Linting:** Python quality checks are configured in `pyproject.toml` with Ruff and related tooling.
 - **Type Checking:** Python typing is configured through `mypy` / `pyrefly`; front-end typing uses TypeScript.
 - **Security:** Python security checks use `bandit`; keep secret-handling changes aligned with `SECURITY.md`.
@@ -45,7 +45,7 @@ uv run --locked --group test python tests/startup_smoke_runner.py
 # Run Python lint checks
 uv run --locked --group lint ruff check . --line-length=100
 uv run --locked --group lint flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-uv run --locked --group lint pylint --errors-only --disable=import-error app.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/
+uv run --locked --group lint pylint --errors-only --disable=import-error app.py app_factory/ bg/ app_bg.py wsgi.py gunicorn.conf.py shutdown_manager.py config/ config_store.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/ scripts/
 
 # Run Python type/analysis checks if available in your environment (validate both platforms)
 uv run --locked --group typecheck mypy
@@ -61,7 +61,7 @@ npm ci
 npm run typecheck
 npm run verify-generated
 npm run lint
-npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
+npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js" "scripts/**/*.mjs"
 npm audit --audit-level=high
 npm run build
 ```

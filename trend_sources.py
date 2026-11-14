@@ -177,7 +177,9 @@ class QueryTemplates:
     def get_symbol_queries(cls, symbol, name, market):
         """シンボルクエリを取得"""
         templates = cls.SYMBOL.get(market, [])
-        return [t.format(symbol=symbol, name=name) for t in templates]
+        safe_symbol = _safe_text(symbol)
+        safe_name = _safe_text(name)
+        return [t.replace("{symbol}", safe_symbol).replace("{name}", safe_name) for t in templates]
 
 
 REDDIT_MARKET_SUBREDDITS = {
@@ -562,14 +564,19 @@ def collect_google_trends_keyword_items(
     keyword: str, market: str = "us", limit: int = 5
 ) -> list[dict]:
     """指定キーワードのGoogle Trends関連語を収集"""
+    if int(limit) <= 0:
+        return []
     items: list[dict] = []
     for title in _trend_queries_for_keyword(keyword, market, limit=limit):
+        clean_title = _safe_text(title)
+        if not clean_title:
+            continue
         items.append(
             make_item(
                 "trend",
-                title,
+                clean_title,
                 summary=f"google_trends keyword={_safe_text(keyword)} market={_market_key(market)}",
-                url="https://trends.google.com/trends/explore",
+                url=f"https://trends.google.com/trends/explore?q={quote_plus(clean_title)}",
                 source="google_trends",
             )
         )

@@ -320,13 +320,14 @@ def test_handle_yfinance_error_uses_canonical_markers(monkeypatch):
 
 
 def test_handle_yfinance_error_nonrate_errors_reset_streak(monkeypatch):
+    """Unrelated non-rate errors must preserve global 429 backoff streak (BG-002)."""
     from bg.sync import fetch as fetch_mod
 
     app_state.market.yfinance_429_streak = 2
     with patch.object(app_state.market, "mark_yf_429") as mark:
         fetch_mod._handle_yfinance_error(ValueError("unexpected shape"))
     mark.assert_not_called()
-    assert app_state.market.yfinance_429_streak == 0
+    assert app_state.market.yfinance_429_streak == 2
 
 
 # ---------------------------------------------------------------------------

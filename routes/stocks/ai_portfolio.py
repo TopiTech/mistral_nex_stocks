@@ -33,6 +33,8 @@ from route_helpers import (
     extract_api_key,
     invalidate_stock_caches,
     rate_limit,
+    sanitize_client_upstream_text,
+    sanitize_upstream_log_message,
 )
 from routes.stocks import common as _common
 from routes.stocks.common import (
@@ -78,6 +80,37 @@ class FetchJob(TypedDict, total=False):
     message: str
 
 
+def _safe_provider_error_details(details: Any) -> dict[str, Any]:
+    """Allowlist non-sensitive structured metadata from ProviderAPIError.details."""
+    if not isinstance(details, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    retry_after = details.get("retry_after")
+    if isinstance(retry_after, (int, float)) and not isinstance(retry_after, bool):
+        safe["retry_after"] = retry_after
+    provider_error = details.get("provider_error")
+    if isinstance(provider_error, dict):
+        safe_pe: dict[str, Any] = {}
+        status_code = provider_error.get("status_code")
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            safe_pe["status_code"] = status_code
+        for key in ("code", "type", "provider"):
+            val = provider_error.get(key)
+            if isinstance(val, int) and not isinstance(val, bool):
+                safe_pe[key] = val
+            elif isinstance(val, str):
+                cleaned_val = sanitize_client_upstream_text(val, "")
+                if cleaned_val:
+                    safe_pe[key] = cleaned_val
+        if "message" in provider_error and provider_error["message"] is not None:
+            safe_pe["message"] = sanitize_client_upstream_text(
+                provider_error["message"], "upstream provider error"
+            )
+        if safe_pe:
+            safe["provider_error"] = safe_pe
+    return safe
+
+
 def _ai_portfolio_error_response(
     job_err: BaseException,
     flask_g: Any = None,
@@ -86,24 +119,26 @@ def _ai_portfolio_error_response(
     effective_g = flask_g if flask_g is not None else g
     req_id = getattr(effective_g, "request_id", "-")
     err_type = type(job_err).__name__
-    err_msg = str(job_err)
+    safe_log_msg = sanitize_upstream_log_message(job_err)
 
     if isinstance(job_err, ProviderAPIError):
         current_app.logger.error(
             "AI portfolio provider error id=%s status=%d: %s",
             req_id,
             job_err.status_code,
-            err_msg,
+            safe_log_msg,
         )
+        safe_reason = sanitize_client_upstream_text(job_err, default_reason)
+        safe_extra = _safe_provider_error_details(job_err.details)
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
-            details={"reason": err_msg, "error_type": err_type, **job_err.details},
+            details={"reason": safe_reason, "error_type": err_type, **safe_extra},
             status_code=job_err.status_code,
         )
 
     if isinstance(job_err, (httpx.TimeoutException, requests.Timeout)):
         current_app.logger.error(
-            "AI portfolio timeout id=%s error_type=%s: %s", req_id, err_type, err_msg
+            "AI portfolio timeout id=%s error_type=%s: %s", req_id, err_type, safe_log_msg
         )
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
@@ -117,27 +152,30 @@ def _ai_portfolio_error_response(
     if isinstance(job_err, httpx.HTTPStatusError) and job_err.response is not None:
         status = job_err.response.status_code
         current_app.logger.error(
-            "AI portfolio HTTP status error id=%s status=%d: %s", req_id, status, err_msg
+            "AI portfolio HTTP status error id=%s status=%d: %s", req_id, status, safe_log_msg
         )
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
-            details={"reason": f"AIサービスエラー (HTTP {status}): {err_msg}", "error_type": err_type},
+            details={"reason": f"AIサービスエラー (HTTP {status})", "error_type": err_type},
             status_code=status,
         )
 
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):
         current_app.logger.error(
-            "AI portfolio network error id=%s error_type=%s: %s", req_id, err_type, err_msg
+            "AI portfolio network error id=%s error_type=%s: %s", req_id, err_type, safe_log_msg
         )
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
-            details={"reason": f"AIサービス通信エラー: {err_msg}", "error_type": err_type},
+            details={
+                "reason": "AIサービス通信エラーが発生しました。接続先やネットワーク状態を確認してください。",
+                "error_type": err_type,
+            },
             status_code=503,
         )
 
     if isinstance(job_err, PortfolioStorageError):
         current_app.logger.error(
-            "AI portfolio storage error id=%s error_type=%s: %s", req_id, err_type, err_msg
+            "AI portfolio storage error id=%s error_type=%s: %s", req_id, err_type, safe_log_msg
         )
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
@@ -149,7 +187,7 @@ def _ai_portfolio_error_response(
         )
 
     current_app.logger.error(
-        "AI portfolio unexpected error id=%s error_type=%s: %s", req_id, err_type, err_msg
+        "AI portfolio unexpected error id=%s error_type=%s: %s", req_id, err_type, safe_log_msg
     )
     return error_response(
         ErrorCode.INTERNAL_SERVER_ERROR,
@@ -355,7 +393,7 @@ def api_generate_ai_portfolio() -> Any:
                 )
                 result_holder["error"] = exc
                 result_holder["step"] = "error"
-                result_holder["message"] = f"AIポートフォリオ生成エラー: {exc}"
+                result_holder["message"] = "AIポートフォリオ生成中にエラーが発生しました"
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
@@ -372,7 +410,9 @@ def api_generate_ai_portfolio() -> Any:
             route_helpers._submit_in_app_context(app_state.execution.executor, _run_ai_portfolio_job)
         except queue.Full as exc:
             current_app.logger.warning(
-                "AI portfolio job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+                "AI portfolio job queue is full id=%s: %s",
+                getattr(g, "request_id", "-"),
+                sanitize_upstream_log_message(exc),
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
@@ -386,7 +426,9 @@ def api_generate_ai_portfolio() -> Any:
                 status_code=503,
             )
         except Exception as exc:
-            current_app.logger.error("Failed to schedule AI portfolio job: %s", exc)
+            current_app.logger.error(
+                "Failed to schedule AI portfolio job: %s", sanitize_upstream_log_message(exc)
+            )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
             result_holder["error"] = exc
@@ -509,7 +551,7 @@ def api_rebalance_ai_portfolio() -> Any:
                 )
                 result_holder["error"] = exc
                 result_holder["step"] = "error"
-                result_holder["message"] = f"AIリバランスエラー: {exc}"
+                result_holder["message"] = "AIリバランス中にエラーが発生しました"
             finally:
                 with ai_portfolio_fetch_lock:
                     ai_portfolio_fetch_inflight.pop(inflight_key, None)
@@ -533,7 +575,9 @@ def api_rebalance_ai_portfolio() -> Any:
             route_helpers._submit_in_app_context(app_state.execution.executor, _run_ai_rebalance_job)
         except queue.Full as exc:
             current_app.logger.warning(
-                "AI rebalance job queue is full id=%s: %s", getattr(g, "request_id", "-"), exc
+                "AI rebalance job queue is full id=%s: %s",
+                getattr(g, "request_id", "-"),
+                sanitize_upstream_log_message(exc),
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
@@ -547,7 +591,9 @@ def api_rebalance_ai_portfolio() -> Any:
                 status_code=503,
             )
         except Exception as exc:
-            current_app.logger.error("Failed to schedule AI rebalance job: %s", exc)
+            current_app.logger.error(
+                "Failed to schedule AI rebalance job: %s", sanitize_upstream_log_message(exc)
+            )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
             result_holder["error"] = exc
@@ -762,7 +808,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
     resolved_usdjpy_rate = DEFAULT_USDJPY_RATE
     if has_us_items:
         rate_is_valid = True
-        raw_rate = getattr(app_state.market, "last_usdjpy_rate", DEFAULT_USDJPY_RATE)
+        raw_rate, raw_ts = app_state.market.get_usdjpy_rate_snapshot()
         if is_bool_like(raw_rate):
             resolved_usdjpy_rate = DEFAULT_USDJPY_RATE
             rate_is_valid = False
@@ -775,7 +821,6 @@ def api_copy_ai_portfolio_to_my() -> Any:
         if not math.isfinite(resolved_usdjpy_rate) or resolved_usdjpy_rate <= 0:
             resolved_usdjpy_rate = DEFAULT_USDJPY_RATE
             rate_is_valid = False
-        raw_ts = getattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
         if is_bool_like(raw_ts):
             usdjpy_rate_ts = 0.0
         else:
@@ -796,15 +841,14 @@ def api_copy_ai_portfolio_to_my() -> Any:
             try:
                 resolved_fx, is_est = get_current_usdjpy_rate(default_rate=DEFAULT_USDJPY_RATE)
                 if not is_est and math.isfinite(resolved_fx) and resolved_fx > 0:
-                    resolved_usdjpy_rate = resolved_fx
-                    usdjpy_rate_ts = now
                     is_stale = False
-                    app_state.market.last_usdjpy_rate = resolved_usdjpy_rate
-                    app_state.market.last_usdjpy_rate_ts = usdjpy_rate_ts
+                    resolved_usdjpy_rate, usdjpy_rate_ts = app_state.market.update_usdjpy_rate(
+                        resolved_fx, ts=now
+                    )
                 else:
-                    resolved_usdjpy_rate = resolved_fx
-                    app_state.market.last_usdjpy_rate = resolved_usdjpy_rate
-                    app_state.market.last_usdjpy_rate_ts = now - 24 * 3600 + 60.0
+                    resolved_usdjpy_rate, _ = app_state.market.update_usdjpy_rate(
+                        resolved_fx, ts=now - 24 * 3600 + 60.0
+                    )
             except Exception as fx_exc:
                 current_app.logger.debug("Failed to dynamically resolve USDJPY rate: %s", fx_exc)
 

@@ -258,9 +258,20 @@ def _reset_caches_and_sessions(app_state: object) -> None:
 
 
 def _reset_realtime_engine() -> None:
-    """Reset RealtimeMarketEngine stores and dirty flags."""
+    """Stop active producers and reset RealtimeMarketEngine stores and dirty flags."""
     try:
         from services.realtime_engine import realtime_market_engine
+
+        pts_thread = getattr(realtime_market_engine, "pts_thread", None)
+        yahoojp_scraper = getattr(realtime_market_engine, "yahoojp_scraper", None)
+        tv_client = getattr(realtime_market_engine, "tv_client", None)
+        if (
+            getattr(realtime_market_engine, "running", False)
+            or (pts_thread is not None and pts_thread.is_alive())
+            or getattr(yahoojp_scraper, "running", False)
+            or getattr(tv_client, "running", False)
+        ):
+            realtime_market_engine.stop()
 
         with realtime_market_engine.store_lock:
             realtime_market_engine.market_store.clear()
@@ -280,6 +291,12 @@ def _reset_realtime_engine() -> None:
                     except Exception:
                         pass
                 realtime_market_engine._client_events.clear()
+        try:
+            import services.realtime.utils as _rt_utils
+
+            _rt_utils._scraper_market_ref = None
+        except (ImportError, AttributeError):
+            pass
     except (ImportError, AttributeError):
         pass
 
@@ -322,6 +339,21 @@ def _reset_sync_and_leader() -> None:
         pass
 
 
+def _reset_keyring() -> None:
+    """Clear stored test passwords and restore the shared MemoryKeyring backend."""
+    try:
+        import keyring
+
+        from tests.test_support.keyring_mock import get_shared_memory_keyring
+
+        mem_keyring = get_shared_memory_keyring()
+        mem_keyring.clear()
+        if keyring.get_keyring() is not mem_keyring:
+            keyring.set_keyring(mem_keyring)
+    except Exception:
+        pass
+
+
 def reset_app_state_internals() -> None:
     """Reset global app_state and test-isolation boundaries to a clean slate.
 
@@ -332,6 +364,7 @@ def reset_app_state_internals() -> None:
     - Realtime market engine quote and PTS stores
     - Background worker leader election states and locks
     - Tracked temporary configuration files
+    - In-memory keyring backend registration and stored test passwords
     - API credentials and ephemeral encryption keys
     """
     from app_state import app_state
@@ -342,6 +375,7 @@ def reset_app_state_internals() -> None:
     _reset_realtime_engine()
     _reset_sync_and_leader()
     cleanup_temp_files()
+    _reset_keyring()
     try:
         from credential_manager import clear_api_credentials
 

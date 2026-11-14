@@ -288,8 +288,26 @@ class TestServicesAndIntegrations:
         with patch("services.fallback_provider.get_alphavantage_api_key", return_value="dummy_key"):
             with patch("requests.get", return_value=mock_resp):
                 res = av.get_latest_quote("TEST")
-                assert res is not None
-                assert res["regularMarketPrice"] == 0.0
+                # Non-finite price is rejected (returns None instead of fabricating 0.0, SVC-011)
+                assert res is None
+
+            # Valid finite price preserves quote while rejecting NaN/Inf optional fields
+            mock_resp.json.return_value = {
+                "Global Quote": {
+                    "01. symbol": "TEST",
+                    "05. price": "101.5",
+                    "08. previous close": "Infinity",
+                    "02. open": "NaN",
+                    "06. volume": "-5",
+                }
+            }
+            with patch("requests.get", return_value=mock_resp):
+                res_valid = av.get_latest_quote("TEST")
+                assert res_valid is not None
+                assert res_valid["regularMarketPrice"] == 101.5
+                assert res_valid["regularMarketPreviousClose"] is None
+                assert res_valid["regularMarketOpen"] is None
+                assert res_valid["regularMarketVolume"] == 0
 
         # YahooJPScraper
         ys = YahooJPScraperProvider()

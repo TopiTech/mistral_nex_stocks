@@ -19,6 +19,7 @@ from tests.test_support import (
     apply_all_test_patches,
     apply_baseline_test_env,
     get_baseline_test_env,
+    get_shared_memory_keyring,
     reset_app_state_internals,
 )
 
@@ -33,10 +34,8 @@ sys.modules["secretstorage"] = None  # type: ignore[assignment]
 _BASELINE_TEST_ENV: dict[str, str] = get_baseline_test_env(test_temp_dir.name)
 
 import keyring
-import keyring.core
 
-_mem_keyring = MemoryKeyring()
-keyring.core._keyring = _mem_keyring  # type: ignore[attr-defined]
+_mem_keyring = get_shared_memory_keyring()
 keyring.set_keyring(_mem_keyring)
 
 import pytest
@@ -208,7 +207,9 @@ def reset_app_state():
 
     def _clear_persisted_state():
         reset_app_state_internals()
-        _mem_keyring.passwords.clear()
+        _mem_keyring.clear()
+        if keyring.get_keyring() is not _mem_keyring:
+            keyring.set_keyring(_mem_keyring)
         yf_session_manager._reset_for_testing()
         config_store._reset_legacy_merge_flag()
         for _f in (

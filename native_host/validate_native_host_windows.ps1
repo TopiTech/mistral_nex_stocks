@@ -18,7 +18,7 @@ if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
   throw "Manifest template not found: $templatePath"
 }
 $templatePath = (Resolve-Path -LiteralPath $templatePath).Path
-if (-not (Test-Path $ManifestPath -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
   $ManifestPath = $templatePath
   Write-Host "[INFO] Generated manifest not found; validating template." -ForegroundColor Yellow
 }
@@ -34,17 +34,22 @@ if ($manifest.name -ne 'com.mistral_nex_stocks.host') { throw 'Invalid native ho
 if ($manifest.type -ne 'stdio') { throw 'Native host type must be stdio.' }
 if (-not $manifest.path) { throw 'Native host launcher path is missing.' }
 $hasOrigins = ($manifest.PSObject.Properties.Match('allowed_origins').Count -gt 0)
-$origins = if ($hasOrigins -and $manifest.allowed_origins) { @($manifest.allowed_origins) } else { @() }
+$origins = if ($hasOrigins -and $null -ne $manifest.allowed_origins) { @($manifest.allowed_origins) } else { @() }
 $originCount = ($origins | Measure-Object).Count
 if (-not $isTemplate -and $originCount -eq 0) {
   throw 'Manifest must contain at least one allowed origin.'
 }
 foreach ($origin in $origins) {
-  if ($origin -and $origin -notmatch '^chrome-extension://[a-z0-9]{32}/$') { throw "Invalid allowed origin: $origin" }
+  if ($null -eq $origin -or -not ($origin -is [string]) -or [string]::IsNullOrWhiteSpace($origin)) {
+    throw 'Invalid allowed origin: empty or non-string value.'
+  }
+  if ($origin -notmatch '^chrome-extension://[a-z0-9]{32}/$') {
+    throw "Invalid allowed origin: $origin"
+  }
 }
 
 $resolvedLauncher = if ([IO.Path]::IsPathRooted($manifest.path)) { $manifest.path } else { Join-Path (Split-Path -Parent $resolvedManifestPath) $manifest.path }
-if (Test-Path $resolvedLauncher -PathType Leaf) {
+if (Test-Path -LiteralPath $resolvedLauncher -PathType Leaf) {
   Write-Host "[ OK ] Launcher exists: $resolvedLauncher" -ForegroundColor Green
 } elseif ($RequireLauncher) {
   throw "Launcher does not exist: $resolvedLauncher"
@@ -52,6 +57,6 @@ if (Test-Path $resolvedLauncher -PathType Leaf) {
   Write-Host "[WARN] Machine-specific launcher is missing: $resolvedLauncher" -ForegroundColor Yellow
 }
 foreach ($required in @('native_host.py', 'start_backend.py')) {
-  if (-not (Test-Path (Join-Path $scriptDir $required) -PathType Leaf)) { throw "Required source file missing: $required" }
+  if (-not (Test-Path -LiteralPath (Join-Path $scriptDir $required) -PathType Leaf)) { throw "Required source file missing: $required" }
 }
 Write-Host "[ OK ] Native host manifest is structurally valid (read-only check)." -ForegroundColor Green

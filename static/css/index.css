@@ -4511,6 +4511,19 @@ textarea:focus-visible {
   border: none;
 }
 
+.tv-load-error {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--danger, #ff7d7d);
+  font-size: 0.95rem;
+  font-weight: 600;
+  background: rgba(15, 23, 42, 0.92);
+}
+
 /* --- Real-Time SSE Tick Pulse Glow Animations --- */
 @keyframes tickPulseUp {
   0% {

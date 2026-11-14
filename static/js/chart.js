@@ -796,6 +796,9 @@ async function updateApiStatus() {
  */
 function createEl(tag, className, text) {
   const el = document.createElement(tag);
+  if (String(tag).toLowerCase() === "button") {
+    el.type = "button";
+  }
   if (className) el.className = className;
   if (text != null) el.textContent = text;
   return el;
@@ -1250,12 +1253,24 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     document.querySelector("#stock-detail-drawer .chart-canvas");
   if (!canvas) return;
 
+  const fsErrorHost = options.targetCanvas
+    ? document.getElementById("fs-chart-canvas-wrapper") ||
+      options.targetCanvas.parentElement
+    : null;
+  if (fsErrorHost) {
+    fsErrorHost.querySelectorAll(".chart-error").forEach((el) => el.remove());
+  }
+
   const ctx = canvas.getContext("2d");
   if (!data || data.length < 2) {
     // 描画不能データでは旧チャートを(新しい期間のチャートとして)残さず、
     // 破棄してから情報表示を出す(空データで旧チャートが残るのを防ぐ)。
     _safeDestroyChart(canvas);
-    if (wrapper && !options.targetCanvas) {
+    if (options.targetCanvas && fsErrorHost) {
+      fsErrorHost.appendChild(
+        createEl("div", "chart-error info", NO_HISTORY_MSG),
+      );
+    } else if (wrapper && !options.targetCanvas) {
       showChartError(wrapper, NO_HISTORY_MSG, "info");
     }
     return;
@@ -1985,7 +2000,11 @@ async function refreshStockChart(wrapper, period, interval) {
         signal,
       );
     } catch (firstErr) {
-      if (firstErr.name === "AbortError" || signal.aborted) {
+      if (
+        firstErr.name === "AbortError" ||
+        signal.aborted ||
+        wrapper.dataset.chartFetchId !== currentFetchId
+      ) {
         return;
       }
       // 初回読み込み時にバックエンドがデータ未キャッシュの場合、
@@ -1998,7 +2017,8 @@ async function refreshStockChart(wrapper, period, interval) {
         clearChartError(wrapper);
         showChartError(wrapper, "データを読み込み中です...", "info");
         await new Promise((r) => setTimeout(r, 3000));
-        if (signal.aborted) return;
+        if (signal.aborted || wrapper.dataset.chartFetchId !== currentFetchId)
+          return;
         // 再試行前にプレフェッチキャッシュを再チェック
         const retryPrefetch = getFreshPrefetchedHistory(
           stockKey,
@@ -2068,11 +2088,15 @@ async function refreshStockChart(wrapper, period, interval) {
         });
     }
   } catch (e) {
-    if (e.name === "TimeoutError") {
-      showChartError(wrapper, e.message, "error");
+    if (
+      e.name === "AbortError" ||
+      signal.aborted ||
+      wrapper.dataset.chartFetchId !== currentFetchId
+    ) {
       return;
     }
-    if (e.name === "AbortError" || signal.aborted) {
+    if (e.name === "TimeoutError") {
+      showChartError(wrapper, e.message, "error");
       return;
     }
     logger.error("History fetch error:", e);

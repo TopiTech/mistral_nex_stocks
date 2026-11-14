@@ -120,19 +120,66 @@ function setMnsExtensionToken(value) {
   }
 }
 
+let backendPortExplicitlySet = false;
+let resolveBackendPortHydrated = null;
+const backendPortHydrated = new Promise((resolve) => {
+  resolveBackendPortHydrated = resolve;
+});
+
+function finishBackendPortHydration() {
+  if (resolveBackendPortHydrated) {
+    const done = resolveBackendPortHydrated;
+    resolveBackendPortHydrated = null;
+    done();
+  }
+}
+
 function setBackendPort(value) {
+  backendPortExplicitlySet = true;
   backendPort = normalizeBackendPort(value);
   BACKEND_URLS = buildBackendUrls(backendPort);
   chrome.storage.local.set({ backendPort: backendPort });
+  finishBackendPortHydration();
 }
 
 // Load persisted state from storage
-chrome.storage.local.get(["backendPort"], (items) => {
-  if (items.backendPort) {
-    backendPort = normalizeBackendPort(items.backendPort);
-    BACKEND_URLS = buildBackendUrls(backendPort);
+{
+  const hydrationFallbackTimer =
+    typeof setTimeout === "function"
+      ? setTimeout(finishBackendPortHydration, 100)
+      : null;
+  const clearFallbackTimer = () => {
+    if (hydrationFallbackTimer !== null && typeof clearTimeout === "function") {
+      clearTimeout(hydrationFallbackTimer);
+    }
+  };
+  try {
+    const maybePromise = chrome.storage.local.get(["backendPort"], (items) => {
+      clearFallbackTimer();
+      if (!backendPortExplicitlySet && items && items.backendPort) {
+        backendPort = normalizeBackendPort(items.backendPort);
+        BACKEND_URLS = buildBackendUrls(backendPort);
+      }
+      finishBackendPortHydration();
+    });
+    if (maybePromise && typeof maybePromise.then === "function") {
+      maybePromise.then(
+        () => {
+          clearFallbackTimer();
+          finishBackendPortHydration();
+        },
+        () => {
+          clearFallbackTimer();
+          finishBackendPortHydration();
+        },
+      );
+    }
+  } catch (error) {
+    clearFallbackTimer();
+    console.warn("Failed to read backendPort from storage.local:", error);
+    finishBackendPortHydration();
   }
-});
+}
 // Remove shutdown tokens written by older versions to persistent storage.
 chrome.storage.local.remove("mnsShutdownToken");
 
@@ -271,6 +318,7 @@ async function addStockViaExtension(base, symbol, market) {
 }
 
 async function refreshBackendPort() {
+  await backendPortHydrated;
   try {
     const response = await sendNativeMessage({ action: "get_backend_port" });
     if (response && response.ok) {
@@ -284,6 +332,7 @@ async function refreshBackendPort() {
 }
 
 async function checkHealth(retries = 1, timeoutMs = HEALTH_TIMEOUT_MS) {
+  await backendPortHydrated;
   let lastError = null;
   const attempts = [];
 
@@ -379,7 +428,12 @@ async function sendNativeMessage(message, retries = 3) {
       }
       return response;
     } catch (err) {
-      if (attempt < retries) {
+      const errMsg = String(err?.message || err || "").toLowerCase();
+      const isDeterministicHostError =
+        errMsg.includes("not found") ||
+        errMsg.includes("forbidden") ||
+        errMsg.includes("invalid extension id");
+      if (!isDeterministicHostError && attempt < retries) {
         const delay = 500 * Math.pow(1.5, attempt) + Math.random() * 200;
         console.warn(
           `Native messaging error, retrying in ${Math.round(delay)}ms...`,
@@ -404,37 +458,67 @@ async function openRoute(route) {
 const DEFAULT_BADGE_COLOR = "#4d8fff";
 const DEFAULT_BADGE_DURATION = 2500;
 let badgeClearTimer = null;
+let badgeToken = 0;
+
+function cancelBadgeClearTimer() {
+  if (badgeClearTimer) {
+    clearTimeout(badgeClearTimer);
+    badgeClearTimer = null;
+  }
+}
+
+function commitBadgeText(text, color = null) {
+  badgeToken += 1;
+  cancelBadgeClearTimer();
+  chrome.action.setBadgeText({ text });
+  if (color) {
+    chrome.action.setBadgeBackgroundColor({ color });
+  }
+}
 
 function setBadgeMessage(
   text,
   color = DEFAULT_BADGE_COLOR,
   durationMs = DEFAULT_BADGE_DURATION,
 ) {
-  if (badgeClearTimer) {
-    clearTimeout(badgeClearTimer);
-    badgeClearTimer = null;
-  }
+  const token = ++badgeToken;
+  cancelBadgeClearTimer();
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color });
   badgeClearTimer = setTimeout(() => {
-    chrome.action.setBadgeText({ text: "" });
     badgeClearTimer = null;
+    if (token !== badgeToken) return;
+    chrome.action.setBadgeText({ text: "" });
   }, durationMs);
 }
 
 // ------------------------------------------------------------------
 // Side Panel Support
 // ------------------------------------------------------------------
+function enableActionPopupFallback() {
+  if (chrome.action && typeof chrome.action.setPopup === "function") {
+    chrome.action.setPopup({ popup: "popup.html" });
+  }
+}
+
 if (chrome.sidePanel?.setPanelBehavior) {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch((error) => console.error(error));
+    .catch((error) => {
+      console.error(error);
+      enableActionPopupFallback();
+    });
 } else if (chrome.action?.onClicked && chrome.sidePanel?.open) {
   chrome.action.onClicked.addListener((tab) => {
     if (tab.windowId) {
-      chrome.sidePanel.open({ windowId: tab.windowId }).catch(console.error);
+      chrome.sidePanel.open({ windowId: tab.windowId }).catch((error) => {
+        console.error(error);
+        enableActionPopupFallback();
+      });
     }
   });
+} else {
+  enableActionPopupFallback();
 }
 
 // ------------------------------------------------------------------
@@ -591,10 +675,14 @@ async function updateBadge() {
     return;
   }
   isUpdatingBadge = true;
+  const startBadgeToken = badgeToken;
   try {
+    await backendPortHydrated;
     const health = await checkHealth();
     if (!health.ok) {
-      chrome.action.setBadgeText({ text: "" });
+      if (badgeToken === startBadgeToken) {
+        commitBadgeText("");
+      }
       return;
     }
 
@@ -606,6 +694,7 @@ async function updateBadge() {
       );
       if (!res.ok) return;
       const data = await res.json();
+      if (badgeToken !== startBadgeToken) return;
       const n225 = data["N225"];
       // popup.js と同様に change_percent フォールバックを持たせる(経路により
       // percent ではなく change_percent のみを持つ指数キャッシュがありうる)。
@@ -617,13 +706,12 @@ async function updateBadge() {
             (pctValue >= 0 ? "+" : "") + Math.round(pctValue).toString() + "%";
           const color = pctValue >= 0 ? "#7dffb0" : "#ff7d7d";
 
-          chrome.action.setBadgeText({ text: text });
-          chrome.action.setBadgeBackgroundColor({ color: color });
+          commitBadgeText(text, color);
         } else {
-          chrome.action.setBadgeText({ text: "" });
+          commitBadgeText("");
         }
       } else {
-        chrome.action.setBadgeText({ text: "" });
+        commitBadgeText("");
       }
     } catch (e) {
       console.debug("Badge update failed:", e);
@@ -691,7 +779,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return safeSendResponse(await checkHealth(retries, timeoutMs));
       }
       if (message.action === "getContext") {
-        await refreshBackendPort();
         const health = await checkHealth();
         // Do not read either token here: the popup only needs diagnostics,
         // and both secrets are acquired lazily by the actions that use them.
@@ -706,6 +793,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
       }
       if (message.action === "startBackend") {
+        setMnsShutdownToken(null);
         const res = await sendNativeMessage({
           action: "start_backend",
         });
@@ -728,62 +816,103 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         }
 
-        if (!mnsShutdownToken) {
+        const acquireShutdownToken = async (forceRefresh = false) => {
+          if (forceRefresh) {
+            setMnsShutdownToken(null);
+          }
+          if (mnsShutdownToken) {
+            return { ok: true, token: mnsShutdownToken, rateLimited: false };
+          }
           try {
             const tokenRes = await sendNativeMessage({
               action: "get_shutdown_token",
             });
-            if (tokenRes && tokenRes.ok) {
+            if (tokenRes && tokenRes.ok && tokenRes.token) {
               setMnsShutdownToken(tokenRes.token);
+              return { ok: true, token: tokenRes.token, rateLimited: false };
             }
+            const errText = String(tokenRes?.error || "");
+            const rateLimited = errText.toLowerCase().includes("rate limit");
+            return { ok: false, error: errText, rateLimited };
           } catch (e) {
             console.warn("Failed to query shutdown token before shutdown:", e);
+            return {
+              ok: false,
+              error: e?.message || String(e),
+              rateLimited: false,
+            };
           }
-        }
+        };
 
         try {
-          const res = await fetchWithTimeout(
-            `${health.base}/api/shutdown`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-MNS-Shutdown-Token": mnsShutdownToken || "",
-              },
-              body: JSON.stringify({ confirm: true }),
-              cache: "no-store",
-            },
-            SHUTDOWN_TIMEOUT_MS,
-          );
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || data?.ok === false) {
-            const rawError = String(data?.error || `HTTP ${res.status}`);
-            // 現行バックエンドはトークン失敗を統一エラーエンベロープ
-            // (403 + details.reason)で返すため、安定フィールドでも判定する。
-            // 旧英語文言マッチは旧バックエンド互換として残す。
-            const isShutdownTokenError =
-              rawError.includes("shutdown token is not configured") ||
-              rawError.includes("invalid or missing shutdown token") ||
-              (res.status === 403 &&
-                data?.details?.reason === "invalid shutdown request");
-            if (isShutdownTokenError) {
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const tokenState = await acquireShutdownToken(false);
+            if (tokenState.rateLimited) {
               return safeSendResponse({
                 ok: false,
                 error:
-                  "古いバックエンドが起動しているか、シャットダウントークンが無効です。バックエンドを再起動し、拡張機能を再読み込みしてください。",
+                  tokenState.error ||
+                  "シャットダウントークン取得のレート制限に達しました。少し待ってから再試行してください。",
               });
             }
-            return safeSendResponse({ ok: false, error: rawError });
+
+            const res = await fetchWithTimeout(
+              `${health.base}/api/shutdown`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-MNS-Shutdown-Token": mnsShutdownToken || "",
+                },
+                body: JSON.stringify({ confirm: true }),
+                cache: "no-store",
+              },
+              SHUTDOWN_TIMEOUT_MS,
+            );
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data?.ok === false) {
+              const rawError = String(data?.error || `HTTP ${res.status}`);
+              // 現行バックエンドはトークン失敗を統一エラーエンベロープ
+              // (403 + details.reason)で返すため、安定フィールドでも判定する。
+              // 旧英語文言マッチは旧バックエンド互換として残す。
+              const isShutdownTokenError =
+                rawError.includes("shutdown token is not configured") ||
+                rawError.includes("invalid or missing shutdown token") ||
+                (res.status === 403 &&
+                  data?.details?.reason === "invalid shutdown request");
+              if (isShutdownTokenError && attempt === 0) {
+                const refreshed = await acquireShutdownToken(true);
+                if (refreshed.rateLimited) {
+                  return safeSendResponse({
+                    ok: false,
+                    error:
+                      refreshed.error ||
+                      "シャットダウントークン再取得のレート制限に達しました。少し待ってから再試行してください。",
+                  });
+                }
+                if (refreshed.ok) {
+                  continue;
+                }
+              }
+              if (isShutdownTokenError) {
+                return safeSendResponse({
+                  ok: false,
+                  error:
+                    "古いバックエンドが起動しているか、シャットダウントークンが無効です。バックエンドを再起動し、拡張機能を再読み込みしてください。",
+                });
+              }
+              return safeSendResponse({ ok: false, error: rawError });
+            }
+            commitBadgeText("");
+            setMnsShutdownToken(null);
+            return safeSendResponse({ ok: true });
           }
-          chrome.action.setBadgeText({ text: "" });
-          setMnsShutdownToken(null);
-          return safeSendResponse({ ok: true });
         } catch (_e) {
           // The fetch failed, which may occur if Flask closed the connection during
           // shutdown. Verify if the backend is down before treating as success.
           const checkAfterError = await checkHealth();
           if (!checkAfterError.ok) {
-            chrome.action.setBadgeText({ text: "" });
+            commitBadgeText("");
             setMnsShutdownToken(null);
             return safeSendResponse({ ok: true, stopped: true });
           }
@@ -854,6 +983,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       if (message.action === "openOrbit") {
         return safeSendResponse(await openRoute("/experimental/orbit"));
+      }
+      if (message.action === "openRoute") {
+        return safeSendResponse(await openRoute(message.route));
       }
 
       return safeSendResponse({ ok: false, error: "Unknown action" });

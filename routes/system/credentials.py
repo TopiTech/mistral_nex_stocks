@@ -18,8 +18,16 @@ import routes.api_system
 from app_state import app_state
 from error_codes import ErrorCode
 from mistral_compat import HAS_AGENTS_SDK, load_sdk_agent, mistral_agents
-from route_helpers import _parse_credentials_save_request, rate_limit
+from route_helpers import (
+    _parse_credentials_save_request,
+    openai_base_url_error_response,
+    rate_limit,
+)
 from routes.system.blueprint import api_system_bp
+from schemas.config import (
+    normalize_openai_base_url_for_compare,
+    validate_openai_base_url_setting,
+)
 from utils.env_helpers import _env_bool
 from utils.networking import (
     check_admin_token,
@@ -312,6 +320,19 @@ def api_credentials():
         target_openai_model = parsed_creds.openai_model
         target_openai_emb_model = parsed_creds.openai_embeddings_model
 
+        if target_openai_url is not None and target_openai_url != "":
+            validated_url, url_err = validate_openai_base_url_setting(target_openai_url)
+            if url_err is not None:
+                url_resp = openai_base_url_error_response(url_err)
+                if url_resp is not None:
+                    return url_resp
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"fields": ["openai_base_url"], "reason": "openai_base_url の形式が不正です"},
+                    status_code=400,
+                )
+            target_openai_url = validated_url
+
         has_credentials_update = (
             mistral_api_key is not None
             or openai_api_key is not None
@@ -407,25 +428,92 @@ def api_credentials_verify():
         target_provider = get_ai_provider()
 
     if target_provider == "openai_compatible":
-        from credential_manager import get_openai_api_key, get_openai_base_url
+        from credential_manager import (
+            get_openai_api_key,
+            get_openai_base_url,
+            is_preview_api_key,
+        )
         from services.openai_service import verify_openai_connection
 
-        openai_key = data.get("openai_api_key")
-        if openai_key is None:
-            openai_key = data.get("api_key")
-        if not openai_key or not str(openai_key).strip():
-            openai_key = get_openai_api_key() or ""
-        else:
-            openai_key = str(openai_key).strip()
+        raw_openai_key = (
+            data["openai_api_key"]
+            if "openai_api_key" in data and data["openai_api_key"] is not None
+            else data.get("api_key")
+        )
+        if raw_openai_key is not None and not isinstance(raw_openai_key, str):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={"reason": "openai_api_key must be a string"},
+                status_code=400,
+            )
 
-        raw_base_url = data.get("openai_base_url") or data.get("base_url")
+        raw_base_url = (
+            data["openai_base_url"]
+            if "openai_base_url" in data and data["openai_base_url"] is not None
+            else data.get("base_url")
+        )
         if raw_base_url is not None and not isinstance(raw_base_url, str):
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": "openai_base_url must be a string"},
                 status_code=400,
             )
-        base_url = raw_base_url or get_openai_base_url()
+
+        supplied_base_url = ""
+        if raw_base_url is not None and raw_base_url.strip():
+            validated_url, url_err = validate_openai_base_url_setting(raw_base_url)
+            if url_err is not None:
+                url_resp = openai_base_url_error_response(url_err)
+                if url_resp is not None:
+                    return url_resp
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "openai_base_url の形式が不正です"},
+                    status_code=400,
+                )
+            supplied_base_url = validated_url or ""
+
+        stored_base_url = str(get_openai_base_url() or "").strip()
+        base_url = supplied_base_url or stored_base_url
+        if base_url and not supplied_base_url:
+            validated_stored_url, stored_url_err = validate_openai_base_url_setting(base_url)
+            if stored_url_err is not None:
+                url_resp = openai_base_url_error_response(stored_url_err)
+                if url_resp is not None:
+                    return url_resp
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "openai_base_url の形式が不正です"},
+                    status_code=400,
+                )
+            base_url = validated_stored_url or ""
+
+        supplied_key = raw_openai_key.strip() if raw_openai_key else ""
+        if supplied_key and is_preview_api_key(supplied_key):
+            supplied_key = ""
+
+        if supplied_key:
+            openai_key = supplied_key
+        else:
+            norm_supplied = (
+                normalize_openai_base_url_for_compare(supplied_base_url)
+                if supplied_base_url
+                else ""
+            )
+            norm_stored = (
+                normalize_openai_base_url_for_compare(stored_base_url)
+                if stored_base_url
+                else ""
+            )
+            can_fallback_to_stored_key = not norm_supplied or (
+                bool(norm_stored) and norm_supplied == norm_stored
+            )
+            if can_fallback_to_stored_key:
+                stored_key = str(get_openai_api_key() or "").strip()
+                openai_key = "" if is_preview_api_key(stored_key) else stored_key
+            else:
+                openai_key = ""
+
         res_dict = verify_openai_connection(base_url=base_url, api_key=openai_key)
         if not res_dict.get("ok"):
             # API-9: never forward the raw service dict / unsanitized upstream

@@ -9,11 +9,25 @@ import logging
 import queue
 import threading
 import weakref
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _worker
+from contextlib import contextmanager
 from typing import Any, cast
 
 logger = logging.getLogger(__name__)
+
+# Process-wide lock protecting temporary ``os.umask(0o077)`` changes so
+# concurrent threads creating restricted files cannot leak permissive masks or
+# restore an unintended umask over another thread's file creation.
+PROCESS_UMASK_LOCK = threading.RLock()
+
+
+@contextmanager
+def restrictive_umask_lock() -> Iterator[None]:
+    """Serialize process-global ``os.umask`` mutations across threads."""
+    with PROCESS_UMASK_LOCK:
+        yield
 
 
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):

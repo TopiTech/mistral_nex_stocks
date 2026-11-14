@@ -570,15 +570,21 @@ def clear_ephemeral_credentials(exclude: set[str] | None = None) -> None:
             _EPHEMERAL_KEY = None
 
 
-def is_ephemeral_active() -> bool:
+def is_ephemeral_active(exclude: set[str] | tuple[str, ...] | frozenset[str] | None = None) -> bool:
     """Return True if any credentials are stored ephemerally (R8). Restart will lose them."""
     with _EPHEMERAL_LOCK:
+        if exclude:
+            return any(k not in exclude for k in _EPHEMERAL_CREDENTIALS)
         return bool(_EPHEMERAL_CREDENTIALS)
 
 
-def get_ephemeral_keys() -> list[str]:
+def get_ephemeral_keys(
+    exclude: set[str] | tuple[str, ...] | frozenset[str] | None = None,
+) -> list[str]:
     """Return list of key_names stored ephemerally (for status reporting)."""
     with _EPHEMERAL_LOCK:
+        if exclude:
+            return [k for k in _EPHEMERAL_CREDENTIALS if k not in exclude]
         return list(_EPHEMERAL_CREDENTIALS.keys())
 
 

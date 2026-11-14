@@ -58,7 +58,7 @@ jobs:
         run: npm run lint
 
       - name: Check Prettier formatting
-        run: npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js"
+        run: npx prettier --check "static/js/**/*.js" "chrome_extension/**/*.js" "scripts/**/*.mjs"
 
       - name: Audit npm dependencies
         run: npm audit --audit-level=high

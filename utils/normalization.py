@@ -144,13 +144,18 @@ def is_valid_symbol(symbol):
     # with False, never raise TypeError.
     if symbol is None:
         return False
-    symbol_str = str(symbol)
-    if not symbol_str or len(symbol_str) > 15:
+    symbol_raw = str(symbol)
+    symbol_normalized = unicodedata.normalize("NFKC", symbol_raw).upper()
+    if (
+        not symbol_raw
+        or not symbol_normalized
+        or len(symbol_raw) > 15
+        or len(symbol_normalized) > 15
+    ):
         return False
     dangerous_chars = ["/", "\\", "..", "\0", "%", "\x00", "\n", "\r"]
-    if any(char in symbol_str for char in dangerous_chars):
+    if any(char in symbol_raw or char in symbol_normalized for char in dangerous_chars):
         return False
-    symbol_normalized = unicodedata.normalize("NFKC", symbol_str).upper()
     return bool(SYMBOL_PATTERN.match(symbol_normalized))
 
 

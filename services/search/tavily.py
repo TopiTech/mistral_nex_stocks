@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 from tenacity import (
@@ -11,6 +12,70 @@ from tenacity import (
 import trend_sources as ts
 
 logger = logging.getLogger(__name__)
+
+_TAVILY_REQUEST_TIMEOUT_SEC = 10.0
+_TAVILY_TOTAL_DEADLINE_SEC = 18.0
+_TAVILY_CIRCUIT_NAME = "tavily"
+
+
+def _is_tavily_circuit_open() -> bool:
+    try:
+        from app_state import app_state
+
+        market = getattr(app_state, "market", None)
+        if market is not None and hasattr(market, "is_circuit_open"):
+            return bool(market.is_circuit_open(_TAVILY_CIRCUIT_NAME))
+    except Exception:
+        pass
+    return False
+
+
+def _report_tavily_circuit(success: bool) -> None:
+    try:
+        from app_state import app_state
+
+        market = getattr(app_state, "market", None)
+        if market is not None and hasattr(market, "report_circuit_result"):
+            market.report_circuit_result(_TAVILY_CIRCUIT_NAME, success)
+    except Exception:
+        pass
+
+
+def _extract_tavily_status_code(exc: BaseException | None) -> int | None:
+    if exc is None:
+        return None
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_tavily_circuit_failure(exc: BaseException) -> bool:
+    """True for transient/server availability failures that should advance circuit breaker."""
+    status = _extract_tavily_status_code(exc)
+    if status is not None:
+        return status >= 500
+    msg = str(exc).lower()
+    return any(
+        kw in msg
+        for kw in ("timeout", "timed out", "connectionerror", "connection reset", "connection aborted")
+    ) or isinstance(exc, (TimeoutError, ConnectionError))
+
+
+def _is_tavily_fatal_batch_error(exc: BaseException) -> bool:
+    """True when an auth/rate-limit/quota error makes remaining queries futile."""
+    status = _extract_tavily_status_code(exc)
+    if status in (401, 403, 429, 432, 433):
+        return True
+    msg = str(exc).lower()
+    return any(
+        kw in msg
+        for kw in ("unauthorized", "invalid api key", "too many requests", "rate limit", "usage limit")
+    )
 
 
 def _external_error_metadata(exc: BaseException | None) -> tuple[str, str]:
@@ -90,6 +155,7 @@ def tavily_search(
     timelimit="d",
     topic="news",
     errors_out=None,
+    timeout: float | None = None,
 ):
     """Performs a web search via Tavily API."""
     normalized_query = " ".join(str(query or "").split())
@@ -97,6 +163,9 @@ def tavily_search(
         return []
     if not api_key:
         raise ValueError("Tavily API key is required")
+    if _is_tavily_circuit_open():
+        logger.info("Tavily circuit is open; skipping search request")
+        return []
 
     time_range_map = {
         "d": "day",
@@ -108,7 +177,8 @@ def tavily_search(
 
     try:
         client = _get_tavily_client(api_key)
-        kwargs = {
+        req_timeout = _TAVILY_REQUEST_TIMEOUT_SEC if timeout is None else max(1.0, float(timeout))
+        kwargs: dict[str, Any] = {
             "query": normalized_query,
             "search_depth": "advanced" if max_results > 5 else "basic",
             "topic": topic,
@@ -116,11 +186,13 @@ def tavily_search(
             "include_answer": False,
             "include_raw_content": False,
             "include_images": False,
+            "timeout": req_timeout,
         }
         if time_range:
             kwargs["time_range"] = time_range
 
         response = _tavily_client_search(client, kwargs)
+        _report_tavily_circuit(True)
         results = response.get("results", []) if isinstance(response, dict) else []
         return results if isinstance(results, list) else []
     except ImportError as exc:
@@ -130,6 +202,8 @@ def tavily_search(
         return []
     except Exception as exc:
         error_type, status = _external_error_metadata(exc)
+        if _is_tavily_circuit_failure(exc):
+            _report_tavily_circuit(False)
         logger.warning(
             "Tavily search failed query_length=%s error_type=%s status=%s",
             len(normalized_query),
@@ -174,12 +248,25 @@ def _collect_tavily_items(
     """Collects search items from Tavily API across multiple queries."""
     if not api_key:
         return []
+    try:
+        eff_limit = int(limit)
+        eff_query_limit = int(query_limit)
+    except (TypeError, ValueError):
+        return []
+    if eff_limit <= 0 or eff_query_limit <= 0:
+        return []
 
     items: list[dict[str, Any]] = []
     query_list = list(queries)
-    for q in query_list[: max(1, int(query_limit))]:
-        if len(items) >= limit * 2:
+    deadline = time.monotonic() + _TAVILY_TOTAL_DEADLINE_SEC
+    local_errors = errors_out if isinstance(errors_out, list) else []
+
+    for q in query_list[: max(1, eff_query_limit)]:
+        if len(items) >= eff_limit * 2:
             break
+        if time.monotonic() >= deadline or _is_tavily_circuit_open():
+            break
+        err_start = len(local_errors)
         try:
             results = tavily_search(
                 q,
@@ -187,7 +274,7 @@ def _collect_tavily_items(
                 max_results=max_results,
                 timelimit=timelimit,
                 topic=topic,
-                errors_out=errors_out,
+                errors_out=local_errors,
             )
             items.extend(_format_tavily_items(results))
         except (ValueError, RuntimeError) as exc:
@@ -198,6 +285,11 @@ def _collect_tavily_items(
                 error_type,
                 status,
             )
+            if _is_tavily_fatal_batch_error(exc):
+                break
             continue
+        if any(_is_tavily_fatal_batch_error(e) for e in local_errors[err_start:]):
+            logger.info("Aborting remaining Tavily queries after terminal auth/rate-limit error")
+            break
 
-    return ts.dedupe_items(items)[:limit]
+    return ts.dedupe_items(items)[:eff_limit]

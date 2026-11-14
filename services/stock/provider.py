@@ -607,6 +607,8 @@ class YFinanceProvider(BaseStockProvider):
             exchange = resolve_exchange_prefix(exchange)
 
             # fastinfo_{symbol} キャッシュの注入（get_fast_info の代替・補完）
+            # Merge with any existing cached entry so already-fetched
+            # marketCap/quoteType metadata is never overwritten by a pre-warm.
             fast_cache_key = f"fastinfo_{symbol}"
             fast_data = {
                 "regularMarketPreviousClose": prev_close,
@@ -618,11 +620,36 @@ class YFinanceProvider(BaseStockProvider):
             fast_data = {k: v for k, v in fast_data.items() if v is not None}
             try:
                 with m_state.yfinance_short_cache_lock:
-                    m_state.yfinance_short_cache[fast_cache_key] = fast_data
+                    existing_fast = m_state.yfinance_short_cache.get(fast_cache_key)
+                    if isinstance(existing_fast, dict):
+                        merged_fast = dict(existing_fast)
+                        for fk, fv in fast_data.items():
+                            merged_fast.setdefault(fk, fv)
+                        m_state.yfinance_short_cache[fast_cache_key] = merged_fast
+                    else:
+                        m_state.yfinance_short_cache[fast_cache_key] = fast_data
             except (AttributeError, RuntimeError, TypeError):
                 pass
 
     @with_yfinance_retry(max_retries=2, base_delay=3.0, backoff_factor=3.0)
+    def _yf_download_with_retry(
+        self, cache_miss_symbols: list[str], period: str, timeout: float
+    ) -> pd.DataFrame:
+        """Run yf.download directly inside @with_yfinance_retry so transient errors retry."""
+        sess = _shim().yf_session_manager.get_session()
+        batch_workers = min(3, len(cache_miss_symbols))
+        return yf.download(
+            tickers=cache_miss_symbols,
+            period=period,
+            interval="1d",
+            group_by="column",
+            session=sess,
+            threads=batch_workers,
+            auto_adjust=True,
+            progress=False,
+            timeout=timeout,
+        )
+
     def download_batch(
         self, symbols: list[str], period: str = "3mo", lightweight: bool = False
     ) -> pd.DataFrame:
@@ -685,23 +712,8 @@ class YFinanceProvider(BaseStockProvider):
                 len(cache_miss_symbols),
             )
             try:
-                sess = _shim().yf_session_manager.get_session()
-                # threads is bounded by the session manager's concurrency
-                # semaphore (YFINANCE_MAX_CONCURRENT_REQUESTS=3), so enabling a
-                # small worker pool overlaps per-symbol requests within the same
-                # pacing budget instead of serializing the whole batch. Peak
-                # request rate is unchanged; wall-clock latency drops.
-                batch_workers = min(3, len(cache_miss_symbols))
-                batch_downloaded = yf.download(
-                    tickers=cache_miss_symbols,
-                    period=period,
-                    interval="1d",
-                    group_by="column",
-                    session=sess,
-                    threads=batch_workers,
-                    auto_adjust=True,
-                    progress=False,
-                    timeout=YFINANCE_TIMEOUT_BATCH,
+                batch_downloaded = self._yf_download_with_retry(
+                    cache_miss_symbols, period, YFINANCE_TIMEOUT_BATCH
                 )
                 if not batch_downloaded.empty:
                     for sym in cache_miss_symbols:
@@ -861,20 +873,26 @@ class YFinanceProvider(BaseStockProvider):
         # gate: a cache hit is not a network call, so a 429 must not discard
         # known-good metadata. The gate below still blocks the network path.
         cache_key = f"fastinfo_{symbol}"
+        cached_fast: dict[str, Any] | None = None
+        is_rate_limited = m_state.is_yf_rate_limited()
         try:
             with m_state.yfinance_short_cache_lock:
-                cached_fast = m_state.yfinance_short_cache.get(cache_key)
-            if isinstance(cached_fast, dict):
-                return dict(cached_fast)
+                raw_cached = m_state.yfinance_short_cache.get(cache_key)
+            if isinstance(raw_cached, dict):
+                cached_fast = dict(raw_cached)
+                if is_rate_limited or (
+                    "marketCap" in cached_fast or "quoteType" in cached_fast
+                ):
+                    return cached_fast
         except (AttributeError, RuntimeError):
             cached_fast = None
 
-        if m_state.is_yf_rate_limited():
-            return {}
+        if is_rate_limited:
+            return cached_fast if isinstance(cached_fast, dict) else {}
 
         t = self.get_ticker(symbol)
         if not t:
-            return {}
+            return cached_fast if isinstance(cached_fast, dict) else {}
         try:
             fast = t.fast_info
 
@@ -949,6 +967,8 @@ class YFinanceProvider(BaseStockProvider):
                 "symbol": symbol,
             }
             cleaned = {k: v for k, v in mapped_info.items() if v is not None}
+            if cached_fast:
+                cleaned = {**cached_fast, **cleaned}
             if cleaned:
                 try:
                     with m_state.yfinance_short_cache_lock:
@@ -972,7 +992,7 @@ class YFinanceProvider(BaseStockProvider):
             exc_name = type(exc).__name__
             if "Timeout" in exc_name or "Connection" in exc_name:
                 raise
-        return {}
+        return cached_fast if isinstance(cached_fast, dict) else {}
 
     @with_yfinance_retry(max_retries=2, base_delay=2.0, backoff_factor=2.0)
     def get_info(self, symbol: str) -> dict:
@@ -1234,6 +1254,12 @@ class YFinanceProvider(BaseStockProvider):
 
     def get_news(self, symbol: str, limit: int = 10) -> list[dict]:
         """Fetch recent news for a stock ticker."""
+        try:
+            eff_limit = int(limit)
+        except (TypeError, ValueError):
+            return []
+        if eff_limit <= 0:
+            return []
         t = self.get_ticker(symbol)
         if not t:
             return []
@@ -1242,10 +1268,23 @@ class YFinanceProvider(BaseStockProvider):
             if not isinstance(raw_news, list):
                 return []
             results = []
-            for item in raw_news[:limit]:
-                content = item.get("content", {}) if isinstance(item, dict) else {}
-                provider = content.get("provider", {}) if isinstance(content, dict) else {}
-                thumbnail = content.get("thumbnail", {}) if isinstance(content, dict) else {}
+            for item in raw_news[:eff_limit]:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content") or {}
+                if not isinstance(content, dict) or not content:
+                    continue
+                provider = content.get("provider") or {}
+                thumbnail = content.get("thumbnail") or {}
+                canonical = content.get("canonicalUrl") or {}
+                click = content.get("clickThroughUrl") or {}
+                link = (
+                    canonical.get("url", "")
+                    if isinstance(canonical, dict) and canonical.get("url")
+                    else click.get("url", "")
+                    if isinstance(click, dict)
+                    else ""
+                )
                 results.append(
                     {
                         "title": content.get("title", ""),
@@ -1260,11 +1299,7 @@ class YFinanceProvider(BaseStockProvider):
                         "thumbnailUrl": thumbnail.get("originalUrl", "")
                         if isinstance(thumbnail, dict)
                         else "",
-                        "link": (content.get("canonicalUrl") or {}).get("url", "")
-                        if isinstance(content.get("canonicalUrl"), dict)
-                        else content.get("clickThroughUrl", {}).get("url", "")
-                        if isinstance(content.get("clickThroughUrl"), dict)
-                        else "",
+                        "link": link,
                     }
                 )
             return results

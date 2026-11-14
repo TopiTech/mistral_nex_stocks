@@ -28,3 +28,14 @@ class MemoryKeyring(KeyringBackend):
     def clear(self) -> None:
         """Clear all stored test passwords."""
         self.passwords.clear()
+
+
+_SHARED_MEMORY_KEYRING: MemoryKeyring | None = None
+
+
+def get_shared_memory_keyring() -> MemoryKeyring:
+    """Return the process-wide MemoryKeyring singleton used for test isolation."""
+    global _SHARED_MEMORY_KEYRING
+    if _SHARED_MEMORY_KEYRING is None:
+        _SHARED_MEMORY_KEYRING = MemoryKeyring()
+    return _SHARED_MEMORY_KEYRING

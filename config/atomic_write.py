@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from config.paths import _ensure_runtime_dir
+from utils.threading import restrictive_umask_lock
 
 logger = logging.getLogger("config_store")
 
@@ -174,25 +175,26 @@ def _durable_write_json(path: Path, data: dict) -> None:
                 except OSError:
                     pass
         else:
-            old_umask = os.umask(0o077)
-            try:
-                fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with restrictive_umask_lock():
+                old_umask = os.umask(0o077)
                 try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                        f.flush()
+                    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    try:
+                        with os.fdopen(fd, "w", encoding="utf-8") as f:
+                            json.dump(data, f, ensure_ascii=False, indent=2)
+                            f.flush()
+                            try:
+                                os.fsync(f.fileno())
+                            except OSError:
+                                pass
+                    except Exception:
                         try:
-                            os.fsync(f.fileno())
+                            os.close(fd)
                         except OSError:
                             pass
-                except Exception:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    raise
-            finally:
-                os.umask(old_umask)
+                        raise
+                finally:
+                    os.umask(old_umask)
         os.replace(tmp, path)
         if not config_store._is_windows():
             _fsync_directory(path.parent)
@@ -211,25 +213,26 @@ def _durable_write_json(path: Path, data: dict) -> None:
 
 def _safe_write_json(tmp_file: Path, data: dict) -> None:
     """Write JSON data to tmp_file using restrictive permissions (0o600) with fsync."""
-    old_umask = os.umask(0o077)
-    try:
-        fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with restrictive_umask_lock():
+        old_umask = os.umask(0o077)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
+            fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except OSError:
+                        pass
+            except Exception:
                 try:
-                    os.fsync(f.fileno())
+                    os.close(fd)
                 except OSError:
                     pass
-        except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            raise
-    finally:
-        os.umask(old_umask)
+                raise
+        finally:
+            os.umask(old_umask)
 
 
 def _write_and_replace_with_fcntl_lock(

@@ -29,9 +29,17 @@
 
       // Animation loop control
       this.animId = null;
+      this._frameLoop = null;
       this._isRunning = false;
+      this._isIdleSleeping = false;
+      this._hasActiveSprings = false;
+      this._ambientTime = 0;
       this.lastTime = performance.now();
       this.globalAngle = 0;
+      this._isJpTheme = false;
+      this._hasPortfolioHoldings = false;
+      this._unsubState = null;
+      this._themeObserver = null;
 
       // Orbit radii configurations
       this.radii = {
@@ -46,9 +54,55 @@
       // Supernova Shockwave Particle Effects
       this.shockwaves = [];
 
+      this._refreshThemeMode();
       this.initStars();
       this.resize();
       this.bindEvents();
+    }
+
+    _refreshThemeMode() {
+      this._isJpTheme =
+        typeof document !== "undefined" &&
+        Boolean(document.body?.classList?.contains("theme-color-jp"));
+    }
+
+    _shouldPauseLoop() {
+      const stateData = this.state?.state;
+      if (!stateData) return false;
+      const isStaticMode = Boolean(stateData.paused || stateData.reducedMotion);
+      if (!isStaticMode) return false;
+      if (stateData.draggedSymbol) return false;
+      if (this.shockwaves.length > 0) return false;
+      if (this._hasActiveSprings) return false;
+      return true;
+    }
+
+    wake() {
+      if (!this._isRunning) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      this._isIdleSleeping = false;
+      if (!this.animId && typeof requestAnimationFrame === "function") {
+        this.lastTime = performance.now();
+        this.animId = requestAnimationFrame(this._ensureFrameLoop());
+      }
+    }
+
+    _ensureFrameLoop() {
+      if (!this._frameLoop) {
+        this._frameLoop = (now) => {
+          this.animId = null;
+          this.render(now);
+          if (!this._isRunning) return;
+          if (typeof document !== "undefined" && document.hidden) return;
+          if (this._shouldPauseLoop()) {
+            this._isIdleSleeping = true;
+            return;
+          }
+          this._isIdleSleeping = false;
+          this.animId = requestAnimationFrame(this._frameLoop);
+        };
+      }
+      return this._frameLoop;
     }
 
     triggerShockwave(x = this.centerX, y = this.centerY) {
@@ -60,6 +114,7 @@
         alpha: 1.0,
         speed: 320, // px per sec
       });
+      this.wake();
     }
 
     initStars() {
@@ -98,6 +153,7 @@
         middle: 230 * scaleFactor,
         outer: 340 * scaleFactor,
       };
+      this.wake();
     }
 
     bindEvents() {
@@ -113,16 +169,48 @@
             this.animId = null;
           }
         } else if (this._isRunning) {
-          this.start();
+          this.wake();
         }
       };
       if (typeof document !== "undefined" && document.addEventListener) {
         document.addEventListener("visibilitychange", this._visibilityHandler);
       }
+
+      if (this.state && typeof this.state.subscribe === "function") {
+        this._unsubState = this.state.subscribe(() => {
+          this.wake();
+        });
+      }
+
+      const MutationObserverCtor =
+        global.MutationObserver ||
+        (typeof window !== "undefined" ? window.MutationObserver : undefined);
+      if (
+        typeof MutationObserverCtor === "function" &&
+        typeof document !== "undefined" &&
+        document.body
+      ) {
+        this._themeObserver = new MutationObserverCtor(() => {
+          this._refreshThemeMode();
+          this.wake();
+        });
+        this._themeObserver.observe(document.body, {
+          attributes: true,
+          attributeFilter: ["class"],
+        });
+      }
     }
 
     destroy() {
       this.stop();
+      if (typeof this._unsubState === "function") {
+        this._unsubState();
+        this._unsubState = null;
+      }
+      if (this._themeObserver) {
+        this._themeObserver.disconnect();
+        this._themeObserver = null;
+      }
       if (typeof window !== "undefined") {
         window.removeEventListener("resize", this._resizeHandler);
       }
@@ -141,16 +229,12 @@
         return;
       }
       if (this.animId) return;
-      this.lastTime = performance.now();
-      const loop = (now) => {
-        this.render(now);
-        this.animId = requestAnimationFrame(loop);
-      };
-      this.animId = requestAnimationFrame(loop);
+      this.wake();
     }
 
     stop() {
       this._isRunning = false;
+      this._isIdleSleeping = false;
       if (this.animId) {
         cancelAnimationFrame(this.animId);
         this.animId = null;
@@ -158,7 +242,7 @@
     }
 
     getColorForChange(changePercent) {
-      const isJpTheme = document.body.classList.contains("theme-color-jp");
+      const isJpTheme = this._isJpTheme;
       if (Math.abs(changePercent) < 0.05) {
         return {
           main: "#38bdf8", // Sky blue
@@ -219,45 +303,92 @@
         nonCenterStocks.shift();
       }
 
-      // Distribute remaining stocks into tiers
-      // Tier 1 (Inner, 4-6 stocks): Portfolio or top favorites
-      // Tier 2 (Middle, 6-10 stocks): Watchlist / High Volume
-      // Tier 3 (Outer, remaining stocks): Market / Gainers / Losers
-      const innerCount = Math.min(6, Math.ceil(nonCenterStocks.length * 0.3));
-      const middleCount = Math.min(10, Math.ceil(nonCenterStocks.length * 0.4));
+      // Distribute remaining stocks into tiers.
+      // When stocks carry portfolio weight / holding data or explicit tiers,
+      // place holdings on the inner ring, watchlist on middle, and market/indices on outer.
+      const hasPortfolioHoldings = nonCenterStocks.some(
+        (s) =>
+          s.tier === "inner" ||
+          Number(s.portfolioWeight) > 0 ||
+          Number(s.portfolioValue) > 0 ||
+          Number(s.shares) > 0,
+      );
+      this._hasPortfolioHoldings = hasPortfolioHoldings;
 
-      nonCenterStocks.forEach((s, idx) => {
-        let tier = "outer";
-        let targetRadius = this.radii.outer;
-        let tierIndex = idx - innerCount - middleCount;
-        let tierTotal = Math.max(
-          1,
-          nonCenterStocks.length - innerCount - middleCount,
-        );
+      const innerGroup = [];
+      const middleGroup = [];
+      const outerGroup = [];
 
-        if (idx < innerCount) {
-          tier = "inner";
-          targetRadius = this.radii.inner;
-          tierIndex = idx;
-          tierTotal = innerCount;
-        } else if (idx < innerCount + middleCount) {
-          tier = "middle";
-          targetRadius = this.radii.middle;
-          tierIndex = idx - innerCount;
-          tierTotal = middleCount;
+      if (hasPortfolioHoldings) {
+        for (const s of nonCenterStocks) {
+          const isHolding =
+            s.tier === "inner" ||
+            Number(s.portfolioWeight) > 0 ||
+            Number(s.portfolioValue) > 0 ||
+            Number(s.shares) > 0;
+          if (isHolding) {
+            innerGroup.push(s);
+          } else if (s.tier === "outer" || s.market === "idx") {
+            outerGroup.push(s);
+          } else if (middleGroup.length < 10) {
+            middleGroup.push(s);
+          } else {
+            outerGroup.push(s);
+          }
         }
+        innerGroup.sort(
+          (a, b) =>
+            (Number(b.portfolioWeight) || Number(b.portfolioValue) || 0) -
+            (Number(a.portfolioWeight) || Number(a.portfolioValue) || 0),
+        );
+      } else {
+        const innerCount = Math.min(6, Math.ceil(nonCenterStocks.length * 0.3));
+        const middleCount = Math.min(
+          10,
+          Math.ceil(nonCenterStocks.length * 0.4),
+        );
+        const preferredOuter = [];
+        const regularStocks = [];
+        for (const s of nonCenterStocks) {
+          if (s.tier === "outer" || s.market === "idx") {
+            preferredOuter.push(s);
+          } else {
+            regularStocks.push(s);
+          }
+        }
+        for (const s of regularStocks) {
+          if (innerGroup.length < innerCount) {
+            innerGroup.push(s);
+          } else if (middleGroup.length < middleCount) {
+            middleGroup.push(s);
+          } else {
+            outerGroup.push(s);
+          }
+        }
+        outerGroup.push(...preferredOuter);
+      }
 
-        const baseAngle = (tierIndex / tierTotal) * Math.PI * 2;
-        result.push({
-          ...s,
-          isCenter: false,
-          tier,
-          targetRadius,
-          baseAngle,
-          tierIndex,
-          tierTotal,
+      const tierGroups = [
+        { list: innerGroup, tier: "inner", radius: this.radii.inner },
+        { list: middleGroup, tier: "middle", radius: this.radii.middle },
+        { list: outerGroup, tier: "outer", radius: this.radii.outer },
+      ];
+      for (const group of tierGroups) {
+        const tierTotal = group.list.length;
+        group.list.forEach((s, tierIndex) => {
+          const baseAngle =
+            tierTotal > 0 ? (tierIndex / tierTotal) * Math.PI * 2 : 0;
+          result.push({
+            ...s,
+            isCenter: false,
+            tier: group.tier,
+            targetRadius: group.radius,
+            baseAngle,
+            tierIndex,
+            tierTotal,
+          });
         });
-      });
+      }
 
       this._orbitAssignmentCache = {
         stockList,
@@ -269,48 +400,55 @@
     }
 
     render(now) {
-      const dt = Math.min((now - this.lastTime) / 1000, 0.1);
+      const rawDt = (now - this.lastTime) / 1000;
+      const dt = Math.min(Math.max(0, rawDt), 0.1);
       this.lastTime = now;
 
       const stateData = this.state.state;
-      const isPaused = stateData.paused;
-      const isReducedMotion = stateData.reducedMotion;
+      const isPaused = Boolean(stateData.paused);
+      const isReducedMotion = Boolean(stateData.reducedMotion);
 
       if (!isPaused && !isReducedMotion) {
         this.globalAngle += dt * 0.15;
+        this._ambientTime += dt * 1000;
       }
+      const animTime = this._ambientTime;
 
       const ctx = this.ctx;
       ctx.save();
       ctx.scale(this.dpr, this.dpr);
 
       // 1. Cosmic Deep Space Background
-      this.renderBackground(ctx, now);
+      this.renderBackground(ctx, animTime);
 
       // 2. Starfield Particles
-      this.renderStarfield(ctx, now);
+      this.renderStarfield(ctx, animTime);
 
       // 3. Concentric Orbital Tracks & Gravitational Grid
-      this.renderOrbitTracks(ctx, now);
+      this.renderOrbitTracks(ctx, animTime);
 
       // 4. Center Drop Zone Highlight (if dragging)
-      this.renderCenterDropZone(ctx, stateData, now);
+      this.renderCenterDropZone(ctx, stateData, animTime);
 
       // 4.5. Supernova Shockwaves
-      this.renderShockwaves(ctx, dt);
+      if (isReducedMotion) {
+        this.shockwaves = [];
+      } else {
+        this.renderShockwaves(ctx, dt);
+      }
 
       // 5. Orbital & Center Nodes
       const assigned = this.assignOrbits(
         stateData.stockList,
         stateData.selectedSymbol,
       );
-      this.updateAndRenderNodes(ctx, assigned, stateData, dt, now);
+      this.updateAndRenderNodes(ctx, assigned, stateData, dt, animTime);
 
       // 6. Constellation Connecting Lines
-      this.renderConstellations(ctx, stateData, now);
+      this.renderConstellations(ctx, stateData, animTime);
 
       // 7. Dragged Node Overlay (if any)
-      this.renderDraggedNode(ctx, stateData, now);
+      this.renderDraggedNode(ctx, stateData, animTime);
 
       // 8. Hover HUD Tooltip (if hovering)
       this.renderHoverTooltip(ctx, stateData);
@@ -397,7 +535,7 @@
           radius: this.radii.inner,
           color: "rgba(99, 102, 241, 0.28)",
           dash: [4, 6],
-          label: "PORTFOLIO",
+          label: this._hasPortfolioHoldings ? "PORTFOLIO" : "CORE",
         },
         {
           radius: this.radii.middle,
@@ -559,6 +697,7 @@
       }
 
       // 2. Position calculation & rendering pass
+      this._hasActiveSprings = false;
       for (const stock of assignedStocks) {
         if (!stock || !stock.symbol) continue;
 
@@ -616,6 +755,14 @@
         renderData.currentY += (targetY - renderData.currentY) * lerpFactor;
         renderData.currentRadius +=
           (targetRadius - renderData.currentRadius) * lerpFactor;
+        if (
+          !stateData.reducedMotion &&
+          (Math.abs(targetX - renderData.currentX) > 0.25 ||
+            Math.abs(targetY - renderData.currentY) > 0.25 ||
+            Math.abs(targetRadius - renderData.currentRadius) > 0.25)
+        ) {
+          this._hasActiveSprings = true;
+        }
 
         // Skip rendering on main pass if currently dragged (handled in renderDraggedNode)
         if (stateData.draggedSymbol === stock.symbol) {
@@ -831,6 +978,31 @@
       ctx.restore();
     }
 
+    _measureTextWidth(ctx, text) {
+      if (typeof ctx.measureText === "function") {
+        const w = ctx.measureText(String(text || "")).width;
+        if (Number.isFinite(w) && w > 0) return w;
+      }
+      return String(text || "").length * 7;
+    }
+
+    _truncateToWidth(ctx, text, maxWidth) {
+      const str = String(text || "");
+      if (!str || maxWidth <= 0) return "";
+      if (this._measureTextWidth(ctx, str) <= maxWidth) return str;
+      const ellipsis = "...";
+      const ellW = this._measureTextWidth(ctx, ellipsis);
+      if (maxWidth <= ellW) return ellipsis;
+      let out = str;
+      while (
+        out.length > 0 &&
+        this._measureTextWidth(ctx, out) + ellW > maxWidth
+      ) {
+        out = out.slice(0, -1);
+      }
+      return out ? out + ellipsis : ellipsis;
+    }
+
     renderHoverTooltip(ctx, stateData) {
       const symbol = stateData.hoveredSymbol;
       if (!symbol || stateData.draggedSymbol) return;
@@ -840,20 +1012,69 @@
       if (!stock || !renderData) return;
 
       const { currentX: x, currentY: y, currentRadius: r } = renderData;
-      const cardW = 180;
+      const paddingX = 12;
       const cardH = 92;
 
-      // Smart position offset to keep within bounds
+      const symbolFont = "bold 12px 'Orbitron', sans-serif";
+      const sectorFont = "10px 'Inter', sans-serif";
+      const nameFont = "10px 'Inter', sans-serif";
+      const priceFont = "bold 13px 'Inter', sans-serif";
+      const chgFont = "bold 11px 'Inter', sans-serif";
+      const hintFont = "9px 'Inter', sans-serif";
+
+      const sectorText = stock.sector || "その他";
+      const fullName = String(stock.displayName || stock.name || "");
+      const priceStr =
+        stock.price > 0
+          ? global.ObservatoryDataAdapter.formatPrice(stock.price, stock)
+          : "--";
+      const chg = Number.isFinite(stock.changePercent)
+        ? stock.changePercent
+        : 0;
+      const chgSign = chg >= 0 ? "+" : "";
+      const chgStr = `${chgSign}${chg.toFixed(2)}%`;
+      const hintText = "長押し / D: AI Dive | ドロップ: 基準変更";
+
+      ctx.save();
+      ctx.font = symbolFont;
+      const symW = this._measureTextWidth(ctx, stock.symbol);
+      ctx.font = sectorFont;
+      const sectorW = this._measureTextWidth(ctx, sectorText);
+      ctx.font = priceFont;
+      const priceW = this._measureTextWidth(ctx, priceStr);
+      ctx.font = chgFont;
+      const chgW = this._measureTextWidth(ctx, chgStr);
+      ctx.font = hintFont;
+      const hintW = this._measureTextWidth(ctx, hintText);
+
+      const headerMinW = symW + Math.min(sectorW, 90) + 12;
+      const priceRowMinW = priceW + chgW + 14;
+      const maxCardW = Math.max(190, (this.width || 320) - 24);
+      const cardW = Math.min(
+        maxCardW,
+        Math.max(
+          190,
+          Math.ceil(Math.max(headerMinW, priceRowMinW, hintW)) + paddingX * 2,
+        ),
+      );
+      const innerW = cardW - paddingX * 2;
+
+      // Smart position offset clamped strictly inside viewport bounds
       let posX = x + r + 12;
       let posY = y - cardH / 2;
 
       if (posX + cardW > this.width - 12) {
         posX = x - r - cardW - 12;
       }
-      if (posY < 12) posY = 12;
-      if (posY + cardH > this.height - 12) posY = this.height - cardH - 12;
+      posX = Math.max(
+        12,
+        Math.min(posX, Math.max(12, this.width - cardW - 12)),
+      );
+      posY = Math.max(
+        12,
+        Math.min(posY, Math.max(12, this.height - cardH - 12)),
+      );
 
-      ctx.save();
       // Backdrop blur fill
       ctx.fillStyle = "rgba(15, 23, 42, 0.90)";
       ctx.strokeStyle = "rgba(99, 102, 241, 0.6)";
@@ -869,50 +1090,56 @@
       // Content text
       const colors = this.getColorForChange(stock.changePercent);
 
-      // Symbol Title
+      // Symbol Title (left)
       ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 12px 'Orbitron', sans-serif";
+      ctx.font = symbolFont;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      ctx.fillText(stock.symbol, posX + 10, posY + 10);
+      ctx.fillText(stock.symbol, posX + paddingX, posY + 10);
 
-      // Sector Tag
+      // Sector Tag (right-aligned, truncated if needed so it never overlaps symbol)
       ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
-      ctx.font = "10px 'Inter', sans-serif";
-      ctx.fillText(stock.sector || "その他", posX + 75, posY + 12);
-
-      // Name Subtitle
-      ctx.fillStyle = "#94a3b8";
-      ctx.font = "10px 'Inter', sans-serif";
-      const truncatedName =
-        (stock.displayName || stock.name || "").length > 18
-          ? (stock.displayName || stock.name).substring(0, 18) + "..."
-          : stock.displayName || stock.name;
-      ctx.fillText(truncatedName, posX + 10, posY + 28);
-
-      // Price & Change
-      const priceStr =
-        stock.price > 0
-          ? global.ObservatoryDataAdapter.formatPrice(stock.price, stock)
-          : "--";
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 13px 'Inter', sans-serif";
-      ctx.fillText(priceStr, posX + 10, posY + 46);
-
-      const chg = Number.isFinite(stock.changePercent)
-        ? stock.changePercent
-        : 0;
-      const chgSign = chg >= 0 ? "+" : "";
-      ctx.fillStyle = colors.main;
-      ctx.font = "bold 11px 'Inter', sans-serif";
-      ctx.fillText(`${chgSign}${chg.toFixed(2)}%`, posX + 90, posY + 48);
-
-      // Hint line
-      ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
-      ctx.font = "9px 'Inter', sans-serif";
+      ctx.font = sectorFont;
+      ctx.textAlign = "right";
+      const sectorMaxW = Math.max(24, innerW - symW - 10);
       ctx.fillText(
-        "長押し / D: AI Dive | ドロップ: 基準変更",
-        posX + 10,
+        this._truncateToWidth(ctx, sectorText, sectorMaxW),
+        posX + cardW - paddingX,
+        posY + 12,
+      );
+
+      // Name Subtitle (measured & truncated)
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = nameFont;
+      ctx.textAlign = "left";
+      ctx.fillText(
+        this._truncateToWidth(ctx, fullName, innerW),
+        posX + paddingX,
+        posY + 28,
+      );
+
+      // Price (left) & Change (right)
+      ctx.fillStyle = "#ffffff";
+      ctx.font = priceFont;
+      ctx.textAlign = "left";
+      ctx.fillText(
+        this._truncateToWidth(ctx, priceStr, Math.max(40, innerW - chgW - 10)),
+        posX + paddingX,
+        posY + 46,
+      );
+
+      ctx.fillStyle = colors.main;
+      ctx.font = chgFont;
+      ctx.textAlign = "right";
+      ctx.fillText(chgStr, posX + cardW - paddingX, posY + 48);
+
+      // Hint line (clamped)
+      ctx.fillStyle = "rgba(148, 163, 184, 0.7)";
+      ctx.font = hintFont;
+      ctx.textAlign = "left";
+      ctx.fillText(
+        this._truncateToWidth(ctx, hintText, innerW),
+        posX + paddingX,
         posY + 72,
       );
 
@@ -927,9 +1154,17 @@
       const stocks = stateData.stockList;
       if (!stocks || !stocks.length) return null;
 
-      // Check in reverse order so topmost/rendered nodes receive hits first
-      for (let i = stocks.length - 1; i >= 0; i--) {
-        const s = stocks[i];
+      const assigned =
+        this._orbitAssignmentCache &&
+        this._orbitAssignmentCache.stockList === stocks &&
+        this._orbitAssignmentCache.selectedSymbol === stateData.selectedSymbol
+          ? this._orbitAssignmentCache.result
+          : this.assignOrbits(stocks, stateData.selectedSymbol);
+
+      // Check in reverse draw order so topmost rendered nodes receive hits first
+      for (let i = assigned.length - 1; i >= 0; i--) {
+        const s = assigned[i];
+        if (!s || !s.symbol) continue;
         const renderData = this.nodeRenderData.get(s.symbol);
         if (!renderData) continue;
 

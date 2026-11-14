@@ -25,6 +25,7 @@ from config.corruption import (
 )
 from config.merge import _merge_configs, _remove_stale_legacy_config
 from config.paths import _ensure_runtime_dir
+from utils.threading import restrictive_umask_lock
 
 logger = logging.getLogger("config_store")
 
@@ -49,15 +50,16 @@ def _sync_legacy_preferences_into_runtime(action: str) -> None:
     Raises ``RuntimeError`` when the merge did not complete so callers keep a
     single place that decides what happens to the legacy file.
     """
-    if not _merge_configs(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE):
-        raise RuntimeError(f"legacy config {action} did not complete")
-    try:
-        config_store.LEGACY_CONFIG_FILE.unlink()
-        logger.info(
-            "Removed legacy config after %s: %s", action, config_store.LEGACY_CONFIG_FILE
-        )
-    except OSError as rm_exc:
-        logger.debug("Could not remove legacy config after %s: %s", action, rm_exc)
+    with config_store.config_update_lock():
+        if not _merge_configs(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE):
+            raise RuntimeError(f"legacy config {action} did not complete")
+        try:
+            config_store.LEGACY_CONFIG_FILE.unlink()
+            logger.info(
+                "Removed legacy config after %s: %s", action, config_store.LEGACY_CONFIG_FILE
+            )
+        except OSError as rm_exc:
+            logger.debug("Could not remove legacy config after %s: %s", action, rm_exc)
 
 
 def load_config() -> dict[str, Any]:
@@ -68,6 +70,7 @@ def load_config() -> dict[str, Any]:
     corrupt the in-process cache (H-1). Mutations that are not saved will not
     leak into subsequent ``load_config`` results either.
     """
+    needs_legacy_sync = False
     with config_store._CONFIG_LOCK:
         _ensure_runtime_dir()
 
@@ -81,53 +84,70 @@ def load_config() -> dict[str, Any]:
                 config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
                 and config_store.LEGACY_CONFIG_FILE.exists()
             ):
-                if not config_store.CONFIG_FILE.exists():
-                    # No runtime config yet: the legacy file is this
-                    # installation's only source of truth, so migrate it
-                    # wholesale (secrets, generated tokens and mns_master_key
-                    # included). The preference-only merge must NOT run here:
-                    # it writes nothing but _MERGE_SEED_KEYS, and the legacy
-                    # file is then deleted, so every _MERGE_PROTECTED_KEYS
-                    # entry would be lost — the next start would generate a
-                    # fresh master key and orphan every previously encrypted
-                    # value (user_stocks.json, chat history, portfolios).
-                    if _migrate_legacy_runtime_file(
-                        config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
-                    ):
-                        logger.info(
-                            "Migrated legacy config into runtime config: %s",
-                            config_store.CONFIG_FILE,
-                        )
-                    elif config_store.CONFIG_FILE.exists():
-                        # A concurrent process won the O_EXCL race and owns the
-                        # migration: reconcile the seeded preferences so the
-                        # legacy copy is still cleaned up.
-                        try:
-                            _sync_legacy_preferences_into_runtime("sync")
-                        except Exception as exc:
-                            logger.warning("Failed to sync legacy config: %s", exc)
-                    else:
-                        # The copy failed. Keep the legacy file (still the only
-                        # copy of the secrets) so a later start can retry
-                        # instead of leaving the runtime config on defaults.
-                        logger.warning(
-                            "Could not migrate legacy config %s; keeping it for a later retry",
-                            config_store.LEGACY_CONFIG_FILE,
-                        )
-                else:
-                    try:
-                        if (
-                            config_store.LEGACY_CONFIG_FILE.stat().st_mtime_ns
-                            > config_store.CONFIG_FILE.stat().st_mtime_ns
+                needs_legacy_sync = True
+            else:
+                config_store._LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
+
+    if needs_legacy_sync:
+        # Acquire config_update_lock BEFORE _CONFIG_LOCK (which config_update_lock
+        # acquires internally) to uphold the repository's cross-process lock order
+        # while coordinating legacy config merge/sync across processes and threads.
+        with config_store.config_update_lock():
+            if not config_store._LEGACY_MERGE_DONE:
+                if (
+                    config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
+                    and config_store.LEGACY_CONFIG_FILE.exists()
+                ):
+                    if not config_store.CONFIG_FILE.exists():
+                        # No runtime config yet: the legacy file is this
+                        # installation's only source of truth, so migrate it
+                        # wholesale (secrets, generated tokens and mns_master_key
+                        # included). The preference-only merge must NOT run here:
+                        # it writes nothing but _MERGE_SEED_KEYS, and the legacy
+                        # file is then deleted, so every _MERGE_PROTECTED_KEYS
+                        # entry would be lost — the next start would generate a
+                        # fresh master key and orphan every previously encrypted
+                        # value (user_stocks.json, chat history, portfolios).
+                        if _migrate_legacy_runtime_file(
+                            config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
                         ):
-                            _sync_legacy_preferences_into_runtime("sync")
-                        else:
-                            _remove_stale_legacy_config(
-                                config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
+                            logger.info(
+                                "Migrated legacy config into runtime config: %s",
+                                config_store.CONFIG_FILE,
                             )
-                    except Exception as exc:
-                        logger.warning("Failed to sync newer legacy config: %s", exc)
-            config_store._LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
+                        elif config_store.CONFIG_FILE.exists():
+                            # A concurrent process won the O_EXCL race and owns the
+                            # migration: reconcile the seeded preferences so the
+                            # legacy copy is still cleaned up.
+                            try:
+                                _sync_legacy_preferences_into_runtime("sync")
+                            except Exception as exc:
+                                logger.warning("Failed to sync legacy config: %s", exc)
+                        else:
+                            # The copy failed. Keep the legacy file (still the only
+                            # copy of the secrets) so a later start can retry
+                            # instead of leaving the runtime config on defaults.
+                            logger.warning(
+                                "Could not migrate legacy config %s; keeping it for a later retry",
+                                config_store.LEGACY_CONFIG_FILE,
+                            )
+                    else:
+                        try:
+                            if (
+                                config_store.LEGACY_CONFIG_FILE.stat().st_mtime_ns
+                                > config_store.CONFIG_FILE.stat().st_mtime_ns
+                            ):
+                                _sync_legacy_preferences_into_runtime("sync")
+                            else:
+                                _remove_stale_legacy_config(
+                                    config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
+                                )
+                        except Exception as exc:
+                            logger.warning("Failed to sync newer legacy config: %s", exc)
+                config_store._LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
+
+    with config_store._CONFIG_LOCK:
+        _ensure_runtime_dir()
 
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
         cached = config_store._CONFIG_CACHE["data"]
@@ -286,7 +306,7 @@ def load_config() -> dict[str, Any]:
                             except OSError:
                                 read_key = None
                         break
-                    except (json.JSONDecodeError, OSError) as read_exc:
+                    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as read_exc:
                         last_err = read_exc
                         if attempt < 2:
                             time.sleep(0.05)
@@ -437,20 +457,21 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                         json.dump(backup_data, f, ensure_ascii=False, indent=2)
                 else:
                     # Write with 0o600 umask so the file is never world-readable
-                    old_umask = os.umask(0o077)
-                    try:
-                        fd = os.open(str(backup_tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with restrictive_umask_lock():
+                        old_umask = os.umask(0o077)
                         try:
-                            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                                json.dump(backup_data, f, ensure_ascii=False, indent=2)
-                        except Exception:
+                            fd = os.open(str(backup_tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                             try:
-                                os.close(fd)
-                            except OSError:
-                                pass
-                            raise
-                    finally:
-                        os.umask(old_umask)
+                                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                                    json.dump(backup_data, f, ensure_ascii=False, indent=2)
+                            except Exception:
+                                try:
+                                    os.close(fd)
+                                except OSError:
+                                    pass
+                                raise
+                        finally:
+                            os.umask(old_umask)
                 backup_file = config_store.CONFIG_FILE.with_suffix(
                     config_store.CONFIG_FILE.suffix + ".bak"
                 )
@@ -462,7 +483,12 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                         logger.warning(
                             "Failed to set backup config file permissions: %s", chmod_exc
                         )
-            except (TypeError, json.JSONDecodeError, RecursionError) as corrupt_exc:
+            except (
+                TypeError,
+                json.JSONDecodeError,
+                UnicodeDecodeError,
+                RecursionError,
+            ) as corrupt_exc:
                 # DATA-7: the on-disk config exists but is unparseable (or
                 # has a non-object root). Corruption detection otherwise only
                 # happens lazily in load_config; a save-first process would

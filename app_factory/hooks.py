@@ -71,7 +71,7 @@ def _enforce_sec_fetch_site_check():
     browser Origin header.
     """
     is_mutating = request.method in ("POST", "DELETE", "PUT", "PATCH")
-    is_costly_get = request.method == "GET" and request.path in _CROSS_SITE_COSTLY_GET_PATHS
+    is_costly_get = request.method in ("GET", "HEAD") and request.path in _CROSS_SITE_COSTLY_GET_PATHS
     if not is_mutating and not is_costly_get:
         return None
 

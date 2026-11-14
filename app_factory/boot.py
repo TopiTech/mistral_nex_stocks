@@ -16,7 +16,7 @@ import time
 from flask import Flask
 
 from app_state import app_state
-from utils.env_helpers import _env_bool, _env_int
+from utils.env_helpers import _env_bool
 from utils.storage import load_user_stocks
 
 logger = logging.getLogger("app")
@@ -49,39 +49,20 @@ def bootstrap(app: Flask) -> None:
         # gunicorn --preload master after fork) does not count: background
         # threads do not survive fork, so this process re-runs bootstrap.
 
-        # H-6: Fail closed when remote API access is enabled without an admin token.
-        # MNS_ALLOW_REMOTE_API expands the credentials / local-request surface; without
-        # MNS_ADMIN_TOKEN a misconfigured reverse-proxy deployment would leave key
-        # management reachable by any caller that can hit the proxy.
-        # Checked BEFORE marking bootstrap complete so a misconfigured start can
-        # still be corrected (env fix + retry) without leaving a half-booted flag.
-        _allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
-        _use_proxy_fix = _env_bool("MNS_PROXY_FIX")
-        if _allow_remote and not _use_proxy_fix:
-            raise RuntimeError(
-                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX=1. "
-                "Refuse to start. Configure MNS_PROXY_FIX=1 or disable remote API access."
-            )
-        _admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
-        if _allow_remote and len(_admin_token) < 32:
-            raise RuntimeError(
-                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_ADMIN_TOKEN with at least 32 characters. "
-                "Refuse to start. Configure a strong token or disable remote API access."
-            )
-        if _allow_remote:
-            _proxy_hops = _env_int("MNS_PROXY_FIX_X_FOR", 1, min_value=0)
-            if _proxy_hops < 1:
-                raise RuntimeError(
-                    "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX_X_FOR >= 1. "
-                    "The trusted proxy hop count must be at least 1 when remote mode is enabled."
-                )
+        # H-6 / CORE-004: Fail closed when remote API access is enabled without
+        # trusted proxy hops or a strong admin token. Shared helper keeps wsgi.py
+        # and bootstrap() strictly identical.
+        from utils.worker_validation import (
+            enforce_single_worker,
+            validate_remote_api_configuration,
+        )
+
+        validate_remote_api_configuration()
 
         # Keep the first-request fallback and direct ``app:app`` imports under
         # the same fail-closed process guard as wsgi.py.  In particular, uWSGI
         # ini files expose their process count through the native ``uwsgi``
         # module rather than Gunicorn-style environment variables.
-        from utils.worker_validation import enforce_single_worker
-
         try:
             enforce_single_worker()
         except RuntimeError as exc:

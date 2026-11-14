@@ -178,7 +178,12 @@ class APIClient {
         // Abort if closeSSE()/mode-switch happened while the URL was being
         // resolved (e.g. the ticket POST was still in flight): opening now
         // would create a stale EventSource that is never cleaned up.
-        if (this._lastSSEParams !== params) return;
+        if (
+          this._lastSSEParams !== params ||
+          this._openChainToken !== chainToken
+        ) {
+          return;
+        }
         if (this.isVisibilityPaused) {
           _log.info(
             "SSE: URL resolved while visibility paused, deferring connection",
@@ -199,7 +204,18 @@ class APIClient {
       })
       .catch((err) => {
         _log.warn("SSE: Failed to resolve stream URL", err);
-        if (this._lastSSEParams !== params) return;
+        if (
+          this._lastSSEParams !== params ||
+          this._openChainToken !== chainToken
+        ) {
+          return;
+        }
+        if (this.isVisibilityPaused) {
+          _log.info(
+            "SSE: URL resolution rejected while visibility paused, deferring reconnect",
+          );
+          return;
+        }
         try {
           onError(err instanceof Error ? err : new Error(String(err)));
         } catch (cbErr) {
@@ -210,6 +226,7 @@ class APIClient {
       .finally(() => {
         if (this._openChainToken === chainToken) {
           this.isConnecting = false;
+          this._openChainToken = null;
         }
       });
   }
@@ -508,6 +525,25 @@ class APIClient {
       return null;
     }
   }
+  /**
+   * Return whether an SSE connection is open, connecting, pending reconnect,
+   * or visibility-paused (meaning visibilitychange/resume already owns recovery).
+   */
+  hasActiveSSE() {
+    const src = this.currentEventSource;
+    const readyState = src ? src.readyState : -1;
+    const openState = typeof EventSource !== "undefined" ? EventSource.OPEN : 1;
+    const connectingState =
+      typeof EventSource !== "undefined" ? EventSource.CONNECTING : 0;
+    return (
+      readyState === openState ||
+      readyState === connectingState ||
+      this.isConnecting ||
+      this.ssePendingReconnectTimeout !== null ||
+      this._reconnecting ||
+      Boolean(this.isVisibilityPaused && this._lastSSEParams)
+    );
+  }
   closeSSE() {
     this._lastSSEParams = null;
     this.isVisibilityPaused = false;
@@ -532,6 +568,8 @@ class APIClient {
   }
   _teardownSSE() {
     this._reconnecting = false;
+    this.isConnecting = false;
+    this._openChainToken = null;
     this._stopSleepWatchdog();
     if (this._visibilityTimeout) {
       clearTimeout(this._visibilityTimeout);

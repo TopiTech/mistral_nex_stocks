@@ -2,12 +2,12 @@
 // #region UI Core Configuration
 // --- UI Core Configuration ---
 const getCssVar = (name, fallback) => {
-  return typeof window !== "undefined"
-    ? window
-        .getComputedStyle(document.documentElement)
-        .getPropertyValue(name)
-        .trim() || fallback
-    : fallback;
+  if (typeof window === "undefined") return fallback;
+  const targetEl = document.body || document.documentElement;
+  if (!targetEl) return fallback;
+  return (
+    window.getComputedStyle(targetEl).getPropertyValue(name).trim() || fallback
+  );
 };
 
 const CONSTANTS = {

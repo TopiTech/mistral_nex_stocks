@@ -28,6 +28,7 @@
 
       if (this.els.closeBtn) {
         this.els.closeBtn.addEventListener("click", () => {
+          this.clearAiComparisonResult();
           this.state.clearConnectedSymbols();
           this.state.toggleConnectMode(false);
         });
@@ -40,9 +41,32 @@
       }
     }
 
+    clearAiComparisonResult() {
+      if (this._abortController) {
+        this._abortController.abort();
+        this._abortController = null;
+      }
+      if (this.els.aiResultContainer) {
+        this.els.aiResultContainer.textContent = "";
+        this.els.aiResultContainer.classList?.add("hidden");
+      }
+    }
+
     bindState() {
       this._unsubState = this.state.subscribe((key, val, data) => {
-        if (key === "isConnectMode" || key === "connectedSymbols") {
+        if (key === "connectedSymbols") {
+          this.clearAiComparisonResult();
+          this.renderHUD(data);
+          return;
+        }
+        if (key === "isConnectMode") {
+          this.renderHUD(data);
+          return;
+        }
+        if (
+          key === "stocks" &&
+          (data.isConnectMode || (data.connectedSymbols || []).length > 0)
+        ) {
           this.renderHUD(data);
         }
       });
@@ -73,6 +97,7 @@
       if (!drawer) return;
 
       if (!isConnect && symbols.length === 0) {
+        this.clearAiComparisonResult();
         if (drawer.contains(document.activeElement)) {
           if (toggleBtn && typeof toggleBtn.focus === "function") {
             toggleBtn.focus();
@@ -235,17 +260,27 @@
       ctx.setLineDash([]);
 
       let hasValidData = false;
+      let legendX = 8;
+      const extractPointPrice = (pt) => {
+        if (pt !== null && pt !== undefined && typeof pt === "object") {
+          const candidate =
+            pt.close !== undefined
+              ? pt.close
+              : pt.price !== undefined
+                ? pt.price
+                : pt.c;
+          return Number(candidate);
+        }
+        return Number(pt);
+      };
 
       stockObjs.forEach((st, idx) => {
         const rawChart = st.chartData || [];
         if (!rawChart || rawChart.length < 2) return;
 
-        const baseVal = Number(
-          rawChart[0].close || rawChart[0].price || rawChart[0] || 0,
-        );
-        if (baseVal <= 0) return;
+        const baseVal = extractPointPrice(rawChart[0]);
+        if (!Number.isFinite(baseVal) || baseVal <= 0) return;
 
-        hasValidData = true;
         const color = chartColors[idx % chartColors.length];
         const stepX = w / Math.max(1, rawChart.length - 1);
 
@@ -253,25 +288,46 @@
         ctx.lineWidth = 2.0;
         ctx.beginPath();
 
+        let started = false;
         rawChart.forEach((pt, pIdx) => {
-          const val = Number(pt.close || pt.price || pt || baseVal);
+          const val = extractPointPrice(pt);
+          if (!Number.isFinite(val)) return;
           const ret = ((val - baseVal) / baseVal) * 100; // Return %
+          if (!Number.isFinite(ret)) return;
           // Scale -20% to +20% to canvas height
           const clampedRet = Math.max(-25, Math.min(25, ret));
           const y = midY - (clampedRet / 25) * (h * 0.42);
           const x = pIdx * stepX;
 
-          if (pIdx === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
         });
 
+        if (!started) return;
+        hasValidData = true;
         ctx.stroke();
 
-        // Legend label on top-right
+        // Legend label with dynamic spacing to prevent label overlap
+        const label = String(st.symbol || "");
         ctx.fillStyle = color;
         ctx.font = "bold 10px 'Orbitron', sans-serif";
         ctx.textAlign = "left";
-        ctx.fillText(st.symbol, 8 + idx * 55, 14);
+        ctx.fillText(label, legendX, 14);
+        const measuredWidth =
+          typeof ctx.measureText === "function"
+            ? ctx.measureText(label)?.width
+            : 0;
+        legendX +=
+          Math.max(
+            24,
+            Number.isFinite(measuredWidth) && measuredWidth > 0
+              ? measuredWidth
+              : label.length * 7,
+          ) + 12;
       });
 
       if (hasValidData) {
@@ -324,7 +380,8 @@
       if (this._abortController) {
         this._abortController.abort();
       }
-      this._abortController = new AbortController();
+      const abortController = new AbortController();
+      this._abortController = abortController;
 
       try {
         const stockObjs = symbols
@@ -359,16 +416,19 @@
           request_token: global.createRequestToken(),
         };
 
-        const abortController = this._abortController;
         let data = null;
         for (let attempt = 0; attempt < 20; attempt += 1) {
-          const fetchFn = global.apiFetch || global.csrfFetch || fetch;
-          const res = await fetchFn("/api/chat", {
+          const reqInit = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
             signal: abortController.signal,
-          });
+          };
+          const res = global.apiFetch
+            ? await global.apiFetch("/api/chat", reqInit, { showToast: false })
+            : await (global.csrfFetch || fetch)("/api/chat", reqInit);
+
+          if (abortController !== this._abortController) return;
 
           data =
             res && typeof res.json === "function"
@@ -434,7 +494,10 @@
           );
         }
       } catch (err) {
-        if (err.name !== "AbortError") {
+        if (
+          err?.name !== "AbortError" &&
+          abortController === this._abortController
+        ) {
           aiResultContainer.textContent = "";
           const errDiv = document.createElement("div");
           errDiv.className = "ai-error-banner";
@@ -447,8 +510,9 @@
           aiResultContainer.appendChild(errDiv);
         }
       } finally {
-        if (aiCompareBtn) {
-          aiCompareBtn.disabled = false;
+        if (aiCompareBtn && abortController === this._abortController) {
+          const currentSymbols = this.state?.state?.connectedSymbols || [];
+          aiCompareBtn.disabled = currentSymbols.length < 2;
         }
       }
     }

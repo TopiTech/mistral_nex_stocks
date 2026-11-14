@@ -28,7 +28,7 @@ function Test-SafePath {
   param([string]$Path)
   if (-not $Path) { return $false }
   # パストラバーサル攻撃およびシェルメタ文字の検出
-  if ($Path -match '\.\.|[|><&;`"]') {
+  if ($Path -match '\.\.|[|><&;`"!\r\n\0]') {
     Write-Host "[ERROR] Unsafe path detected: $Path" -ForegroundColor Red
     return $false
   }
@@ -43,7 +43,7 @@ function Test-Admin {
 
 function Protect-FilePermissions {
   param([string]$Path)
-  if (-not (Test-Path $Path)) { return }
+  if (-not (Test-Path -LiteralPath $Path)) { return }
   try {
     $sidSystem = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
     $sidAdmins = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
@@ -75,9 +75,12 @@ function Protect-FilePermissions {
       $acl.AddAccessRule($arUsersGroup)
     }
 
-    Set-Acl -Path $Path -AclObject $acl
+    Set-Acl -LiteralPath $Path -AclObject $acl
     Write-Host "[ OK ] Hardened file permissions (NTFS ACL): $Path" -ForegroundColor Green
   } catch {
+    if ($Scope -eq 'LocalMachine') {
+      throw "Failed to harden file permissions for ${Path} under -Scope LocalMachine: $($_.Exception.Message)"
+    }
     Write-Host "[WARN] Failed to harden permissions for ${Path}: $($_.Exception.Message)" -ForegroundColor Yellow
   }
 }
@@ -87,39 +90,60 @@ function Test-DirectoryUserWritable {
   # write-data access to the directory (not just this account): a LocalMachine install whose generated
   # launcher/manifest live in such a directory is replaceable by any local user.
   try {
-    $acl = Get-Acl -Path $Dir
+    $acl = Get-Acl -LiteralPath $Dir
+    if ($null -eq $acl) { return $true }
     $sidUsers = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-545")
     $sidEveryone = New-Object System.Security.Principal.SecurityIdentifier("S-1-1-0")
     $sidAuthenticatedUsers = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-11")
     foreach ($rule in $acl.Access) {
-      $ruleSid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
-      if (
-        $ruleSid -eq $sidUsers -or
-        $ruleSid -eq $sidEveryone -or
-        $ruleSid -eq $sidAuthenticatedUsers
-      ) {
-        if ($rule.AccessControlType -eq 'Allow') {
-          $rights = [System.Security.AccessControl.FileSystemRights]$rule.FileSystemRights
-          if (($rights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -or
-              ($rights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles)) {
-            return $true
+      try {
+        $ruleSid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+        if (
+          $ruleSid -eq $sidUsers -or
+          $ruleSid -eq $sidEveryone -or
+          $ruleSid -eq $sidAuthenticatedUsers
+        ) {
+          if ($rule.AccessControlType -eq 'Allow') {
+            $rights = [System.Security.AccessControl.FileSystemRights]$rule.FileSystemRights
+            if (($rights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -or
+                ($rights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles)) {
+              return $true
+            }
           }
         }
+      } catch {
+        continue
       }
     }
     return $false
   } catch {
-    return $false
+    # Fail closed if the directory ACL itself cannot be inspected.
+    return $true
   }
 }
 function Resolve-PythonPath {
   param([string]$Requested,[string]$RootDir)
+  if ($Requested) {
+    try {
+      $resolvedRequested = (Resolve-Path -LiteralPath $Requested -ErrorAction Stop).Path
+    } catch {
+      throw "Specified PythonPath could not be resolved: $Requested"
+    }
+    if (-not (Test-Path -LiteralPath $resolvedRequested -PathType Leaf)) {
+      throw "Specified PythonPath is not an existing file: $Requested"
+    }
+    return $resolvedRequested
+  }
   $candidates = New-Object System.Collections.Generic.List[string]
-  if ($Requested) { [void]$candidates.Add($Requested) }
   foreach ($p in @((Join-Path $RootDir '.venv\Scripts\pythonw.exe'),(Join-Path $RootDir '.venv\Scripts\python.exe'),(Join-Path $RootDir 'venv\Scripts\pythonw.exe'),(Join-Path $RootDir 'venv\Scripts\python.exe'),(Join-Path $RootDir 'Scripts\pythonw.exe'),(Join-Path $RootDir 'Scripts\python.exe'))) { if ($p) { [void]$candidates.Add($p) } }
   foreach ($cmd in @('pythonw.exe','python.exe','python3.exe','pyw.exe','py.exe')) { try { $g = Get-Command $cmd -ErrorAction Stop; if ($g.Source) { [void]$candidates.Add($g.Source) } } catch {} }
 
-  foreach ($candidate in ($candidates | Select-Object -Unique)) { try { $resolved = (Resolve-Path $candidate -ErrorAction Stop).Path; if (Test-Path $resolved -PathType Leaf) { return $resolved } } catch {} }
+  foreach ($candidate in ($candidates | Select-Object -Unique)) {
+    try {
+      $resolved = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path
+      if (Test-Path -LiteralPath $resolved -PathType Leaf) { return $resolved }
+    } catch {}
+  }
   throw 'Python executable not found. Use -PythonPath C:\Path\To\python.exe'
 }
 
@@ -135,14 +159,14 @@ $RootDir = Split-Path -Parent $ScriptDir
 $TemplateLauncher = Join-Path $ScriptDir 'host_launcher.cmd.template'
 $LauncherCmd = Join-Path $ScriptDir 'native_host.cmd'
 $ManifestJson = Join-Path $ScriptDir 'com.mistral_nex_stocks.host.json'
-foreach ($required in @($TemplateLauncher,(Join-Path $ScriptDir 'native_host.py'),(Join-Path $ScriptDir 'start_backend.py'))) { if (-not (Test-Path $required -PathType Leaf)) { throw "Required file not found: $required" } }
+foreach ($required in @($TemplateLauncher,(Join-Path $ScriptDir 'native_host.py'),(Join-Path $ScriptDir 'start_backend.py'))) { if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required file not found: $required" } }
 if (($Scope -eq 'LocalMachine') -and (-not (Test-Admin))) { throw 'Run PowerShell as Administrator when using -Scope LocalMachine.' }
 # R29: LocalMachine installs write the generated launcher/manifest into this
 # script's directory and point HKLM registration at them. If that directory is
 # writable by any user (project clone dirs usually are), any local user could
 # replace native_host.cmd / the manifest and get their code launched by other
 # users' browsers. Refuse instead of installing with a weak target.
-if (($Scope -eq 'LocalMachine') -and (Test-DirectoryUserWritable -Dir $ScriptDir)) {
+if (($Scope -eq 'LocalMachine') -and ((Test-DirectoryUserWritable -Dir $ScriptDir) -or (Test-DirectoryUserWritable -Dir $RootDir))) {
   throw 'Cannot install with -Scope LocalMachine: the project directory is writable by Users, Everyone, or Authenticated Users, so the generated launcher/manifest would be replaceable by any local user. Re-run with -Scope CurrentUser, or move the project to a protected location (e.g. under "%ProgramFiles%") before using -Scope LocalMachine.'
 }
 $cleanIds = @()
@@ -180,16 +204,16 @@ if (-not $PSCmdlet.ShouldProcess(
   return
 }
 
-if (-not $NoUnblock) { Get-ChildItem -Path $ScriptDir -File | Unblock-File -ErrorAction SilentlyContinue }
+if (-not $NoUnblock) { Get-ChildItem -LiteralPath $ScriptDir -File | Unblock-File -ErrorAction SilentlyContinue }
 Write-Host "[INFO] Python: $pythonExe" -ForegroundColor Cyan
-$launcher = Get-Content $TemplateLauncher -Raw -Encoding UTF8
+$launcher = Get-Content -LiteralPath $TemplateLauncher -Raw -Encoding UTF8
 $launcher = $launcher.Replace('__PYTHON_EXE__', $pythonExeEscaped)
 Write-FileNoBom -Path $LauncherCmd -Content $launcher
 Protect-FilePermissions -Path $LauncherCmd
 Write-Host "[ OK ] Launcher: $LauncherCmd" -ForegroundColor Green
-$launcherAbsPath = (Resolve-Path $LauncherCmd).Path
+$launcherAbsPath = (Resolve-Path -LiteralPath $LauncherCmd).Path
 $allowedOrigins = @(); foreach ($id in $cleanIds) { $allowedOrigins += "chrome-extension://$id/" }
-$manifestTemplate = Get-Content (Join-Path $ScriptDir 'com.mistral_nex_stocks.host.json.template') -Raw -Encoding UTF8
+$manifestTemplate = Get-Content -LiteralPath (Join-Path $ScriptDir 'com.mistral_nex_stocks.host.json.template') -Raw -Encoding UTF8
 $manifestContent = $manifestTemplate.Replace('__LAUNCHER_PATH__', $launcherAbsPath.Replace('\', '\\'))
 $manifestObject = $manifestContent | ConvertFrom-Json
 $manifestObject.allowed_origins = $allowedOrigins
@@ -198,11 +222,11 @@ Write-FileNoBom -Path $ManifestJson -Content $manifestContent
 Protect-FilePermissions -Path $ManifestJson
 # Manifest integrity checks (encoding/path/required keys)
 try {
-  $manifestCheck = Get-Content -Path $ManifestJson -Raw -Encoding UTF8 | ConvertFrom-Json
+  $manifestCheck = Get-Content -LiteralPath $ManifestJson -Raw -Encoding UTF8 | ConvertFrom-Json
   if (-not $manifestCheck.name -or -not $manifestCheck.path -or -not $manifestCheck.allowed_origins) {
     throw "Manifest validation failed: required fields are missing"
   }
-  if (-not (Test-Path $manifestCheck.path -PathType Leaf)) {
+  if (-not (Test-Path -LiteralPath $manifestCheck.path -PathType Leaf)) {
     throw "Manifest validation failed: launcher path does not exist -> $($manifestCheck.path)"
   }
 } catch {
@@ -214,7 +238,7 @@ foreach ($subKey in (Get-SubKeys -BrowserName $Browser)) {
   if ($PSCmdlet.ShouldProcess($subKey, 'Register native messaging host')) {
     $key = $rootKey.CreateSubKey($subKey)
     if (-not $key) { throw "Failed to create registry key: $subKey" }
-    $manifestAbsPath = (Resolve-Path $ManifestJson).Path
+    $manifestAbsPath = (Resolve-Path -LiteralPath $ManifestJson).Path
     try { $key.SetValue('', $manifestAbsPath, [Microsoft.Win32.RegistryValueKind]::String); $actual = $key.GetValue('', $null); if (($actual -ne $manifestAbsPath) -and (-not $Force)) { throw "Registry verification failed: $subKey" } }
     finally { $key.Close() }
     Write-Host "[ OK ] Registry: $Scope\\$subKey" -ForegroundColor Green

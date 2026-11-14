@@ -550,29 +550,56 @@
      */
     loadSymbol(containerOrSymbol, tickerOrContainer, exchange, options = {}) {
       let targetContainer = "tradingview-chart-container";
-      let targetTicker = containerOrSymbol;
+      let targetTicker;
       let targetExchange = exchange;
       let targetOptions = options;
 
-      if (
-        typeof containerOrSymbol === "string" &&
-        typeof tickerOrContainer === "string"
-      ) {
-        if (
-          document.getElementById(containerOrSymbol) ||
-          containerOrSymbol.toLowerCase().includes("container")
-        ) {
-          targetContainer = containerOrSymbol;
-          targetTicker = tickerOrContainer;
-        } else {
-          targetTicker = containerOrSymbol;
-          targetContainer = tickerOrContainer;
+      const looksLikeContainerId = (value) => {
+        if (typeof value !== "string") return false;
+        if (value.toLowerCase().includes("container")) return true;
+        const el = document.getElementById(value);
+        return Boolean(
+          el && (el.id === value || typeof el.tagName === "string"),
+        );
+      };
+
+      const hasSecondStringArg =
+        typeof tickerOrContainer === "string" &&
+        tickerOrContainer.trim().length > 0;
+
+      if (hasSecondStringArg && looksLikeContainerId(containerOrSymbol)) {
+        targetContainer = containerOrSymbol;
+        targetTicker = tickerOrContainer;
+        if (typeof exchange === "object" && exchange !== null) {
+          targetExchange = undefined;
+          targetOptions = exchange;
         }
       } else if (
-        typeof tickerOrContainer === "string" &&
-        exchange === undefined
+        hasSecondStringArg &&
+        looksLikeContainerId(tickerOrContainer) &&
+        !(typeof exchange === "string" && exchange.trim().length > 0)
       ) {
-        targetExchange = tickerOrContainer;
+        targetTicker = containerOrSymbol;
+        targetContainer = tickerOrContainer;
+        if (typeof exchange === "object" && exchange !== null) {
+          targetExchange = undefined;
+          targetOptions = exchange;
+        }
+      } else if (
+        typeof tickerOrContainer === "object" &&
+        tickerOrContainer !== null
+      ) {
+        targetTicker = containerOrSymbol;
+        targetExchange = undefined;
+        targetOptions = tickerOrContainer;
+      } else {
+        targetTicker = containerOrSymbol;
+        if (typeof tickerOrContainer === "string") {
+          targetExchange = tickerOrContainer;
+        }
+        if (typeof exchange === "object" && exchange !== null) {
+          targetOptions = exchange;
+        }
       }
 
       this.resetFallbackFlag(targetTicker);
@@ -936,6 +963,10 @@
         mountWidget();
       } else {
         let tvScript = document.getElementById("tv-script-js");
+        if (tvScript && tvScript.dataset?.loadFailed === "true") {
+          tvScript.remove();
+          tvScript = null;
+        }
         if (!tvScript) {
           tvScript = document.createElement("script");
           tvScript.id = "tv-script-js";
@@ -951,20 +982,33 @@
           // element so the next renderAdvancedChart creates a fresh one.
           tvScript.onerror = () => {
             console.error("TradingView: Failed to load the tv.js script");
+            tvScript.dataset.loadFailed = "true";
             const stale = document.getElementById("tv-script-js");
-            if (stale) stale.remove();
-            const chartHost = document.getElementById("tv_chart_container");
-            if (chartHost && !chartHost.querySelector(".tv-load-error")) {
-              const msg = document.createElement("div");
-              msg.className = "tv-load-error";
-              msg.setAttribute("role", "alert");
-              msg.textContent =
-                "チャートの読み込みに失敗しました。再試行してください。";
-              chartHost.appendChild(msg);
+            if (stale) {
+              stale.dataset.loadFailed = "true";
+              stale.remove();
+            } else if (tvScript.parentNode) {
+              tvScript.remove();
+            }
+            const chartHost =
+              document.getElementById(containerId) ||
+              container ||
+              document.getElementById("tradingview-chart-container");
+            if (chartHost) {
+              const innerEl = document.getElementById(`${containerId}-inner`);
+              if (innerEl) innerEl.style.display = "none";
+              if (!chartHost.querySelector(".tv-load-error")) {
+                const msg = document.createElement("div");
+                msg.className = "tv-load-error";
+                msg.setAttribute("role", "alert");
+                msg.textContent =
+                  "チャートの読み込みに失敗しました。再試行してください。";
+                chartHost.appendChild(msg);
+              }
             }
           };
           document.head.appendChild(tvScript);
-        } else if (!tvScript.dataset?.loadFailed) {
+        } else if (tvScript.dataset?.loadFailed !== "true") {
           // 読み込み中スクリプトへの古い待ち閉包を除去してから積む
           // (同一要素に複数のloadリスナーが溜まるのを防ぐ)。
           if (tvScript._pendingMountHandler) {

@@ -275,6 +275,13 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
         crypto_utils._EPHEMERAL_CREDENTIALS.update(previous_ephemeral_values)
 
 
+def _require_string_setting(value: object, field_name: str) -> str:
+    """Validate that an optional credential-adjacent setting is a string."""
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string, got {type(value).__name__}")
+    return value
+
+
 def save_api_credentials(
     mistral_api_key=None,
     langsearch_api_key=None,
@@ -299,8 +306,21 @@ def save_api_credentials(
     failed credential save after the model has already been committed.
     ``api_mode`` / ``agent_id`` / ``preview_mode`` / ``ai_provider`` follow the same rule.
     """
+    if agent_id is not None:
+        _require_string_setting(agent_id, "agent_id")
+    if openai_base_url is not None:
+        _require_string_setting(openai_base_url, "openai_base_url")
+    if openai_model is not None:
+        _require_string_setting(openai_model, "openai_model")
+    if openai_embeddings_model is not None:
+        _require_string_setting(openai_embeddings_model, "openai_embeddings_model")
+    if update_custom_ai_prompt and custom_ai_prompt is not None:
+        _require_string_setting(custom_ai_prompt, "custom_ai_prompt")
+    if mistral_model is not None:
+        _require_string_setting(mistral_model, "mistral_model")
+
     requested = {
-        key: value
+        key: str(value).strip()
         for key, value in {
             "mistral_api_key": mistral_api_key,
             "openai_api_key": openai_api_key,
@@ -585,11 +605,14 @@ def get_model_tier(model_name: str | None = None) -> str:
     return "free" if is_free_tier_model(model_name) else "paid"
 
 
+_INTERNAL_EPHEMERAL_KEYS = frozenset({"mns_master_key"})
+
+
 def get_api_credential_state() -> dict[str, Any]:
     """API認証情報の設定状況を取得"""
     model_name = get_model_name()
-    ephemeral_active = crypto_utils.is_ephemeral_active()
-    ephemeral_keys = crypto_utils.get_ephemeral_keys()
+    ephemeral_active = crypto_utils.is_ephemeral_active(exclude=_INTERNAL_EPHEMERAL_KEYS)
+    ephemeral_keys = crypto_utils.get_ephemeral_keys(exclude=_INTERNAL_EPHEMERAL_KEYS)
     ephemeral_warning = (
         "API keys are stored in ephemeral memory and will be lost on restart."
         if ephemeral_active

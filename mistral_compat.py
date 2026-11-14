@@ -19,11 +19,13 @@ Exports:
 
 import importlib.metadata
 import logging
+import threading
 from importlib.metadata import PackageNotFoundError
 from typing import Any, cast
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
+_SDK_AGENT_ENV_LOCK = threading.Lock()
 
 # --------------------------------------------------------------------------
 # Security guard: reject the backdoored mistralai 2.4.6 release.
@@ -321,30 +323,31 @@ def load_sdk_agent(
 
         from constants import DEFAULT_MISTRAL_MODEL
 
-        if api_key:
-            # M3 (2026-11-07 review): the Agents SDK sources its key from
-            # the MISTRAL_API_KEY environment variable only, so this bridge
-            # is unavoidable — but setdefault silently preferred a stale
-            # pre-existing key, making the agent authenticate with a
-            # DIFFERENT account than the caller-resolved credential with no
-            # error or log. The caller's credential is authoritative (it is
-            # the same key the non-agents paths pass explicitly to the
-            # client), so overwrite and log the replacement fingerprint.
-            previous = os.environ.get("MISTRAL_API_KEY")
-            if previous is not None and previous != api_key:
-                logger.warning(
-                    "Replacing a conflicting pre-existing MISTRAL_API_KEY with the "
-                    "caller-configured credential for the local agents run "
-                    "(stored_len=%d, configured_len=%d)",
-                    len(previous),
-                    len(api_key),
-                )
-            os.environ["MISTRAL_API_KEY"] = api_key
         chosen_model = (model or "").strip() or DEFAULT_MISTRAL_MODEL
-        return mistral_agents.Agent(
-            model=chosen_model,
-            instructions=instructions,
-        )
+        with _SDK_AGENT_ENV_LOCK:
+            if api_key:
+                # M3 (2026-11-07 review): the Agents SDK sources its key from
+                # the MISTRAL_API_KEY environment variable only, so this bridge
+                # is unavoidable — but setdefault silently preferred a stale
+                # pre-existing key, making the agent authenticate with a
+                # DIFFERENT account than the caller-resolved credential with no
+                # error or log. The caller's credential is authoritative (it is
+                # the same key the non-agents paths pass explicitly to the
+                # client), so overwrite and log the replacement fingerprint.
+                previous = os.environ.get("MISTRAL_API_KEY")
+                if previous is not None and previous != api_key:
+                    logger.warning(
+                        "Replacing a conflicting pre-existing MISTRAL_API_KEY with the "
+                        "caller-configured credential for the local agents run "
+                        "(stored_len=%d, configured_len=%d)",
+                        len(previous),
+                        len(api_key),
+                    )
+                os.environ["MISTRAL_API_KEY"] = api_key
+            return mistral_agents.Agent(
+                model=chosen_model,
+                instructions=instructions,
+            )
 
     try:
         parsed_uuid = UUID(target)

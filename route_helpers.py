@@ -75,10 +75,38 @@ from utils.stock_payload import (
 from utils.text_utils import (
     _parse_json_request,
     _parse_optional_json_request,
+    _sanitize_error_message,
     _token_fingerprint,
 )
 
 logger = logging.getLogger(__name__)
+
+_LOG_URL_QUERY_RE = re.compile(r"(https?://[^\s?#\"'<>]+)\?[^\s\"'<>]*", re.IGNORECASE)
+_LOG_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_CLIENT_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_CLIENT_UNSAFE_TRACE_RE = re.compile(
+    r"(Traceback\s*\(most recent call last\)|File\s+\"|<!DOCTYPE|<html|\bat\s+0x[0-9a-f]+)",
+    re.IGNORECASE,
+)
+
+
+def sanitize_upstream_log_message(raw_text: Any) -> str:
+    """Sanitize upstream error text before writing to application logs."""
+    text = _sanitize_error_message(_as_text(raw_text))
+    text = _LOG_URL_QUERY_RE.sub(r"\1?[REDACTED]", text)
+    return _LOG_CONTROL_CHARS_RE.sub(" ", text).strip()
+
+
+def sanitize_client_upstream_text(raw_text: Any, fallback: str) -> str:
+    """Return a safe client-facing error message with URLs, traces, and secrets removed."""
+    cleaned = sanitize_upstream_log_message(raw_text)
+    if not cleaned or _CLIENT_UNSAFE_TRACE_RE.search(cleaned):
+        return fallback
+    without_urls = _CLIENT_URL_RE.sub("", cleaned)
+    normalized = " ".join(without_urls.split()).strip(" :;-")
+    if not normalized:
+        return fallback
+    return normalized
 
 
 def _as_text(value: Any) -> str:
@@ -229,15 +257,6 @@ def _is_polling_token_inflight(token: str) -> bool:
                             return False
             except Exception:
                 pass
-        # Check news inflight (token alone, no conversation scope)
-        try:
-            from routes.api_analysis import news_fetch_inflight, news_fetch_lock
-
-            with news_fetch_lock:
-                if token in news_fetch_inflight:
-                    return True
-        except Exception:
-            pass
     except Exception:
         return True
     # Inside a request without conversation scope and no cache hit:
@@ -1709,6 +1728,29 @@ _CREDENTIALS_KEY_SPECS: dict[str, tuple[Any, int]] = {
 }
 
 
+_OPENAI_BASE_URL_ERROR_REASONS: dict[str, str] = {
+    "url_bad_scheme": "URLは http:// または https:// で始まっている必要があります",
+    "url_userinfo_forbidden": "openai_base_url にユーザー情報 (user:pass@) を含めることはできません",
+    "url_invalid": "openai_base_url の形式が不正です",
+    "url_blocked_target": "openai_base_url の接続先は許可されていません",
+}
+
+
+def openai_base_url_error_response(error_code: str) -> tuple[Any, int] | None:
+    """Return a standardized 400 response for an OpenAI base URL validation error."""
+    reason = _OPENAI_BASE_URL_ERROR_REASONS.get(error_code)
+    if reason is None:
+        return None
+    return error_response(
+        ErrorCode.INVALID_INPUT,
+        details={
+            "fields": ["openai_base_url"],
+            "reason": reason,
+        },
+        status_code=400,
+    )
+
+
 def _credentials_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
     """Map canonical credentials-save failures back to the endpoint's errors.
 
@@ -1798,15 +1840,9 @@ def _credentials_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
                 details={"reason": "openai_base_urlは文字列で指定してください"},
                 status_code=400,
             )
-        if first == "url_bad_scheme":
-            return error_response(
-                ErrorCode.INVALID_INPUT,
-                details={
-                    "fields": ["openai_base_url"],
-                    "reason": "URLは http:// または https:// で始まっている必要があります",
-                },
-                status_code=400,
-            )
+        url_error_resp = openai_base_url_error_response(first)
+        if url_error_resp is not None:
+            return url_error_resp
         if first == "openai_model_not_string":
             return error_response(
                 ErrorCode.INVALID_INPUT,

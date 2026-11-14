@@ -35,11 +35,16 @@ from bg.sync.process import (
 from bg.sync.state import (
     _BG_LOOP_MARKER_ATTR,
     SYNC_STALE_LOCK_WAIT_SEC,
+    _clear_wedged_sync_lock,
     _get_app_bg_attr,
     _get_sync_execution_lock,
     _get_sync_generation,
+    _is_app_bg_delegate,
+    _is_wedged_sync_lock,
+    _mark_wedged_sync_lock,
     _next_sync_generation,
     _recover_stale_sync_state_if_needed,
+    _rotate_sync_execution_lock_if_default,
     _set_sync_start_time,
 )
 from constants import (
@@ -63,16 +68,22 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
 
     lock = _get_sync_execution_lock()
     if not lock.acquire(blocking=False):
-        if not _recover_stale_sync_state_if_needed():
+        if not _recover_stale_sync_state_if_needed() and not _is_wedged_sync_lock(lock):
             logger.info("Sync already in progress, skipping.")
             return
+        wait_sec = float(
+            _get_app_bg_attr("SYNC_STALE_LOCK_WAIT_SEC", SYNC_STALE_LOCK_WAIT_SEC)
+        )
         lock = _get_sync_execution_lock()
-        if not lock.acquire(timeout=SYNC_STALE_LOCK_WAIT_SEC):
+        if not lock.acquire(timeout=wait_sec):
             logger.critical(
                 "Sync lock takeover timed out after %.0fs; the previous sync is still wedged.",
-                SYNC_STALE_LOCK_WAIT_SEC,
+                wait_sec,
             )
+            _mark_wedged_sync_lock(lock)
+            _rotate_sync_execution_lock_if_default(lock)
             return
+    _clear_wedged_sync_lock(lock)
 
     # Bound before the try so the finally block can always reference it (H-1).
     sync_generation = 0
@@ -229,41 +240,60 @@ def _run_scheduled_sync_job() -> None:
             schedule_sync_all_stocks_now()
 
 
-def schedule_sync_all_stocks_now(force: bool = False) -> bool:
+def schedule_sync_all_stocks_now(
+    force: bool = False,
+    *,
+    facade_globals: dict[str, Any] | None = None,
+) -> bool:
     """同期ジョブをスケジュール"""
-    target = _get_app_bg_attr("schedule_sync_all_stocks_now", None)
-    if target is not None and target is not schedule_sync_all_stocks_now:
-        return target(force=force)
+    if facade_globals is None:
+        target = _get_app_bg_attr("schedule_sync_all_stocks_now", None)
+        if (
+            target is not None
+            and target is not schedule_sync_all_stocks_now
+            and not _is_app_bg_delegate(target)
+        ):
+            return bool(target(force=force))
+        recover_fn = _get_app_bg_attr(
+            "_recover_stale_sync_state_if_needed",
+            _recover_stale_sync_state_if_needed,
+        )
+        job = _get_app_bg_attr("_run_scheduled_sync_job", _run_scheduled_sync_job)
+    else:
+        recover_fn = facade_globals.get(
+            "_recover_stale_sync_state_if_needed",
+            _recover_stale_sync_state_if_needed,
+        )
+        job = facade_globals.get("_run_scheduled_sync_job", _run_scheduled_sync_job)
 
-    recover_fn = _get_app_bg_attr(
-        "_recover_stale_sync_state_if_needed", _recover_stale_sync_state_if_needed
-    )
     with app_state.market.sync_schedule_lock:
+        prev_forced = bool(getattr(app_state.market, "sync_forced", False))
         if force:
             app_state.market.sync_forced = True
-    with app_state.market.is_syncing_lock:
-        if app_state.market.is_syncing and not recover_fn():
-            with app_state.market.sync_schedule_lock:
+        with app_state.market.is_syncing_lock:
+            if app_state.market.is_syncing and not recover_fn():
                 app_state.market.sync_pending = True
-            return False
-
-    with app_state.market.sync_schedule_lock:
+                return False
         if app_state.market.sync_scheduled:
             app_state.market.sync_pending = True
             return False
         app_state.market.sync_scheduled = True
 
     try:
-        app_state.execution.sync_refresh_executor.submit(_run_scheduled_sync_job)
+        app_state.execution.sync_refresh_executor.submit(job)
         return True
     except queue.Full as exc:
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False
+            if force:
+                app_state.market.sync_forced = prev_forced
         logger.warning("Failed to schedule stock sync (queue full): %s", exc)
         return False
     except (RuntimeError, AttributeError, ValueError) as exc:
         with app_state.market.sync_schedule_lock:
             app_state.market.sync_scheduled = False
+            if force:
+                app_state.market.sync_forced = prev_forced
         logger.warning("Failed to schedule stock sync: %s", exc)
         return False
 
@@ -309,15 +339,19 @@ def _watchdog_restart_dead_realtime_engine(engine: Any = None) -> list[str]:
 
         engine = realtime_market_engine
     try:
-        dead = [t for t in engine.worker_threads() if not t.is_alive()]
-        if dead:
+        dead_names = [t.name for t in engine.worker_threads() if not t.is_alive()]
+        if callable(getattr(engine, "missing_worker_names", None)):
+            for name in engine.missing_worker_names():
+                if name not in dead_names:
+                    dead_names.append(name)
+        if dead_names:
             logger.warning(
                 "Watchdog detected %d dead realtime producer thread(s): %s — restarting engine.",
-                len(dead),
-                ", ".join(t.name for t in dead),
+                len(dead_names),
+                ", ".join(dead_names),
             )
             engine.restart()
-        return [t.name for t in dead]
+        return dead_names
     except Exception as exc:
         logger.debug("Realtime engine watchdog check failed: %s", exc)
         return []

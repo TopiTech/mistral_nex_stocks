@@ -97,6 +97,7 @@ async function send(action, payload) {
 }
 
 let stockPollInterval = null;
+let stockPollAbortController = null;
 let stockPollActive = false;
 let stockPollGeneration = 0;
 let allStocksData = null;
@@ -156,7 +157,52 @@ function initTabSwitching() {
   });
 }
 
-function renderStockItem(symbol, name, price, changePercent, market = "") {
+function formatPopupPrice(price, market = "", symbol = "", currency = "") {
+  if (price === null || price === undefined || price === "--") {
+    return "--";
+  }
+  if (typeof price !== "number") {
+    return String(price);
+  }
+  if (!Number.isFinite(price)) {
+    return "--";
+  }
+  const currencyUpper = String(currency || "").toUpperCase();
+  const marketLower = String(market || "").toLowerCase();
+  const upperSymbol = String(symbol || "").toUpperCase();
+  if (
+    currencyUpper === "JPY" ||
+    marketLower === "jp" ||
+    (!currencyUpper && !marketLower && /\.T$/.test(upperSymbol))
+  ) {
+    return `¥${Math.round(price).toLocaleString("ja-JP")}`;
+  }
+  if (upperSymbol === "USDJPY=X") {
+    return `¥${price.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+  if (marketLower === "idx" && !currencyUpper && upperSymbol.startsWith("^")) {
+    return price.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+  return `$${price.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function renderStockItem(
+  symbol,
+  name,
+  price,
+  changePercent,
+  market = "",
+  currency = "",
+) {
   const container = document.createElement("div");
   container.className = "stock-item";
   container.setAttribute("data-symbol", symbol);
@@ -181,15 +227,7 @@ function renderStockItem(symbol, name, price, changePercent, market = "") {
   const pctStr = Number.isFinite(val)
     ? `${changeSign}${val.toFixed(2)}%`
     : "--%";
-  const priceStr =
-    price !== null && price !== undefined && price !== "--"
-      ? typeof price === "number"
-        ? price.toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })
-        : price
-      : "--";
+  const priceStr = formatPopupPrice(price, market, symbol, currency);
 
   const infoDiv = document.createElement("div");
   infoDiv.className = "stock-info";
@@ -324,7 +362,7 @@ function filterAndRenderStocks() {
     for (const s of matchingStocks) {
       const pct = s.change_percent ?? s.percent;
       fragment.appendChild(
-        renderStockItem(s.symbol, s.name, s.price, pct, s.market),
+        renderStockItem(s.symbol, s.name, s.price, pct, s.market, s.currency),
       );
     }
   }
@@ -356,15 +394,25 @@ function filterAndRenderStocks() {
   }
 }
 
-async function fetchAndRenderStocks(base) {
+async function fetchAndRenderStocks(base, signal = null, generation = null) {
+  const isStalePoll = () =>
+    Boolean(signal?.aborted) ||
+    (generation !== null &&
+      (!stockPollActive || generation !== stockPollGeneration));
   try {
+    const fetchOptions = signal
+      ? { cache: "no-store", signal }
+      : { cache: "no-store" };
     const res = await fetchWithTimeout(
       `${base}/api/stocks`,
-      { cache: "no-store" },
+      fetchOptions,
       STOCK_POLL_TIMEOUT_MS,
     );
+    if (isStalePoll()) return;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (isStalePoll()) return;
+
     allStocksData = data;
     const stockContainer = $("stockListContainer");
     stockContainer?.classList.remove("stale");
@@ -379,6 +427,9 @@ async function fetchAndRenderStocks(base) {
     });
     setSafeText($("stockRefreshTime"), timeStr);
   } catch (err) {
+    if (isStalePoll() || err?.name === "AbortError") {
+      return;
+    }
     const stockContainer = $("stockListContainer");
     if (stockContainer) {
       stockContainer.classList.add("stale");
@@ -410,11 +461,25 @@ async function fetchAndRenderStocks(base) {
 
 function startStockPolling(base) {
   if (stockPollInterval) clearTimeout(stockPollInterval);
+  if (stockPollAbortController) {
+    stockPollAbortController.abort();
+    stockPollAbortController = null;
+  }
   stockPollActive = true;
   const generation = ++stockPollGeneration;
 
   async function poll() {
-    await fetchAndRenderStocks(base);
+    const controller =
+      typeof AbortController === "function" ? new AbortController() : null;
+    stockPollAbortController = controller;
+    await fetchAndRenderStocks(
+      base,
+      controller ? controller.signal : null,
+      generation,
+    );
+    if (stockPollAbortController === controller) {
+      stockPollAbortController = null;
+    }
     if (stockPollActive && generation === stockPollGeneration) {
       stockPollInterval = setTimeout(poll, 5000);
     }
@@ -426,6 +491,10 @@ function startStockPolling(base) {
 function stopStockPolling() {
   stockPollActive = false;
   stockPollGeneration += 1;
+  if (stockPollAbortController) {
+    stockPollAbortController.abort();
+    stockPollAbortController = null;
+  }
   if (stockPollInterval) {
     clearTimeout(stockPollInterval);
     stockPollInterval = null;
@@ -451,6 +520,21 @@ function setHealth(health) {
     $("startBtn").classList.remove("hidden");
     $("stopBtn").classList.add("hidden");
     stopStockPolling();
+    allStocksData = null;
+    const stockContainer = $("stockListContainer");
+    if (stockContainer) {
+      stockContainer.classList.add("stale");
+      stockContainer.setAttribute(
+        "aria-label",
+        "バックエンドに接続できていません。",
+      );
+      stockContainer.textContent = "";
+      const offlineDiv = document.createElement("div");
+      offlineDiv.className = "meta text-center p-14";
+      offlineDiv.textContent = "バックエンド未起動 — 起動後に株価を表示します";
+      stockContainer.appendChild(offlineDiv);
+    }
+    setSafeText($("stockRefreshTime"), "未接続 (オフライン)");
   }
 }
 
@@ -522,12 +606,42 @@ function bindAsyncButton(id, handler) {
   });
 }
 
+const ROUTE_ACTION_MAP = {
+  "/main": "openMain",
+  "/screener": "openScreener",
+  "/heatmap": "openHeatmap",
+  "/experimental/orbit": "openOrbit",
+  "/setup": "openSetup",
+  "/settings": "openSettings",
+};
+
 async function openAppPage(path = "/") {
-  // ポート水和を待ってからバックエンド基点を解決する(既定ポートへの誤遷移防止)。
-  await backendPortHydrated;
-  const ctx = await send("getContext");
-  const base = ctx?.health?.ok ? ctx.health.base : fallbackBackendBase();
-  chrome.tabs.create({ url: `${base}${path}` });
+  try {
+    // ポート水和を待ってからバックグラウンド経由で安全に開く(既定ポートへの誤遷移防止)。
+    await backendPortHydrated;
+    const action = ROUTE_ACTION_MAP[path];
+    const res = action
+      ? await send(action)
+      : await send("openRoute", { route: path });
+    if (!res?.ok) {
+      throw new Error(res?.error || "画面を開けませんでした");
+    }
+  } catch (e) {
+    console.error("Failed to open app page:", e);
+    handleUIError(e);
+  }
+}
+
+async function waitForBackendStopped(maxWaitMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const health = await send("health", { retries: 0, timeoutMs: 1000 });
+    if (!health?.ok) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
 }
 
 async function waitForBackendReady(maxWaitMs = 30000) {
@@ -573,7 +687,7 @@ document.addEventListener("DOMContentLoaded", () => {
         stopStockPolling();
         const res = await send("stopBackend");
         if (!res?.ok) throw new Error(res?.error || "停止に失敗しました");
-        await new Promise((r) => setTimeout(r, 1000));
+        await waitForBackendStopped();
       },
       "⏳ 停止中...",
     ),
@@ -815,12 +929,33 @@ async function loadDetectedTickers() {
       symBox.appendChild(mktSpan);
       symBox.appendChild(countSpan);
 
+      let inlineErrorEl = null;
+      const setCardError = (message) => {
+        if (!message) {
+          if (inlineErrorEl) {
+            inlineErrorEl.textContent = "";
+            inlineErrorEl.classList?.add("hidden");
+          }
+          return;
+        }
+        if (!inlineErrorEl) {
+          inlineErrorEl = document.createElement("div");
+          inlineErrorEl.className = "detector-inline-error";
+          inlineErrorEl.setAttribute?.("role", "alert");
+          card.appendChild(inlineErrorEl);
+        } else {
+          inlineErrorEl.classList?.remove("hidden");
+        }
+        inlineErrorEl.textContent = message;
+      };
+
       const addBtn = document.createElement("button");
       addBtn.type = "button";
       addBtn.className = "mini-add-btn";
       addBtn.textContent = "➕ 追加";
       addBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
+        setCardError("");
         addBtn.disabled = true;
         addBtn.textContent = "追加中...";
         try {
@@ -829,12 +964,13 @@ async function loadDetectedTickers() {
             market: item.market,
           });
           if (response?.ok) {
+            setCardError("");
             addBtn.textContent = "✓ 追加済";
             addBtn.className = "mini-add-btn success";
             addBtn.title = "";
           } else {
             const errorMsg = response?.error || "銘柄の追加に失敗しました";
-            handleUIError(errorMsg);
+            setCardError(errorMsg);
             addBtn.title = errorMsg;
             addBtn.textContent = "失敗";
             addBtn.disabled = false;
@@ -847,7 +983,7 @@ async function loadDetectedTickers() {
         } catch (err) {
           const errorMsg =
             err?.message || String(err || "銘柄の追加中にエラーが発生しました");
-          handleUIError(err);
+          setCardError(errorMsg);
           addBtn.title = errorMsg;
           addBtn.textContent = "エラー";
           addBtn.disabled = false;

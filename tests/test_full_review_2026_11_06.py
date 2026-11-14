@@ -155,9 +155,8 @@ def test_alphavantage_rejects_bool_price() -> None:
         patch("requests.get", return_value=mock_resp),
     ):
         quote = provider.get_latest_quote("AAPL")
-    # bool price coerces to the 0.0 default, never to 1.0
-    assert quote is not None
-    assert quote["regularMarketPrice"] == 0.0
+    # bool / non-positive prices are rejected (returns None so fallback continues, SVC-011)
+    assert quote is None
 
 
 # ---------------------------------------------------------------------------

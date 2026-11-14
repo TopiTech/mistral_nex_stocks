@@ -273,11 +273,27 @@ function initVisibilityHandler() {
     if (document.hidden) return;
     const activeSource =
       sseState.stockEventSource || sseApiClient.currentEventSource;
+    const connectingState =
+      typeof EventSource !== "undefined" ? EventSource.CONNECTING : 0;
+    const openState = typeof EventSource !== "undefined" ? EventSource.OPEN : 1;
+    const closedState =
+      typeof EventSource !== "undefined" ? EventSource.CLOSED : 2;
     // SSE が OPEN なら api_client.js の再接続・ストリーム更新で十分 —
     // タブ復帰のたびに /api/stocks を全取得して再描画する必要はない。
-    if (activeSource && activeSource.readyState === EventSource.OPEN) return;
+    if (activeSource && activeSource.readyState === openState) return;
     fetchInitialStocks();
-    if (!activeSource || activeSource.readyState === EventSource.CLOSED) {
+    const isAlreadyResumingOrActive =
+      (typeof sseApiClient.hasActiveSSE === "function" &&
+        sseApiClient.hasActiveSSE()) ||
+      Boolean(sseApiClient.isConnecting) ||
+      sseApiClient.ssePendingReconnectTimeout !== null ||
+      Boolean(
+        activeSource &&
+        (activeSource.readyState === openState ||
+          activeSource.readyState === connectingState),
+      );
+    if (isAlreadyResumingOrActive) return;
+    if (!activeSource || activeSource.readyState === closedState) {
       // api_client.js only *resumes* a paused stream; a fully disconnected
       // stream (e.g. max reconnect attempts reached while hidden) needs an
       // explicit restart. Mode 0 (disabled) stays on background polling.
@@ -743,11 +759,15 @@ function openPortfolioModal(stockKey) {
     DOM.get("pf-modal-symbol").textContent = `${stock.symbol} - ${stock.name}`;
     DOM.get("pf-shares-input").value = toFiniteNumber(stock.shares, 0);
     DOM.get("pf-price-input").value = toFiniteNumber(stock.avg_price, 0);
-    if (fxInput)
+    if (fxInput) {
+      const savedFxRate = toFiniteNumber(stock.avg_fx_rate, 0);
       fxInput.value =
-        stock.avg_fx_rate !== undefined && stock.avg_fx_rate !== null
-          ? toFiniteNumber(stock.avg_fx_rate, 0)
+        stock.avg_fx_rate !== undefined &&
+        stock.avg_fx_rate !== null &&
+        savedFxRate > 0
+          ? savedFxRate
           : "";
+    }
     updatePortfolioModalTotalCost();
   });
 
@@ -785,6 +805,13 @@ function openPortfolioModal(stockKey) {
           : { ok: true, value: null };
       if (!fxRateParsed.ok) {
         showToast(`❌ ${fxRateParsed.error}`, "#ff7d7d");
+        return;
+      }
+      if (fxRateParsed.value !== null && fxRateParsed.value <= 0) {
+        showToast(
+          "❌ 決済時為替レートは0より大きい数値を入力してください",
+          "#ff7d7d",
+        );
         return;
       }
 
@@ -956,7 +983,14 @@ window.addEventListener("click", (e) => {
   const searchInput = DOM.get("searchInput");
   const searchBtn = DOM.get("searchBtn");
   const searchResults = DOM.get("search-results");
-  if (searchResults && searchResults.style.display !== "none") {
+  const isSearchResultsVisible =
+    searchResults &&
+    (typeof window.getComputedStyle === "function"
+      ? window.getComputedStyle(searchResults).display !== "none"
+      : Boolean(
+          searchResults.style.display && searchResults.style.display !== "none",
+        ));
+  if (isSearchResultsVisible) {
     // Exclude both searchInput and searchBtn from triggering searchResults close.
     // Also check if searchBtn contains the target (in case it has child elements).
     const clickedSearchBtn =
@@ -968,65 +1002,6 @@ window.addEventListener("click", (e) => {
     if (!clickedInsideResults && !clickedSearchInput && !clickedSearchBtn) {
       searchResults.style.display = "none";
     }
-  }
-});
-
-// Global Escape key handler for drawers and floating UI
-window.addEventListener("keydown", (e) => {
-  if (e.isComposing || e.keyCode === 229) return;
-  if (e.key !== "Escape" || e.defaultPrevented) return;
-  const fsModal = document.getElementById("chart-fullscreen-modal");
-  if (fsModal && !fsModal.classList.contains("hidden")) {
-    if (typeof closeFsChartModal === "function") {
-      e.preventDefault();
-      closeFsChartModal();
-      return;
-    }
-  }
-  const aiDrawer = document.getElementById("ai-drawer-overlay");
-  if (aiDrawer && !aiDrawer.classList.contains("hidden")) {
-    if (typeof closeAiDrawer === "function") {
-      e.preventDefault();
-      closeAiDrawer();
-      return;
-    }
-  }
-  const detailDrawer = document.getElementById("stock-detail-drawer-overlay");
-  if (detailDrawer && !detailDrawer.classList.contains("hidden")) {
-    if (typeof closeStockDetailDrawer === "function") {
-      e.preventDefault();
-      closeStockDetailDrawer();
-      return;
-    }
-  }
-  const alertModal = document.getElementById("alertModal");
-  if (
-    alertModal &&
-    !alertModal.classList.contains("hidden") &&
-    alertModal.classList.contains("show")
-  ) {
-    if (typeof closeModal === "function") {
-      e.preventDefault();
-      closeModal("alertModal");
-      return;
-    }
-  }
-  const portfolioModal = document.getElementById("portfolioModal");
-  if (
-    portfolioModal &&
-    !portfolioModal.classList.contains("hidden") &&
-    portfolioModal.classList.contains("show")
-  ) {
-    if (typeof closeModal === "function") {
-      e.preventDefault();
-      closeModal("portfolioModal");
-      return;
-    }
-  }
-  const searchResults = DOM.get("search-results");
-  if (searchResults && searchResults.style.display !== "none") {
-    e.preventDefault();
-    searchResults.style.display = "none";
   }
 });
 
@@ -1048,6 +1023,12 @@ function showBrowserNotification(title, body) {
 }
 
 function checkAlerts(stock, oldPrice) {
+  if (
+    !stock ||
+    typeof stock.price !== "number" ||
+    !Number.isFinite(stock.price)
+  )
+    return;
   if (oldPrice === undefined || oldPrice === null) return;
   const stockKey = makeStockKey(stock.market, stock.symbol);
   const cfg = getAlertsConfig()[stockKey];

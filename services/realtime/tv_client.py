@@ -416,14 +416,21 @@ class TradingViewWSClient:
         finally:
             restart_pending = False
             restart_epoch = 0
+            unexpected_exit = False
             with self._lifecycle_lock:
-                if self.thread is worker_thread:
+                unexpected_exit = self.running and epoch == self._worker_epoch
+                if self.thread is worker_thread and not unexpected_exit:
                     self.thread = None
+                if not unexpected_exit:
                     restart_pending = self.running and epoch != self._worker_epoch
                     restart_epoch = self._worker_epoch
-                if epoch == self._worker_epoch:
-                    self.running = False
-                    self.connected = False
+                self.connected = False
+            if unexpected_exit:
+                logger.warning(
+                    "TradingView WS worker exited unexpectedly (epoch=%s); "
+                    "retaining dead thread reference for watchdog recovery.",
+                    epoch,
+                )
             if restart_pending:
                 replacement: threading.Thread | None = None
                 with self._lifecycle_lock:

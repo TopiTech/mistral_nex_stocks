@@ -474,25 +474,27 @@ def _update_indices_data(
         if "USDJPY" in new_header_data:
             rate_dict = new_header_data["USDJPY"]
             price_val: object = rate_dict.get("price")
-            if price_val not in (None, "--", "") and not is_bool_like(price_val):
+            if (
+                isinstance(price_val, (int, float, str))
+                and price_val not in ("--", "")
+                and not is_bool_like(price_val)
+            ):
                 try:
-                    rate_float = float(price_val)  # type: ignore[arg-type]
+                    rate_float = float(price_val)
                     if math.isfinite(rate_float) and rate_float > 0:
+                        time_mod = _get_app_bg_attr("time", time)
+                        now_ts = float(time_mod.time())
+                        old_rate, _ = app_state.market.get_usdjpy_rate_snapshot()
+                        app_state.market.update_usdjpy_rate(rate_float, ts=now_ts)
                         with app_state.market.user_stocks_lock:
-                            old_rate = getattr(app_state.market, "last_usdjpy_rate", None)
-                            old_saved_ts = getattr(
-                                app_state.market, "last_usdjpy_persisted_ts", 0.0
+                            old_saved_ts = float(
+                                getattr(app_state.market, "last_usdjpy_persisted_ts", 0.0)
                             )
-                            time_mod = _get_app_bg_attr("time", time)
-                            now_ts = float(time_mod.time())
-                            app_state.market.last_usdjpy_rate = rate_float
-                            app_state.market.last_usdjpy_rate_ts = now_ts
-
-                            should_persist = (
-                                old_rate is None
-                                or abs(rate_float - old_rate) >= 0.01
-                                or (now_ts - old_saved_ts) >= 300.0
-                            )
+                        should_persist = (
+                            old_rate <= 0.0
+                            or abs(rate_float - old_rate) >= 0.01
+                            or (now_ts - old_saved_ts) >= 300.0
+                        )
                         # C-03: persist outside user_stocks_lock so slow disk
                         # I/O (encrypt + fsync) never blocks SSE/readers.
                         if should_persist:

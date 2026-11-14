@@ -456,7 +456,7 @@ class StockDiskCache:
                         path.unlink(missing_ok=True)
                         return None
                     return data.get("value")
-                except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+                except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError, AttributeError) as exc:
                     logger.warning(
                         "Disk cache corrupt entry detected for %s; unlinking: %s", key, exc
                     )
@@ -552,7 +552,7 @@ class StockDiskCache:
                     self._cache_dir.mkdir(parents=True, exist_ok=True)
                     with open(tmp_path, "w", encoding="utf-8") as fh:
                         json.dump(
-                            {"value": value, "stored_at": time.time()},
+                            {"key": str(key), "value": value, "stored_at": time.time()},
                             fh,
                             ensure_ascii=False,
                             separators=(",", ":"),
@@ -646,7 +646,8 @@ class StockDiskCache:
         if not prefix or not str(prefix).strip():
             logger.warning("delete_prefix called with empty prefix; ignoring")
             return 0
-        safe_prefix = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(prefix))
+        prefix_str = str(prefix)
+        safe_prefix = "".join(c if c.isalnum() or c in "-_" else "_" for c in prefix_str)
         if not safe_prefix.strip("_"):
             logger.warning("delete_prefix called with non-alphanumeric prefix; ignoring")
             return 0
@@ -660,12 +661,30 @@ class StockDiskCache:
                 for entry in self._cache_dir.glob("*.json"):
                     # ``entry.stem`` is always ``<safe_key>_<digest>``, so an
                     # equality check against the bare prefix can never match.
-                    is_match = (
+                    stem_match = (
                         entry.stem.startswith(f"{safe_prefix}_")
                         or entry.stem.startswith(f"{safe_prefix}-")
                         or (safe_prefix.endswith(("_", "-")) and entry.stem.startswith(safe_prefix))
                     )
-                    if is_match:
+                    if not stem_match:
+                        continue
+                    should_delete = True
+                    try:
+                        with open(entry, "r", encoding="utf-8") as fh:
+                            payload = json.load(fh)
+                        if isinstance(payload, dict) and isinstance(payload.get("key"), str):
+                            stored_key = payload["key"]
+                            if len(prefix_str) > 120 or prefix_str.endswith(
+                                ("_", "-", ".", ":", "/")
+                            ):
+                                should_delete = stored_key.startswith(prefix_str)
+                            else:
+                                should_delete = stored_key == prefix_str or stored_key.startswith(
+                                    (f"{prefix_str}_", f"{prefix_str}-")
+                                )
+                    except (OSError, ValueError, TypeError):
+                        should_delete = True
+                    if should_delete:
                         try:
                             entry.unlink()
                             removed += 1
@@ -758,7 +777,7 @@ class StockDiskCache:
                                     continue
                                 raise
                         migrated += 1
-                    except (TypeError, json.JSONDecodeError) as exc:
+                    except (TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
                         logger.debug("Deleting invalid disk cache entry %s: %s", entry, exc)
                         try:
                             entry.unlink(missing_ok=True)

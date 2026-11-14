@@ -61,8 +61,12 @@ def _handle_yfinance_error(exc: Exception, symbol: str = "") -> None:
         )
     elif "timeout" in exc_str_lower:
         logger.debug("yfinance timeout detected. symbol=%s", symbol)
-    else:
-        with app_state.market.yfinance_lock:
+
+
+def _reset_yfinance_streak_on_success() -> None:
+    """Clear the graduated 429 streak only after a successful yfinance fetch."""
+    with app_state.market.yfinance_lock:
+        if not app_state.market.is_yfinance_rate_limited:
             app_state.market.yfinance_429_streak = 0
 
 
@@ -113,6 +117,7 @@ def fetch_stock(
             YFTickerMissingError,
             YFRateLimitError,
         ) as e:
+            _handle_yfinance_error(e, symbol)
             logger.debug("Fetch failed for %s with period %s: %s", symbol, period, e)
             invalid = _invalid_tuple_if_applicable(symbol, e)
             if invalid is not None:
@@ -135,6 +140,7 @@ def fetch_stock(
         build_fn = _get_app_bg_attr("build_stock_payload", build_stock_payload)
         payload = build_fn(symbol, name_or_dict, market, hist, snapshot_ts_ms=snapshot_ts_ms)
         if isinstance(payload, dict):
+            _reset_yfinance_streak_on_success()
             try:
                 app_state.payload_disk_cache.set(
                     f"payload_{symbol}_{market}", _strip_portfolio_fields(payload)
@@ -210,6 +216,22 @@ def extract_batch_history(
         return pd.DataFrame()
 
 
+def _build_batch_results(
+    items: list[tuple[str, str, str]],
+    batch_items: list[tuple[str, str, str]],
+    results_map: dict[tuple[str, str], Any],
+) -> list[Any]:
+    """Assemble full-length result list matching *items* order (BG-002)."""
+    batch_len = len(batch_items)
+    results = [
+        results_map.get((item[0], item[2])) if idx < batch_len else None
+        for idx, item in enumerate(items)
+    ]
+    if any(isinstance(entry, dict) for entry in results):
+        _reset_yfinance_streak_on_success()
+    return results
+
+
 def fetch_stocks_batch(
     items: list[tuple[str, str, str]],
     snapshot_ts_ms: int | None = None,
@@ -230,7 +252,8 @@ def fetch_stocks_batch(
         logger.warning("Disk cache is in degraded state; skipping batch stock fetch")
         return [None] * len(items)
 
-    symbols = [item[0] for item in items]
+    batch_items = items
+    symbols = [item[0] for item in batch_items]
     logger.info("Batch stock fetch starting: count=%d", len(symbols))
 
     max_batch_size = len(symbols)
@@ -242,8 +265,8 @@ def fetch_stocks_batch(
                 len(symbols),
                 max_batch_size,
             )
-            symbols = symbols[:max_batch_size]
-            items = items[:max_batch_size]
+            batch_items = items[:max_batch_size]
+            symbols = [item[0] for item in batch_items]
 
     downloaded = None
     if _shim().acquire_yfinance_slot():
@@ -283,7 +306,7 @@ def fetch_stocks_batch(
     fallback_items = []
     max_fallbacks = 2
 
-    for symbol, name, market in items:
+    for symbol, name, market in batch_items:
         payload = None
         if downloaded is not None and not downloaded.empty:
             try:
@@ -311,16 +334,14 @@ def fetch_stocks_batch(
         logger.debug("Lightweight mode: skipping all %d fallbacks", len(fallback_items))
         for symbol, _name, _market in fallback_items:
             results_map[(symbol, _market)] = None
-        results = [results_map.get((item[0], item[2])) for item in items]
-        return results
+        return _build_batch_results(items, batch_items, results_map)
 
     if app_state.market.is_yf_rate_limited():
         logger.warning(
             "yfinance rate-limited: skipping %d batch fallbacks.",
             len(fallback_items),
         )
-        results = [results_map.get((item[0], item[2])) for item in items]
-        return results
+        return _build_batch_results(items, batch_items, results_map)
 
     to_fetch = fallback_items[:max_fallbacks]
     skipped_items = fallback_items[max_fallbacks:]
@@ -388,8 +409,7 @@ def fetch_stocks_batch(
 
             fut.add_done_callback(_log_late_failure)
 
-    results = [results_map.get((item[0], item[2])) for item in items]
-    return results
+    return _build_batch_results(items, batch_items, results_map)
 
 
 def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None:

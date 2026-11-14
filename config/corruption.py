@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import config_store
+from utils.threading import restrictive_umask_lock
 
 logger = logging.getLogger("config_store")
 
@@ -111,20 +112,21 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
             with open(tmp_dest, "w", encoding="utf-8") as f:
                 json.dump(sanitized, f, ensure_ascii=False, indent=2)
         else:
-            old_umask = os.umask(0o077)
-            try:
-                fd = os.open(str(tmp_dest), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with restrictive_umask_lock():
+                old_umask = os.umask(0o077)
                 try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        json.dump(sanitized, f, ensure_ascii=False, indent=2)
-                except Exception:
+                    fd = os.open(str(tmp_dest), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                     try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    raise
-            finally:
-                os.umask(old_umask)
+                        with os.fdopen(fd, "w", encoding="utf-8") as f:
+                            json.dump(sanitized, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
+                        raise
+                finally:
+                    os.umask(old_umask)
         os.replace(tmp_dest, dest)
         if not config_store._is_windows() and dest.exists():
             try:

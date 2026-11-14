@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import logging
 import os
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -14,20 +17,23 @@ import config_store
 from app_state import app_state
 from bg._app_bridge import _get_app_bg_attr, _set_app_bg_attr
 
+fcntl: Any
+msvcrt: Any
 try:
     import fcntl
 except ImportError:
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 try:
     import msvcrt
 except ImportError:
-    msvcrt = None  # type: ignore[assignment]
+    msvcrt = None
 
 logger = logging.getLogger(__name__)
 
 APP_DATA_DIR = config_store.APP_DATA_DIR
 _ATOMIC_LOCK_STALE_SEC: float = 60.0
 
+_LEADER_LOCK_MUTEX = threading.RLock()
 _LEADER_LOCK_FILE: Any = None
 # LIFECYCLE-7: "follower until elected" — a process must not claim leadership
 # before the election loop has won the leader lock, otherwise every worker in
@@ -38,13 +44,15 @@ _is_sync_leader: bool = False
 
 
 def _get_leader_lock_file() -> Any:
-    return _get_app_bg_attr("_LEADER_LOCK_FILE", _LEADER_LOCK_FILE)
+    with _LEADER_LOCK_MUTEX:
+        return _get_app_bg_attr("_LEADER_LOCK_FILE", _LEADER_LOCK_FILE)
 
 
 def _set_leader_lock_file(f: Any) -> None:
     global _LEADER_LOCK_FILE
-    _LEADER_LOCK_FILE = f
-    _set_app_bg_attr("_LEADER_LOCK_FILE", f)
+    with _LEADER_LOCK_MUTEX:
+        _LEADER_LOCK_FILE = f
+        _set_app_bg_attr("_LEADER_LOCK_FILE", f)
 
 
 def _set_is_sync_leader(val: bool) -> None:
@@ -101,14 +109,15 @@ def _pid_is_alive(pid: int) -> bool:
 
 def _release_leader_lock() -> None:
     """Close the leader lock file handle on process exit without unlinking advisory lock files."""
-    _lock_file = _get_leader_lock_file()
-    _set_leader_lock_file(None)
-    _set_is_sync_leader(False)
-    if _lock_file is not None:
-        try:
-            _lock_file.close()
-        except OSError:
-            pass
+    with _LEADER_LOCK_MUTEX:
+        _lock_file = _get_leader_lock_file()
+        _set_leader_lock_file(None)
+        _set_is_sync_leader(False)
+        if _lock_file is not None:
+            try:
+                _lock_file.close()
+            except OSError:
+                pass
 
 
 def release_leader_lock() -> None:
@@ -201,6 +210,37 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
     return False
 
 
+def _try_acquire_advisory_file_lock(
+    lock_path: Path,
+    pid: int,
+    lock_handle: Callable[[Any], None],
+) -> bool:
+    """Acquire or refresh an OS advisory file lock under ``_LEADER_LOCK_MUTEX``."""
+    with _LEADER_LOCK_MUTEX:
+        lock_f = _get_leader_lock_file()
+        if lock_f is not None:
+            try:
+                lock_f.seek(0)
+                lock_f.truncate(0)
+                lock_f.write(str(pid))
+                lock_f.flush()
+                return True
+            except ValueError:
+                _set_leader_lock_file(None)
+
+        lock_path.touch(exist_ok=True)
+        with contextlib.ExitStack() as stack:
+            lock_f = stack.enter_context(open(lock_path, "r+", encoding="utf-8"))
+            lock_handle(lock_f)
+            lock_f.seek(0)
+            lock_f.truncate(0)
+            lock_f.write(str(pid))
+            lock_f.flush()
+            _set_leader_lock_file(lock_f)
+            stack.pop_all()
+            return True
+
+
 def _try_acquire_leader_lock() -> bool:
     """Try to acquire a non-blocking lock on the leader lock file."""
     target = _get_app_bg_attr("_try_acquire_leader_lock", None)
@@ -218,87 +258,30 @@ def _try_acquire_leader_lock() -> bool:
     try:
         if os.name == "nt":  # Windows
             if msvcrt is not None:
-                lock_f = _get_leader_lock_file()
-                opened_here = False
-                if lock_f is None:
-                    lock_path.touch(exist_ok=True)
-                    lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
-                    opened_here = True
-                else:
-                    # LIVENESS: an open mirror handle means this process already
-                    # owns the OS-level lock. Unlike flock (idempotent), msvcrt
-                    # re-locking the same byte range through the same fd fails
-                    # with EACCES even for the lock owner, which would make this
-                    # branch return False and, via the finally below, close the
-                    # mirror handle and silently abdicate leadership. Refresh the
-                    # recorded pid and report ownership instead of re-locking.
-                    lock_f.seek(0)
-                    lock_f.truncate(0)
-                    lock_f.write(str(pid))
-                    lock_f.flush()
-                    return True
-                acquired = False
+
+                def _lock_win(handle: Any) -> None:
+                    fd = handle.fileno()
+                    handle.seek(0)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
                 try:
-                    fd = lock_f.fileno()
-                    lock_f.seek(0)
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-                    lock_f.seek(0)
-                    lock_f.truncate(0)
-                    lock_f.write(str(pid))
-                    lock_f.flush()
-                    _set_leader_lock_file(lock_f)
-                    acquired = True
-                    return True
+                    return _try_acquire_advisory_file_lock(lock_path, pid, _lock_win)
                 except OSError:
                     return False
-                finally:
-                    if not acquired:
-                        try:
-                            lock_f.close()
-                        except OSError:
-                            pass
-                        if not opened_here:
-                            _set_leader_lock_file(None)
-            return _try_acquire_atomic_lock(lock_path, pid)
+            with _LEADER_LOCK_MUTEX:
+                return _try_acquire_atomic_lock(lock_path, pid)
         else:  # Unix
             if fcntl is not None:
-                lock_f = _get_leader_lock_file()
-                opened_here = False
-                if lock_f is None:
-                    lock_path.touch(exist_ok=True)
-                    lock_f = open(lock_path, "r+", encoding="utf-8")  # noqa: SIM115
-                    opened_here = True
-                else:
-                    # Mirror of the Windows branch: an open mirror handle means
-                    # this process already holds the flock. Re-locking is
-                    # idempotent on POSIX, but skipping it keeps both platforms
-                    # on the same ownership-first contract.
-                    lock_f.seek(0)
-                    lock_f.truncate(0)
-                    lock_f.write(str(pid))
-                    lock_f.flush()
-                    return True
-                acquired = False
+
+                def _lock_unix(handle: Any) -> None:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
                 try:
-                    fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
-                    lock_f.seek(0)
-                    lock_f.truncate(0)
-                    lock_f.write(str(pid))
-                    lock_f.flush()
-                    _set_leader_lock_file(lock_f)
-                    acquired = True
-                    return True
+                    return _try_acquire_advisory_file_lock(lock_path, pid, _lock_unix)
                 except OSError:
                     return False
-                finally:
-                    if not acquired:
-                        try:
-                            lock_f.close()
-                        except OSError:
-                            pass
-                        if not opened_here:
-                            _set_leader_lock_file(None)
-            return _try_acquire_atomic_lock(lock_path, pid)
+            with _LEADER_LOCK_MUTEX:
+                return _try_acquire_atomic_lock(lock_path, pid)
     except (OSError, ValueError) as exc:
         logger.debug("Failed to acquire sync leader lock: %s", exc)
         return False

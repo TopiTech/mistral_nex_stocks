@@ -24,7 +24,11 @@ const CHECK_TIMEOUT_MS = 10000;
 function withWatchdog(label, promise) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`${label}: check hung (no settlement within ${CHECK_TIMEOUT_MS}ms)`));
+      reject(
+        new Error(
+          `${label}: check hung (no settlement within ${CHECK_TIMEOUT_MS}ms)`,
+        ),
+      );
     }, CHECK_TIMEOUT_MS);
     promise.then(
       (value) => {
@@ -66,7 +70,8 @@ function readApiSource() {
 
 function readIdleTimeoutConstant(source) {
   const match = /const CHAT_STREAM_IDLE_TIMEOUT_MS = (\d+);/.exec(source);
-  if (!match) fail(`${API_PATH} no longer declares CHAT_STREAM_IDLE_TIMEOUT_MS`);
+  if (!match)
+    fail(`${API_PATH} no longer declares CHAT_STREAM_IDLE_TIMEOUT_MS`);
   return Number(match[1]);
 }
 
@@ -196,8 +201,10 @@ async function verifyZeroTimeoutIsPassthrough() {
   const { readStreamChunk } = loadChatStream(readApiSource());
   const reader = makeReader([new Uint8Array([7])]);
   const result = await readStreamChunk(reader, 0);
-  if (!result || result.done !== false) fail("disabled timeout must still read");
-  if (reader.state.readCalls !== 1) fail("disabled timeout must call read once");
+  if (!result || result.done !== false)
+    fail("disabled timeout must still read");
+  if (reader.state.readCalls !== 1)
+    fail("disabled timeout must call read once");
 }
 
 async function verifyStreamResolvesOnDoneFrame() {
@@ -215,7 +222,8 @@ async function verifyStreamResolvesOnDoneFrame() {
     { symbol: "AAPL", market: "us", message: "hi", request_token: "tok" },
     (partial) => partials.push(partial),
   );
-  if (reply !== "こんにちは") fail(`unexpected reply: ${JSON.stringify(reply)}`);
+  if (reply !== "こんにちは")
+    fail(`unexpected reply: ${JSON.stringify(reply)}`);
   if (partials.join("|") !== "こん|こんにちは") {
     fail(`unexpected deltas: ${JSON.stringify(partials)}`);
   }
@@ -234,14 +242,17 @@ async function verifySilentStreamFallsBackAndReleasesReader() {
   });
   const partials = [];
   const error = await expectRejection(
-    streamChatReply({ symbol: "AAPL", market: "us", message: "hi" }, (partial) =>
-      partials.push(partial),
+    streamChatReply(
+      { symbol: "AAPL", market: "us", message: "hi" },
+      (partial) => partials.push(partial),
     ),
     "streamChatReply on a stream that goes silent",
   );
   if (error.isStreamFallback !== true) {
     // 部分応答を完成品として返してはいけない。ポーリングで回収させる。
-    fail(`idle timeout must request the polling fallback, got ${error.message}`);
+    fail(
+      `idle timeout must request the polling fallback, got ${error.message}`,
+    );
   }
   if (partials.length !== 1) {
     fail("the first delta must still reach onDelta before the stall");

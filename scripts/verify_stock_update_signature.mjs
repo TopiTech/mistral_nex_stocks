@@ -46,19 +46,26 @@ function loadSignatureHelpers() {
   // ブラウザ専用グローバルを一切与えず、純粋関数であることを担保する。
   const sandbox = {};
   vm.createContext(sandbox);
-  vm.runInContext(`${bodies.join("\n")}\nglobalThis.__helpers = { stockRenderHash, stockUpdateSignature };`, sandbox);
+  vm.runInContext(
+    `${bodies.join("\n")}\nglobalThis.__helpers = { stockRenderHash, stockUpdateSignature };`,
+    sandbox,
+  );
   return sandbox.__helpers;
 }
 
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
-    fail(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    fail(
+      `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+    );
   }
 }
 
 function assertNotEqual(actual, other, label) {
   if (actual === other) {
-    fail(`${label}: expected a different value, both were ${JSON.stringify(actual)}`);
+    fail(
+      `${label}: expected a different value, both were ${JSON.stringify(actual)}`,
+    );
   }
 }
 
@@ -245,8 +252,12 @@ function verifyCallSitesUseSharedHelpers() {
     fail(`${UI_PATH} render throttle no longer uses stockRenderHash()`);
   }
   // 片方だけ組成を書き戻す再発を検出する。
-  const inlineComposition = "${stock.price}|${stock.change}|${stock.change_percent}";
-  if (apiSource.includes(inlineComposition) || uiSource.includes(inlineComposition)) {
+  const inlineComposition =
+    "${stock.price}|${stock.change}|${stock.change_percent}";
+  if (
+    apiSource.includes(inlineComposition) ||
+    uiSource.includes(inlineComposition)
+  ) {
     fail("render hash composition was inlined again; use stockRenderHash()");
   }
 }

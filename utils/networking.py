@@ -5,10 +5,16 @@ import os
 import re
 import secrets
 import socket
+import ssl
 import threading
 import time
+import typing
+from collections.abc import Iterable
 from pathlib import Path
-from urllib.parse import unquote_plus, urlparse
+from urllib.parse import unquote_plus, urlsplit
+
+import httpcore
+import httpx
 
 from app_state import app_state
 from constants import _BASE_ALLOWED_CORS_ORIGINS
@@ -20,6 +26,7 @@ logger = logging.getLogger(__name__)
 _cors_origins_cache = None
 _cors_origins_cache_ts = 0.0
 _CORS_ORIGINS_CACHE_TTL = 30.0
+_cors_origins_lock = threading.Lock()
 
 
 def _normalize_extension_origin(raw):
@@ -134,16 +141,20 @@ def _normalize_origin(origin: str) -> str:
 def get_allowed_cors_origins():
     """Retrieve the set of allowed CORS origins from constants and dynamic sources."""
     global _cors_origins_cache, _cors_origins_cache_ts
-    now = time.time()
-    if _cors_origins_cache is not None and (now - _cors_origins_cache_ts) < _CORS_ORIGINS_CACHE_TTL:
-        return _cors_origins_cache
-    origins = frozenset(
-        {_normalize_origin(origin) for origin in _BASE_ALLOWED_CORS_ORIGINS}
-        | _load_allowed_extension_origins()
-    )
-    _cors_origins_cache = origins
-    _cors_origins_cache_ts = now
-    return origins
+    with _cors_origins_lock:
+        now = time.time()
+        if (
+            _cors_origins_cache is not None
+            and (now - _cors_origins_cache_ts) < _CORS_ORIGINS_CACHE_TTL
+        ):
+            return _cors_origins_cache
+        origins = frozenset(
+            {_normalize_origin(origin) for origin in _BASE_ALLOWED_CORS_ORIGINS}
+            | _load_allowed_extension_origins()
+        )
+        _cors_origins_cache = origins
+        _cors_origins_cache_ts = now
+        return origins
 
 
 def require_trusted_state_changing_request(req, require_origin=True):
@@ -523,8 +534,174 @@ _BLOCKED_OUTBOUND_NETWORKS = (
 )
 
 
+def _is_blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True if an IP address (or its IPv4-mapped target) falls in a blocked range."""
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [addr]
+    mapped_v4 = getattr(addr, "ipv4_mapped", None)
+    if mapped_v4 is not None:
+        addresses.append(mapped_v4)
+    for item in addresses:
+        for network in _BLOCKED_OUTBOUND_NETWORKS:
+            if item.version == network.version and item in network:
+                return True
+    return False
+
+
+_SocketOption: typing.TypeAlias = (
+    tuple[int, int, int]
+    | tuple[int, int, bytes | bytearray]
+    | tuple[int, int, None, int]
+)
+
+
+def _resolve_safe_outbound_ips(host: str, port: int | None = None) -> list[str]:
+    """Resolve *host* and return validated non-blocked IPs, failing closed."""
+    if not host:
+        raise ValueError("Outbound host is empty")
+    cleaned_host = str(host).strip()
+    if cleaned_host.startswith("[") and cleaned_host.endswith("]"):
+        cleaned_host = cleaned_host[1:-1].strip()
+    cleaned_host = cleaned_host.split("%", 1)[0].strip()
+    if not cleaned_host:
+        raise ValueError("Outbound host is empty")
+
+    try:
+        literal_addr = ipaddress.ip_address(cleaned_host)
+    except ValueError:
+        literal_addr = None
+
+    if literal_addr is not None:
+        if _is_blocked_ip(literal_addr):
+            raise ValueError(f"Blocked outbound IP address: {literal_addr}")
+        return [str(literal_addr)]
+
+    try:
+        infos = (
+            socket.getaddrinfo(cleaned_host, port, type=socket.SOCK_STREAM)
+            if port is not None
+            else socket.getaddrinfo(cleaned_host, None)
+        )
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"Failed resolving outbound host: {cleaned_host}") from exc
+
+    if not infos:
+        raise ValueError(f"No DNS records resolved for outbound host: {cleaned_host}")
+
+    validated: list[str] = []
+    seen: set[str] = set()
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+        raw_ip = str(sockaddr[0]).split("%", 1)[0].strip()
+        try:
+            addr = ipaddress.ip_address(raw_ip)
+        except ValueError as exc:
+            raise ValueError(f"Invalid resolved IP for outbound host {cleaned_host}: {raw_ip!r}") from exc
+        if _is_blocked_ip(addr):
+            raise ValueError(f"Blocked outbound IP address resolved for {cleaned_host}: {addr}")
+        ip_text = str(addr)
+        if ip_text not in seen:
+            seen.add(ip_text)
+            validated.append(ip_text)
+
+    if not validated:
+        raise ValueError(f"No valid IP addresses resolved for outbound host: {cleaned_host}")
+    return validated
+
+
+class PinnedOutboundSyncBackend(httpcore.SyncBackend):
+    """httpcore sync backend that validates and pins resolved IPs at connect time."""
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[_SocketOption] | None = None,
+    ) -> httpcore.NetworkStream:
+        try:
+            validated_ips = _resolve_safe_outbound_ips(host, port)
+        except ValueError as exc:
+            raise httpcore.ConnectError(str(exc)) from exc
+
+        deadline = time.monotonic() + timeout if timeout is not None and timeout > 0 else None
+        last_exc: httpcore.ConnectError | httpcore.ConnectTimeout | None = None
+        options_list = list(socket_options) if socket_options is not None else None
+
+        for idx, target_ip in enumerate(validated_ips):
+            attempt_timeout = timeout
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 and idx > 0:
+                    break
+                attempt_timeout = max(0.05, remaining) if remaining > 0 else timeout
+            try:
+                return super().connect_tcp(
+                    host=target_ip,
+                    port=port,
+                    timeout=attempt_timeout,
+                    local_address=local_address,
+                    socket_options=options_list,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_exc = exc
+
+        if last_exc is not None:
+            raise last_exc
+        raise httpcore.ConnectError(f"Failed connecting to validated outbound IPs for {host}")
+
+
+class PinnedOutboundHTTPTransport(httpx.HTTPTransport):
+    """HTTPTransport using PinnedOutboundSyncBackend with env proxies disabled."""
+
+    def __init__(
+        self,
+        *,
+        verify: ssl.SSLContext | str | bool = True,
+        limits: httpx.Limits | None = None,
+        retries: int = 0,
+    ) -> None:
+        resolved_limits = limits if limits is not None else httpx.Limits()
+        super().__init__(
+            verify=verify,
+            trust_env=False,
+            limits=resolved_limits,
+            retries=retries,
+        )
+        ssl_context = (
+            verify
+            if isinstance(verify, ssl.SSLContext)
+            else httpx.create_ssl_context(verify=verify, trust_env=False)
+        )
+        old_pool = self._pool
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=ssl_context,
+            max_connections=resolved_limits.max_connections,
+            max_keepalive_connections=resolved_limits.max_keepalive_connections,
+            keepalive_expiry=resolved_limits.keepalive_expiry,
+            http1=True,
+            http2=False,
+            retries=retries,
+            network_backend=PinnedOutboundSyncBackend(),
+        )
+        if isinstance(old_pool, httpcore.ConnectionPool):
+            old_pool.close()
+
+
+def create_pinned_outbound_httpx_transport(
+    *,
+    verify: ssl.SSLContext | str | bool = True,
+    limits: httpx.Limits | None = None,
+    retries: int = 0,
+) -> PinnedOutboundHTTPTransport:
+    """Create an httpx transport that enforces connect-time SSRF IP pinning."""
+    return PinnedOutboundHTTPTransport(verify=verify, limits=limits, retries=retries)
+
+
 def is_blocked_outbound_host(host: str) -> bool:
-    """Return True when *host* resolves only to link-local / metadata addresses.
+    """Return True when *host* cannot be resolved safely or targets blocked IPs.
 
     Loopback and RFC1918 targets stay allowed on purpose: the app documents
     support for local and LAN OpenAI-compatible servers
@@ -532,32 +709,44 @@ def is_blocked_outbound_host(host: str) -> bool:
     a supported deployment. Link-local addresses are never a model endpoint and
     are the standard SSRF pivot to cloud metadata, so they are rejected.
 
-    An unresolvable host returns False: the request is allowed to fail on its
-    own rather than turning a transient DNS error into a validation error.
+    DNS resolution failures fail closed (return True) so transient or
+    manipulated lookup errors never bypass SSRF protection.
     """
-    if not host:
-        return True
-    candidates: list[str] = []
     try:
-        candidates.append(str(ipaddress.ip_address(host)))
+        _resolve_safe_outbound_ips(host)
     except ValueError:
-        try:
-            infos = socket.getaddrinfo(host, None)
-        except (OSError, UnicodeError):
-            return False
-        for info in infos:
-            sockaddr = info[4]
-            if sockaddr:
-                candidates.append(str(sockaddr[0]))
-    for candidate in candidates:
-        try:
-            addr = ipaddress.ip_address(candidate)
-        except ValueError:
-            continue
-        for network in _BLOCKED_OUTBOUND_NETWORKS:
-            if addr.version == network.version and addr in network:
-                return True
+        return True
     return False
+
+
+def inspect_outbound_base_url(raw: str) -> tuple[bool, str, str]:
+    """Inspect a caller-supplied OpenAI-compatible base URL.
+
+    Returns ``(ok, error_code, reason)``. Enforces scheme, control-char/whitespace
+    hygiene, port syntax, absence of embedded userinfo (``user:pass@host``), and
+    resolved-IP SSRF checks using one canonical validator.
+    """
+    target = (raw or "").strip()
+    if not target:
+        return False, "empty", "Base URLが未設定です"
+    if not target.lower().startswith(("http://", "https://")):
+        return False, "url_bad_scheme", "Base URLが不正です (http/https のみ対応)"
+    if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in target):
+        return False, "url_invalid", "Base URLに不正な文字が含まれています"
+    try:
+        parsed = urlsplit(target)
+        port = parsed.port
+    except ValueError:
+        return False, "url_invalid", "Base URLが不正です (http/https のみ対応)"
+    if port is not None and port <= 0:
+        return False, "url_invalid", "Base URLが不正です (http/https のみ対応)"
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        return False, "url_userinfo_forbidden", "Base URLに認証情報を含めることはできません"
+    if not parsed.hostname:
+        return False, "url_invalid", "Base URLが不正です (http/https のみ対応)"
+    if is_blocked_outbound_host(parsed.hostname):
+        return False, "url_blocked_target", "Base URLの接続先は許可されていません"
+    return True, "", ""
 
 
 def validate_outbound_base_url(raw: str) -> tuple[bool, str]:
@@ -567,15 +756,8 @@ def validate_outbound_base_url(raw: str) -> tuple[bool, str]:
     reason is a fixed string so a caller cannot use the endpoint as a read
     oracle for internal services.
     """
-    target = (raw or "").strip()
-    if not target:
-        return False, "Base URLが未設定です"
-    parsed = urlparse(target)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return False, "Base URLが不正です (http/https のみ対応)"
-    if is_blocked_outbound_host(parsed.hostname):
-        return False, "Base URLの接続先は許可されていません"
-    return True, ""
+    ok, _code, reason = inspect_outbound_base_url(raw)
+    return ok, reason
 
 
 def _is_local_request(req):

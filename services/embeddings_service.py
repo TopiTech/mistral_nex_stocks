@@ -47,10 +47,25 @@ def get_mistral_embeddings_batch(
     texts while retrieving already cached vectors with thread-safety and
     rate-limit slot protection.
     """
-    if not texts or not api_key or not isinstance(api_key, str):
+    from credential_manager import (
+        get_openai_embeddings_model,
+        is_openai_provider,
+        is_preview_api_key,
+    )
+
+    if (
+        not texts
+        or not api_key
+        or not isinstance(api_key, str)
+        or is_preview_api_key(api_key)
+    ):
         return [None] * len(texts)
 
-    from credential_manager import get_openai_embeddings_model, is_openai_provider
+    try:
+        parsed_batch_size = int(batch_size)
+    except (TypeError, ValueError):
+        parsed_batch_size = 32
+    effective_batch_size = max(1, parsed_batch_size)
 
     if is_openai_provider():
         emb_namespace = f"openai:{get_openai_embeddings_model()}"
@@ -102,7 +117,7 @@ def get_mistral_embeddings_batch(
             else (get_openai_api_key() or "")
         )
         openai_embs = get_openai_embeddings_batch(
-            uncached_texts, api_key=eff_key, batch_size=batch_size
+            uncached_texts, api_key=eff_key, batch_size=effective_batch_size
         )
         with _EMBEDDINGS_CACHE_LOCK:
             for data_idx, emb in enumerate(openai_embs):
@@ -129,10 +144,10 @@ def get_mistral_embeddings_batch(
     if client is None:
         return results
 
-    for i in range(0, len(uncached_texts), batch_size):
-        chunk_texts = uncached_texts[i : i + batch_size]
-        chunk_hashes = uncached_hashes[i : i + batch_size]
-        chunk_indices = uncached_indices[i : i + batch_size]
+    for i in range(0, len(uncached_texts), effective_batch_size):
+        chunk_texts = uncached_texts[i : i + effective_batch_size]
+        chunk_hashes = uncached_hashes[i : i + effective_batch_size]
+        chunk_indices = uncached_indices[i : i + effective_batch_size]
 
         wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
         wait_status = _wait_for_rate_limit_slot(wait_before)
@@ -294,9 +309,11 @@ def rank_news_by_semantic_relevance(
 
     Uses Delta-Batch Embeddings to calculate all article vectors in a single API call.
     """
+    from credential_manager import is_preview_api_key
+
     if not news_items or not isinstance(news_items, list):
         return []
-    if not api_key:
+    if not api_key or not isinstance(api_key, str) or is_preview_api_key(api_key):
         return news_items
 
     query_text = (

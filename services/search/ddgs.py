@@ -4,7 +4,7 @@ import queue
 import random
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from typing import Any
 
 from ddgs import DDGS
@@ -444,43 +444,53 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
     count is capped at ``limit * 2`` so the overall request volume stays
     bounded.
     """
+    try:
+        eff_limit = int(limit)
+        eff_query_limit = int(query_limit)
+        eff_news_n = int(news_n)
+        eff_text_n = int(text_n)
+    except (TypeError, ValueError):
+        return []
+    if eff_limit <= 0 or eff_query_limit <= 0 or (eff_news_n <= 0 and eff_text_n <= 0):
+        return []
+
     items: list[dict[str, Any]] = []
     try:
-        target_queries = list(queries)[: max(1, int(query_limit))]
+        target_queries = list(queries)[: max(1, eff_query_limit)]
+        if not target_queries:
+            return []
 
         def _collect_one(idx: int, q: str) -> list[dict[str, Any]]:
             if idx > 0:
                 time.sleep(idx * random.uniform(0.05, 0.15))
             out: list[dict[str, Any]] = []
-            out.extend(
-                _format_ddgs_news_items(
-                    ddgs_news_search(
-                        q,
-                        region=region,
-                        timelimit=timelimit,
-                        max_results=news_n,
-                        ddgs_session=None,
+            if eff_news_n > 0:
+                out.extend(
+                    _format_ddgs_news_items(
+                        ddgs_news_search(
+                            q,
+                            region=region,
+                            timelimit=timelimit,
+                            max_results=eff_news_n,
+                            ddgs_session=None,
+                        )
                     )
                 )
-            )
-            out.extend(
-                _format_ddgs_text_items(
-                    ddgs_text_search(
-                        q,
-                        region=region,
-                        timelimit=timelimit,
-                        max_results=text_n,
-                        ddgs_session=None,
+            if eff_text_n > 0:
+                out.extend(
+                    _format_ddgs_text_items(
+                        ddgs_text_search(
+                            q,
+                            region=region,
+                            timelimit=timelimit,
+                            max_results=eff_text_n,
+                            ddgs_session=None,
+                        )
                     )
                 )
-            )
             return out
 
         pool = _get_ddgs_search_pool()
-        # A bounded pool raises ``queue.Full`` once its queue is saturated and
-        # ``RuntimeError`` after a concurrent shutdown.  Submit one query at a
-        # time so a refusal costs only that query instead of discarding the
-        # results of every query submitted before it.
         futures: list[tuple[int, Future[list[dict[str, Any]]]]] = []
         for idx, q in enumerate(target_queries):
             try:
@@ -490,33 +500,71 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
                     "DDGS context collection query not scheduled error_type=%s",
                     type(exc).__name__,
                 )
-        # M14 (2026-11-07 review): merging in as_completed order made the
-        # survivor of a duplicate (ts.dedupe keeps the FIRST occurrence) and
-        # the final item order depend on network timing — the same query set
-        # returned different merges run to run. Collect into the query index
-        # and extend in submission order; the early-exit cancels stragglers
-        # so they cannot keep running on the shared 3-worker pool.
-        results_by_index: dict[int, list] = {}
-        early_exit = False
+        # Wait with FIRST_COMPLETED so a slow/stalled earlier query does not
+        # block fast subsequent queries from triggering early_exit, while
+        # indexing into results_by_index keeps final merge order deterministic.
+        future_to_idx: dict[Any, int] = {}
         for idx, fut in futures:
-            try:
-                collected = fut.result()
-            except Exception as exc:
-                if "No results found" in str(exc):
-                    logger.debug("DDGS context collection: no results for a query")
-                else:
+            future_to_idx[fut] = idx
+
+        results_by_index: dict[int, list[dict[str, Any]]] = {}
+        early_exit = False
+        pending_futs: set[Any] = set(future_to_idx)
+        overall_timeout = max(2.0, float(_get_ddgs_timeout()) * 1.5 + 2.0)
+        deadline = time.monotonic() + overall_timeout
+
+        if pending_futs and all(isinstance(fut, Future) for fut in pending_futs):
+            while pending_futs:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     logger.info(
-                        "DDGS context collection query failed error_type=%s",
-                        type(exc).__name__,
+                        "DDGS context collection deadline exceeded remaining=%d",
+                        len(pending_futs),
                     )
-                continue
-            results_by_index[idx] = collected
-            if sum(len(v) for v in results_by_index.values()) >= limit * 2:
-                early_exit = True
-                break
-        if early_exit:
-            # Mirror the old early-exit: the not-yet-consumed stragglers are
-            # cancelled so they cannot keep occupying the shared pool.
+                    break
+                done, pending_futs = wait(
+                    pending_futs, timeout=remaining, return_when=FIRST_COMPLETED
+                )
+                if not done:
+                    break
+                for fut in done:
+                    idx = future_to_idx[fut]
+                    try:
+                        collected = fut.result()
+                    except Exception as exc:
+                        if "No results found" in str(exc):
+                            logger.debug("DDGS context collection: no results for a query")
+                        else:
+                            logger.info(
+                                "DDGS context collection query failed error_type=%s",
+                                type(exc).__name__,
+                            )
+                        continue
+                    results_by_index[idx] = collected
+                    if sum(len(v) for v in results_by_index.values()) >= eff_limit * 2:
+                        early_exit = True
+                        break
+                if early_exit:
+                    break
+        else:
+            for fut, idx in future_to_idx.items():
+                try:
+                    collected = fut.result()
+                except Exception as exc:
+                    if "No results found" in str(exc):
+                        logger.debug("DDGS context collection: no results for a query")
+                    else:
+                        logger.info(
+                            "DDGS context collection query failed error_type=%s",
+                            type(exc).__name__,
+                        )
+                    continue
+                results_by_index[idx] = collected
+                if sum(len(v) for v in results_by_index.values()) >= eff_limit * 2:
+                    early_exit = True
+                    break
+
+        if early_exit or pending_futs:
             for _, pending in futures:
                 pending.cancel()
         for idx in range(len(target_queries)):
@@ -526,7 +574,7 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
             logger.debug("DDGS context collection: no results for queries")
         else:
             logger.info("DDGS context collection failed error_type=%s", type(exc).__name__)
-    return ts.dedupe_items(items)[:limit]
+    return ts.dedupe_items(items)[:eff_limit]
 
 
 def _market_ddgs_queries(market="us"):

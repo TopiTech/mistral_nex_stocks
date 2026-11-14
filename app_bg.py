@@ -8,7 +8,6 @@ If is_disk_cache_degraded() is True, fetch_stocks_batch will return [None] early
 from __future__ import annotations
 
 import logging
-import queue
 import time
 
 from app_state import app_state
@@ -52,6 +51,7 @@ from bg.sse_interpolator import (
     _interpolate_and_fluctuate_market,
     bg_interpolate_loop,
 )
+from bg.sync.state import _register_app_bg_delegate
 from bg.sync_worker import (
     _BATCH_INVALID_MARKER,
     SYNC_STALE_LOCK_WAIT_SEC,
@@ -80,6 +80,12 @@ from bg.sync_worker import (
     start_background_worker,
     sync_all_stocks_now,
 )
+from bg.sync_worker import (
+    _recover_stale_sync_state_if_needed as _bg_recover_stale_sync_state_if_needed,
+)
+from bg.sync_worker import (
+    schedule_sync_all_stocks_now as _bg_schedule_sync_all_stocks_now,
+)
 from constants import SIMULATE_FLUCTUATION
 from route_helpers import (
     ensure_stock_placeholder_in_caches,
@@ -101,64 +107,14 @@ _original_announce_current_market_state = _raw_announce_current_market_state
 _start_background_threads = start_background_worker
 
 
+@_register_app_bg_delegate
 def _recover_stale_sync_state_if_needed() -> bool:
-    global _sync_start_time
-    with app_state.market.is_syncing_lock:
-        if not app_state.market.is_syncing:
-            return False
-        start_ts = float(globals().get("_sync_start_time", _sync_start_time))
-        elapsed = time.time() - start_ts if start_ts > 0 else 0.0
-        if elapsed <= SYNC_STALE_TIMEOUT_SEC:
-            return False
-        logger.critical(
-            "Sync is stale (running %.0fs, threshold %.0fs). Resetting sync state "
-            "so scheduling, the UI, and lock takeovers can recover.",
-            elapsed,
-            SYNC_STALE_TIMEOUT_SEC,
-        )
-        app_state.market.is_syncing = False
-        globals()["_sync_start_time"] = 0.0
-        _sync_start_time = 0.0
-        try:
-            _set_sync_start_time(0.0)
-        except Exception:
-            pass
-        return True
+    return _bg_recover_stale_sync_state_if_needed(facade_globals=globals())
 
 
+@_register_app_bg_delegate
 def schedule_sync_all_stocks_now(force: bool = False) -> bool:
-    with app_state.market.sync_schedule_lock:
-        if force:
-            app_state.market.sync_forced = True
-    recover_fn = globals().get(
-        "_recover_stale_sync_state_if_needed", _recover_stale_sync_state_if_needed
-    )
-    with app_state.market.is_syncing_lock:
-        if app_state.market.is_syncing and not recover_fn():
-            with app_state.market.sync_schedule_lock:
-                app_state.market.sync_pending = True
-            return False
-
-    with app_state.market.sync_schedule_lock:
-        if app_state.market.sync_scheduled:
-            app_state.market.sync_pending = True
-            return False
-        app_state.market.sync_scheduled = True
-
-    try:
-        job = globals().get("_run_scheduled_sync_job", _run_scheduled_sync_job)
-        app_state.execution.sync_refresh_executor.submit(job)
-        return True
-    except queue.Full as exc:
-        with app_state.market.sync_schedule_lock:
-            app_state.market.sync_scheduled = False
-        logger.warning("Failed to schedule stock sync (queue full): %s", exc)
-        return False
-    except (RuntimeError, AttributeError, ValueError) as exc:
-        with app_state.market.sync_schedule_lock:
-            app_state.market.sync_scheduled = False
-        logger.warning("Failed to schedule stock sync: %s", exc)
-        return False
+    return _bg_schedule_sync_all_stocks_now(force=force, facade_globals=globals())
 
 
 __all__ = [
@@ -194,6 +150,7 @@ __all__ = [
     "_run_scheduled_sync_job",
     "_set_is_sync_leader",
     "_set_sync_generation",
+    "_set_sync_start_time",
     "_sse_full_snapshot_counter",
     "_sse_payload_cache",
     "_sse_payload_cached_generation",
@@ -216,6 +173,7 @@ __all__ = [
     "acquire_yfinance_slot",
     "announce_current_market_state",
     "announce_real_market_state",
+    "app_state",
     "bg_interpolate_loop",
     "bg_leader_election_loop",
     "bg_yahoo_fetch_loop",
@@ -236,4 +194,5 @@ __all__ = [
     "schedule_sync_all_stocks_now",
     "start_background_worker",
     "sync_all_stocks_now",
+    "time",
 ]

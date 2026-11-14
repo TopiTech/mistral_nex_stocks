@@ -5,9 +5,11 @@ Extracted from app_state.py to reduce module complexity.
 """
 
 import logging
+import math
 import ssl
 import threading
 import time
+from collections import deque
 from typing import Any, ClassVar
 
 import httpx
@@ -32,7 +34,14 @@ def _tracked_usdjpy_rate() -> float:
     try:
         from app_state import app_state
 
-        return float(app_state.market.last_usdjpy_rate or 0.0)
+        market = app_state.market
+        snapshot_fn = getattr(market, "get_usdjpy_rate_snapshot", None)
+        if callable(snapshot_fn):
+            rate, _ = snapshot_fn()
+        else:
+            raw_rate = getattr(market, "last_usdjpy_rate", 0.0)
+            rate = float(raw_rate or 0.0)
+        return rate if math.isfinite(rate) else 0.0
     except Exception:
         return 0.0
 
@@ -67,10 +76,12 @@ class AIState:
         self.mistral_response_lock = threading.Lock()
         self.mistral_clients: LRUCache[Any, Any] = LRUCache(maxsize=128)
         self.mistral_clients_lock = threading.Lock()
+        self._retired_mistral_clients: deque[tuple[float, Any]] = deque()
 
         # OpenAI-compatible HTTP client connection pool and concurrency limits
         self.openai_clients: LRUCache[tuple[str, str], Any] = LRUCache(maxsize=32)
         self.openai_clients_lock = threading.Lock()
+        self._retired_openai_clients: deque[tuple[float, Any]] = deque()
         self.openai_call_semaphore = threading.Semaphore(3)
         self.openai_stream_semaphore = threading.Semaphore(STREAM_CHAT_MAX_CONCURRENT)
 
@@ -322,21 +333,81 @@ class AIState:
         with self.mistral_cooldown_lock:
             self.mistral_429_streak = 0
 
+    @staticmethod
+    def _close_client_safely(client: Any, label: str) -> None:
+        try:
+            if hasattr(client, "close") and callable(client.close):
+                client.close()
+        except Exception as exc:
+            logger.debug("Error closing %s client error_type=%s", label, type(exc).__name__)
+
+    @classmethod
+    def _prune_retired_clients_locked(
+        cls,
+        retired_queue: deque[tuple[float, Any]],
+        max_retired: int,
+        label: str,
+    ) -> None:
+        grace_sec = max(float(MISTRAL_API_TIMEOUT_SEC) * 2.0, 120.0)
+        now = time.monotonic()
+        while retired_queue:
+            retired_ts, old_client = retired_queue[0]
+            if getattr(old_client, "is_closed", False):
+                retired_queue.popleft()
+                continue
+            if (now - retired_ts) >= grace_sec or len(retired_queue) > max_retired:
+                retired_queue.popleft()
+                cls._close_client_safely(old_client, label)
+            else:
+                break
+
+    @classmethod
+    def _lookup_or_evict_locked(
+        cls,
+        pool: LRUCache[Any, Any],
+        retired_queue: deque[tuple[float, Any]],
+        cache_key: Any,
+        default_maxsize: int,
+        label: str,
+    ) -> Any | None:
+        maxsize = max(int(getattr(pool, "maxsize", default_maxsize)), 1)
+        cls._prune_retired_clients_locked(retired_queue, max_retired=max(maxsize * 2, 64), label=label)
+
+        if cache_key in pool:
+            client = pool[cache_key]
+            if not getattr(client, "is_closed", False):
+                return client
+            # Evict the closed client for this key before checking pool capacity
+            # so an unrelated live client is never evicted needlessly.
+            pool.pop(cache_key, None)
+
+        if len(pool) >= maxsize:
+            try:
+                _, old_client = pool.popitem()
+                if not getattr(old_client, "is_closed", False):
+                    # Defer closing an evicted live client so any concurrent
+                    # caller that already borrowed it can finish cleanly.
+                    retired_queue.append((time.monotonic(), old_client))
+            except (KeyError, Exception) as exc:
+                logger.debug(
+                    "Error retiring evicted %s client error_type=%s",
+                    label,
+                    type(exc).__name__,
+                )
+        return None
+
     def get_or_create_mistral_client(self, api_key: str):
         cache_key = api_key
         with self.mistral_clients_lock:
-            if cache_key in self.mistral_clients:
-                return self.mistral_clients[cache_key]
-
-            if len(self.mistral_clients) >= getattr(self.mistral_clients, "maxsize", 128):
-                try:
-                    _, old_client = self.mistral_clients.popitem()
-                    if hasattr(old_client, "close"):
-                        old_client.close()
-                except (KeyError, Exception) as exc:
-                    logger.debug(
-                        "Error closing evicted Mistral client error_type=%s", type(exc).__name__
-                    )
+            existing = self._lookup_or_evict_locked(
+                self.mistral_clients,
+                self._retired_mistral_clients,
+                cache_key,
+                default_maxsize=128,
+                label="Mistral",
+            )
+            if existing is not None:
+                return existing
 
             import mistral_compat
 
@@ -351,24 +422,25 @@ class AIState:
     def get_or_create_openai_client(self, base_url: str, api_key: str | None = None) -> Any:
         """Retrieve or create an httpx.Client configured with connection pooling for OpenAI endpoints."""
         clean_url = (base_url or "").strip().rstrip("/")
+        from utils.networking import validate_outbound_base_url
+
+        url_ok, url_reason = validate_outbound_base_url(clean_url)
+        if not url_ok:
+            raise ValueError(url_reason)
+
         clean_key = (api_key or "").strip()
         cache_key = (clean_url, clean_key)
 
         with self.openai_clients_lock:
-            if cache_key in self.openai_clients:
-                client = self.openai_clients[cache_key]
-                if not getattr(client, "is_closed", False):
-                    return client
-
-            if len(self.openai_clients) >= getattr(self.openai_clients, "maxsize", 32):
-                try:
-                    _, old_client = self.openai_clients.popitem()
-                    if hasattr(old_client, "close"):
-                        old_client.close()
-                except (KeyError, Exception) as exc:
-                    logger.debug(
-                        "Error closing evicted OpenAI client error_type=%s", type(exc).__name__
-                    )
+            existing = self._lookup_or_evict_locked(
+                self.openai_clients,
+                self._retired_openai_clients,
+                cache_key,
+                default_maxsize=32,
+                label="OpenAI",
+            )
+            if existing is not None:
+                return existing
 
             verify_ctx: Any = True
             try:
@@ -378,17 +450,29 @@ class AIState:
             except Exception as exc:
                 logger.debug("Failed configuring OS trust store certs for OpenAI: %s", exc)
 
+            from utils.networking import create_pinned_outbound_httpx_transport
+
             limits = httpx.Limits(
                 max_keepalive_connections=20,
                 max_connections=50,
                 keepalive_expiry=60.0,
             )
-            client = httpx.Client(
+            transport = create_pinned_outbound_httpx_transport(
                 verify=verify_ctx,
                 limits=limits,
-                timeout=MISTRAL_API_TIMEOUT_SEC,
-                follow_redirects=True,
             )
+            try:
+                client = httpx.Client(
+                    verify=verify_ctx,
+                    limits=limits,
+                    timeout=MISTRAL_API_TIMEOUT_SEC,
+                    follow_redirects=False,
+                    trust_env=False,
+                    transport=transport,
+                )
+            except Exception:
+                transport.close()
+                raise
             self.openai_clients[cache_key] = client
             return client
 
@@ -396,21 +480,19 @@ class AIState:
         """Close all persistent client sessions across all providers (called during shutdown)."""
         with self.mistral_clients_lock:
             while self.mistral_clients:
-                try:
-                    _, client = self.mistral_clients.popitem()
-                    if hasattr(client, "close") and callable(client.close):
-                        client.close()
-                except Exception as exc:
-                    logger.debug("Error closing Mistral client on shutdown: %s", exc)
+                _, client = self.mistral_clients.popitem()
+                self._close_client_safely(client, "Mistral shutdown")
+            while self._retired_mistral_clients:
+                _, client = self._retired_mistral_clients.popleft()
+                self._close_client_safely(client, "Mistral retired shutdown")
 
         with self.openai_clients_lock:
             while self.openai_clients:
-                try:
-                    _, client = self.openai_clients.popitem()
-                    if hasattr(client, "close") and callable(client.close):
-                        client.close()
-                except Exception as exc:
-                    logger.debug("Error closing OpenAI client on shutdown: %s", exc)
+                _, client = self.openai_clients.popitem()
+                self._close_client_safely(client, "OpenAI shutdown")
+            while self._retired_openai_clients:
+                _, client = self._retired_openai_clients.popleft()
+                self._close_client_safely(client, "OpenAI retired shutdown")
 
     def response_cache_size(self) -> int:
         """Return the current number of cached Mistral responses under lock."""

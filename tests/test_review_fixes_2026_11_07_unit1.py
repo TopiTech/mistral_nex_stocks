@@ -165,6 +165,7 @@ def test_wsgi_empty_proxy_fix_x_for_is_treated_as_default(monkeypatch):
     other layer treats the value as unset (default 1).
     """
     monkeypatch.setenv("MNS_ALLOW_REMOTE_API", "1")
+    monkeypatch.setenv("MNS_ADMIN_TOKEN", "x" * 32)
     monkeypatch.setenv("MNS_PROXY_FIX", "1")
     monkeypatch.setenv("MNS_PROXY_FIX_X_FOR", "")
     import wsgi as wsgi_mod
@@ -175,6 +176,7 @@ def test_wsgi_empty_proxy_fix_x_for_is_treated_as_default(monkeypatch):
 
 def test_wsgi_invalid_proxy_fix_x_for_still_refuses_to_start(monkeypatch):
     monkeypatch.setenv("MNS_ALLOW_REMOTE_API", "1")
+    monkeypatch.setenv("MNS_ADMIN_TOKEN", "x" * 32)
     monkeypatch.setenv("MNS_PROXY_FIX", "1")
     monkeypatch.setenv("MNS_PROXY_FIX_X_FOR", "not-a-number")
     import wsgi as wsgi_mod

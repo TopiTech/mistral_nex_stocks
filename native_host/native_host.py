@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Native host wrapper for Chrome native messaging and backend startup."""
 
+import importlib
 import io
 import json
 import logging
@@ -1519,6 +1520,13 @@ def send_message(message):
     """Send a native message to stdout."""
     try:
         content = json.dumps(message, ensure_ascii=False).encode("utf-8")
+        if len(content) > MAX_MESSAGE_BYTES:
+            logger.error(
+                "Refusing to send oversized native message (%d bytes > MAX_MESSAGE_BYTES=%d)",
+                len(content),
+                MAX_MESSAGE_BYTES,
+            )
+            return
         with SEND_LOCK:
             RAW_STDOUT.write(struct.pack("<I", len(content)))
             RAW_STDOUT.write(content)
@@ -1647,12 +1655,10 @@ def main():
                         # encrypted at rest, but restricting the file removes a
                         # needless information-leak surface for the ciphertext.
                         if os.name != "nt":
-                            import stat
-
                             file_mode = token_file.stat().st_mode
-                            if file_mode & stat.S_IROTH:
+                            if file_mode & 0o077:
                                 logger.warning(
-                                    "Token file is world-readable (mode=%o); "
+                                    "Token file has permissive mode (mode=%o); "
                                     "restricting to owner-only (0o600).",
                                     file_mode,
                                 )
@@ -1663,14 +1669,16 @@ def main():
                                         "Failed to restrict shutdown token file permissions: %s",
                                         perm_exc,
                                     )
-                        # R5 fix & R2 fix: acquire shared lock before reading to prevent
+                        # R5 fix & R2 fix: acquire shared/non-blocking lock before reading to prevent
                         # reading a partially-written file during token rotation,
-                        # retrying on Windows when temporarily locked by backend.
+                        # retrying when temporarily locked by backend and failing closed on lock exhaustion.
                         raw = ""
+                        last_read_err: OSError | None = None
                         import random
 
                         for attempt in range(10):
                             try:
+                                last_read_err = None
                                 with open(token_file, "r", encoding="utf-8") as fh:
                                     if os.name == "nt":
                                         import msvcrt as _msvcrt
@@ -1680,11 +1688,8 @@ def main():
                                         fd = fh.fileno()
                                         locked = False
                                         if os.fstat(fd).st_size > 0:
-                                            try:
-                                                _msvcrt_mod.locking(fd, _msvcrt_mod.LK_NBLCK, 1)
-                                                locked = True
-                                            except OSError:
-                                                pass
+                                            _msvcrt_mod.locking(fd, _msvcrt_mod.LK_NBLCK, 1)
+                                            locked = True
                                         try:
                                             raw = fh.read().strip()
                                         finally:
@@ -1695,17 +1700,32 @@ def main():
                                                 except OSError:
                                                     pass
                                     else:
+                                        _fcntl: Any | None = None
                                         try:
-                                            import fcntl as _fcntl  # type: ignore[import-not-found]
-
-                                            _fcntl.flock(fh.fileno(), _fcntl.LOCK_SH)  # type: ignore[attr-defined]
-                                            raw = fh.read().strip()
-                                        except (ImportError, OSError):
+                                            _fcntl = importlib.import_module("fcntl")
+                                        except ImportError:
+                                            _fcntl = None
+                                        if _fcntl is not None:
+                                            _fcntl.flock(
+                                                fh.fileno(),
+                                                _fcntl.LOCK_SH | _fcntl.LOCK_NB,
+                                            )
+                                            try:
+                                                raw = fh.read().strip()
+                                            finally:
+                                                try:
+                                                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
+                                                except OSError:
+                                                    pass
+                                        else:
                                             raw = fh.read().strip()
                                 if raw:
                                     break
-                            except OSError:
+                            except OSError as lock_err:
+                                last_read_err = lock_err
                                 time.sleep(0.02 * (1.5**attempt) + random.uniform(0.005, 0.015))
+                        if not raw and last_read_err is not None:
+                            raise last_read_err
                         if raw:
                             try:
                                 entry = json.loads(raw)

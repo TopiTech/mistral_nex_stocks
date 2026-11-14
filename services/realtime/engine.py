@@ -721,7 +721,7 @@ class RealtimeMarketEngine:
 
                 now_ts = time.time()
                 for sym in target_symbols:
-                    if not self.running:
+                    if not self.running or self._pts_epoch != my_epoch:
                         break
                     cached_payload = self._pts_cached_payload(sym)
                     is_stale = (
@@ -771,6 +771,19 @@ class RealtimeMarketEngine:
         if self.pts_thread is not None:
             threads.append(self.pts_thread)
         return threads
+
+    def missing_worker_names(self) -> list[str]:
+        """Return expected producer thread names missing while the engine is running."""
+        if not self.running:
+            return []
+        missing: list[str] = []
+        if self.tv_client.thread is None:
+            missing.append("TradingViewWSWorker")
+        if self.yahoojp_scraper.thread is None:
+            missing.append("YahooJPScraperWorker")
+        if self.pts_thread is None:
+            missing.append("JPPTSWorker")
+        return missing
 
     def restart(self) -> None:
         """Stop and restart the engine producers (crash recovery)."""

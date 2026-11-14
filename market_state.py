@@ -28,6 +28,7 @@ from constants import (
     YFINANCE_SHORT_CACHE_TTL,
 )
 from session_manager import yf_session_manager
+from utils.normalization import is_bool_like
 
 logger = logging.getLogger("backend")
 
@@ -88,6 +89,7 @@ class MarketDataState:
         # silently computing share counts with a day-old rate.
         self.last_usdjpy_rate_ts: float = 0.0
         self.last_usdjpy_persisted_ts: float = 0.0
+        self.usdjpy_rate_lock = threading.RLock()
 
         self.last_modified_ns = 0
         # Process-internal monotonic version counter for user_stocks.json.
@@ -421,33 +423,68 @@ class MarketDataState:
             value = self.previous_close_cache.get(symbol)
         return value if value is not None else None
 
+    @staticmethod
+    def _coerce_finite_float(raw: Any, default: float = 0.0) -> float:
+        if raw is None or is_bool_like(raw):
+            return default
+        try:
+            val = float(raw)
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return val if math.isfinite(val) else default
+
+    def get_usdjpy_rate_snapshot(self) -> tuple[float, float]:
+        """Return ``(last_usdjpy_rate, last_usdjpy_rate_ts)`` atomically under lock."""
+        with self.usdjpy_rate_lock:
+            return (
+                self._coerce_finite_float(self.last_usdjpy_rate, 0.0),
+                self._coerce_finite_float(self.last_usdjpy_rate_ts, 0.0),
+            )
+
+    def update_usdjpy_rate(
+        self, rate: float, ts: float | None = None
+    ) -> tuple[float, float]:
+        """Atomically update ``last_usdjpy_rate`` and optional ``last_usdjpy_rate_ts``."""
+        with self.usdjpy_rate_lock:
+            self.last_usdjpy_rate = rate
+            if ts is not None:
+                self.last_usdjpy_rate_ts = ts
+            return self.last_usdjpy_rate, self.last_usdjpy_rate_ts
+
+    @staticmethod
+    def _symbol_cache_variants(symbol: str) -> tuple[str, ...]:
+        if symbol.endswith(".T") and len(symbol) > 2:
+            return (symbol, symbol[:-2])
+        return (symbol, f"{symbol}.T")
+
     def clear_previous_close_cache(self, symbol: str | None = None) -> None:
         """Drop one symbol or the whole previous-close cache."""
         with self.previous_close_cache_lock:
             if symbol is None:
                 self.previous_close_cache.clear()
             else:
-                self.previous_close_cache.pop(symbol, None)
-                self.previous_close_cache.pop(f"{symbol}.T", None)
+                for variant in self._symbol_cache_variants(symbol):
+                    self.previous_close_cache.pop(variant, None)
 
     def update_volume_cache(self, symbol: str, volume: float | str | None) -> None:
         """Update the in-memory volume cache for *symbol*."""
         if not symbol:
             return
+        variants = self._symbol_cache_variants(symbol)
         with self.yfinance_volume_cache_lock:
-            if volume is not None:
+            if volume is not None and not is_bool_like(volume):
                 try:
-                    num = int(float(str(volume).replace(",", "").strip()))
-                    if num > 0:
-                        self.yfinance_volume_cache[symbol] = num
-                        if symbol.endswith(".T"):
-                            self.yfinance_volume_cache[symbol[:-2]] = num
-                        else:
-                            self.yfinance_volume_cache[f"{symbol}.T"] = num
-                        return
-                except (ValueError, TypeError):
+                    parsed = float(str(volume).replace(",", "").strip())
+                    if math.isfinite(parsed) and parsed > 0:
+                        num = int(parsed)
+                        if num > 0:
+                            for variant in variants:
+                                self.yfinance_volume_cache[variant] = num
+                            return
+                except (ValueError, TypeError, OverflowError):
                     pass
-            self.yfinance_volume_cache.pop(symbol, None)
+            for variant in variants:
+                self.yfinance_volume_cache.pop(variant, None)
 
     def get_volume_cached(self, symbol: str) -> int | None:
         """Return the cached volume for *symbol* without sse_data_lock."""
@@ -467,8 +504,8 @@ class MarketDataState:
             if symbol is None:
                 self.yfinance_volume_cache.clear()
             else:
-                self.yfinance_volume_cache.pop(symbol, None)
-                self.yfinance_volume_cache.pop(f"{symbol}.T", None)
+                for variant in self._symbol_cache_variants(symbol):
+                    self.yfinance_volume_cache.pop(variant, None)
 
     def mark_yf_429(self, retry_after: float | None = None) -> float:
         """

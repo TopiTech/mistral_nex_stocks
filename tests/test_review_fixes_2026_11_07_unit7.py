@@ -710,7 +710,8 @@ def test_tradingview_script_load_failure_is_surfaced_and_retried() -> None:
     source = _read("static/js/tradingview_manager.js")
     assert "tvScript.onerror = () => {" in source
     onerror_idx = source.index("tvScript.onerror = () => {")
-    onerror_block = source[onerror_idx : onerror_idx + 700]
+    onerror_end = source.index("document.head.appendChild(tvScript);", onerror_idx)
+    onerror_block = source[onerror_idx:onerror_end]
     assert ".tv-load-error" in onerror_block
     assert "stale.remove()" in onerror_block
 

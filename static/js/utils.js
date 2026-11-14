@@ -256,8 +256,13 @@ function openModal(modalId, onOpenCallback) {
   modal._keydownHandler = (event) => {
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
-      event.preventDefault();
-      closeModal(modalId);
+      if (typeof window.closeTopmostOverlayOnEscape === "function") {
+        window.closeTopmostOverlayOnEscape(event);
+      } else {
+        event.preventDefault();
+        event.stopPropagation();
+        closeModal(modalId);
+      }
       return;
     }
     if (event.key !== "Tab") return;
@@ -584,6 +589,145 @@ function initThemeColorScheme() {
   }
 }
 
+/**
+ * Close the highest z-index active overlay on Escape key press.
+ * Returns true if an overlay was closed (and calls preventDefault + stopPropagation).
+ */
+function closeTopmostOverlayOnEscape(e) {
+  if (!e || e.isComposing || e.keyCode === 229 || e.defaultPrevented) {
+    return false;
+  }
+  if (e.key !== "Escape") return false;
+
+  const consumeEscape = () => {
+    e.preventDefault();
+    if (typeof e.stopPropagation === "function") e.stopPropagation();
+  };
+
+  // Priority order (topmost z-index -> lowest):
+  // 1. #chart-fullscreen-modal (z-index: 2000)
+  const fsModal = document.getElementById("chart-fullscreen-modal");
+  if (
+    fsModal &&
+    !fsModal.classList.contains("hidden") &&
+    fsModal.style.display !== "none"
+  ) {
+    consumeEscape();
+    if (typeof window.closeFsChartModal === "function") {
+      window.closeFsChartModal();
+    } else if (typeof closeFsChartModal === "function") {
+      closeFsChartModal();
+    } else {
+      fsModal.classList.add("hidden");
+    }
+    return true;
+  }
+
+  // 2. #ai-portfolio-modal
+  const aiPortfolioModal = document.getElementById("ai-portfolio-modal");
+  if (
+    aiPortfolioModal &&
+    !aiPortfolioModal.classList.contains("hidden") &&
+    (aiPortfolioModal.classList.contains("show") ||
+      (aiPortfolioModal.style.display &&
+        aiPortfolioModal.style.display !== "none"))
+  ) {
+    consumeEscape();
+    if (typeof window.closeAiPortfolioModal === "function") {
+      window.closeAiPortfolioModal();
+    } else {
+      closeModal("ai-portfolio-modal");
+    }
+    return true;
+  }
+
+  // 3. #alertModal / #portfolioModal (z-index: 1600)
+  const isModalOpen = (el) =>
+    Boolean(
+      el &&
+      !el.classList.contains("hidden") &&
+      (el.classList.contains("show") || el.style.display === "flex"),
+    );
+  const alertModal = document.getElementById("alertModal");
+  const portfolioModal = document.getElementById("portfolioModal");
+  const activeEl =
+    typeof document !== "undefined" ? document.activeElement : null;
+  const modalOrder =
+    portfolioModal &&
+    isModalOpen(portfolioModal) &&
+    activeEl &&
+    portfolioModal.contains(activeEl)
+      ? [
+          ["portfolioModal", portfolioModal],
+          ["alertModal", alertModal],
+        ]
+      : [
+          ["alertModal", alertModal],
+          ["portfolioModal", portfolioModal],
+        ];
+  for (const [id, modalEl] of modalOrder) {
+    if (isModalOpen(modalEl)) {
+      consumeEscape();
+      closeModal(id);
+      return true;
+    }
+  }
+
+  // 4. #ai-drawer-overlay (z-index: 1500)
+  const aiDrawerOverlay = document.getElementById("ai-drawer-overlay");
+  if (aiDrawerOverlay && !aiDrawerOverlay.classList.contains("hidden")) {
+    consumeEscape();
+    if (typeof window.closeAiDrawer === "function") {
+      window.closeAiDrawer();
+    } else if (typeof closeAiDrawer === "function") {
+      closeAiDrawer();
+    } else {
+      aiDrawerOverlay.classList.add("hidden");
+    }
+    return true;
+  }
+
+  // 5. #stock-detail-drawer-overlay (z-index: 1300)
+  const detailDrawerOverlay = document.getElementById(
+    "stock-detail-drawer-overlay",
+  );
+  if (
+    detailDrawerOverlay &&
+    !detailDrawerOverlay.classList.contains("hidden")
+  ) {
+    consumeEscape();
+    if (typeof window.closeStockDetailDrawer === "function") {
+      window.closeStockDetailDrawer();
+    } else if (typeof closeStockDetailDrawer === "function") {
+      closeStockDetailDrawer();
+    } else {
+      detailDrawerOverlay.classList.add("hidden");
+    }
+    return true;
+  }
+
+  // 6. #search-results dropdown
+  const searchResults = document.getElementById("search-results");
+  const isSearchVisible =
+    searchResults &&
+    (typeof window.getComputedStyle === "function"
+      ? window.getComputedStyle(searchResults).display !== "none"
+      : Boolean(
+          searchResults.style.display && searchResults.style.display !== "none",
+        ));
+  if (isSearchVisible) {
+    consumeEscape();
+    searchResults.style.display = "none";
+    return true;
+  }
+
+  return false;
+}
+
+if (typeof window !== "undefined") {
+  window.closeTopmostOverlayOnEscape = closeTopmostOverlayOnEscape;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initThemeColorScheme();
 
@@ -607,32 +751,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // failing mutating requests after the 1h token TTL (R2).
   startCsrfAutoRefresh();
 
-  // Global Escape key handler for open slide-in drawers
+  // Single unified Escape key handler respecting z-index stacking order
   document.addEventListener("keydown", (e) => {
-    if (e.isComposing || e.keyCode === 229 || e.defaultPrevented) return;
-    if (e.key === "Escape") {
-      const detailDrawerOverlay = document.getElementById(
-        "stock-detail-drawer-overlay",
-      );
-      if (
-        detailDrawerOverlay &&
-        !detailDrawerOverlay.classList.contains("hidden")
-      ) {
-        if (typeof closeStockDetailDrawer === "function") {
-          e.preventDefault();
-          closeStockDetailDrawer();
-        }
-        return;
-      }
-      const aiDrawerOverlay = document.getElementById("ai-drawer-overlay");
-      if (aiDrawerOverlay && !aiDrawerOverlay.classList.contains("hidden")) {
-        if (typeof closeAiDrawer === "function") {
-          e.preventDefault();
-          closeAiDrawer();
-        }
-        return;
-      }
-    }
+    closeTopmostOverlayOnEscape(e);
   });
 });
 

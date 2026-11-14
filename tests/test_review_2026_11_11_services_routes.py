@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 import time
 from unittest.mock import patch
 
@@ -133,6 +134,10 @@ def test_openai_embeddings_bool_index_falls_back_to_position() -> None:
         patch("services.openai_service.get_openai_base_url", return_value="http://example.test/v1"),
         patch("services.openai_service.get_openai_embeddings_model", return_value="m"),
         patch("services.openai_service._build_openai_headers", return_value={}),
+        patch(
+            "utils.networking.socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+        ),
     ):
         results = get_openai_embeddings_batch(["a", "b"], api_key="k")
 

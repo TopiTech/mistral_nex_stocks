@@ -18,7 +18,11 @@ from services.search_service import (
     collect_market_news_context,
     collect_market_trending_titles,
 )
-from utils.caching import get_cached, get_cached_context_with_negative_cache
+from utils.caching import (
+    _set_cached_value,
+    get_cached,
+    get_cached_context_with_negative_cache,
+)
 from utils.text_utils import sanitize_cdata
 from utils.text_utils import wrap_cdata as _wrap_cdata
 from utils.threading import DaemonThreadPoolExecutor
@@ -327,7 +331,6 @@ class NewsService:
                 NEWS_SUMMARY_MAX_TOKENS,
                 use_cache=False,
                 response_format=NewsSummaryModel,
-                cache_key_override="news_summary_v3_structured",
                 reasoning_effort="none",
                 temperature=0.0,
             )
@@ -404,6 +407,12 @@ class NewsService:
         elif force_refresh:
             logger.info("News bundle force refresh context_hash=%s", llm_hash[:12])
             news_bundle = _generate_news_bundle()
+            if _is_valid_news_bundle(news_bundle):
+                _set_cached_value(
+                    f"news_bundle_llm_{llm_hash}",
+                    news_bundle,
+                    duration=CACHE_DURATION_NEWS,
+                )
         else:
             news_bundle = get_cached(
                 f"news_bundle_llm_{llm_hash}",

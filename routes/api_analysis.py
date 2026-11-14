@@ -56,6 +56,7 @@ from route_helpers import (
     extract_langsearch_api_key,
     extract_tavily_api_key,
     rate_limit,
+    sanitize_upstream_log_message,
 )
 from services.ai_service import (
     ProviderAPIError,
@@ -111,6 +112,7 @@ _OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 # single definition behind ``_safe_symbol`` so the allow-list cannot drift
 # between call sites (M-1: 許可/拒否文字クラスを単一定義に集約).
 _SYMBOL_PROMPT_STRIP_RE = re.compile(r"[^\w.=\^\-]")
+_HTTP_401_CODE_RE = re.compile(r"(?<!\d)401(?!\d)")
 
 
 def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
@@ -957,15 +959,18 @@ def _stream_chat_response(
                 elif event["type"] == "error":
                     status_code = int(event.get("status_code") or 0)
                     raw_message = str(event.get("message") or "Unknown stream error")
+                    safe_log_message = (
+                        sanitize_upstream_log_message(raw_message) or "Unknown stream error"
+                    )
                     with stream_state_lock:
-                        stream_error = RuntimeError(raw_message)
+                        stream_error = RuntimeError(safe_log_message)
                     # The provider event is deliberately message+status only;
                     # the HTTP layer never reads or forwards a raw body field.
                     app_logger.warning(
                         "Chat stream API error id=%s status=%s message=%s",
                         request_id,
                         status_code,
-                        raw_message,
+                        safe_log_message,
                     )
                     if status_code == 401:
                         friendly_message = (
@@ -985,12 +990,12 @@ def _stream_chat_response(
                         )
                     elif status_code >= 500:
                         friendly_message = "AIサービスに接続できませんでした"
-                    else:
+                    elif status_code in (400, 422):
                         friendly_message = (
-                            raw_message
-                            if raw_message and not raw_message.startswith("Unknown")
-                            else "チャット処理に失敗しました"
+                            "リクエスト内容またはモデル設定が無効です。入力を確認してください。"
                         )
+                    else:
+                        friendly_message = "チャット処理に失敗しました"
                     yield (
                         "data: "
                         + json.dumps({"error": friendly_message}, ensure_ascii=False)
@@ -1049,21 +1054,25 @@ def _chat_error_response(
     if operation_token:
         payload["request_token"] = operation_token
 
-    exc_str = _sanitize_error_message(str(exc or ""))
+    exc_str = sanitize_upstream_log_message(exc)
     req_id = getattr(flask_g, "request_id", "-")
     err_type = type(exc).__name__
 
-    if "認証" in exc_str or "401" in exc_str:
+    if "認証" in exc_str or _HTTP_401_CODE_RE.search(exc_str):
         current_app.logger.warning(
             "api_chat auth error id=%s error=%s",
             req_id,
             exc_str,
         )
-        msg = (
-            exc_str
-            if "認証" in exc_str
-            else "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
-        )
+        safe_auth_default = "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
+        if "API認証エラー" in exc_str:
+            msg = (
+                "API認証エラー"
+                if exc_str.strip() == "API認証エラー"
+                else "API認証エラー。APIキーを確認してください。"
+            )
+        else:
+            msg = safe_auth_default
         status_code = 401
     elif isinstance(
         exc,
@@ -1361,7 +1370,7 @@ def api_news():
     result = result_holder["result"]
     if not isinstance(result, dict):
         return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
-    result["disclaimer"] = ANALYSIS_DISCLAIMER
+    result = {**result, "disclaimer": ANALYSIS_DISCLAIMER}
     return ok_response(result)
 
 
@@ -2151,11 +2160,13 @@ def api_analyze_chart_image():
         err_msg = raw_err.get("message", "") if isinstance(raw_err, dict) else str(raw_err)
         req_id = getattr(g, "request_id", "-")
         current_app.logger.error(
-            "Analyze chart image failed id=%s: %s", req_id, err_msg
+            "Analyze chart image failed id=%s: %s",
+            req_id,
+            sanitize_upstream_log_message(err_msg),
         )
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
-            details={"reason": _sanitize_error_message(err_msg) or "画像分析に失敗しました"},
+            details={"reason": "画像分析に失敗しました"},
             status_code=500,
         )
 

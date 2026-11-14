@@ -166,11 +166,15 @@ def _register_signal_handlers(app: Flask) -> None:
         return
 
     def _handle_shutdown_signal(signum, frame):
-        logger.info("Received termination signal %s. Shutting down...", signum)
+        # Signal-safe: avoid logger/executor locks here to prevent self-deadlock
+        # if a signal interrupts a thread holding logging._lock or pool locks.
+        # Setting shutdown_event signals loops to stop, and exiting the main
+        # thread delegates clean shutdown + logging to atexit (_cleanup_on_exit).
+        del signum, frame
         try:
-            app_state.shutdown_executors()
-        except Exception as exc:
-            logger.error("Shutdown executor failure, continuing cleanup: %s", exc)
+            app_state.execution.shutdown_event.set()
+        except Exception:
+            pass
         if not sys.is_finalizing() and threading.current_thread() is threading.main_thread():
             sys.exit(0)
 

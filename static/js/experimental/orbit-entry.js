@@ -79,6 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
     aiDiveTier2: document.getElementById("ai-dive-tier2"),
     aiDiveTier3: document.getElementById("ai-dive-tier3"),
     aiDiveTier4: document.getElementById("ai-dive-tier4"),
+    aiDiveTier4ProviderLabel: document.getElementById("ai-dive-provider-label"),
     aiDiveStartBtn: document.getElementById("ai-dive-start-btn"),
 
     // Accessibility
@@ -197,6 +198,7 @@ document.addEventListener("DOMContentLoaded", () => {
     tier2Container: elements.aiDiveTier2,
     tier3Container: elements.aiDiveTier3,
     tier4Container: elements.aiDiveTier4,
+    tier4ProviderLabel: elements.aiDiveTier4ProviderLabel,
     startAiBtn: elements.aiDiveStartBtn,
   });
 
@@ -255,7 +257,32 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 8.5. Bind Search Palette
+  // 8.5. Bind Search Palette & Modal Backdrops
+  let activeSearchIdx = -1;
+
+  function setActiveSearchOption(nextIdx) {
+    const container = elements.searchResults;
+    const input = elements.searchInput;
+    if (!container || !input) return;
+    const options = Array.from(container.querySelectorAll('[role="option"]'));
+    if (!options.length) {
+      activeSearchIdx = -1;
+      input.removeAttribute("aria-activedescendant");
+      return;
+    }
+    const clampedIdx =
+      ((nextIdx % options.length) + options.length) % options.length;
+    activeSearchIdx = clampedIdx;
+    options.forEach((opt, idx) => {
+      opt.classList.toggle("active", idx === clampedIdx);
+    });
+    const activeOpt = options[clampedIdx];
+    if (activeOpt.id) {
+      input.setAttribute("aria-activedescendant", activeOpt.id);
+    }
+    activeOpt.scrollIntoView?.({ block: "nearest" });
+  }
+
   if (elements.searchBtn) {
     elements.searchBtn.addEventListener("click", () => {
       accessibilityController.openSearchModal();
@@ -268,9 +295,67 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  if (elements.searchModal) {
+    elements.searchModal.addEventListener("click", (e) => {
+      if (e.target === elements.searchModal) {
+        accessibilityController.closeSearchModal();
+      }
+    });
+  }
+
+  if (elements.helpModal) {
+    elements.helpModal.addEventListener("click", (e) => {
+      if (e.target === elements.helpModal) {
+        accessibilityController.closeHelpModal();
+      }
+    });
+  }
+
   if (elements.searchInput) {
     elements.searchInput.addEventListener("input", (e) => {
       renderSearchResults(e.target.value);
+    });
+
+    elements.searchInput.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      const container = elements.searchResults;
+      if (!container) return;
+      const options = Array.from(container.querySelectorAll('[role="option"]'));
+      if (!options.length) return;
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          setActiveSearchOption(
+            activeSearchIdx < 0 ? 0 : (activeSearchIdx + 1) % options.length,
+          );
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setActiveSearchOption(
+            activeSearchIdx <= 0 ? options.length - 1 : activeSearchIdx - 1,
+          );
+          break;
+        case "Home":
+          e.preventDefault();
+          setActiveSearchOption(0);
+          break;
+        case "End":
+          e.preventDefault();
+          setActiveSearchOption(options.length - 1);
+          break;
+        case "Enter": {
+          e.preventDefault();
+          const targetIdx = activeSearchIdx >= 0 ? activeSearchIdx : 0;
+          const target = options[targetIdx];
+          if (target && typeof target.click === "function") {
+            target.click();
+          }
+          break;
+        }
+        default:
+          break;
+      }
     });
   }
 
@@ -278,6 +363,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const container = elements.searchResults;
     if (!container) return;
     container.textContent = "";
+    activeSearchIdx = -1;
+    if (elements.searchInput) {
+      elements.searchInput.removeAttribute("aria-activedescendant");
+    }
 
     const cleanQuery = query.trim().toUpperCase();
     const allStocks = state.state.stockList || [];
@@ -304,9 +393,12 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    let optionSeq = 0;
     matched.forEach((st) => {
+      const optionIndex = optionSeq++;
       const item = document.createElement("button");
       item.type = "button";
+      item.id = `orbit-search-option-${optionIndex}`;
       item.className = "search-result-item";
       // combobox/listbox 契約(FE-tpl-2): 結果項目を option として告知する。
       item.setAttribute("role", "option");
@@ -473,13 +565,16 @@ document.addEventListener("DOMContentLoaded", () => {
     // 出さず、失敗時も既存の表示を壊さない。初回とユーザー操作由来の
     // 読み込みは従来どおり全体オーバーレイ+エラー表示。
     if (!silent) setLoading(true);
-    hideError();
+    if (!silent) hideError();
 
     try {
       // First try /api/stocks to get rich portfolio & tracked stocks
-      const res = await (window.apiFetch || fetch)(`/api/stocks`, {
-        signal: controller.signal,
-      });
+      const stocksReqInit = { signal: controller.signal };
+      const res = window.apiFetch
+        ? await window.apiFetch("/api/stocks", stocksReqInit, {
+            showToast: false,
+          })
+        : await fetch("/api/stocks", stocksReqInit);
       const data =
         res && typeof res.json === "function"
           ? await res.json().catch(() => null)
@@ -493,7 +588,13 @@ document.addEventListener("DOMContentLoaded", () => {
         const retryTimeout = setTimeout(() => {
           if (loadRetryTimeout !== retryTimeout || !isCurrentRequest()) return;
           loadRetryTimeout = null;
-          loadObservatoryData(retryCount + 1, requestGeneration);
+          if (silent) {
+            loadObservatoryData(retryCount + 1, requestGeneration, {
+              silent: true,
+            });
+          } else {
+            loadObservatoryData(retryCount + 1, requestGeneration);
+          }
         }, 2000);
         loadRetryTimeout = retryTimeout;
         return;
@@ -505,19 +606,31 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (market === "jp") {
           rawList = data.stocks.jp || [];
         } else {
-          rawList = [...(data.stocks.us || []), ...(data.stocks.jp || [])];
+          rawList = [
+            ...(data.stocks.us || []).map((s) => ({
+              ...s,
+              market: s.market || "us",
+            })),
+            ...(data.stocks.jp || []).map((s) => ({
+              ...s,
+              market: s.market || "jp",
+            })),
+            ...(data.stocks.idx || []).map((s) => ({
+              ...s,
+              market: s.market || "idx",
+            })),
+          ];
         }
       }
 
       // If stock count is low, supplement with /api/heatmap
       if (rawList.length < 8 && market !== "all") {
         try {
-          const hmRes = await (window.apiFetch || fetch)(
-            `/api/heatmap?market=${market}`,
-            {
-              signal: controller.signal,
-            },
-          );
+          const hmUrl = `/api/heatmap?market=${market}`;
+          const hmInit = { signal: controller.signal };
+          const hmRes = window.apiFetch
+            ? await window.apiFetch(hmUrl, hmInit, { showToast: false })
+            : await fetch(hmUrl, hmInit);
           const hmData =
             hmRes && typeof hmRes.json === "function"
               ? await hmRes.json().catch(() => null)
@@ -553,6 +666,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      hideError();
       state.setStocks(normalizedList);
       setLoading(false);
       renderer.start();

@@ -257,7 +257,15 @@ function buildWorld(options = {}) {
     widget.sandbox.currentDrawerActiveWrapper = wrapper;
   }
 
-  return { ...widget, wrapper, inlineContainer, inlineCanvas, drawer, drawerContainer, drawerCanvas };
+  return {
+    ...widget,
+    wrapper,
+    inlineContainer,
+    inlineCanvas,
+    drawer,
+    drawerContainer,
+    drawerCanvas,
+  };
 }
 
 function expect(condition, message) {
@@ -399,6 +407,4 @@ if (failed > 0) {
   process.exit(1);
 }
 
-console.log(
-  "ui.js chart error banners follow the active stock detail drawer.",
-);
+console.log("ui.js chart error banners follow the active stock detail drawer.");

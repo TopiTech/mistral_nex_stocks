@@ -225,12 +225,19 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
         if price is None or price <= 0:
             self._record_fetch_failure(symbol)
             return None
-        change = self._number_after_label(html, "前日比", signed=True) or 0.0
+        raw_change = self._number_after_label(html, "前日比", signed=True)
+        change = raw_change if raw_change is not None else 0.0
+        prev_close = price - change
+        change_percent = (
+            round((change / prev_close) * 100.0, 2)
+            if raw_change is not None and prev_close > 0
+            else 0.0
+        )
         payload: TickerPayload = {
             "symbol": symbol,
             "price": price,
             "change": change,
-            "change_percent": 0.0,
+            "change_percent": change_percent,
             "source": "sbi",
             "updated_at": time.time(),
         }

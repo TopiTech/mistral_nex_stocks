@@ -1071,7 +1071,9 @@
       }
     } catch (err) {
       console.error("copyAiPortfolioToMy error:", err);
-      showAiPortfolioFailure("マイポートフォリオへの反映に失敗しました");
+      showAiPortfolioFailure(
+        err?.message || "マイポートフォリオへの反映に失敗しました",
+      );
     }
   }
 

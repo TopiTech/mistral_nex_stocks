@@ -135,120 +135,122 @@ styles %}
     キャンバスにフォーカスして左右矢印キーで基準銘柄を切り替えられます。マウス操作が難しい場合は銘柄検索ボタン（スラッシュキー）も利用できます。
   </p>
 
-  <!-- Bottom-Left Floating Reference Stock HUD Card -->
-  <section
-    id="center-stock-card"
-    class="center-stock-card"
-    aria-label="基準銘柄カード"
-  >
-    <div class="center-card-header">
-      <div id="center-stock-symbol" class="center-card-symbol">--</div>
-      <div class="center-card-tag">CENTER REFERENCE</div>
-    </div>
-    <div id="center-stock-name" class="center-card-name">
-      基準銘柄を選択中...
-    </div>
-    <div class="center-card-price-row">
-      <span id="center-stock-price" class="center-stat-price">--</span>
-      <span id="center-stock-change" class="center-stat-change">--</span>
-    </div>
-    <button
-      id="center-ai-dive-btn"
-      class="center-ai-btn"
-      type="button"
-      title="AI深層分析を開く (D)"
+  <div class="observatory-hud-dock">
+    <!-- Bottom-Left Floating Reference Stock HUD Card -->
+    <section
+      id="center-stock-card"
+      class="center-stock-card"
+      aria-label="基準銘柄カード"
     >
-      ✨ AI Dive (D)
-    </button>
-  </section>
+      <div class="center-card-header">
+        <div id="center-stock-symbol" class="center-card-symbol">--</div>
+        <div class="center-card-tag">CENTER REFERENCE</div>
+      </div>
+      <div id="center-stock-name" class="center-card-name">
+        基準銘柄を選択中...
+      </div>
+      <div class="center-card-price-row">
+        <span id="center-stock-price" class="center-stat-price">--</span>
+        <span id="center-stock-change" class="center-stat-change">--</span>
+      </div>
+      <button
+        id="center-ai-dive-btn"
+        class="center-ai-btn"
+        type="button"
+        title="AI深層分析を開く (D)"
+      >
+        ✨ AI Dive (D)
+      </button>
+    </section>
 
-  <!-- Bottom-Center Floating Timeline Scrubber HUD Panel -->
-  <section class="timeline-scrubber-panel" aria-label="タイムライン操作パネル">
-    <div class="timeline-info-row">
-      <span id="timeline-status-badge" class="time-badge live">LIVE</span>
-      <span id="timeline-display-text" class="timeline-display-text"
-        >リアルタイム (最新)</span
-      >
-      <div style="display: flex; gap: 4px">
-        <button
-          id="timeline-play-btn"
-          class="timeline-now-btn"
-          type="button"
-          title="タイムラプス自動再生"
+    <!-- Bottom-Center Floating Timeline Scrubber HUD Panel -->
+    <section class="timeline-scrubber-panel" aria-label="タイムライン操作パネル">
+      <div class="timeline-info-row">
+        <span id="timeline-status-badge" class="time-badge live">LIVE</span>
+        <span id="timeline-display-text" class="timeline-display-text"
+          >リアルタイム (最新)</span
         >
-          ▶️ 再生
-        </button>
-        <button id="timeline-now-btn" class="timeline-now-btn" type="button">
-          最新に戻る
-        </button>
+        <div style="display: flex; gap: 4px">
+          <button
+            id="timeline-play-btn"
+            class="timeline-now-btn"
+            type="button"
+            title="タイムラプス自動再生"
+          >
+            ▶️ 再生
+          </button>
+          <button id="timeline-now-btn" class="timeline-now-btn" type="button">
+            最新に戻る
+          </button>
+        </div>
       </div>
-    </div>
-    <div class="timeline-slider-wrapper">
-      <input
-        id="timeline-slider"
-        class="timeline-slider"
-        type="range"
-        min="0"
-        max="0"
-        value="0"
-        step="1"
-        aria-label="履歴時間スライダー"
-        disabled
-      />
-      <div
-        id="timeline-granularity-group"
-        class="timeline-granularity-group"
-        role="group"
-        aria-label="時間粒度切り替え"
-      >
-        <button
-          class="gran-pill"
-          data-granularity="1d"
-          type="button"
-          aria-pressed="false"
-          tabindex="-1"
+      <div class="timeline-slider-wrapper">
+        <input
+          id="timeline-slider"
+          class="timeline-slider"
+          type="range"
+          min="0"
+          max="0"
+          value="0"
+          step="1"
+          aria-label="履歴時間スライダー"
+          disabled
+        />
+        <div
+          id="timeline-granularity-group"
+          class="timeline-granularity-group"
+          role="group"
+          aria-label="時間粒度切り替え"
         >
-          1D
-        </button>
-        <button
-          class="gran-pill"
-          data-granularity="5d"
-          type="button"
-          aria-pressed="false"
-          tabindex="-1"
-        >
-          5D
-        </button>
-        <button
-          class="gran-pill"
-          data-granularity="1mo"
-          type="button"
-          aria-pressed="false"
-          tabindex="-1"
-        >
-          1M
-        </button>
-        <button
-          class="gran-pill active"
-          data-granularity="3mo"
-          type="button"
-          aria-pressed="true"
-          tabindex="0"
-        >
-          3M
-        </button>
-        <button
-          class="gran-pill"
-          data-granularity="1y"
-          type="button"
-          aria-pressed="false"
-          tabindex="-1"
-        >
-          1Y
-        </button>
+          <button
+            class="gran-pill"
+            data-granularity="1d"
+            type="button"
+            aria-pressed="false"
+            tabindex="-1"
+          >
+            1D
+          </button>
+          <button
+            class="gran-pill"
+            data-granularity="5d"
+            type="button"
+            aria-pressed="false"
+            tabindex="-1"
+          >
+            5D
+          </button>
+          <button
+            class="gran-pill"
+            data-granularity="1mo"
+            type="button"
+            aria-pressed="false"
+            tabindex="-1"
+          >
+            1M
+          </button>
+          <button
+            class="gran-pill active"
+            data-granularity="3mo"
+            type="button"
+            aria-pressed="true"
+            tabindex="0"
+          >
+            3M
+          </button>
+          <button
+            class="gran-pill"
+            data-granularity="1y"
+            type="button"
+            aria-pressed="false"
+            tabindex="-1"
+          >
+            1Y
+          </button>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
   <!-- Right-Side Floating Constellation Comparison Drawer -->
   <aside
@@ -331,9 +333,9 @@ styles %}
     <div class="ai-dive-modal scrollable-panel">
       <div class="ai-dive-header">
         <div>
-          <h2 id="ai-dive-symbol-title" class="ai-dive-symbol-title">AAPL</h2>
+          <h2 id="ai-dive-symbol-title" class="ai-dive-symbol-title">--</h2>
           <div id="ai-dive-name-subtitle" class="ai-dive-name-subtitle">
-            Apple Inc.
+            銘柄を選択中...
           </div>
         </div>
         <button
@@ -366,7 +368,9 @@ styles %}
 
       <!-- Tier 4 & 5: Deep AI Analysis (On-Demand) -->
       <section class="ai-dive-section">
-        <h4 class="ai-dive-section-title">階層 4: Mistral AI 構造化深層分析</h4>
+        <h4 class="ai-dive-section-title">
+          階層 4: <span id="ai-dive-provider-label">AI</span> 構造化深層分析
+        </h4>
         <div class="ai-dive-action-row">
           <button
             id="ai-dive-start-btn"

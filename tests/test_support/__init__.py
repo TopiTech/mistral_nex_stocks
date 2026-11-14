@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tests.test_support.environment import apply_baseline_test_env, get_baseline_test_env
 from tests.test_support.executors import SynchronousExecutor
-from tests.test_support.keyring_mock import MemoryKeyring
+from tests.test_support.keyring_mock import MemoryKeyring, get_shared_memory_keyring
 from tests.test_support.patches import (
     apply_all_test_patches,
     apply_background_stubs,
@@ -27,6 +27,7 @@ __all__ = [
     "cleanup_temp_files",
     "create_temp_config",
     "get_baseline_test_env",
+    "get_shared_memory_keyring",
     "reset_app_state_internals",
     "safe_temp_dir",
 ]

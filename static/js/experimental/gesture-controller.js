@@ -36,8 +36,10 @@
       this._onPointerMove = (e) => this.handlePointerMove(e);
       this._onPointerUp = (e) => this.handlePointerUp(e);
       this._onPointerCancel = (e) => this.handlePointerCancel(e);
+      this._onPointerLeave = () => this.handlePointerLeave();
 
       this.canvas.addEventListener("pointerdown", this._onPointerDown);
+      this.canvas.addEventListener("pointerleave", this._onPointerLeave);
       window.addEventListener("pointermove", this._onPointerMove);
       window.addEventListener("pointerup", this._onPointerUp);
       window.addEventListener("pointercancel", this._onPointerCancel);
@@ -47,10 +49,22 @@
     destroy() {
       this.clearLongPressTimer();
       this.canvas.removeEventListener("pointerdown", this._onPointerDown);
+      this.canvas.removeEventListener("pointerleave", this._onPointerLeave);
       window.removeEventListener("pointermove", this._onPointerMove);
       window.removeEventListener("pointerup", this._onPointerUp);
       window.removeEventListener("pointercancel", this._onPointerCancel);
       window.removeEventListener("blur", this._onPointerCancel);
+    }
+
+    handlePointerLeave() {
+      if (!this.isDragging) {
+        if (this.state.state.hoveredSymbol !== null) {
+          this.state.setHoveredSymbol(null);
+        }
+        if (this.canvas && this.canvas.style) {
+          this.canvas.style.cursor = "default";
+        }
+      }
     }
 
     getCanvasPos(e) {

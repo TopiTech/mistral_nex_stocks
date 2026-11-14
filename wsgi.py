@@ -22,7 +22,12 @@ Tests can opt out of bootstrap by setting MNS_SKIP_BOOTSTRAP=1.
 
 import sys
 
-from utils.worker_validation import MultiWorkerConfigurationError, enforce_single_worker
+from utils.worker_validation import (
+    MultiWorkerConfigurationError,
+    RemoteApiConfigurationError,
+    enforce_single_worker,
+    validate_remote_api_configuration,
+)
 
 # H-1: Enforce single-worker architecture. Multi-process mode is NOT supported
 # due to in-memory singleton state (app_state) and thread-local caches
@@ -46,34 +51,10 @@ from utils.worker_validation import MultiWorkerConfigurationError, enforce_singl
 # before it is rejected.
 try:
     enforce_single_worker()
-    # R6: validate proxy hop count in remote mode — bootstrap in app.py also
-    # validates, but wsgi.py is the import-time guard for gunicorn/uWSGI,
-    # so the check must be mirrored here for fail-fast before Flask init.
-    import os as _os_wsgi
-
-    from utils.env_helpers import _env_bool as _wsgi_env_bool
-
-    if _wsgi_env_bool("MNS_ALLOW_REMOTE_API"):
-        _proxy_fix_wsgi = _wsgi_env_bool("MNS_PROXY_FIX")
-        if not _proxy_fix_wsgi:
-            print(
-                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX=1. Refuse to start.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        try:
-            # Treat an empty/whitespace value as unset so a stray
-            # "MNS_PROXY_FIX_X_FOR=" line in a .env file resolves to the same
-            # default (1) as every other layer instead of a fatal exit.
-            _hops = int(_os_wsgi.environ.get("MNS_PROXY_FIX_X_FOR", "1").strip() or "1")
-        except (ValueError, AttributeError):
-            _hops = 0
-        if _hops < 1:
-            print(
-                "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX_X_FOR >= 1. Refuse to start.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    validate_remote_api_configuration()
+except RemoteApiConfigurationError as exc:
+    print(str(exc), file=sys.stderr)
+    sys.exit(1)
 except MultiWorkerConfigurationError as exc:
     print(
         f"FATAL: {exc} Refuse to start. "

@@ -128,6 +128,11 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
     app = Flask("app")
     app.config["MNS_SKIP_BOOTSTRAP"] = skip_bootstrap
 
+    # -- Apply config overrides before subsystem wiring/security init --
+    if config_override:
+        app.config.update(config_override)
+    app.config.setdefault("MNS_SKIP_BOOTSTRAP", skip_bootstrap)
+
     # -- ProxyFix --
     _apply_proxy_fix(app)
 
@@ -136,6 +141,8 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
 
     # -- Security --
     csrf = init_security(app)
+    if config_override:
+        app.config.update(config_override)
 
     # -- Static file cache buster --
     _configure_static_cache_buster(app)
@@ -184,10 +191,6 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
 
     # -- Error handlers --
     register_error_handlers(app)
-
-    # -- Apply config overrides --
-    if config_override:
-        app.config.update(config_override)
 
     return app
 

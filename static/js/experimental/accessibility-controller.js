@@ -282,12 +282,67 @@
       );
     }
 
+    isModalFocusableVisible(element, modal) {
+      if (!element) return false;
+      if (
+        element.hasAttribute?.("inert") ||
+        element.hasAttribute?.("hidden") ||
+        element.classList?.contains("hidden")
+      ) {
+        return false;
+      }
+      if (
+        element.style?.display === "none" ||
+        element.style?.visibility === "hidden"
+      ) {
+        return false;
+      }
+      if (typeof global.getComputedStyle === "function") {
+        try {
+          const computed = global.getComputedStyle(element);
+          if (
+            computed &&
+            (computed.display === "none" || computed.visibility === "hidden")
+          ) {
+            return false;
+          }
+          if (
+            "offsetParent" in element &&
+            element.offsetParent === null &&
+            computed?.position !== "fixed" &&
+            element !== modal
+          ) {
+            return false;
+          }
+        } catch {
+          // Ignore non-DOM mock elements that reject getComputedStyle
+        }
+      } else if ("offsetParent" in element && element.offsetParent === null) {
+        return false;
+      }
+      let cur = element.parentElement;
+      while (cur && cur !== modal) {
+        if (
+          cur.hasAttribute?.("hidden") ||
+          cur.hasAttribute?.("inert") ||
+          cur.classList?.contains("hidden") ||
+          cur.getAttribute?.("aria-hidden") === "true" ||
+          cur.style?.display === "none" ||
+          cur.style?.visibility === "hidden"
+        ) {
+          return false;
+        }
+        cur = cur.parentElement;
+      }
+      return true;
+    }
+
     trapModalFocus(event, modal) {
       const focusable = Array.from(
         modal.querySelectorAll(
           'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
-      ).filter((element) => !element.hasAttribute("inert"));
+      ).filter((element) => this.isModalFocusableVisible(element, modal));
       if (!focusable.length) {
         event.preventDefault();
         modal.focus();
@@ -295,10 +350,21 @@
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      const isOutsideOrRoot =
+        active === modal ||
+        (typeof modal.contains === "function"
+          ? !modal.contains(active)
+          : !focusable.includes(active));
+      if (isOutsideOrRoot) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first.focus();
       }
@@ -490,6 +556,7 @@
       this.els.searchModal.setAttribute("inert", "");
       if (this.els.searchInput) {
         this.els.searchInput.setAttribute("aria-expanded", "false");
+        this.els.searchInput.removeAttribute("aria-activedescendant");
       }
       this.restoreModalFocus();
     }

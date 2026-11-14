@@ -463,6 +463,18 @@ button:focus-visible {
   border-radius: 4px;
 }
 
+.detector-inline-error {
+  margin-top: 6px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #fecdd3;
+  background: rgba(244, 63, 94, 0.16);
+  border: 1px solid rgba(244, 63, 94, 0.45);
+  border-radius: 6px;
+  word-break: break-word;
+}
+
 .mt-8 {
   margin-top: 8px;
 }

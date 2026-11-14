@@ -304,26 +304,28 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                 rt = snapshot.get(symbol) or (
                     snapshot.get(symbol.removesuffix(".T")) if symbol.endswith(".T") else None
                 )
-                if isinstance(rt, dict) and rt.get("price") is not None:
-                    price = rt.get("price")
-                    if change is None:
-                        change = rt.get("change")
-                    if change_pct is None:
-                        # (M37) `or` swallowed a legitimate 0.0 change (falsy)
-                        # into the secondary key / None.
-                        change_pct = _first_finite_number(
-                            rt.get("change_pct"), rt.get("change_percent")
-                        )
-                    if volume is None:
-                        volume = rt.get("volume")
-                    if high is None:
-                        high = rt.get("high")
-                    if low is None:
-                        low = rt.get("low")
-                    if open_val is None:
-                        open_val = rt.get("open")
-                    if updated_at is None:
-                        updated_at = rt.get("timestamp") or rt.get("updated_at")
+                if isinstance(rt, dict):
+                    rt_price = _first_finite_number(rt.get("price"))
+                    if rt_price is not None:
+                        price = rt_price
+                        if change is None:
+                            change = _first_finite_number(rt.get("change"))
+                        if change_pct is None:
+                            # (M37) `or` swallowed a legitimate 0.0 change (falsy)
+                            # into the secondary key / None.
+                            change_pct = _first_finite_number(
+                                rt.get("change_pct"), rt.get("change_percent")
+                            )
+                        if volume is None:
+                            volume = _first_finite_number(rt.get("volume"))
+                        if high is None:
+                            high = _first_finite_number(rt.get("high"))
+                        if low is None:
+                            low = _first_finite_number(rt.get("low"))
+                        if open_val is None:
+                            open_val = _first_finite_number(rt.get("open"))
+                        if updated_at is None:
+                            updated_at = rt.get("timestamp") or rt.get("updated_at")
             except Exception:
                 pass
 
@@ -332,30 +334,32 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
             try:
                 for cache_key in (f"payload_{symbol}_{market}", f"payload_{symbol}"):
                     cached_payload = app_state.payload_disk_cache.get(cache_key, ttl=300)
-                    if isinstance(cached_payload, dict) and cached_payload.get("price") is not None:
-                        price = cached_payload.get("price")
-                        if change is None:
-                            change = cached_payload.get("change")
-                        if change_pct is None:
-                            # (M37) `or` swallowed a legitimate 0.0 change
-                            # (falsy) into the secondary key / None.
-                            change_pct = _first_finite_number(
-                                cached_payload.get("change_percent"),
-                                cached_payload.get("change_pct"),
-                            )
-                        if volume is None:
-                            volume = cached_payload.get("volume")
-                        if high is None:
-                            high = cached_payload.get("high")
-                        if low is None:
-                            low = cached_payload.get("low")
-                        if open_val is None:
-                            open_val = cached_payload.get("open")
-                        if updated_at is None:
-                            updated_at = cached_payload.get("updated_at")
-                        if not info.get("name") and cached_payload.get("name"):
-                            info["name"] = cached_payload.get("name")
-                        break
+                    if isinstance(cached_payload, dict):
+                        cp_price = _first_finite_number(cached_payload.get("price"))
+                        if cp_price is not None:
+                            price = cp_price
+                            if change is None:
+                                change = _first_finite_number(cached_payload.get("change"))
+                            if change_pct is None:
+                                # (M37) `or` swallowed a legitimate 0.0 change
+                                # (falsy) into the secondary key / None.
+                                change_pct = _first_finite_number(
+                                    cached_payload.get("change_percent"),
+                                    cached_payload.get("change_pct"),
+                                )
+                            if volume is None:
+                                volume = _first_finite_number(cached_payload.get("volume"))
+                            if high is None:
+                                high = _first_finite_number(cached_payload.get("high"))
+                            if low is None:
+                                low = _first_finite_number(cached_payload.get("low"))
+                            if open_val is None:
+                                open_val = _first_finite_number(cached_payload.get("open"))
+                            if updated_at is None:
+                                updated_at = cached_payload.get("updated_at")
+                            if not info.get("name") and cached_payload.get("name"):
+                                info["name"] = cached_payload.get("name")
+                            break
             except Exception:
                 pass
 
@@ -403,23 +407,25 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                         if hist is not None and not hist.empty and "Close" in hist:
                             closes = hist["Close"].dropna()
                             if not closes.empty:
-                                price = float(closes.iloc[-1])
+                                cand_price = _finite_number(closes.iloc[-1])
+                                if cand_price is not None:
+                                    price = cand_price
                                 if open_val is None and "Open" in hist:
                                     opens = hist["Open"].dropna()
                                     if not opens.empty:
-                                        open_val = float(opens.iloc[-1])
+                                        open_val = _finite_number(opens.iloc[-1])
                                 if high is None and "High" in hist:
                                     highs = hist["High"].dropna()
                                     if not highs.empty:
-                                        high = float(highs.iloc[-1])
+                                        high = _finite_number(highs.iloc[-1])
                                 if low is None and "Low" in hist:
                                     lows = hist["Low"].dropna()
                                     if not lows.empty:
-                                        low = float(lows.iloc[-1])
+                                        low = _finite_number(lows.iloc[-1])
                                 if volume is None and "Volume" in hist:
                                     vols = hist["Volume"].dropna()
                                     if not vols.empty:
-                                        volume = float(vols.iloc[-1])
+                                        volume = _finite_number(vols.iloc[-1])
                     prev_close = (
                         info.get("regularMarketPreviousClose")
                         or info.get("previousClose")

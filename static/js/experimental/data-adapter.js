@@ -84,6 +84,32 @@
    * @param {Object} [options] - Additional context (tier, isCenter, etc.)
    * @returns {Object} Normalized stock model
    */
+  function inferMarketFromSymbol(symbol, fallbackMarket) {
+    const normalizedFallback = String(fallbackMarket || "")
+      .trim()
+      .toLowerCase();
+    if (
+      normalizedFallback === "us" ||
+      normalizedFallback === "jp" ||
+      normalizedFallback === "idx"
+    ) {
+      return normalizedFallback;
+    }
+    if (/\.T$/i.test(symbol)) return "jp";
+    if (symbol.startsWith("^") || symbol.includes("=X")) return "idx";
+    return "us";
+  }
+
+  function formatLocalDateStr(ms) {
+    if (!Number.isFinite(ms)) return "";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "";
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
   function normalizeObservatoryStock(raw, options = {}) {
     if (!raw || typeof raw !== "object") {
       return null;
@@ -95,7 +121,7 @@
     if (!symbol) return null;
 
     const displayName = String(raw.name || raw.display_name || symbol).trim();
-    const market = String(raw.market || options.market || "us").toLowerCase();
+    const market = inferMarketFromSymbol(symbol, raw.market || options.market);
     const price = toFiniteNumberSafe(raw.price, 0);
     const rawChange = toFiniteNumberSafe(raw.change, 0);
     const rawChangePercent = toFiniteNumberSafe(
@@ -150,11 +176,45 @@
     }
 
     // Determine tier: center, inner (portfolio/fav), middle (watchlist), outer (market)
-    const tier = options.tier || (options.isCenter ? "center" : "middle");
-    const portfolioWeight = toFiniteNumberSafe(
-      raw.portfolio_weight || options.portfolioWeight,
+    const shares = toFiniteNumberSafe(
+      raw.shares !== undefined ? raw.shares : options.shares,
       0,
     );
+    const portfolioValue = toFiniteNumberSafe(
+      raw.portfolio_value !== undefined
+        ? raw.portfolio_value
+        : raw.portfolioValue !== undefined
+          ? raw.portfolioValue
+          : options.portfolioValue,
+      0,
+    );
+    const portfolioWeight = toFiniteNumberSafe(
+      raw.portfolio_weight !== undefined
+        ? raw.portfolio_weight
+        : raw.portfolioWeight !== undefined
+          ? raw.portfolioWeight
+          : options.portfolioWeight,
+      0,
+    );
+    const explicitTier = String(options.tier || raw.tier || "")
+      .trim()
+      .toLowerCase();
+    const isHolding =
+      shares > 0 ||
+      portfolioValue > 0 ||
+      portfolioWeight > 0 ||
+      Boolean(raw.is_portfolio || raw.in_portfolio);
+    const tier = options.isCenter
+      ? "center"
+      : explicitTier === "inner" ||
+          explicitTier === "middle" ||
+          explicitTier === "outer"
+        ? explicitTier
+        : isHolding
+          ? "inner"
+          : market === "idx"
+            ? "outer"
+            : "middle";
 
     // History data if present
     const chartData = Array.isArray(raw.chart_data) ? raw.chart_data : [];
@@ -181,6 +241,8 @@
       momentum,
       radius: sizeMetric,
       tier,
+      shares,
+      portfolioValue,
       portfolioWeight,
       chartData,
       isCenter: Boolean(options.isCenter),
@@ -230,22 +292,53 @@
           item.v !== undefined ? item.v : item.volume,
           0,
         );
+        const extractValidDateStr = (candidate) => {
+          if (typeof candidate !== "string") return "";
+          const trimmed = candidate.trim();
+          if (!trimmed) return "";
+          const head = trimmed.split(/[T\s]/)[0];
+          if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
+          const parsed = Date.parse(trimmed);
+          return Number.isNaN(parsed) ? "" : formatLocalDateStr(parsed);
+        };
+        const serverDateCandidate =
+          typeof item.date === "string" && item.date.trim()
+            ? item.date.trim()
+            : typeof item.date_str === "string" && item.date_str.trim()
+              ? item.date_str.trim()
+              : typeof item.datetime === "string" && item.datetime.trim()
+                ? item.datetime.trim()
+                : "";
         const rawDate =
           item.x !== undefined
             ? item.x
             : item.date || item.timestamp || item.datetime;
         let timestamp = Date.now();
-        let dateStr = "";
+        let dateStr = extractValidDateStr(serverDateCandidate);
 
-        if (typeof rawDate === "number") {
-          timestamp = rawDate > 1e11 ? rawDate : rawDate * 1000;
-          dateStr = new Date(timestamp).toISOString().split("T")[0];
-        } else if (typeof rawDate === "string") {
-          const parsed = Date.parse(rawDate);
-          timestamp = isNaN(parsed) ? Date.now() : parsed;
-          dateStr =
-            rawDate.split("T")[0] ||
-            new Date(timestamp).toISOString().split("T")[0];
+        if (typeof rawDate === "number" && Number.isFinite(rawDate)) {
+          const ms = rawDate > 1e11 ? rawDate : rawDate * 1000;
+          if (!Number.isNaN(new Date(ms).getTime())) {
+            timestamp = ms;
+            if (!dateStr) {
+              dateStr = formatLocalDateStr(timestamp);
+            }
+          }
+        } else if (typeof rawDate === "string" && rawDate.trim()) {
+          const trimmed = rawDate.trim();
+          const parsed = Date.parse(trimmed);
+          timestamp = Number.isNaN(parsed) ? Date.now() : parsed;
+          if (!dateStr) {
+            dateStr =
+              extractValidDateStr(trimmed) || formatLocalDateStr(timestamp);
+          }
+        } else if (dateStr) {
+          const parsed = Date.parse(dateStr);
+          timestamp = Number.isNaN(parsed) ? Date.now() : parsed;
+        }
+
+        if (!dateStr) {
+          dateStr = formatLocalDateStr(timestamp);
         }
 
         return {

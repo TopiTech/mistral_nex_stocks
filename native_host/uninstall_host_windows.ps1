@@ -1,7 +1,7 @@
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
-  [ValidateSet('Chrome','Edge','Both')][string]$Browser = 'Chrome',
-  [ValidateSet('CurrentUser','LocalMachine')][string]$Scope = 'CurrentUser',
+  [ValidateSet('Chrome','Edge','Both')][string]$Browser = 'Both',
+  [ValidateSet('CurrentUser','LocalMachine','All')][string]$Scope = 'All',
   [switch]$KeepFiles
 )
 $ErrorActionPreference = 'Stop'
@@ -9,71 +9,95 @@ Set-StrictMode -Version Latest
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# Remove every registration this install family can create (both hives x both
-# browsers), not just the hive/browser named by parameters. A mismatched
-# -Scope (e.g. LocalMachine install followed by a default CurrentUser
-# uninstall) otherwise leaves machine-wide registrations pointing at files
-# this script then deletes, so anyone able to recreate those files controls
-# what every user's browser launches as the native host.
-$hostKeyNames = @(
-  'SOFTWARE\Google\Chrome\NativeMessagingHosts\com.mistral_nex_stocks.host',
-  'SOFTWARE\Microsoft\Edge\NativeMessagingHosts\com.mistral_nex_stocks.host'
-)
-$roots = @(
+$chromeKey = 'SOFTWARE\Google\Chrome\NativeMessagingHosts\com.mistral_nex_stocks.host'
+$edgeKey = 'SOFTWARE\Microsoft\Edge\NativeMessagingHosts\com.mistral_nex_stocks.host'
+$allHostKeyNames = @($chromeKey, $edgeKey)
+$targetKeyNames = New-Object System.Collections.Generic.List[string]
+if ($Browser -in @('Chrome','Both')) { [void]$targetKeyNames.Add($chromeKey) }
+if ($Browser -in @('Edge','Both')) { [void]$targetKeyNames.Add($edgeKey) }
+
+$allRoots = @(
   [Microsoft.Win32.Registry]::CurrentUser,
   [Microsoft.Win32.Registry]::LocalMachine
 )
-# Registry paths whose stored manifest still points into this directory.
-$liveManifestPaths = New-Object System.Collections.Generic.List[string]
+$targetRoots = New-Object System.Collections.Generic.List[Microsoft.Win32.RegistryKey]
+if ($Scope -in @('CurrentUser','All')) { [void]$targetRoots.Add([Microsoft.Win32.Registry]::CurrentUser) }
+if ($Scope -in @('LocalMachine','All')) { [void]$targetRoots.Add([Microsoft.Win32.Registry]::LocalMachine) }
 
-foreach ($root in $roots) {
+$failedKeys = New-Object System.Collections.Generic.List[string]
+
+foreach ($root in $targetRoots) {
   $rootName = if ($root -eq [Microsoft.Win32.Registry]::LocalMachine) { 'HKLM' } else { 'HKCU' }
-  foreach ($subKey in $hostKeyNames) {
-    # Read the stored manifest path first (read-only open works without
-    # elevation, so a non-admin uninstall can still detect an HKLM entry that
-    # references this directory before attempting deletion).
+  foreach ($subKey in $targetKeyNames) {
+    $exists = $false
     try {
-      $key = $root.OpenSubKey($subKey)
+      $probe = $root.OpenSubKey($subKey, $false)
+      if ($null -ne $probe) {
+        $exists = $true
+        $probe.Close()
+      }
+    } catch {
+      [void]$failedKeys.Add("$rootName\${subKey}: $($_.Exception.Message)")
+      continue
+    }
+    if ($exists) {
+      try {
+        if ($PSCmdlet.ShouldProcess("$rootName\$subKey", "Remove NativeMessagingHosts registry key")) {
+          $root.DeleteSubKeyTree($subKey, $false)
+        }
+      } catch {
+        [void]$failedKeys.Add("$rootName\${subKey}: $($_.Exception.Message)")
+      }
+    }
+  }
+}
+
+# Scan ALL hives x BOTH browsers after the deletion pass so that any surviving
+# registration (from another browser/scope, -WhatIf, or a failed removal) blocks
+# deletion of shared launcher/manifest files.
+$liveManifestPaths = New-Object System.Collections.Generic.List[string]
+$expectedManifestPath = Join-Path $scriptDir 'com.mistral_nex_stocks.host.json'
+foreach ($root in $allRoots) {
+  foreach ($subKey in $allHostKeyNames) {
+    try {
+      $key = $root.OpenSubKey($subKey, $false)
       if ($null -ne $key) {
         try {
           $manifestPath = [string]$key.GetValue('', '')
           if ((-not [string]::IsNullOrWhiteSpace($manifestPath)) -and
-              ($manifestPath -ieq (Join-Path $scriptDir 'com.mistral_nex_stocks.host.json'))) {
+              ($manifestPath -ieq $expectedManifestPath)) {
             [void]$liveManifestPaths.Add($manifestPath)
           }
         } finally {
           $key.Close()
         }
       }
-    } catch {}
-    try {
-      if ($PSCmdlet.ShouldProcess("$rootName\$subKey", "Remove NativeMessagingHosts registry key")) {
-        $root.DeleteSubKeyTree($subKey, $false)
-      }
-    } catch {}
+    } catch {
+      # Treat an unreadable surviving key conservatively as still present.
+      [void]$liveManifestPaths.Add($expectedManifestPath)
+    }
   }
 }
 
 if (-not $KeepFiles) {
-  foreach ($f in @((Join-Path $scriptDir 'native_host.cmd'), (Join-Path $scriptDir 'com.mistral_nex_stocks.host.json'))) {
-    if (Test-Path $f) {
-      # Never delete a generated manifest that a surviving registration still
-      # references (deleting it would leave a dangling entry pointing at a
-      # recreatable path). This can only happen when registry deletion above
-      # was declined (-WhatIf) or failed.
-      $stillReferenced = $false
-      foreach ($livePath in $liveManifestPaths) {
-        if ($livePath -ieq $f) { $stillReferenced = $true; break }
-      }
-      if ($stillReferenced) {
+  foreach ($f in @((Join-Path $scriptDir 'native_host.cmd'), $expectedManifestPath)) {
+    if (Test-Path -LiteralPath $f) {
+      if ($liveManifestPaths.Count -gt 0) {
         Write-Host "[WARN] Skipped $f : still referenced by a surviving registry entry." -ForegroundColor Yellow
         continue
       }
       if ($PSCmdlet.ShouldProcess($f, "Delete generated host file")) {
-        Remove-Item $f -Force
+        Remove-Item -LiteralPath $f -Force
       }
     }
   }
+}
+
+if ($failedKeys.Count -gt 0) {
+  foreach ($err in $failedKeys) {
+    Write-Host "[ERROR] Failed to remove registry key $err" -ForegroundColor Red
+  }
+  throw "Failed to remove $($failedKeys.Count) native host registry key(s)."
 }
 
 Write-Host 'Native host registration removed.' -ForegroundColor Green

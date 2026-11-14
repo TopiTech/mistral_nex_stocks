@@ -54,21 +54,23 @@ def _get_timestamp() -> float:
 # ---------------------------------------------------------------------------
 _FERNET_PREFIX = "fernet:"
 _fernet_instance: Any = None
+_fernet_master_key: str | None = None
 _fernet_lock = threading.Lock()
 
 
 def _get_fernet():
-    """Return a process-lifetime Fernet instance built from the master key."""
-    global _fernet_instance
-    if _fernet_instance is None:
-        with _fernet_lock:
-            if _fernet_instance is None:
-                from cryptography.fernet import Fernet
+    """Return a Fernet instance synchronized with the active master key."""
+    global _fernet_instance, _fernet_master_key
+    from cryptography.fernet import Fernet
 
-                from config_store import get_or_create_master_key
+    from config_store import get_or_create_master_key
 
-                _fernet_instance = Fernet(get_or_create_master_key().encode("ascii"))
-    return _fernet_instance
+    current_key = get_or_create_master_key()
+    with _fernet_lock:
+        if _fernet_instance is None or _fernet_master_key != current_key:
+            _fernet_instance = Fernet(current_key.encode("ascii"))
+            _fernet_master_key = current_key
+        return _fernet_instance
 
 
 def _encrypt_content(content: str) -> str:
@@ -113,11 +115,12 @@ def _reset_db_state() -> None:
     call SQLiteChatHistoryStore._reset_for_testing() to reset instance-level
     state.
     """
-    global _db_initialized, _fernet_instance
+    global _db_initialized, _fernet_instance, _fernet_master_key
     with _db_init_lock:
         _db_initialized = False
     with _fernet_lock:
         _fernet_instance = None
+        _fernet_master_key = None
 
 
 _SCHEMA_VERSION = 2
@@ -365,8 +368,10 @@ class SQLiteChatHistoryStore:
             except Exception:
                 pass
         cls._instances.clear()
-        global _fernet_instance
-        _fernet_instance = None
+        global _fernet_instance, _fernet_master_key
+        with _fernet_lock:
+            _fernet_instance = None
+            _fernet_master_key = None
         _reset_db_state()
 
     def close(self) -> None:
@@ -502,14 +507,20 @@ class SQLiteChatHistoryStore:
         """Validate a single chat message at the storage boundary.
 
         Enforces the explicit persistence contract: every message must be a
-        ``dict`` carrying a ``role`` and a string ``content`` (encryption
-        requires text). Raises ``TypeError``/``KeyError`` for malformed input so
-        callers cannot persist shapeless data.
+        ``dict`` carrying a non-empty string ``role`` and a string ``content``
+        (encryption requires text). Raises ``TypeError``/``KeyError``/``ValueError``
+        for malformed input so callers cannot persist shapeless data.
         """
         if not isinstance(message, dict):
             raise TypeError(f"chat message must be a dict, got {type(message).__name__}")
         if "role" not in message:
             raise KeyError("role")
+        if not isinstance(message["role"], str):
+            raise TypeError(
+                f"chat message role must be a str, got {type(message['role']).__name__}"
+            )
+        if not message["role"].strip():
+            raise ValueError("chat message role must be a non-empty string")
         if "content" not in message:
             raise KeyError("content")
         if not isinstance(message["content"], str):
@@ -695,6 +706,8 @@ class SQLiteChatHistoryStore:
                         msgs = [msgs[0]]
             if changed:
                 self._write_messages(cursor, session_id, msgs)
+            else:
+                self._enforce_session_limit(cursor)
             return msgs
 
         try:

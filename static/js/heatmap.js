@@ -8,6 +8,7 @@ document.addEventListener("DOMContentLoaded", () => {
     timeoutId: null,
     sizeMetric: "market_cap",
     rawStocks: [],
+    lastErrorMessage: null,
     viewMode: "2d",
     three: {
       scene: null,
@@ -222,6 +223,8 @@ document.addEventListener("DOMContentLoaded", () => {
           .map(normalizeStock)
           .filter((stock) => stock.size > 0);
         render3DHeatmap(normalized);
+      } else if (state.lastErrorMessage) {
+        showError(state.lastErrorMessage);
       }
     } else {
       state.viewMode = mode;
@@ -240,6 +243,8 @@ document.addEventListener("DOMContentLoaded", () => {
           .map(normalizeStock)
           .filter((stock) => stock.size > 0);
         renderHeatmap(normalized);
+      } else if (state.lastErrorMessage) {
+        showError(state.lastErrorMessage);
       }
     }
   }
@@ -357,6 +362,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function showError(message) {
+    state.lastErrorMessage = message;
     // 3D表示中は2Dキャンバスは display:none のため、エラーは表示中の
     // コンテナ(3Dキャンバス)へ描画しないとユーザーに伝わらない。
     if (state.viewMode === "3d") {
@@ -430,9 +436,13 @@ document.addEventListener("DOMContentLoaded", () => {
       // (失敗/中断後のトグル操作が旧市場のタイルを再描画するのを防ぐ)。
       state.rawStocks = [];
       state.rawStocksMarket = null;
+      state.lastErrorMessage = null;
       // 新規ロードのみキャンバスをクリアしてローディング表示
       setLoading(true);
       if (els.canvas) els.canvas.textContent = "";
+      els.canvas3d
+        ?.querySelectorAll(".heatmap-error-state")
+        .forEach((node) => node.remove());
       if (els.updateTime) els.updateTime.textContent = "-";
       if (els.count) els.count.textContent = "--";
     }
@@ -498,6 +508,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      state.lastErrorMessage = null;
+      els.canvas3d
+        ?.querySelectorAll(".heatmap-error-state")
+        .forEach((node) => node.remove());
       state.stockCount = normalized.length;
       if (state.viewMode === "3d") {
         render3DHeatmap(normalized);
@@ -791,6 +805,29 @@ document.addEventListener("DOMContentLoaded", () => {
     height: window.innerHeight,
   };
 
+  function positionTooltipAt(clientX, clientY) {
+    if (!els.tooltip) return;
+    const padding = 16;
+    const tooltipRect = tooltipSizeCache || els.tooltip.getBoundingClientRect();
+    if (!tooltipSizeCache) {
+      tooltipSizeCache = tooltipRect;
+    }
+    const viewWidth = viewportSizeCache.width || window.innerWidth;
+    const viewHeight = viewportSizeCache.height || window.innerHeight;
+    let left = clientX + padding;
+    let top = clientY + padding;
+
+    if (left + tooltipRect.width > viewWidth - padding) {
+      left = clientX - tooltipRect.width - padding;
+    }
+    if (top + tooltipRect.height > viewHeight - padding) {
+      top = clientY - tooltipRect.height - padding;
+    }
+
+    els.tooltip.style.left = `${Math.max(padding, left)}px`;
+    els.tooltip.style.top = `${Math.max(padding, top)}px`;
+  }
+
   function showTooltip(node, stock, changePercent) {
     if (!els.tooltip) return;
     const priceText = formatNumber(stock.price, stock.market);
@@ -810,29 +847,53 @@ document.addEventListener("DOMContentLoaded", () => {
     if (node && node.classList) {
       node.classList.add("is-tooltip-open");
     }
+
+    let anchorX = null;
+    let anchorY = null;
+    if (
+      state.viewMode === "3d" &&
+      state.three.renderer &&
+      node === state.three.renderer.domElement &&
+      typeof node.getBoundingClientRect === "function"
+    ) {
+      const rect = node.getBoundingClientRect();
+      const hovered = state.three.hoveredMesh;
+      const camera = state.three.camera;
+      if (
+        hovered?.position &&
+        typeof hovered.position.clone === "function" &&
+        camera
+      ) {
+        const projected = hovered.position.clone().project(camera);
+        if (Number.isFinite(projected.x) && Number.isFinite(projected.y)) {
+          anchorX = rect.left + (projected.x * 0.5 + 0.5) * rect.width;
+          anchorY = rect.top + (-projected.y * 0.5 + 0.5) * rect.height;
+        }
+      }
+      if (anchorX === null || anchorY === null) {
+        anchorX = rect.left + rect.width / 2;
+        anchorY = rect.top + rect.height / 2;
+      }
+    } else if (node && typeof node.getBoundingClientRect === "function") {
+      const rect = node.getBoundingClientRect();
+      if (
+        rect.width > 0 ||
+        rect.height > 0 ||
+        rect.left !== 0 ||
+        rect.top !== 0
+      ) {
+        anchorX = rect.left + rect.width / 2;
+        anchorY = rect.top + rect.height / 2;
+      }
+    }
+    if (Number.isFinite(anchorX) && Number.isFinite(anchorY)) {
+      positionTooltipAt(anchorX, anchorY);
+    }
   }
 
   function moveTooltip(event) {
     if (!els.tooltip) return;
-    const padding = 16;
-    const tooltipRect = tooltipSizeCache || els.tooltip.getBoundingClientRect();
-    if (!tooltipSizeCache) {
-      tooltipSizeCache = tooltipRect;
-    }
-    const viewWidth = viewportSizeCache.width || window.innerWidth;
-    const viewHeight = viewportSizeCache.height || window.innerHeight;
-    let left = event.clientX + padding;
-    let top = event.clientY + padding;
-
-    if (left + tooltipRect.width > viewWidth - padding) {
-      left = event.clientX - tooltipRect.width - padding;
-    }
-    if (top + tooltipRect.height > viewHeight - padding) {
-      top = event.clientY - tooltipRect.height - padding;
-    }
-
-    els.tooltip.style.left = `${Math.max(padding, left)}px`;
-    els.tooltip.style.top = `${Math.max(padding, top)}px`;
+    positionTooltipAt(event.clientX, event.clientY);
   }
 
   function hideTooltip() {
@@ -1001,6 +1062,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderer.domElement.addEventListener("click", onClick);
     renderer.domElement.addEventListener("keydown", onKeyDown);
     renderer.domElement.addEventListener("mouseleave", hideTooltip);
+    renderer.domElement.addEventListener("blur", hideTooltip);
 
     start3DAnimation();
     // 初期化が完了してから成功フラグを立てる。途中で例外が発生した場合

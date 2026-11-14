@@ -193,7 +193,11 @@ class APIClient {
   private _armVisibilityPause(): void {
     if (this.isVisibilityPaused) return;
     if (typeof document === "undefined" || !document.hidden) return;
-    if (!this.currentEventSource && !this.ssePendingReconnectTimeout && !this.isConnecting) {
+    if (
+      !this.currentEventSource &&
+      !this.ssePendingReconnectTimeout &&
+      !this.isConnecting
+    ) {
       return;
     }
     _log.info("Page hidden: Setting deferred pause timer for SSE");
@@ -242,9 +246,7 @@ class APIClient {
     this._armVisibilityPause();
     let urlOrPromise: string | Promise<string | null> | null;
     try {
-      urlOrPromise = options.urlProvider
-        ? options.urlProvider()
-        : params.url;
+      urlOrPromise = options.urlProvider ? options.urlProvider() : params.url;
     } catch (err) {
       urlOrPromise = Promise.reject(err);
     }
@@ -253,9 +255,16 @@ class APIClient {
         // Abort if closeSSE()/mode-switch happened while the URL was being
         // resolved (e.g. the ticket POST was still in flight): opening now
         // would create a stale EventSource that is never cleaned up.
-        if (this._lastSSEParams !== params) return;
+        if (
+          this._lastSSEParams !== params ||
+          this._openChainToken !== chainToken
+        ) {
+          return;
+        }
         if (this.isVisibilityPaused) {
-          _log.info("SSE: URL resolved while visibility paused, deferring connection");
+          _log.info(
+            "SSE: URL resolved while visibility paused, deferring connection",
+          );
           return;
         }
         if (!resolvedUrl) {
@@ -272,7 +281,18 @@ class APIClient {
       })
       .catch((err: unknown) => {
         _log.warn("SSE: Failed to resolve stream URL", err);
-        if (this._lastSSEParams !== params) return;
+        if (
+          this._lastSSEParams !== params ||
+          this._openChainToken !== chainToken
+        ) {
+          return;
+        }
+        if (this.isVisibilityPaused) {
+          _log.info(
+            "SSE: URL resolution rejected while visibility paused, deferring reconnect",
+          );
+          return;
+        }
         try {
           onError(err instanceof Error ? err : new Error(String(err)));
         } catch (cbErr) {
@@ -283,6 +303,7 @@ class APIClient {
       .finally(() => {
         if (this._openChainToken === chainToken) {
           this.isConnecting = false;
+          this._openChainToken = null;
         }
       });
   }
@@ -469,7 +490,10 @@ class APIClient {
           options?: boolean | EventListenerOptions,
         ) => void
       ).bind(eventSource);
-      const listenerMap = new WeakMap<object, Map<string, Array<EventListener>>>();
+      const listenerMap = new WeakMap<
+        object,
+        Map<string, Array<EventListener>>
+      >();
 
       type EventSourceListener =
         | ((this: EventSource, event: MessageEvent) => void)
@@ -509,7 +533,10 @@ class APIClient {
                 listener.handleEvent(event);
               }
             } catch (err: unknown) {
-              _log.error("Unhandled error in EventSource custom listener:", err);
+              _log.error(
+                "Unhandled error in EventSource custom listener:",
+                err,
+              );
             }
           };
           if (typeof listener === "object" || typeof listener === "function") {
@@ -542,7 +569,10 @@ class APIClient {
         eventListenerOptions?: boolean | EventListenerOptions,
       ): void => {
         let target: EventSourceListener | EventListener | null = listener;
-        if (listener && (typeof listener === "object" || typeof listener === "function")) {
+        if (
+          listener &&
+          (typeof listener === "object" || typeof listener === "function")
+        ) {
           const typeMap = listenerMap.get(listener);
           const wrappers = typeMap?.get(type);
           if (wrappers && wrappers.length > 0) {
@@ -598,7 +628,10 @@ class APIClient {
         const maybeMessage = event as Partial<MessageEvent>;
         if (typeof maybeMessage.data !== "string" || !maybeMessage.data) return;
         try {
-          const payload = JSON.parse(maybeMessage.data) as Record<string, unknown>;
+          const payload = JSON.parse(maybeMessage.data) as Record<
+            string,
+            unknown
+          >;
           const message =
             typeof payload.message === "string"
               ? payload.message
@@ -620,6 +653,26 @@ class APIClient {
       this._handleReconnect(onError);
       return null;
     }
+  }
+
+  /**
+   * Return whether an SSE connection is open, connecting, pending reconnect,
+   * or visibility-paused (meaning visibilitychange/resume already owns recovery).
+   */
+  hasActiveSSE(): boolean {
+    const src = this.currentEventSource;
+    const readyState = src ? src.readyState : -1;
+    const openState = typeof EventSource !== "undefined" ? EventSource.OPEN : 1;
+    const connectingState =
+      typeof EventSource !== "undefined" ? EventSource.CONNECTING : 0;
+    return (
+      readyState === openState ||
+      readyState === connectingState ||
+      this.isConnecting ||
+      this.ssePendingReconnectTimeout !== null ||
+      this._reconnecting ||
+      Boolean(this.isVisibilityPaused && this._lastSSEParams)
+    );
   }
 
   closeSSE(): void {
@@ -648,6 +701,8 @@ class APIClient {
 
   private _teardownSSE(): void {
     this._reconnecting = false;
+    this.isConnecting = false;
+    this._openChainToken = null;
     this._stopSleepWatchdog();
     if (this._visibilityTimeout) {
       clearTimeout(this._visibilityTimeout);

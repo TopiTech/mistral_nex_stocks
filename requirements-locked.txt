@@ -230,7 +230,7 @@ numpy==2.5.1 ; python_full_version >= '3.12'
     # via
     #   pandas
     #   yfinance
-opentelemetry-api==1.45.1
+opentelemetry-api==1.45.2
     # via
     #   mcp
     #   mistralai
@@ -252,27 +252,27 @@ opentelemetry-exporter-otlp-proto-http==1.45.1 ; python_full_version >= '3.12'
     # via
     #   mistralai-otel-observability
     #   mistralai-workflows
-opentelemetry-instrumentation==0.66b1 ; python_full_version >= '3.12'
+opentelemetry-instrumentation==0.66b2 ; python_full_version >= '3.12'
     # via opentelemetry-instrumentation-httpx
-opentelemetry-instrumentation-httpx==0.66b1 ; python_full_version >= '3.12'
+opentelemetry-instrumentation-httpx==0.66b2 ; python_full_version >= '3.12'
     # via mistralai-workflows
 opentelemetry-proto==1.45.1 ; python_full_version >= '3.12'
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-sdk==1.45.1 ; python_full_version >= '3.12'
+opentelemetry-sdk==1.45.2 ; python_full_version >= '3.12'
     # via
     #   mistralai-otel-observability
     #   mistralai-workflows
     #   opentelemetry-exporter-otlp-common
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-semantic-conventions==0.66b1
+opentelemetry-semantic-conventions==0.66b2
     # via
     #   mistralai
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-httpx
     #   opentelemetry-sdk
-opentelemetry-util-http==0.66b1 ; python_full_version >= '3.12'
+opentelemetry-util-http==0.66b2 ; python_full_version >= '3.12'
     # via opentelemetry-instrumentation-httpx
 orjson==3.13.0 ; python_full_version >= '3.12'
     # via mistralai-workflows
@@ -377,7 +377,9 @@ six==1.17.0
     # via
     #   markdownify
     #   python-dateutil
-soupsieve==2.9.2
+soupsieve==2.10 ; python_full_version < '3.11.5'
+    # via beautifulsoup4
+soupsieve==4.1 ; python_full_version >= '3.11.5'
     # via beautifulsoup4
 sse-starlette==3.6.0
     # via mcp

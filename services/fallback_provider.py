@@ -97,6 +97,95 @@ class BaseFallbackProvider:
         raise NotImplementedError
 
 
+class _CurlCffiSessionProvider(BaseFallbackProvider):
+    """Shared thread-local curl_cffi session lifecycle with WeakSet & epoch tracking."""
+
+    _IMPERSONATIONS: ClassVar[tuple[str, ...]] = (
+        "chrome120",
+        "chrome124",
+        "chrome131",
+        "chrome133a",
+        "safari18_0",
+        "edge101",
+    )
+
+    def __init__(self) -> None:
+        self.requests: Any = None
+        self.session: Any = None
+        self._local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
+        self._session_epoch: int = 0
+        try:
+            from curl_cffi import requests as cffi_requests
+
+            self.requests = cffi_requests
+        except ImportError:
+            self.requests = None
+
+    def close(self) -> None:
+        """Close all allocated HTTP sessions and invalidate thread-local caches."""
+        with self._sessions_lock:
+            sessions = list(self._all_sessions)
+            self._all_sessions.clear()
+            self._session_epoch += 1
+        for sess in sessions:
+            try:
+                sess.close()
+            except Exception:
+                pass
+        self._local.session = None
+        self._local.session_epoch = None
+
+    def _get_client(self) -> tuple[Any, bool]:
+        if self.session is not None:
+            return self.session, True
+        if not self.requests:
+            return None, False
+        with self._sessions_lock:
+            current_epoch = self._session_epoch
+            local_sess = getattr(self._local, "session", None)
+            local_epoch = getattr(self._local, "session_epoch", None)
+            if local_sess is not None:
+                try:
+                    still_active = local_sess in self._all_sessions
+                except TypeError:
+                    still_active = False
+                if not still_active or (
+                    local_epoch is not None and local_epoch != current_epoch
+                ):
+                    self._local.session = None
+                    self._local.session_epoch = None
+                    local_sess = None
+        if local_sess is None:
+            for imp in self._IMPERSONATIONS:
+                created_sess: Any = None
+                try:
+                    created_sess = self.requests.Session(impersonate=imp)
+                except Exception as exc:
+                    logger.debug("curl_cffi impersonate %s unavailable: %s", imp, exc)
+                    continue
+                close_orphan = False
+                with self._sessions_lock:
+                    if self._session_epoch != current_epoch:
+                        close_orphan = True
+                    else:
+                        self._all_sessions.add(created_sess)
+                        self._local.session = created_sess
+                        self._local.session_epoch = current_epoch
+                        local_sess = created_sess
+                if close_orphan:
+                    try:
+                        created_sess.close()
+                    except Exception:
+                        pass
+                    return self.requests, False
+                break
+        if local_sess is not None:
+            return local_sess, True
+        return self.requests, False
+
+
 class AlphaVantageProvider(BaseFallbackProvider):
     """Provides fallback data using the Alpha Vantage API.
 
@@ -147,10 +236,6 @@ class AlphaVantageProvider(BaseFallbackProvider):
             if not quote or "05. price" not in quote:
                 return None
 
-            def _to_float(val: Any, default: float = 0.0) -> float:
-                num = _finite_number(val)
-                return num if num is not None else default
-
             def _to_int(val: Any, default: int = 0) -> int:
                 try:
                     if is_bool_like(val):
@@ -161,9 +246,11 @@ class AlphaVantageProvider(BaseFallbackProvider):
                     # the numeric-coercion boundary and previously aborted the
                     # whole quote via the outer handler (M21, 2026-11-07).
                     return default
-                return int(num) if math.isfinite(num) else default
+                return int(num) if math.isfinite(num) and num >= 0 else default
 
-            price = _to_float(quote["05. price"])
+            price = _finite_number(quote["05. price"])
+            if price is None or not math.isfinite(price) or price <= 0:
+                return None
 
             # M22 (2026-11-07 review): never fake unknown OHLC as the current
             # price — a fabricated previous close forces change=0.00% and
@@ -196,33 +283,8 @@ class AlphaVantageProvider(BaseFallbackProvider):
             return None
 
 
-class YahooWebScraperProvider(BaseFallbackProvider):
+class YahooWebScraperProvider(_CurlCffiSessionProvider):
     """Lightweight web scraper for Yahoo Finance using curl_cffi with persistent thread-local session support."""
-
-    def __init__(self):
-        self.requests: Any = None
-        self.session: Any = None
-        self._local = threading.local()
-        self._sessions_lock = threading.Lock()
-        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
-        try:
-            from curl_cffi import requests as cffi_requests
-
-            self.requests = cffi_requests
-        except ImportError:
-            self.requests = None
-
-    def close(self) -> None:
-        """Close all allocated HTTP sessions."""
-        with self._sessions_lock:
-            sessions = list(self._all_sessions)
-            self._all_sessions.clear()
-        for sess in sessions:
-            try:
-                sess.close()
-            except Exception:
-                pass
-        self._local.session = None
 
     @staticmethod
     def _parse_live_price_marker(resp_text: str, symbol: str) -> dict | None:
@@ -259,33 +321,6 @@ class YahooWebScraperProvider(BaseFallbackProvider):
             "regularMarketDayHigh": p_val,
             "regularMarketDayLow": p_val,
         }
-
-    def _get_client(self) -> tuple[Any, bool]:
-        # An explicitly injected session (tests / custom setups) always wins.
-        if self.session is not None:
-            return self.session, True
-        if not self.requests:
-            return None, False
-        if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in (
-                "chrome120",
-                "chrome124",
-                "chrome131",
-                "chrome133a",
-                "safari18_0",
-                "edge101",
-            ):
-                try:
-                    sess = self.requests.Session(impersonate=imp)
-                    self._local.session = sess
-                    with self._sessions_lock:
-                        self._all_sessions.add(sess)
-                    break
-                except Exception:
-                    self._local.session = None
-        if self._local.session is not None:
-            return self._local.session, True
-        return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         if _is_scraper_blocked():
@@ -406,7 +441,7 @@ class YahooWebScraperProvider(BaseFallbackProvider):
                 return int(num)
 
             price_finite = _finite_number(price)
-            if price_finite is None:
+            if price_finite is None or price_finite <= 0:
                 return None
             price_val = price_finite
             # M22: see the AlphaVantage branch — unknown OHLC is None, not a
@@ -498,60 +533,8 @@ def _extract_yahoo_jp_price(soup, raw_text):
     return None
 
 
-class YahooJPScraperProvider(BaseFallbackProvider):
+class YahooJPScraperProvider(_CurlCffiSessionProvider):
     """Scrapes Japanese stock prices from finance.yahoo.co.jp with persistent thread-local session support."""
-
-    def __init__(self):
-        self.requests: Any = None
-        self.session: Any = None
-        self._local = threading.local()
-        self._sessions_lock = threading.Lock()
-        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
-        try:
-            from curl_cffi import requests as cffi_requests
-
-            self.requests = cffi_requests
-        except ImportError:
-            self.requests = None
-
-    def close(self) -> None:
-        """Close all allocated HTTP sessions."""
-        with self._sessions_lock:
-            sessions = list(self._all_sessions)
-            self._all_sessions.clear()
-        for sess in sessions:
-            try:
-                sess.close()
-            except Exception:
-                pass
-        self._local.session = None
-
-    def _get_client(self) -> tuple[Any, bool]:
-        # An explicitly injected session (tests / custom setups) always wins.
-        if self.session is not None:
-            return self.session, True
-        if not self.requests:
-            return None, False
-        if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in (
-                "chrome120",
-                "chrome124",
-                "chrome131",
-                "chrome133a",
-                "safari18_0",
-                "edge101",
-            ):
-                try:
-                    sess = self.requests.Session(impersonate=imp)
-                    self._local.session = sess
-                    with self._sessions_lock:
-                        self._all_sessions.add(sess)
-                    break
-                except Exception:
-                    self._local.session = None
-        if self._local.session is not None:
-            return self._local.session, True
-        return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         if _is_scraper_blocked():
@@ -592,7 +575,10 @@ class YahooJPScraperProvider(BaseFallbackProvider):
                 logger.debug("Yahoo JP scraper could not locate a price for %s", symbol)
                 return None
 
-            price = float(re.sub(r"[^\d.]", "", price_text))
+            price = _finite_number(re.sub(r"[^\d.]", "", str(price_text)))
+            if price is None or not math.isfinite(price) or price <= 0:
+                logger.debug("Yahoo JP scraper parsed non-positive/invalid price for %s: %r", symbol, price_text)
+                return None
 
             # Previous close is unknown from this page; report None instead of
             # faking it as the current price (faking would force change=0 and
@@ -612,7 +598,7 @@ class YahooJPScraperProvider(BaseFallbackProvider):
             return None
 
 
-class Nikkei225JPProvider(BaseFallbackProvider):
+class Nikkei225JPProvider(_CurlCffiSessionProvider):
     """Scrapes Japanese stock prices, ADR quotes, and indices from nikkei225jp.com with persistent session support."""
 
     ADR_ALL_URL = "https://nikkei225jp.com/_data/_nfsDATA/adr/_adr_all.js"
@@ -646,60 +632,26 @@ class Nikkei225JPProvider(BaseFallbackProvider):
     }
 
     def __init__(self):
-        self.requests: Any = None
-        self.session: Any = None
-        self._local = threading.local()
-        self._sessions_lock = threading.Lock()
-        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
+        super().__init__()
         self._adr_cache: dict[str, list[str]] = {}
         self._adr_cache_time: float = 0.0
         self._index_cache: dict[int, list[str]] = {}
         self._index_cache_time: float = 0.0
         self._cache_lock = threading.Lock()
-        try:
-            from curl_cffi import requests as cffi_requests
 
-            self.requests = cffi_requests
-        except ImportError:
-            self.requests = None
-
-    def close(self) -> None:
-        """Close all allocated HTTP sessions."""
-        with self._sessions_lock:
-            sessions = list(self._all_sessions)
-            self._all_sessions.clear()
-        for sess in sessions:
-            try:
-                sess.close()
-            except Exception:
-                pass
-        self._local.session = None
-
-    def _get_client(self) -> tuple[Any, bool]:
-        if self.session is not None:
-            return self.session, True
-        if not self.requests:
-            return None, False
-        if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in (
-                "chrome120",
-                "chrome124",
-                "chrome131",
-                "chrome133a",
-                "safari18_0",
-                "edge101",
-            ):
-                try:
-                    sess = self.requests.Session(impersonate=imp)
-                    self._local.session = sess
-                    with self._sessions_lock:
-                        self._all_sessions.add(sess)
-                    break
-                except Exception:
-                    self._local.session = None
-        if self._local.session is not None:
-            return self._local.session, True
-        return self.requests, False
+    @staticmethod
+    def _report_http_block(resp: Any) -> bool:
+        status = getattr(resp, "status_code", None)
+        if status in (401, 402, 403, 429, 439):
+            snippet = getattr(resp, "text", "")
+            _mark_yahoo_block(
+                status,
+                snippet[:500] if isinstance(snippet, str) else "",
+                is_yahoo_host=False,
+                response=resp,
+            )
+            return True
+        return False
 
     def _refresh_adr_cache(
         self, client: Any, is_session: bool, max_age: float = 10.0
@@ -715,6 +667,8 @@ class Nikkei225JPProvider(BaseFallbackProvider):
                 if is_session
                 else client.get(self.ADR_ALL_URL, impersonate="chrome120", timeout=6.0)
             )
+            if self._report_http_block(resp):
+                return self._adr_cache
             if resp.status_code == 200:
                 text = (
                     resp.text
@@ -748,6 +702,7 @@ class Nikkei225JPProvider(BaseFallbackProvider):
                 return self._index_cache
 
         cache: dict[int, list[str]] = {}
+        blocked = False
         for url in (self.INDEX_MID_URL, self.INDEX_BTM_URL):
             try:
                 resp = (
@@ -755,6 +710,9 @@ class Nikkei225JPProvider(BaseFallbackProvider):
                     if is_session
                     else client.get(url, impersonate="chrome120", timeout=6.0)
                 )
+                if self._report_http_block(resp):
+                    blocked = True
+                    break
                 if resp.status_code == 200:
                     text = (
                         resp.text
@@ -771,24 +729,26 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             except Exception as exc:
                 logger.debug("Nikkei225JPProvider failed fetching index %s: %s", url, exc)
 
-        try:
-            resp = (
-                client.get(self.INDEX_NDY_URL, timeout=6.0)
-                if is_session
-                else client.get(self.INDEX_NDY_URL, impersonate="chrome120", timeout=6.0)
-            )
-            if resp.status_code == 200:
-                text = (
-                    resp.text
-                    if hasattr(resp, "text")
-                    else resp.content.decode("utf-8", errors="replace")
+        if not blocked:
+            try:
+                resp = (
+                    client.get(self.INDEX_NDY_URL, timeout=6.0)
+                    if is_session
+                    else client.get(self.INDEX_NDY_URL, impersonate="chrome120", timeout=6.0)
                 )
-                for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
-                    code = int(m.group(1))
-                    if code not in cache:
-                        cache[code] = [m.group(2), m.group(3), "0", "", ""]
-        except Exception as exc:
-            logger.debug("Nikkei225JPProvider failed fetching NDY min: %s", exc)
+                self._report_http_block(resp)
+                if resp.status_code == 200:
+                    text = (
+                        resp.text
+                        if hasattr(resp, "text")
+                        else resp.content.decode("utf-8", errors="replace")
+                    )
+                    for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
+                        code = int(m.group(1))
+                        if code not in cache:
+                            cache[code] = [m.group(2), m.group(3), "0", "", ""]
+            except Exception as exc:
+                logger.debug("Nikkei225JPProvider failed fetching NDY min: %s", exc)
 
         if cache:
             with self._cache_lock:
@@ -811,11 +771,13 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             return None
 
         def _to_float(val: Any, default: float = 0.0) -> float:
+            if val is None or is_bool_like(val):
+                return default
             try:
                 s = str(val).replace(",", "").replace("+", "").strip()
                 num = float(s)
                 return num if math.isfinite(num) else default
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return default
 
         # 1. Index / Forex mapping
@@ -828,7 +790,7 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             if not parts or len(parts) < 2:
                 return None
             price = _to_float(parts[0])
-            if price <= 0:
+            if not math.isfinite(price) or price <= 0:
                 return None
             change = _to_float(parts[1]) if len(parts) > 1 else 0.0
             # OHLC are unknown from this feed; report None instead of faking
@@ -860,7 +822,9 @@ class Nikkei225JPProvider(BaseFallbackProvider):
                     if is_session
                     else client.get(url, impersonate="chrome120", timeout=6.0)
                 )
-                if resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text:
+                if not self._report_http_block(resp) and (
+                    resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text
+                ):
                     m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', resp.text)
                     if m_parts:
                         parts = m_parts.group(1).split("_")
@@ -875,7 +839,7 @@ class Nikkei225JPProvider(BaseFallbackProvider):
             return None
 
         price = _to_float(parts[8])
-        if price <= 0:
+        if not math.isfinite(price) or price <= 0:
             return None
 
         change = _to_float(parts[9])
@@ -892,59 +856,8 @@ class Nikkei225JPProvider(BaseFallbackProvider):
         }
 
 
-class MinkabuProvider(BaseFallbackProvider):
+class MinkabuProvider(_CurlCffiSessionProvider):
     """Fallback provider for JP stocks using minkabu.jp (lowest tier)."""
-
-    def __init__(self):
-        self.requests: Any = None
-        self.session: Any = None
-        self._local = threading.local()
-        self._sessions_lock = threading.Lock()
-        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
-        try:
-            from curl_cffi import requests as cffi_requests
-
-            self.requests = cffi_requests
-        except ImportError:
-            self.requests = None
-
-    def close(self) -> None:
-        """Close all allocated HTTP sessions."""
-        with self._sessions_lock:
-            sessions = list(self._all_sessions)
-            self._all_sessions.clear()
-        for sess in sessions:
-            try:
-                sess.close()
-            except Exception:
-                pass
-        self._local.session = None
-
-    def _get_client(self) -> tuple[Any, bool]:
-        if self.session is not None:
-            return self.session, True
-        if not self.requests:
-            return None, False
-        if not hasattr(self._local, "session") or self._local.session is None:
-            for imp in (
-                "chrome120",
-                "chrome124",
-                "chrome131",
-                "chrome133a",
-                "safari18_0",
-                "edge101",
-            ):
-                try:
-                    sess = self.requests.Session(impersonate=imp)
-                    self._local.session = sess
-                    with self._sessions_lock:
-                        self._all_sessions.add(sess)
-                    break
-                except Exception:
-                    self._local.session = None
-        if self._local.session is not None:
-            return self._local.session, True
-        return self.requests, False
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         if _is_scraper_blocked():
@@ -971,8 +884,9 @@ class MinkabuProvider(BaseFallbackProvider):
                 # on the page (e.g. 手数料290円) and returned it as the price.
                 from services.realtime.utils import extract_minkabu_price
 
-                price = extract_minkabu_price(resp.text)
-                if price is not None:
+                raw_price = extract_minkabu_price(resp.text)
+                price = _finite_number(raw_price) if raw_price is not None else None
+                if price is not None and math.isfinite(price) and price > 0:
                     # Previous close / OHLC are unknown from this page;
                     # report None rather than the current price so the
                     # fallback quote cannot fake a 0% change (see
@@ -1046,19 +960,7 @@ class CompositeFallbackProvider:
         if (
             symbol.startswith("^")
             or "=" in symbol
-            or symbol
-            in (
-                "N225",
-                "DJI",
-                "NASDAQ",
-                "SP500",
-                "USDJPY",
-                "EURJPY",
-                "EURUSD",
-                "VIX",
-                "BTC-USD",
-                "BTC",
-            )
+            or symbol in Nikkei225JPProvider.INDEX_MAP
         ):
             if not _budget_remains():
                 return None

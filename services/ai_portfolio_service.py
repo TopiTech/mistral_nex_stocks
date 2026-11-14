@@ -31,6 +31,7 @@ from services.ai_service import _sanitize_prompt_text, call_mistral_chat, is_mis
 from services.search_service import collect_symbol_research_context
 from utils.normalization import is_bool_like, is_valid_symbol, normalize_symbol_for_market
 from utils.text_utils import wrap_cdata
+from utils.threading import restrictive_umask_lock
 from utils.validators import (
     AiPortfolioResponseSchema,
     extract_json_payload,
@@ -195,9 +196,15 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                 it["weight_pct"] = round((it["weight_pct"] / tot_clean_w) * 100.0, 1)
             diff = round(100.0 - sum(it["weight_pct"] for it in clean_items), 1)
             if diff != 0.0:
-                # Clamp after rounding overshoot so rebalance never breaches 100±tiny.
-                new_w = round(clean_items[0]["weight_pct"] + diff, 1)
-                clean_items[0]["weight_pct"] = max(0.0, min(100.0, new_w))
+                positive_items = [it for it in clean_items if it.get("weight_pct", 0.0) > 0.0]
+                target_item = max(
+                    positive_items or clean_items,
+                    key=lambda it: it.get("weight_pct", 0.0),
+                )
+                # Clamp after rounding overshoot so rebalance never breaches 100±tiny
+                # and explicitly zeroed holdings are never revived by rounding delta.
+                new_w = round(target_item["weight_pct"] + diff, 1)
+                target_item["weight_pct"] = max(0.0, min(100.0, new_w))
         active_items = clean_items
     else:
         active_items = []
@@ -283,27 +290,28 @@ def _write_saved_ai_portfolios(
                 except OSError:
                     pass
         else:
-            old_umask = os.umask(0o077)
-            try:
-                fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with restrictive_umask_lock():
+                old_umask = os.umask(0o077)
                 try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as file_obj:
-                        json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
-                        file_obj.flush()
+                    fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    try:
+                        with os.fdopen(fd, "w", encoding="utf-8") as file_obj:
+                            json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
+                            file_obj.flush()
+                            try:
+                                os.fsync(file_obj.fileno())
+                            except OSError:
+                                pass
+                    except Exception:
                         try:
-                            os.fsync(file_obj.fileno())
+                            os.close(fd)
                         except OSError:
                             pass
-                except Exception:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    raise
-            finally:
-                if old_umask is not None:
-                    os.umask(old_umask)
-                    old_umask = None
+                        raise
+                finally:
+                    if old_umask is not None:
+                        os.umask(old_umask)
+                        old_umask = None
 
         if not _is_windows():
             try:
@@ -771,7 +779,6 @@ def generate_ai_portfolio_by_theme(
     if not isinstance(theme_or_preset_id, str) or not theme_or_preset_id.strip():
         raise ValueError("theme_or_preset_id must be a non-empty string")
     clean_id = theme_or_preset_id.strip()
-    key = clean_id
 
     # Determine real theme text
     preset_config = DEFAULT_PRESET_CONFIGS.get(clean_id)
@@ -791,6 +798,7 @@ def generate_ai_portfolio_by_theme(
         if (existing_saved and isinstance(existing_saved.get("id"), str))
         else None
     )
+    key = existing_custom_id or preset_id or search_theme
 
     # Check if portfolio is already saved in JSON database (and not forcing rebalance)
     if not force_rebalance and existing_saved is not None:
@@ -1034,7 +1042,7 @@ def generate_ai_portfolio_by_theme(
         # replaces the user's data (items, rationale, target prices) with a
         # generic template when the LLM call fails. Reuse the saved portfolio
         # and only attach a warning instead.
-        if existing_saved is not None and not preset_config:
+        if existing_saved is not None:
             warned = dict(existing_saved)
             warned["fallback_warning"] = (
                 "AIの再生成に失敗したため、以前保存したポートフォリオを表示しています。"

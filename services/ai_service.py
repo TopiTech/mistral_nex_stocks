@@ -412,11 +412,16 @@ def _resolve_agents_target() -> tuple[bool, str]:
     """Return ``(use_agents, agent_id)`` for the currently configured API mode.
 
     In Agents API mode the model (and sampling settings) are defined on the
-    agent in Mistral Console, so requests carry only the ``agent_id``.
+    agent in Mistral Console when ``agent_id`` is configured. If ``agent_id``
+    is empty and the optional Agents SDK is unavailable, ``client.agents.*``
+    cannot be called with an empty ``agent_id``, so fall back to Chat API.
     """
     if not is_agents_mode():
         return False, ""
-    return True, get_agent_id()
+    agent_id = get_agent_id()
+    if not agent_id and not (HAS_AGENTS_SDK and mistral_agents is not None):
+        return False, ""
+    return True, agent_id
 
 
 def _format_messages_for_sdk_agent(messages: list[dict[str, Any]]) -> str:
@@ -1047,13 +1052,11 @@ def call_mistral_chat(
         )
 
     use_agents, agent_id = _resolve_agents_target()
-    if use_agents:
-        if agent_id:
-            model = f"agent:{agent_id}"
-            effective_reasoning = None
-        else:
-            model = _model_override if _model_override else _get_mistral_model_name()
-            effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
+    use_sdk_agents = bool(use_agents and HAS_AGENTS_SDK and mistral_agents is not None)
+    use_api_agents = bool(use_agents and not use_sdk_agents and agent_id)
+    if use_api_agents or (use_sdk_agents and agent_id):
+        model = f"agent:{agent_id}"
+        effective_reasoning = None
     else:
         model = _model_override if _model_override else _get_mistral_model_name()
         effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
@@ -1126,7 +1129,8 @@ def call_mistral_chat(
                 }
             }
 
-        with app_state.ai.mistral_call_semaphore:
+        sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_call_semaphore
+        with sem_ctx:
             if app_state.market.is_circuit_open("mistral"):
                 logger.warning("Mistral circuit is OPEN. Skipping API call.")
                 # SVC-02 completion (M6, 2026-11-07 review): the pacing slot
@@ -1142,20 +1146,21 @@ def call_mistral_chat(
                 }
 
             circuit_probe_claimed = False
-            circuit_state = app_state.market.get_circuit_state("mistral")
-            if circuit_state.get("status") == "HALF_OPEN":
-                if not app_state.market.try_claim_circuit_probe("mistral"):
-                    logger.warning(
-                        "Mistral circuit recovery probe already in progress. Skipping API call."
-                    )
-                    _release_mistral_call_slot(reserved_ts)
-                    return {
-                        "error": {
-                            "message": "AI service is temporarily unavailable (circuit recovery probe in progress)",
-                            "status_code": 503,
+            if not _is_fallback:
+                circuit_state = app_state.market.get_circuit_state("mistral")
+                if circuit_state.get("status") == "HALF_OPEN":
+                    if not app_state.market.try_claim_circuit_probe("mistral"):
+                        logger.warning(
+                            "Mistral circuit recovery probe already in progress. Skipping API call."
+                        )
+                        _release_mistral_call_slot(reserved_ts)
+                        return {
+                            "error": {
+                                "message": "AI service is temporarily unavailable (circuit recovery probe in progress)",
+                                "status_code": 503,
+                            }
                         }
-                    }
-                circuit_probe_claimed = True
+                    circuit_probe_claimed = True
 
             req_id = "-"
             try:
@@ -1173,7 +1178,7 @@ def call_mistral_chat(
             )
 
             response: Any
-            if use_agents and HAS_AGENTS_SDK and mistral_agents is not None:
+            if use_sdk_agents:
                 # Mistral Agents SDK (mistralai-agents) execution
                 if agent_id:
                     agent = load_sdk_agent(agent_id, api_key=api_key)
@@ -1234,7 +1239,7 @@ def call_mistral_chat(
                     "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
                     "retries": _build_mistral_retry_config(),
                 }
-                if use_agents:
+                if use_api_agents:
                     kwargs["agent_id"] = agent_id
                 else:
                     kwargs["model"] = model
@@ -1249,7 +1254,7 @@ def call_mistral_chat(
 
                 # Structured Outputs: Pydanticモデルが渡された場合は chat.parse を使用
                 if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                    if not use_agents:
+                    if not use_api_agents:
                         try:
                             response = client.chat.parse(
                                 **kwargs,
@@ -1315,7 +1320,7 @@ def call_mistral_chat(
                 else:
                     if response_format:
                         kwargs["response_format"] = response_format
-                    if use_agents:
+                    if use_api_agents:
                         response = client.agents.complete(**kwargs)
                     else:
                         response = client.chat.complete(**kwargs)
@@ -1481,7 +1486,7 @@ def call_mistral_chat(
         if (
             _is_mistral_tier_restriction_error(exc, err_payload, status_code)
             and not _is_fallback
-            and not use_agents
+            and not (use_sdk_agents or use_api_agents)
             and model != "mistral-small-2603"
         ):
             if circuit_probe_claimed:
@@ -2130,7 +2135,7 @@ def analyze_chart_image_with_mistral(
     Accepts base64 string or data URL (e.g. data:image/png;base64,...) and returns
     structured visual analysis of technical patterns, support/resistance, and indicators.
     """
-    if not image_data or not isinstance(image_data, str):
+    if not image_data or not isinstance(image_data, str) or not image_data.strip():
         return {"error": "画像データが不正です。"}
 
     clean_img = image_data.strip()
@@ -2201,6 +2206,8 @@ def analyze_chart_image_with_mistral(
             _model_override=model,
             use_cache=False,
         )
+        if not isinstance(response, dict):
+            return {"error": "チャート画像の分析に失敗しました"}
         if is_mistral_error(response):
             return response
 
@@ -2342,6 +2349,85 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
     return None
 
 
+def _extract_thinking_delta(chunk: Any) -> str | None:
+    """Extract only internal reasoning/thinking text from a stream chunk."""
+
+    def _thinking_from_val(val: Any) -> str | None:
+        if isinstance(val, str) and val:
+            return val
+        if hasattr(val, "text") and isinstance(val.text, str) and val.text:
+            return val.text
+        if hasattr(val, "thinking") or hasattr(val, "reasoning_content"):
+            th = getattr(val, "thinking", None) or getattr(val, "reasoning_content", None)
+            if th:
+                return _thinking_from_val(th)
+        if isinstance(val, list):
+            parts = []
+            for item in val:
+                if isinstance(item, dict):
+                    th = item.get("thinking") or item.get("reasoning_content")
+                elif hasattr(item, "thinking") or hasattr(item, "reasoning_content"):
+                    th = getattr(item, "thinking", None) or getattr(item, "reasoning_content", None)
+                else:
+                    th = None
+                if th:
+                    th_text = _thinking_from_val(th)
+                    if th_text:
+                        parts.append(th_text)
+            res = "".join(parts)
+            return res if res else None
+        return None
+
+    def _thinking_from_content(val: Any) -> str | None:
+        if (
+            isinstance(val, list)
+            or hasattr(val, "thinking")
+            or hasattr(val, "reasoning_content")
+        ):
+            return _thinking_from_val(val)
+        return None
+
+    parts: list[str] = []
+    if isinstance(chunk, dict):
+        choices = chunk.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            delta = choices[0].get("delta") or {}
+            content_th = _thinking_from_content(delta.get("content"))
+            if content_th:
+                parts.append(content_th)
+            r_raw = delta.get("reasoning_content") or delta.get("thinking")
+            if r_raw:
+                r_th = _thinking_from_val(r_raw)
+                if r_th:
+                    parts.append(r_th)
+        joined = "".join(parts)
+        return joined if joined else None
+
+    try:
+        choices = chunk.choices
+    except AttributeError:
+        data = getattr(chunk, "data", None)
+        if data is not None:
+            return _extract_thinking_delta(data)
+        return None
+    if not choices:
+        return None
+    try:
+        delta = choices[0].delta
+        content_th = _thinking_from_content(getattr(delta, "content", None))
+        if content_th:
+            parts.append(content_th)
+        r_raw = getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
+        if r_raw:
+            r_th = _thinking_from_val(r_raw)
+            if r_th:
+                parts.append(r_th)
+    except (AttributeError, IndexError):
+        return None
+    joined = "".join(parts)
+    return joined if joined else None
+
+
 def _close_mistral_stream(stream: Any) -> None:
     """Close an SDK stream or its underlying response on every exit path.
 
@@ -2426,13 +2512,11 @@ def stream_mistral_chat(
         return
 
     use_agents, agent_id = _resolve_agents_target()
-    if use_agents:
-        if agent_id:
-            model = f"agent:{agent_id}"
-            effective_reasoning = None
-        else:
-            model = _model_override if _model_override else _get_mistral_model_name()
-            effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
+    use_sdk_agents = bool(use_agents and HAS_AGENTS_SDK and mistral_agents is not None)
+    use_api_agents = bool(use_agents and not use_sdk_agents and agent_id)
+    if use_api_agents or (use_sdk_agents and agent_id):
+        model = f"agent:{agent_id}"
+        effective_reasoning = None
     else:
         model = _model_override if _model_override else _get_mistral_model_name()
         effective_reasoning = _resolve_reasoning_effort(model, reasoning_effort)
@@ -2522,7 +2606,7 @@ def stream_mistral_chat(
             "timeout_ms": int(MISTRAL_API_TIMEOUT_SEC * 1000),
             "retries": _build_mistral_retry_config(),
         }
-        if use_agents:
+        if use_api_agents:
             kwargs["agent_id"] = agent_id
         else:
             kwargs["model"] = model
@@ -2545,7 +2629,7 @@ def stream_mistral_chat(
         sdk_stream = None
         try:
             last_usage: dict[str, Any] | None = None
-            if use_agents and HAS_AGENTS_SDK and mistral_agents is not None:
+            if use_sdk_agents:
                 if agent_id:
                     agent = load_sdk_agent(agent_id, api_key=api_key)
                 else:
@@ -2734,15 +2818,36 @@ def stream_mistral_chat(
                 full_text = "".join(full_parts)
                 yield {"type": "done", "text": full_text}
                 return
-            elif use_agents:
+            elif use_api_agents:
                 sdk_stream = client.agents.stream(**kwargs)
             else:
                 sdk_stream = client.chat.stream(**kwargs)
             for chunk in sdk_stream:
-                delta_text = _extract_stream_delta(chunk, include_thinking=False)
+                delta_text = _extract_stream_delta(chunk, include_thinking=include_thinking)
                 if delta_text:
-                    full_parts.append(delta_text)
-                    yield {"type": "delta", "text": delta_text}
+                    if include_thinking:
+                        thinking_only = _extract_thinking_delta(chunk)
+                        if thinking_only:
+                            yield {"type": "thinking", "text": thinking_only}
+                            if delta_text == thinking_only:
+                                visible_text = ""
+                            elif delta_text.startswith(thinking_only):
+                                visible_text = delta_text[len(thinking_only) :]
+                            elif delta_text.endswith(thinking_only):
+                                visible_text = delta_text[: -len(thinking_only)]
+                            elif thinking_only in delta_text:
+                                visible_text = delta_text.replace(thinking_only, "", 1)
+                            else:
+                                visible_text = delta_text
+                            if visible_text:
+                                full_parts.append(visible_text)
+                                yield {"type": "delta", "text": visible_text}
+                        else:
+                            full_parts.append(delta_text)
+                            yield {"type": "delta", "text": delta_text}
+                    else:
+                        full_parts.append(delta_text)
+                        yield {"type": "delta", "text": delta_text}
                 # Best-effort usage capture: some SDK versions attach usage to
                 # the final stream chunk (C-4).
                 chunk_usage = getattr(chunk, "usage", None)
@@ -2834,6 +2939,7 @@ def stream_mistral_chat(
                     max_tokens=max_tokens,
                     temperature=temperature,
                     reasoning_effort=False,
+                    include_thinking=include_thinking,
                     _model_override=model,
                     _is_fallback=True,
                 )
@@ -2843,7 +2949,7 @@ def stream_mistral_chat(
             if (
                 _is_mistral_tier_restriction_error(exc, err_payload, status_code)
                 and not _is_fallback
-                and not use_agents
+                and not (use_sdk_agents or use_api_agents)
                 and model != "mistral-small-2603"
                 and not full_parts
             ):
@@ -2864,6 +2970,7 @@ def stream_mistral_chat(
                     max_tokens=max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
+                    include_thinking=include_thinking,
                     _model_override="mistral-small-2603",
                     _is_fallback=True,
                 )

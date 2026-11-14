@@ -44,6 +44,7 @@ _sse_payload_lock = threading.Lock()
 # the opposite order (listeners apply diff frames strictly in arrival order).
 _sse_frame_publish_lock = threading.Lock()
 _sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
+_sse_prev_indices: dict[str, Any] = {}
 _sse_full_snapshot_counter: int = 0
 
 
@@ -67,11 +68,35 @@ def _build_sse_light_stocks_payload(
     return light
 
 
+def _build_indices_diff(
+    new_indices: dict[str, Any],
+    prev_indices: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Compute changed/added/removed index entries between SSE snapshots."""
+    cur_map = new_indices if isinstance(new_indices, dict) else {}
+    old_map = prev_indices if isinstance(prev_indices, dict) else {}
+    rows: list[dict[str, Any]] = []
+    for sym, val in cur_map.items():
+        if sym not in old_map or old_map[sym] != val:
+            if isinstance(val, dict):
+                entry = dict(val)
+                entry.setdefault("symbol", sym)
+                rows.append(entry)
+            else:
+                rows.append({"symbol": sym, "value": val})
+    for sym in old_map:
+        if sym not in cur_map:
+            rows.append({"symbol": sym, "_removed": True})
+    return rows
+
+
 def _build_sse_diff(
     new_stocks: dict[str, list[dict[str, Any]]],
     prev_map: dict[str, dict[str, Any]],
+    new_indices: dict[str, Any] | None = None,
+    prev_indices: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Compute the diff between the previous and current stock snapshots."""
+    """Compute the diff between the previous and current market snapshots."""
     diff: dict[str, list[dict[str, Any]]] = {"us": [], "jp": [], "idx": []}
     for market in ("us", "jp", "idx"):
         current_list = new_stocks.get(market, [])
@@ -95,6 +120,8 @@ def _build_sse_diff(
         for sym in prev_map.get(market, {}):
             if sym not in current_map:
                 diff[market].append({"symbol": sym, "_removed": True})
+    if new_indices is not None:
+        diff["indices"] = _build_indices_diff(new_indices, prev_indices or {})
     return diff
 
 
@@ -128,7 +155,8 @@ def _raw_announce_current_market_state() -> None:
         _sse_payload_us_open, \
         _sse_payload_jp_open, \
         _sse_full_snapshot_counter, \
-        _sse_prev_stocks
+        _sse_prev_stocks, \
+        _sse_prev_indices
     yf_limited = app_state.market.is_yf_rate_limited()
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
@@ -178,19 +206,26 @@ def _raw_announce_current_market_state() -> None:
             )
         else:
             prev_stocks = _get_app_bg_attr("_sse_prev_stocks", _sse_prev_stocks)
-            diff = _build_sse_diff(stocks, prev_stocks)
+            prev_indices = _get_app_bg_attr("_sse_prev_indices", _sse_prev_indices)
+            diff = _build_sse_diff(
+                stocks,
+                prev_stocks,
+                new_indices=indices,
+                prev_indices=prev_indices,
+            )
             # L-1: the decision unit is an explicit *changed-entry count* (the
-            # number of changed stock rows across markets), NOT bytes or chars.
+            # number of changed stock/index rows across markets), NOT bytes or chars.
             # ``_build_sse_diff`` returns ``dict[str, list[changed rows]]`` so
             # ``len(rows)`` counts rows; the quantity is named accordingly so
             # the unit cannot be misread as a serialized-size measure.  The
             # publish decision is therefore "is at least one row present?".
             changed_entry_count = sum(len(rows) for rows in diff.values())
+            stock_diff = {market: diff[market] for market in ("us", "jp", "idx")}
             if changed_entry_count > 0:
                 payload = json.dumps(
                     {
                         "stream_event": "diff",
-                        "stocks": diff,
+                        "stocks": stock_diff,
                         "indices": indices,
                         "is_yfinance_rate_limited": yf_limited,
                         "is_us_market_open": us_open,
@@ -220,6 +255,9 @@ def _raw_announce_current_market_state() -> None:
                     new_prev[market][item["symbol"]] = _strip_portfolio_fields(item)
         _sse_prev_stocks = new_prev
         _set_app_bg_attr("_sse_prev_stocks", new_prev)
+        new_prev_indices = copy.deepcopy(indices) if isinstance(indices, dict) else {}
+        _sse_prev_indices = new_prev_indices
+        _set_app_bg_attr("_sse_prev_indices", new_prev_indices)
 
         frame = f"data: {payload}\n\n"
         _sse_payload_cache = frame

@@ -28,6 +28,8 @@ class ExecutionState:
         self.news_executor = DaemonThreadPoolExecutor(max_workers=4, max_queue_size=10)
         self.sync_refresh_executor = DaemonThreadPoolExecutor(max_workers=1, max_queue_size=5)
         self.shutdown_event = threading.Event()
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_done = False
         self.background_threads: list[threading.Thread] = []
         self._threads_lock = threading.Lock()
 
@@ -46,9 +48,14 @@ class ExecutionState:
         """Shut down all executors with optional task completion wait.
 
         Idempotent: calling twice (e.g. signal handler + atexit) is safe.
+        Uses ``_shutdown_done`` rather than ``shutdown_event.is_set()`` so a
+        signal handler can set ``shutdown_event`` cleanly without preventing
+        ``atexit`` from draining and joining executors.
         """
-        if self.shutdown_event.is_set():
-            return
+        with self._shutdown_lock:
+            if self._shutdown_done:
+                return
+            self._shutdown_done = True
         self.shutdown_event.set()
         for ex in [
             self.executor,

@@ -25,6 +25,10 @@ body.observatory-page {
   background-color: var(--cosmic-bg);
   color: var(--cosmic-text);
   font-family: var(--font-main, "Inter", "Noto Sans JP", sans-serif);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 body.observatory-page .orbit-canvas {
@@ -34,10 +38,8 @@ body.observatory-page .orbit-canvas {
 
 /* ── Observatory Header ── */
 .observatory-header {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  position: relative;
+  flex: 0 0 auto;
   min-height: 56px;
   background: rgba(8, 12, 28, 0.82);
   backdrop-filter: blur(12px);
@@ -233,12 +235,14 @@ body.observatory-page .orbit-canvas {
 
 /* ── Main Viewport Canvas ── */
 .observatory-viewport {
-  position: absolute;
-  top: 56px;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
+}
+
+.observatory-hud-dock {
+  display: contents;
 }
 
 .orbit-canvas {
@@ -483,10 +487,10 @@ body.observatory-page .orbit-canvas {
 /* ── Constellation Comparison Floating Drawer (Right-Side) ── */
 .constellation-drawer {
   position: absolute;
-  top: 72px;
+  top: 16px;
   right: 24px;
   width: 360px;
-  max-height: calc(100% - 96px);
+  max-height: calc(100% - 32px);
   background: var(--cosmic-surface);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -1001,6 +1005,21 @@ kbd {
   }
 }
 
+@media (max-width: 1080px) and (min-width: 769px) {
+  .center-stock-card {
+    width: 220px;
+    left: 16px;
+    bottom: 16px;
+  }
+
+  .timeline-scrubber-panel {
+    left: calc(50% + 120px);
+    bottom: 16px;
+    min-width: 0;
+    max-width: calc(100vw - 270px);
+  }
+}
+
 /* Mobile & Tablet Responsive Adjustments */
 @media (max-width: 768px) {
   body.observatory-page {
@@ -1031,25 +1050,42 @@ kbd {
     min-height: 0;
   }
 
-  .center-stock-card {
+  .observatory-hud-dock {
+    position: absolute;
     left: 12px;
+    right: 12px;
     bottom: 12px;
-    width: calc(100% - 24px);
-    max-width: 280px;
-    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 80;
+    pointer-events: none;
   }
 
+  .center-stock-card,
   .timeline-scrubber-panel {
-    bottom: 120px;
-    min-width: min(90%, calc(100vw - 24px));
-    max-width: 90%;
+    position: relative;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    pointer-events: auto;
+  }
+
+  .center-stock-card {
+    padding: 12px;
   }
 
   .constellation-drawer {
     right: 12px;
     left: 12px;
     width: calc(100% - 24px);
-    top: 64px;
+    top: 12px;
     max-height: 50vh;
   }
 }
@@ -1124,7 +1160,8 @@ kbd {
 }
 
 .search-result-item:hover,
-.search-result-item.selected {
+.search-result-item.selected,
+.search-result-item.active {
   background: rgba(99, 102, 241, 0.2);
   border-color: var(--cosmic-accent);
   transform: translateX(2px);

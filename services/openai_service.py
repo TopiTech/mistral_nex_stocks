@@ -118,8 +118,10 @@ def _is_openai_reasoning_model(model_name: str | None) -> bool:
 
 
 def _create_httpx_client(**kwargs) -> httpx.Client:
-    """Create an httpx.Client configured with OS trust store certs on Windows."""
+    """Create an httpx.Client configured with OS trust store certs and SSRF IP pinning."""
     import ssl
+
+    from utils.networking import create_pinned_outbound_httpx_transport
 
     if "verify" not in kwargs:
         try:
@@ -128,7 +130,23 @@ def _create_httpx_client(**kwargs) -> httpx.Client:
             kwargs["verify"] = ctx
         except Exception as exc:
             logger.debug("Failed configuring OS trust store certs: %s", exc)
-    return httpx.Client(**kwargs)
+    follow_redirects = bool(kwargs.pop("follow_redirects", False))
+    kwargs.pop("trust_env", None)
+    verify_arg = kwargs.get("verify", True)
+    limits_arg = kwargs.get("limits")
+    created_transport = None
+    if "transport" not in kwargs:
+        created_transport = create_pinned_outbound_httpx_transport(
+            verify=verify_arg if isinstance(verify_arg, (ssl.SSLContext, str, bool)) else True,
+            limits=limits_arg if isinstance(limits_arg, httpx.Limits) else None,
+        )
+        kwargs["transport"] = created_transport
+    try:
+        return httpx.Client(follow_redirects=follow_redirects, trust_env=False, **kwargs)
+    except Exception:
+        if created_transport is not None:
+            created_transport.close()
+        raise
 
 
 _CALL_OWNED_CLIENT_ATTR = "_mns_call_owned"
@@ -143,11 +161,16 @@ def _get_openai_client(base_url: str, api_key: str | None = None) -> httpx.Clien
     ``_close_call_owned_openai_client()`` on every exit path (success,
     exception, and generator close).
     """
+    ok_url, reason = validate_outbound_base_url(base_url)
+    if not ok_url:
+        raise ValueError(f"Invalid outbound base URL: {reason}")
     try:
         return app_state.ai.get_or_create_openai_client(base_url, api_key)
+    except ValueError:
+        raise
     except Exception as exc:
         logger.debug("Failed getting pooled OpenAI client; using ephemeral client: %s", exc)
-        fallback = _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=True)
+        fallback = _create_httpx_client(timeout=MISTRAL_API_TIMEOUT_SEC, follow_redirects=False)
         setattr(fallback, _CALL_OWNED_CLIENT_ATTR, True)
         return fallback
 
@@ -398,9 +421,12 @@ def _extract_and_parse_openai_json(
                     pass
 
     if parsed_dict is not None:
-        from utils.validators import _normalize_analysis_aliases
+        if _is_stock_analysis_model(pydantic_cls):
+            from utils.validators import _normalize_analysis_aliases
 
-        normalized_parsed = _normalize_analysis_aliases(parsed_dict)
+            normalized_parsed = _normalize_analysis_aliases(parsed_dict)
+        else:
+            normalized_parsed = parsed_dict
         if pydantic_cls is not None:
             try:
                 validated_model = pydantic_cls.model_validate(normalized_parsed)
@@ -410,6 +436,15 @@ def _extract_and_parse_openai_json(
         return normalized_parsed, raw_content
 
     return None, raw_content
+
+
+def _is_stock_analysis_model(pydantic_cls: Any) -> bool:
+    """Return True only when ``pydantic_cls`` is ``StockAnalysis``."""
+    return (
+        isinstance(pydantic_cls, type)
+        and issubclass(pydantic_cls, BaseModel)
+        and pydantic_cls.__name__ == "StockAnalysis"
+    )
 
 
 def _build_openai_cache_key(
@@ -499,6 +534,16 @@ def call_openai_chat(
         return build_preview_chat_response(messages, response_format)
 
     base_url = get_openai_base_url()
+    ok_url, url_reason = validate_outbound_base_url(base_url)
+    if not ok_url:
+        logger.warning("Blocked OpenAI chat call to invalid base_url %r: %s", base_url, url_reason)
+        return {
+            "error": {
+                "message": f"OpenAI互換APIのベースURLが無効です: {url_reason}",
+                "status_code": 400,
+                "provider": "openai_compatible",
+            }
+        }
     model = _model_override if _model_override else get_openai_model()
 
     # Response format handling
@@ -572,16 +617,21 @@ def call_openai_chat(
     effective_messages = [copy.deepcopy(m) if isinstance(m, dict) else m for m in messages]
     if requires_pydantic_parse and pydantic_cls is not None:
         schema_dict = pydantic_cls.model_json_schema()
+        stock_analysis_hints = ""
+        if _is_stock_analysis_model(pydantic_cls):
+            stock_analysis_hints = (
+                "【重要：推奨・センチメント・確信度・目標価格キーの指定値】\n"
+                '- recommendation: "強い買い" | "買い" | "中立" | "売り" | "強い売り"\n'
+                '- sentiment: "強気" | "中立" | "弱気"\n'
+                '- confidence: "高" | "中" | "低"\n'
+                "- target_price_3m: 数値 (例: 150.0)\n"
+                '- upside_3m: 文字列 (例: "+10%")\n'
+            )
         schema_instruction = (
             "\n\n【必須出力形式 (JSON)】\n"
             "必ず以下のJSONスキーマに厳密に準拠した有効な単一のJSONオブジェクト（json形式）のみを出力してください。\n"
             "マークダウンコードブロックや前置き・解説テキストは一切含めず、純粋なJSON文字列のみを出力してください。\n"
-            "【重要：推奨・センチメント・確信度・目標価格キーの指定値】\n"
-            '- recommendation: "強い買い" | "買い" | "中立" | "売り" | "強い売り"\n'
-            '- sentiment: "強気" | "中立" | "弱気"\n'
-            '- confidence: "高" | "中" | "低"\n'
-            "- target_price_3m: 数値 (例: 150.0)\n"
-            '- upside_3m: 文字列 (例: "+10%")\n'
+            f"{stock_analysis_hints}"
             f"スキーマ定義:\n{json.dumps(schema_dict, ensure_ascii=False)}"
         )
         has_system = False
@@ -737,13 +787,11 @@ def call_openai_chat(
                 # 5. response_format rejected
                 rf_reject_keywords = (
                     "response_format",
+                    "response format",
                     "json_schema",
-                    "schema",
-                    "format",
-                    "extra",
-                    "unrecognized",
-                    "unexpected",
-                    "not supported",
+                    "json_object",
+                    "structured_output",
+                    "structured output",
                 )
                 if (
                     any(kw in resp_text_lower for kw in rf_reject_keywords)
@@ -1013,6 +1061,13 @@ def stream_openai_chat(
     # semaphore is held below — same ordering as call_openai_chat (see the
     # M7 note there).
     base_url = get_openai_base_url()
+    ok_url, url_reason = validate_outbound_base_url(base_url)
+    if not ok_url:
+        logger.warning(
+            "Blocked OpenAI stream call to invalid base_url %r: %s", base_url, url_reason
+        )
+        yield _stream_error_event(f"OpenAI互換APIのベースURLが無効です: {url_reason}", 400)
+        return
     model = _model_override if _model_override else get_openai_model()
     if max_tokens is None:
         token_limit = (
@@ -1375,6 +1430,23 @@ def call_openai_chat_with_tools(
         tool_calls = msg.get("tool_calls")
         if not tool_calls or not isinstance(tool_calls, list):
             # Model gave final direct answer
+            if response_format is not None and iteration < max_tool_iterations - 1:
+                current_messages.append(msg)
+                current_messages.append(
+                    {
+                        "role": "user",
+                        "content": "上記の分析結果を要求されたスキーマ形式のJSONで整形して出力してください。",
+                    }
+                )
+                return call_openai_chat(
+                    api_key,
+                    current_messages,
+                    max_tokens=max_tokens,
+                    use_cache=False,
+                    response_format=response_format,
+                    reasoning_effort=reasoning_effort,
+                    temperature=temperature,
+                )
             return response
 
         logger.info(
@@ -1545,6 +1617,9 @@ def analyze_chart_image_with_openai(
     model: str | None = None,
 ) -> dict[str, Any]:
     """Analyze a chart image using an OpenAI-compatible Vision API (multimodal)."""
+    if not image_data or not isinstance(image_data, str) or not image_data.strip():
+        return {"error": "画像データが不正です。"}
+
     target_model = model or get_openai_model()
 
     clean_img = image_data.strip()
@@ -1592,10 +1667,22 @@ def analyze_chart_image_with_openai(
         _model_override=target_model,
         use_cache=False,
     )
+    if not isinstance(response, dict):
+        return {"error": "チャート画像の分析に失敗しました"}
     if "error" in response:
-        err_msg = response["error"].get("message", "")
+        err_obj = response["error"]
+        if isinstance(err_obj, dict):
+            err_msg = str(err_obj.get("message", ""))
+            err_status = err_obj.get("status_code")
+        else:
+            err_msg = str(err_obj)
+            err_status = None
         # Detect vision unsupported errors from provider
-        if "image" in err_msg.lower() or "multimodal" in err_msg.lower() or "400" in str(response):
+        if (
+            "image" in err_msg.lower()
+            or "multimodal" in err_msg.lower()
+            or err_status == 400
+        ):
             return {
                 "error": (
                     f"選択されたモデル ({target_model}) は画像認識（Vision）に対応していません。"
@@ -1625,12 +1712,21 @@ def get_openai_embeddings_batch(
     if not texts:
         return []
 
+    if is_preview_api_key(api_key):
+        return [None] * len(texts)
+
     if app_state.market.is_circuit_open("openai_compatible"):
         logger.warning("OpenAI-compatible circuit is open. Skipping embeddings call.")
         return [None] * len(texts)
 
     target_model = model or get_openai_embeddings_model()
     base_url = get_openai_base_url()
+    ok_url, url_reason = validate_outbound_base_url(base_url)
+    if not ok_url:
+        logger.warning(
+            "Blocked OpenAI embeddings call to invalid base_url %r: %s", base_url, url_reason
+        )
+        return [None] * len(texts)
     endpoint = f"{base_url}/embeddings"
     headers = _build_openai_headers(api_key)
 
@@ -1646,7 +1742,11 @@ def get_openai_embeddings_batch(
     if not valid_items:
         return results
 
-    effective_batch_size = max(1, batch_size)
+    try:
+        parsed_batch_size = int(batch_size)
+    except (TypeError, ValueError):
+        parsed_batch_size = 32
+    effective_batch_size = max(1, parsed_batch_size)
     for i in range(0, len(valid_items), effective_batch_size):
         chunk = valid_items[i : i + effective_batch_size]
         chunk_texts = [text for _, text in chunk]

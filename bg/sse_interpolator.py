@@ -225,7 +225,7 @@ def bg_interpolate_loop() -> None:
                 owned_idx = app_state.market.current_stocks_cache.get("idx")
                 owned_indices = app_state.market.current_indices_cache
 
-            if any((target_us, target_jp, target_idx)):
+            if any((target_us, target_jp, target_idx, indices_copy)):
                 new_current_stocks = {
                     "us": _interpolate_and_fluctuate_market(target_us, current_us, us_open, "us"),
                     "jp": _interpolate_and_fluctuate_market(target_jp, current_jp, jp_open, "jp"),

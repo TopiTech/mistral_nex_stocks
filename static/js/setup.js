@@ -518,7 +518,7 @@ function togglePasswordVisibility(inputId) {
   );
   const icon = btn.querySelector(".toggle-icon");
   if (icon) {
-    icon.textContent = isPassword ? "\u{1F441}" : "\u{1F576}";
+    icon.textContent = isPassword ? "\u{1F576}" : "\u{1F441}";
   }
 }
 

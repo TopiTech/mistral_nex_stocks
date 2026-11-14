@@ -76,11 +76,11 @@ def test_ai_portfolio_actions_surface_http_and_application_failures():
 def test_escape_uses_drawer_close_paths_that_restore_state():
     utils_source = _read("static/js/utils.js")
     ui_source = _read("static/js/ui.js")
-    main_source = _read("static/js/index_main.js")
 
     assert "closeStockDetailDrawer();" in utils_source
     assert "closeAiDrawer();" in utils_source
-    assert "closeFsChartModal();" in main_source
+    assert "closeFsChartModal();" in utils_source
+    assert "closeTopmostOverlayOnEscape(e);" in utils_source
     assert "function closeFsChartModal()" in ui_source
     # L17 (2026-11-07 review): the drawer restore is filtered to the OWNED
     # element selectors (appendScoped) instead of restoring every tab child
@@ -107,8 +107,11 @@ def test_modal_drawers_manage_initial_focus_without_late_focus_after_close():
 
 
 def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
+    import re
+
     api_source = _read("static/js/api.js")
     client_source = _read("static/js/api_client.ts")
+    normalized_client = re.sub(r"\s+", " ", client_source)
 
     assert "connectionGeneration" in api_source
     assert "ticketAbortController.abort()" in api_source
@@ -119,7 +122,13 @@ def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
     assert "if (!isCurrentConnection()) return;" in api_source
     assert "if (!isCurrentConnection()) return null;" in api_source
     assert "urlProvider?: () => string | null | Promise<string | null>;" in client_source
-    assert "if (this._lastSSEParams !== params) return;" in client_source
+    assert (
+        re.search(
+            r"if\s*\(\s*this\._lastSSEParams !== params\b[^{]*\{\s*return;\s*\}",
+            normalized_client,
+        )
+        is not None
+    )
 
 
 def test_concurrent_csrf_rejections_share_one_token_refresh():
@@ -519,10 +528,19 @@ def test_settings_tabpanels_accessibility_and_hidden_attributes():
 
 def test_eventsource_wrapped_listener_exception_handling():
     """Custom listeners throwing exceptions must not crash EventSource dispatch or leak unhandled errors."""
+    import re
+
     client_source = _read("static/js/api_client.ts")
+    normalized_client = re.sub(r"\s+", " ", client_source)
     assert "wrappedListener: EventListener" in client_source
     assert "try {" in client_source
-    assert '_log.error("Unhandled error in EventSource custom listener:", err);' in client_source
+    assert (
+        re.search(
+            r'_log\.error\(\s*"Unhandled error in EventSource custom listener:",\s*err,?\s*\)',
+            normalized_client,
+        )
+        is not None
+    )
 
     node = shutil.which("node")
     if node is None:

@@ -112,7 +112,11 @@
   /* Backward & Extended Variables Compatibility */
   --node-change: var(--text-muted);
   --border-color: var(--border);
+  --success: var(--color-positive);
   --danger: var(--color-negative);
+  --warning: #ffcc66;
+  --purple: #c28bff;
+  --gold: #ffd86b;
 
   /* Transitions */
   --transition-fast: 0.16s ease;
@@ -422,6 +426,8 @@ body.theme-color-jp {
   --neg-color: var(--color-neg-jp);
   --accent-green: var(--color-pos-jp);
   --accent-red: var(--color-neg-jp);
+  --success: var(--color-pos-jp);
+  --danger: var(--color-neg-jp);
 }
 
 /* =============================================

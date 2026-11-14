@@ -406,8 +406,11 @@ class TestR5HealthSkipBootstrap:
         was_ready = app_state.bootstrap_ready.is_set()
         app_state.bootstrap_ready.set()
         try:
-            with patch.dict(
-                os.environ, {"MNS_SKIP_BOOTSTRAP": "0", "MNS_ALLOW_REMOTE_API": "0"}, clear=False
+            with (
+                patch.dict(
+                    os.environ, {"MNS_SKIP_BOOTSTRAP": "0", "MNS_ALLOW_REMOTE_API": "0"}, clear=False
+                ),
+                patch("app.bootstrap"),
             ):
                 resp = client.get("/api/health")
                 assert resp.status_code == 200

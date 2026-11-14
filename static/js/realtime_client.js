@@ -250,18 +250,29 @@
 
         const cached = this._getElements(symbol);
         cached.ptsElements.forEach((el) => {
+          const wrapper = el.closest(".stock-wrapper");
+          const stockCtx = (wrapper && wrapper.__stockData) || data;
           let txt = "";
           if (data.price != null && typeof data.price === "number") {
             txt =
               typeof window.formatPrice === "function"
-                ? `PTS ${window.formatPrice(data.price, data)}`
+                ? `PTS ${window.formatPrice(data.price, stockCtx)}`
                 : `PTS ${data.price}`;
           } else if (data.price != null) {
             txt = `PTS ${data.price}`;
           }
           if (el.textContent !== txt) el.textContent = txt;
-          el.hidden = !txt;
-          const wrapper = el.closest(".stock-wrapper");
+          if (txt) {
+            el.hidden = false;
+            if (typeof el.removeAttribute === "function") {
+              el.removeAttribute("aria-hidden");
+            }
+          } else {
+            el.hidden = true;
+            if (typeof el.setAttribute === "function") {
+              el.setAttribute("aria-hidden", "true");
+            }
+          }
           if (wrapper && wrapper.__stockData) {
             wrapper.__stockData.pts_price = data.price;
           }

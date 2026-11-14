@@ -148,16 +148,22 @@ async function withBusy(btn, fn, busyText = null) {
 
 
 def test_issue03_popup_js_add_detected_stock_error_handling():
-    """Verify addDetectedStock error handling notifies handleUIError and resets after 2.5s."""
+    """Verify addDetectedStock error handling displays inline card errors and resets after 2.5s."""
     js_content = _read("chrome_extension/popup.js")
 
     assert 'send("addDetectedStock"' in js_content
-    assert "handleUIError(errorMsg);" in js_content
+    assert "setCardError(errorMsg);" in js_content
+    assert 'inlineErrorEl.className = "detector-inline-error";' in js_content
     assert "addBtn.title = errorMsg;" in js_content
     assert 'addBtn.textContent = "失敗";' in js_content
     assert 'addBtn.textContent = "エラー";' in js_content
     assert 'addBtn.textContent = "➕ 追加";' in js_content
     assert "2500" in js_content
+
+    handler_start = js_content.index('send("addDetectedStock"')
+    handler_end = js_content.index("card.appendChild(header);", handler_start)
+    handler_block = js_content[handler_start:handler_end]
+    assert "handleUIError" not in handler_block
 
     # Node.js simulation test
     node_test = r"""
@@ -169,6 +175,25 @@ function handleUIError(err) {
 }
 
 async function simulateAdd(ok, errorMsg, isException = false) {
+  const cardErrors = [];
+  let inlineErrorEl = null;
+  const setCardError = (message) => {
+    if (!message) {
+      if (inlineErrorEl) {
+        inlineErrorEl.textContent = "";
+        inlineErrorEl.hidden = true;
+      }
+      return;
+    }
+    if (!inlineErrorEl) {
+      inlineErrorEl = { className: "detector-inline-error", textContent: "", hidden: false };
+      cardErrors.push(inlineErrorEl);
+    } else {
+      inlineErrorEl.hidden = false;
+    }
+    inlineErrorEl.textContent = message;
+  };
+
   const addBtn = {
     disabled: false,
     textContent: "➕ 追加",
@@ -176,6 +201,7 @@ async function simulateAdd(ok, errorMsg, isException = false) {
     className: "mini-add-btn"
   };
 
+  setCardError("");
   addBtn.disabled = true;
   addBtn.textContent = "追加中...";
 
@@ -183,12 +209,13 @@ async function simulateAdd(ok, errorMsg, isException = false) {
     if (isException) throw new Error("ネットワーク断");
     const response = { ok, error: errorMsg };
     if (response?.ok) {
+      setCardError("");
       addBtn.textContent = "✓ 追加済";
       addBtn.className = "mini-add-btn success";
       addBtn.title = "";
     } else {
       const err = response?.error || "銘柄の追加に失敗しました";
-      handleUIError(err);
+      setCardError(err);
       addBtn.title = err;
       addBtn.textContent = "失敗";
       addBtn.disabled = false;
@@ -199,8 +226,8 @@ async function simulateAdd(ok, errorMsg, isException = false) {
       }, 50);
     }
   } catch (err) {
-    const errText = err?.message || String(err || "エラー");
-    handleUIError(err);
+    const errText = err?.message || String(err || "銘柄の追加中にエラーが発生しました");
+    setCardError(errText);
     addBtn.title = errText;
     addBtn.textContent = "エラー";
     addBtn.disabled = false;
@@ -210,26 +237,33 @@ async function simulateAdd(ok, errorMsg, isException = false) {
       }
     }, 50);
   }
-  return addBtn;
+  return { addBtn, cardErrors };
 }
 
 (async () => {
-  // Test failure branch
-  const btn1 = await simulateAdd(false, "追加上限超過");
-  assert.strictEqual(btn1.textContent, "失敗");
-  assert.strictEqual(btn1.title, "追加上限超過");
-  assert.strictEqual(lastUIError, "追加上限超過");
+  // Test failure branch shows inline card error without clobbering global handleUIError
+  const res1 = await simulateAdd(false, "追加上限超過");
+  assert.strictEqual(res1.addBtn.textContent, "失敗");
+  assert.strictEqual(res1.addBtn.title, "追加上限超過");
+  assert.strictEqual(res1.cardErrors.length, 1);
+  assert.strictEqual(res1.cardErrors[0].className, "detector-inline-error");
+  assert.strictEqual(res1.cardErrors[0].textContent, "追加上限超過");
+  assert.strictEqual(lastUIError, null);
   await new Promise(r => setTimeout(r, 80));
-  assert.strictEqual(btn1.textContent, "➕ 追加");
+  assert.strictEqual(res1.addBtn.textContent, "➕ 追加");
 
-  // Test exception branch
-  const btn2 = await simulateAdd(false, "", true);
-  assert.strictEqual(btn2.textContent, "エラー");
-  assert.strictEqual(btn2.title, "ネットワーク断");
-  assert.strictEqual(lastUIError.message, "ネットワーク断");
+  // Test exception branch shows inline card error without clobbering global handleUIError
+  const res2 = await simulateAdd(false, "", true);
+  assert.strictEqual(res2.addBtn.textContent, "エラー");
+  assert.strictEqual(res2.addBtn.title, "ネットワーク断");
+  assert.strictEqual(res2.cardErrors.length, 1);
+  assert.strictEqual(res2.cardErrors[0].textContent, "ネットワーク断");
+  assert.strictEqual(lastUIError, null);
   await new Promise(r => setTimeout(r, 80));
-  assert.strictEqual(btn2.textContent, "➕ 追加");
+  assert.strictEqual(res2.addBtn.textContent, "➕ 追加");
 
+  // Guard so helper remains unused intentionally
+  assert.strictEqual(typeof handleUIError, "function");
   console.log("ISSUE-03 PASS");
 })();
 """

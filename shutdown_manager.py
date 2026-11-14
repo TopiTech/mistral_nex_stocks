@@ -12,6 +12,8 @@ import threading
 import time
 import uuid
 
+from utils.threading import restrictive_umask_lock
+
 
 def _write_atomic_restricted(path, content: str) -> None:
     """Write *content* to *path* atomically with 0o600 / umask 0o077.
@@ -23,12 +25,13 @@ def _write_atomic_restricted(path, content: str) -> None:
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     old_umask = None
     try:
-        try:
-            old_umask = os.umask(0o077)
-            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        finally:
-            if old_umask is not None:
-                os.umask(old_umask)
+        with restrictive_umask_lock():
+            try:
+                old_umask = os.umask(0o077)
+                fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            finally:
+                if old_umask is not None:
+                    os.umask(old_umask)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
             f.flush()

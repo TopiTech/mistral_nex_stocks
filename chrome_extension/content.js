@@ -4,6 +4,9 @@
 (function () {
   "use strict";
 
+  if (window.__MNS_CONTENT_LOADED__) return;
+  window.__MNS_CONTENT_LOADED__ = true;
+
   // Common English words / stop-words to exclude from 2-5 letter uppercase ticker matches
   const EXCLUDED_WORDS = new Set([
     "A",
@@ -284,6 +287,9 @@
   // Maximum text nodes to scan to prevent freezing the main thread on large DOMs
   const MAX_EXTRACT_TEXT_NODES = 2500;
 
+  const IGNORED_ANCESTOR_SELECTOR =
+    "script,style,noscript,textarea,input,select,option,code,pre,svg";
+
   /**
    * Traverse text nodes in document body while ignoring non-content elements
    */
@@ -295,24 +301,17 @@
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         if (!node || !node.parentElement) return NodeFilter.FILTER_REJECT;
-        const tag = node.parentElement.tagName.toUpperCase();
         if (
-          [
-            "SCRIPT",
-            "STYLE",
-            "NOSCRIPT",
-            "TEXTAREA",
-            "INPUT",
-            "SELECT",
-            "OPTION",
-            "CODE",
-            "PRE",
-            "SVG",
-          ].includes(tag)
+          typeof node.parentElement.closest === "function" &&
+          node.parentElement.closest(IGNORED_ANCESTOR_SELECTOR)
         ) {
           return NodeFilter.FILTER_REJECT;
         }
-        if (node.parentElement.isContentEditable) {
+        if (
+          node.parentElement.isContentEditable ||
+          (typeof node.parentElement.closest === "function" &&
+            node.parentElement.closest('[contenteditable="true"]'))
+        ) {
           return NodeFilter.FILTER_REJECT;
         }
         const val = node.nodeValue ? node.nodeValue.trim() : "";
@@ -341,16 +340,18 @@
    */
   function detectTickers() {
     const textBlocks = extractPageTextSnippets();
-    const foundMap = new Map(); // symbol -> { symbol, market, count, snippet }
+    const foundMap = new Map(); // `${market}:${symbol}` -> { symbol, market, count, score, snippet }
 
-    // Regex 1: Explicit $ symbols (e.g. $AAPL, $TSLA, $7203)
-    const dollarRegex = /\$([A-Z]{1,5}|[1-9]\d{3})\b/g;
+    // Regex 1: Explicit $ symbols (e.g. $AAPL, $TSLA, $BRK.B, $V) — exclude numeric amounts like $1000
+    const dollarRegex =
+      /\$([A-Z]{2,5}\.[A-Z]|[A-Z]{1,5})(?![A-Za-z0-9])(?!\.[A-Za-z])/g;
 
-    // Regex 2: Japanese stock codes (e.g. 7203, 9984, 6758.T)
-    const jpRegex = /\b([1-9]\d{3})(?:\.T)?\b/g;
+    // Regex 2: Japanese stock codes (e.g. 7203, 9984, 6758.T, and TSE alphanumeric like 130A / 130A.T)
+    const jpRegex = /\b([1-9]\d{2}[0-9A-Z])(?:\.T)?\b/g;
 
-    // Regex 3: US stock ticker symbols (2 to 5 uppercase letters)
-    const usRegex = /\b([A-Z]{2,5})\b/g;
+    // Regex 3: US stock ticker symbols (dotted BRK.B, 1-letter known tickers, or 2-5 uppercase letters, excluding $ prefixed / .T suffixes)
+    const usRegex =
+      /(?:^|[^A-Za-z0-9.$])([A-Z]{2,5}\.[A-Z]|[A-Z]{1,5})(?![A-Za-z0-9])(?!\.[A-Za-z])/g;
 
     for (const block of textBlocks) {
       const text = block.text;
@@ -359,12 +360,8 @@
       let match;
       dollarRegex.lastIndex = 0;
       while ((match = dollarRegex.exec(text)) !== null) {
-        const raw = match[1];
-        const isJp = /^\d{4}$/.test(raw);
-        const symbol = isJp ? `${raw}.T` : raw;
-        const market = isJp ? "jp" : "us";
-
-        addMatch(foundMap, symbol, market, text, match.index, 3); // weight 3
+        const symbol = match[1];
+        addMatch(foundMap, symbol, "us", text, match.index, 3); // weight 3
       }
 
       // 2. Check Japanese stock codes
@@ -372,14 +369,14 @@
       while ((match = jpRegex.exec(text)) !== null) {
         const code = match[1];
         const hasTSuffix = match[0].toUpperCase().endsWith(".T");
+        const beforeChar = match.index > 0 ? text[match.index - 1] : "";
         if (!hasTSuffix) {
-          // 素の4桁数字(価格・数量・ID等と同形)は年度窓の内外を問わず
-          // 株式文脈必須にする(FE-ext-8)。年度窓外(例: 1200/5678)が
-          // 無条件採用されると、価格だらけのページからジャンクなJP
-          // ティッカーが検出上位を占めていた。文脈 = 前後20文字の
+          if (beforeChar === "$") {
+            continue; // skip USD currency amounts like $1000
+          }
+          // 素の4文字コード(価格・数量・ID等と同形)は年度窓の内外を問わず
+          // 株式文脈必須にする(FE-ext-8)。文脈 = 前後20文字の
           // 株/コード/東証 等キーワード、または括弧付き表記。
-          // Check surrounding context (approx +/-20 chars) for Japanese stock indicators
-          // or bracket notations like (2002) / （2002） to allow valid tickers (e.g. 2001, 2002).
           const contextStart = Math.max(0, match.index - 20);
           const contextEnd = Math.min(
             text.length,
@@ -387,7 +384,6 @@
           );
           const surrounding = text.slice(contextStart, contextEnd);
 
-          const beforeChar = match.index > 0 ? text[match.index - 1] : "";
           const afterChar =
             match.index + match[0].length < text.length
               ? text[match.index + match[0].length]
@@ -404,11 +400,10 @@
             );
 
           if (!hasStockContext) {
-            continue; // skip bare 4-digit numbers without stock context
+            continue; // skip bare 4-char codes without stock context
           }
         }
 
-        // Check surrounding context for Japanese stock indicators or just numeric stock code
         const symbol = `${code}.T`;
         addMatch(foundMap, symbol, "jp", text, match.index, hasTSuffix ? 3 : 2);
       }
@@ -417,11 +412,13 @@
       usRegex.lastIndex = 0;
       while ((match = usRegex.exec(text)) !== null) {
         const sym = match[1];
+        const symIndex = match.index + (match[0].length - sym.length);
+        if (symIndex > 0 && text[symIndex - 1] === "$") continue;
         const isKnown = KNOWN_US_TICKERS.has(sym);
         if (!isKnown && EXCLUDED_WORDS.has(sym)) continue;
-        if (!isKnown && sym.length < 3) continue; // Skip unknown 2-letter words
+        if (!isKnown && sym.length < 3) continue; // Skip unknown 1-2 letter words
 
-        addMatch(foundMap, sym, "us", text, match.index, isKnown ? 2 : 1);
+        addMatch(foundMap, sym, "us", text, symIndex, isKnown ? 2 : 1);
       }
     }
 
@@ -445,7 +442,8 @@
   }
 
   function addMatch(map, symbol, market, fullText, matchIndex, weight = 1) {
-    const existing = map.get(symbol);
+    const mapKey = `${market}:${symbol}`;
+    const existing = map.get(mapKey);
     const snippetStart = Math.max(0, matchIndex - 25);
     const snippetEnd = Math.min(
       fullText.length,
@@ -460,7 +458,7 @@
         existing.snippet = snippet;
       }
     } else {
-      map.set(symbol, {
+      map.set(mapKey, {
         symbol,
         market,
         count: 1,

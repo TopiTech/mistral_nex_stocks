@@ -31,6 +31,57 @@ class MultiWorkerConfigurationError(RuntimeError):
     """Raised when an execution configuration requests more than one process."""
 
 
+class RemoteApiConfigurationError(RuntimeError):
+    """Raised when remote API mode is enabled with an unsafe configuration."""
+
+
+def _truthy_env(source: Mapping[str, str], name: str) -> bool:
+    raw = (source.get(name) or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def validate_remote_api_configuration(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Enforce fail-closed proxy and admin-token requirements in remote mode.
+
+    Shared by both ``wsgi.py`` (import-time before ``create_app()``) and
+    ``app_factory.boot.bootstrap`` so neither startup path drifts on
+    ``MNS_PROXY_FIX``, ``MNS_ADMIN_TOKEN``, or ``MNS_PROXY_FIX_X_FOR`` rules.
+    """
+    source = os.environ if environ is None else environ
+    if not _truthy_env(source, "MNS_ALLOW_REMOTE_API"):
+        return
+
+    if not _truthy_env(source, "MNS_PROXY_FIX"):
+        raise RemoteApiConfigurationError(
+            "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX=1. "
+            "Refuse to start. Configure MNS_PROXY_FIX=1 or disable remote API access."
+        )
+
+    admin_token = (source.get("MNS_ADMIN_TOKEN") or "").strip()
+    if len(admin_token) < 32:
+        raise RemoteApiConfigurationError(
+            "FATAL: MNS_ALLOW_REMOTE_API requires MNS_ADMIN_TOKEN with at least 32 characters. "
+            "Refuse to start. Configure a strong token or disable remote API access."
+        )
+
+    raw_hops = (source.get("MNS_PROXY_FIX_X_FOR") or "").strip()
+    if raw_hops == "":
+        proxy_hops = 1
+    else:
+        try:
+            proxy_hops = int(raw_hops)
+        except (ValueError, TypeError):
+            proxy_hops = 0
+    if proxy_hops < 1:
+        raise RemoteApiConfigurationError(
+            "FATAL: MNS_ALLOW_REMOTE_API requires MNS_PROXY_FIX_X_FOR >= 1. "
+            "The trusted proxy hop count must be at least 1 when remote mode is enabled."
+        )
+
+
 def worker_validation_enabled(environ: Mapping[str, str] | None = None) -> bool:
     """Return whether the fail-closed single-worker guard is enabled."""
     source = os.environ if environ is None else environ

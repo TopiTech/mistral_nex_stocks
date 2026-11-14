@@ -31,7 +31,7 @@ from services.ai_service import _sanitize_prompt_text, call_mistral_chat, is_mis
 from services.search_service import collect_symbol_research_context
 from utils.normalization import is_bool_like, is_valid_symbol, normalize_symbol_for_market
 from utils.text_utils import wrap_cdata
-from utils.threading import restrictive_umask_lock
+from utils.threading import restrictive_umask_lock, safe_fdopen
 from utils.validators import (
     AiPortfolioResponseSchema,
     extract_json_payload,
@@ -294,20 +294,13 @@ def _write_saved_ai_portfolios(
                 old_umask = os.umask(0o077)
                 try:
                     fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    try:
-                        with os.fdopen(fd, "w", encoding="utf-8") as file_obj:
-                            json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
-                            file_obj.flush()
-                            try:
-                                os.fsync(file_obj.fileno())
-                            except OSError:
-                                pass
-                    except Exception:
+                    with safe_fdopen(fd, "w", encoding="utf-8") as file_obj:
+                        json.dump(envelope, file_obj, ensure_ascii=False, indent=2)
+                        file_obj.flush()
                         try:
-                            os.close(fd)
+                            os.fsync(file_obj.fileno())
                         except OSError:
                             pass
-                        raise
                 finally:
                     if old_umask is not None:
                         os.umask(old_umask)

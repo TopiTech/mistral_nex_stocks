@@ -76,6 +76,7 @@ from services.search_service import (
 )
 from utils.caching import CACHE_FETCHING, get_cached, get_cached_context_with_negative_cache
 from utils.formatting import build_fallback_analysis_result
+from utils.http_utils import parse_retry_after
 from utils.networking import require_trusted_or_admin
 from utils.normalization import normalize_market
 from utils.stock_payload import error_response, get_stock_info_cached, ok_response
@@ -442,6 +443,17 @@ def api_chat():
     already_fetching = False
     with chat_fetch_lock:
         cached = chat_result_cache.get(inflight_key)
+        if (
+            cached is not None
+            and not parsed_chat.stream
+            and isinstance(cached[2], _ChatStreamAbortedError)
+        ):
+            # When an SSE stream aborted and the client falls back to
+            # stream=False with the same request_token, discard the abort
+            # marker so the non-streaming fallback runs cleanly while keeping
+            # _finish_stream's cached abort entry intact for SSE observers.
+            chat_result_cache.pop(inflight_key, None)
+            cached = None
         if cached is None:
             if inflight_key in chat_fetch_inflight:
                 result_holder = chat_fetch_inflight[inflight_key]
@@ -660,6 +672,7 @@ def api_chat():
                     current_app.logger.exception(
                         "Chat background job failed id=%s symbol=%s", req_id, symbol
                     )
+                    _rollback_user_message()
                     result_holder["error"] = exc
                 finally:
                     # Clean up the thread-local SQLite connection BEFORE signalling
@@ -1183,14 +1196,41 @@ def _chat_error_response(
         msg = "チャット処理に失敗しました"
         status_code = 500
 
+    details_payload: dict[str, Any] = {"reason": msg, "error_type": err_type}
+    retry_after_sec: float | None = None
+    if status_code == 429:
+        raw_retry_after: Any = None
+        if isinstance(exc, ProviderAPIError) and isinstance(exc.details, dict):
+            raw_retry_after = exc.details.get("retry_after")
+        if raw_retry_after is not None and not isinstance(raw_retry_after, bool):
+            try:
+                parsed_retry = float(raw_retry_after)
+                if math.isfinite(parsed_retry) and parsed_retry > 0:
+                    retry_after_sec = parsed_retry
+            except (TypeError, ValueError):
+                retry_after_sec = None
+        if retry_after_sec is None:
+            parsed_header_retry = parse_retry_after(exc)
+            if (
+                parsed_header_retry is not None
+                and math.isfinite(parsed_header_retry)
+                and parsed_header_retry > 0
+            ):
+                retry_after_sec = parsed_header_retry
+        if retry_after_sec is not None:
+            details_payload["retry_after"] = retry_after_sec
+
     payload["reply"] = msg
     payload["error"] = msg
     payload["message"] = msg
     payload["code"] = status_code
     payload["request_id"] = req_id
     payload["error_code"] = f"ERR_CHAT_{status_code}"
-    payload["details"] = {"reason": msg, "error_type": err_type}
-    return jsonify(payload), status_code
+    payload["details"] = details_payload
+    resp = jsonify(payload)
+    if status_code == 429 and retry_after_sec is not None:
+        resp.headers["Retry-After"] = str(max(1, math.ceil(retry_after_sec)))
+    return resp, status_code
 
 
 def _is_cacheable_news_bundle(bundle: Any) -> bool:

@@ -334,12 +334,23 @@ class SSEEventLog:
                 entry_seq == seq for entry_seq, _kind, _payload in self._entries.get(mode, ())
             )
 
-    def _gc_idle_modes(self, now: float, ttl_sec: float) -> None:
+    def _gc_idle_modes(
+        self,
+        now: float,
+        ttl_sec: float,
+        exclude_mode: int | str | None = None,
+    ) -> None:
         """Drop deques for modes that have not been written to in *ttl_sec*.
 
         Caller MUST hold ``self._lock``.
         """
-        stale = [m for m, ts in self._last_used.items() if now - ts > ttl_sec]
+        if ttl_sec <= 0:
+            return
+        stale = [
+            m
+            for m, ts in self._last_used.items()
+            if m != exclude_mode and now - ts > ttl_sec
+        ]
         for m in stale:
             self._entries.pop(m, None)
             self._last_used.pop(m, None)
@@ -360,8 +371,9 @@ class SSEEventLog:
 
             # R2: opportunistically evict deques for modes that have been
             # silent for 5 minutes. This prevents an idle mode-1 deque from
-            # leaking forever in a server that only ever uses mode 2.
-            self._gc_idle_modes(_time.time(), ttl_sec=300.0)
+            # leaking forever in a server that only ever uses mode 2, while
+            # never evicting the mode currently being replayed.
+            self._gc_idle_modes(_time.time(), ttl_sec=300.0, exclude_mode=mode)
             if last_id > self._seq:
                 return None
             same_mode = list(self._entries.get(mode, ()))

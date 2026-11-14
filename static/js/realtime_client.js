@@ -269,6 +269,9 @@
      */
     handlePtsDeltas(deltas) {
       if (document.hidden) {
+        // Flush any pre-hide rAF delta batch first so paused animation frames
+        // cannot fire upon tab restore and overwrite newer hidden-tab state.
+        this.flushPendingDeltas();
         // (L14, 2026-11-07 review) rAF callbacks never fire while the tab
         // is hidden: the deltas (and their payload closures) piled up and
         // flushed in one burst on return — and a queued OLDER delta could
@@ -322,6 +325,7 @@
      */
     handleDeltas(deltas) {
       if (document.hidden) {
+        this.flushPendingDeltas();
         // (L14) see handlePtsDeltas.
         this._applyDeltasNow(deltas);
         return;

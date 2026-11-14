@@ -52,7 +52,7 @@ from mistral_compat import (
     mistral_agents,
 )
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
-from utils.text_utils import _token_fingerprint
+from utils.text_utils import _sanitize_error_message, _token_fingerprint
 from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import extract_chat_content, extract_json_payload
 
@@ -1908,6 +1908,14 @@ def call_mistral_chat_with_tools(
                 if isinstance(raw_args, str) and len(raw_args) > max_tool_argument_chars:
                     oversized_call = True
                     break
+                if isinstance(raw_args, dict):
+                    try:
+                        if len(json.dumps(raw_args, ensure_ascii=False)) > max_tool_argument_chars:
+                            oversized_call = True
+                            break
+                    except (TypeError, ValueError, RecursionError):
+                        oversized_call = True
+                        break
         if oversized_call:
             logger.warning("Mistral agent loop rejected an oversized tool call payload")
             return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
@@ -1938,6 +1946,11 @@ def call_mistral_chat_with_tools(
                     if not isinstance(fn_args, (dict, str)):
                         raise TypeError("tool arguments must be an object or JSON string")
                     if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                        raise ValueError("tool arguments are too large")
+                    if (
+                        isinstance(fn_args, dict)
+                        and len(json.dumps(fn_args, ensure_ascii=False)) > max_tool_argument_chars
+                    ):
                         raise ValueError("tool arguments are too large")
                     tool_output = execute_mistral_tool_call(fn_name, fn_args)
                     tool_content = _serialize_tool_result(tool_output)
@@ -2658,9 +2671,17 @@ def stream_mistral_chat(
     # the slot mid-stream — would let burst traffic bypass global pacing).
     sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_stream_semaphore
     with sem_ctx:
-        # M7 (2026-11-07 review): claim the HALF_OPEN probe only after the
-        # stream slot is held (see the note above the semaphore).
         if not _is_fallback:
+            if app_state.market.is_circuit_open("mistral"):
+                logger.warning("Mistral circuit opened while waiting for stream semaphore.")
+                yield {
+                    "type": "error",
+                    "message": "AIサービスは一時的に利用できません（サーキットブレーカー発動中）",
+                    "status_code": 503,
+                }
+                return
+            # M7 (2026-11-07 review): claim the HALF_OPEN probe only after the
+            # stream slot is held (see the note above the semaphore).
             circuit_state = app_state.market.get_circuit_state("mistral")
             if circuit_state.get("status") == "HALF_OPEN":
                 if not app_state.market.try_claim_circuit_probe("mistral"):
@@ -2854,20 +2875,35 @@ def stream_mistral_chat(
                                     yield {"type": "delta", "text": d_text}
                             elif item_type == "error":
                                 err_obj = item.get("exception")
-                                logger.error(
-                                    "Agent SDK stream error type=%s: %s",
-                                    type(err_obj).__name__ if err_obj else "unknown",
-                                    err_obj,
+                                agent_err_status = _exception_status_code(err_obj) or 500
+                                safe_err_text = _sanitize_error_message(
+                                    str(err_obj) if err_obj is not None else "Agent stream error"
                                 )
+                                logger.error(
+                                    "Agent SDK stream error type=%s status=%s: %s",
+                                    type(err_obj).__name__ if err_obj else "unknown",
+                                    agent_err_status,
+                                    safe_err_text,
+                                )
+                                if agent_err_status == 429:
+                                    err_resp = (
+                                        _extract_error_response(err_obj)
+                                        if err_obj is not None
+                                        else None
+                                    )
+                                    app_state.ai.mark_mistral_429(
+                                        _extract_mistral_wait_seconds(err_resp)
+                                    )
                                 _report_agent_stream_failure(err_obj)
                                 # M5b: never surface raw SDK exception text to
                                 # the browser; use the sanitized public message.
                                 yield {
                                     "type": "error",
                                     "message": _public_mistral_error_message(
-                                        err_obj or Exception("Agent stream error"), 500
+                                        err_obj or Exception("Agent stream error"),
+                                        agent_err_status,
                                     ),
-                                    "status_code": 500,
+                                    "status_code": agent_err_status,
                                 }
                                 return
                             elif item_type == "done":
@@ -3014,6 +3050,8 @@ def stream_mistral_chat(
                 if circuit_probe_claimed:
                     app_state.market.release_circuit_probe("mistral")
                     circuit_probe_claimed = False
+                _close_mistral_stream(sdk_stream)
+                sdk_stream = None
                 logger.warning(
                     "Model %s rejected reasoning_effort parameter in stream (status 400, error_type=%s). Auto-retrying without reasoning_effort.",
                     model,
@@ -3042,6 +3080,8 @@ def stream_mistral_chat(
                 if circuit_probe_claimed:
                     app_state.market.release_circuit_probe("mistral")
                     circuit_probe_claimed = False
+                _close_mistral_stream(sdk_stream)
+                sdk_stream = None
                 logger.warning(
                     "Mistral stream tier restriction detected for model %s. Auto-falling back to mistral-small-2603.",
                     model,

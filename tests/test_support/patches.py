@@ -30,13 +30,19 @@ def apply_storage_and_config_patches(temp_path: Path) -> None:
     from utils.disk_cache import StockDiskCache
 
     # Shutdown token files
+    app_state.shutdown_manager.runtime_state_dir = temp_path
     app_state.shutdown_manager.token_file = temp_path / ".mns_shutdown_token"
     app_state.shutdown_manager.used_marker = temp_path / ".mns_shutdown_token.used"
+    app_state.shutdown_manager._legacy_token_file = temp_path / "_legacy" / ".mns_shutdown_token"
+    app_state.shutdown_manager._legacy_used_marker = (
+        temp_path / "_legacy" / ".mns_shutdown_token.used"
+    )
 
     # User stocks file
     import utils.storage
 
     utils.storage.USER_STOCKS_FILE = str(temp_path / "user_stocks.json")
+    utils.storage.LEGACY_USER_STOCKS_FILE = str(temp_path / "_legacy" / "user_stocks.json")
 
     # Config store paths
     import config_store
@@ -44,6 +50,7 @@ def apply_storage_and_config_patches(temp_path: Path) -> None:
     config_store.APP_DATA_DIR = temp_path
     config_store.CONFIG_FILE = temp_path / "config.json"
     config_store.USER_STOCKS_FILE = temp_path / "user_stocks.json"
+    config_store.LEGACY_CONFIG_FILE = temp_path / "_legacy" / "config.json"
 
     # AI portfolio service paths
     try:

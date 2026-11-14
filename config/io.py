@@ -25,7 +25,7 @@ from config.corruption import (
 )
 from config.merge import _merge_configs, _remove_stale_legacy_config
 from config.paths import _ensure_runtime_dir
-from utils.threading import restrictive_umask_lock
+from utils.threading import restrictive_umask_lock, safe_fdopen
 
 logger = logging.getLogger("config_store")
 
@@ -37,6 +37,14 @@ def _config_cache_key() -> tuple[int, int] | Literal["missing"]:
         return (st.st_mtime_ns, st.st_size)
     except OSError:
         return "missing"
+
+
+def _is_same_path(path_a: Any, path_b: Any) -> bool:
+    """Return True when two path objects resolve to the same filesystem target."""
+    try:
+        return path_a.resolve() == path_b.resolve()
+    except OSError:
+        return path_a == path_b
 
 
 def _sync_legacy_preferences_into_runtime(action: str) -> None:
@@ -51,8 +59,12 @@ def _sync_legacy_preferences_into_runtime(action: str) -> None:
     single place that decides what happens to the legacy file.
     """
     with config_store.config_update_lock():
+        if _is_same_path(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE):
+            return
         if not _merge_configs(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE):
             raise RuntimeError(f"legacy config {action} did not complete")
+        if _is_same_path(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE):
+            return
         try:
             config_store.LEGACY_CONFIG_FILE.unlink()
             logger.info(
@@ -83,10 +95,11 @@ def load_config() -> dict[str, Any]:
             if (
                 config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
                 and config_store.LEGACY_CONFIG_FILE.exists()
+                and not _is_same_path(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE)
             ):
                 needs_legacy_sync = True
             else:
-                config_store._LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
+                config_store._LEGACY_MERGE_DONE = True
 
     if needs_legacy_sync:
         # Acquire config_update_lock BEFORE _CONFIG_LOCK (which config_update_lock
@@ -94,9 +107,13 @@ def load_config() -> dict[str, Any]:
         # while coordinating legacy config merge/sync across processes and threads.
         with config_store.config_update_lock():
             if not config_store._LEGACY_MERGE_DONE:
+                sync_done = True
                 if (
                     config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
                     and config_store.LEGACY_CONFIG_FILE.exists()
+                    and not _is_same_path(
+                        config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
+                    )
                 ):
                     if not config_store.CONFIG_FILE.exists():
                         # No runtime config yet: the legacy file is this
@@ -123,6 +140,7 @@ def load_config() -> dict[str, Any]:
                                 _sync_legacy_preferences_into_runtime("sync")
                             except Exception as exc:
                                 logger.warning("Failed to sync legacy config: %s", exc)
+                                sync_done = False
                         else:
                             # The copy failed. Keep the legacy file (still the only
                             # copy of the secrets) so a later start can retry
@@ -131,6 +149,7 @@ def load_config() -> dict[str, Any]:
                                 "Could not migrate legacy config %s; keeping it for a later retry",
                                 config_store.LEGACY_CONFIG_FILE,
                             )
+                            sync_done = False
                     else:
                         try:
                             if (
@@ -144,7 +163,11 @@ def load_config() -> dict[str, Any]:
                                 )
                         except Exception as exc:
                             logger.warning("Failed to sync newer legacy config: %s", exc)
-                config_store._LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
+                            sync_done = False
+                elif config_store.CONFIG_FILE.parent != config_store.APP_DATA_DIR:
+                    sync_done = False
+                if sync_done:
+                    config_store._LEGACY_MERGE_DONE = True
 
     # First-run initialization must be serialized with the cross-process
     # update lock, not only the process-local _CONFIG_LOCK. A credential or
@@ -474,15 +497,8 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                         old_umask = os.umask(0o077)
                         try:
                             fd = os.open(str(backup_tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                            try:
-                                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                                    json.dump(backup_data, f, ensure_ascii=False, indent=2)
-                            except Exception:
-                                try:
-                                    os.close(fd)
-                                except OSError:
-                                    pass
-                                raise
+                            with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                                json.dump(backup_data, f, ensure_ascii=False, indent=2)
                         finally:
                             os.umask(old_umask)
                 backup_file = config_store.CONFIG_FILE.with_suffix(

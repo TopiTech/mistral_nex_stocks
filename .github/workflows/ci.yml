@@ -98,7 +98,7 @@ jobs:
         # own bootstrap/leader-election/background-loop logic (app_factory/,
         # bg/, the entry points and the shutdown manager), not only the
         # pre-facade-extraction modules.
-        run: uv run --locked --group lint pylint --errors-only --disable=import-error app.py app_factory/ bg/ app_bg.py wsgi.py gunicorn.conf.py shutdown_manager.py config/ config_store.py config_utils.py trend_sources.py native_host/native_host.py routes/ services/ utils/ scripts/
+        run: uv run --locked --group lint pylint --errors-only --disable=import-error ai_state.py app.py app_bg.py app_state.py config_store.py config_utils.py constants.py credential_manager.py crypto_utils.py error_codes.py error_handlers.py execution_state.py gunicorn.conf.py logging_config.py market_state.py messaging.py mistral_compat.py route_helpers.py sectors.py security_config.py session_manager.py shutdown_manager.py trend_sources.py wsgi.py app_factory/ bg/ config/ native_host/ routes/ schemas/ services/ utils/
 
   type-check:
     runs-on: ubuntu-latest
@@ -156,12 +156,13 @@ jobs:
               my $f = shift;
               open my $fh, "<", $f or die $!;
               my $c = do { local $/; <$fh> };
-              while ($c =~ /<script\b([^>]*)>/g) {
+              while ($c =~ /<script\b([^>]*)>/gi) {
                 my $attrs = $1;
                 # CI-SRI-1 (2026-11-08 review): the previous patterns required
                 # double quotes, so a single-quoted or unquoted src/integrity
-                # made the gate pass silently. Accept any quoting style.
-                if ($attrs =~ /\bsrc\s*=\s*["']?https:\/\// && $attrs !~ /\bintegrity\s*=\s*["']?sha384-/) {
+                # made the gate pass silently. Accept any quoting style,
+                # protocol-relative/http/https URLs, and sha256/sha384/sha512 SRI hashes.
+                if ($attrs =~ /\bsrc\s*=\s*(?:["']?https:\/\/|["']?http:\/\/|["']?\/\/)/i && $attrs !~ /\bintegrity\s*=\s*(?:["']?sha384-|["']?sha256-|["']?sha512-)/i) {
                   print "MISSING SRI in $f\n";
                   exit 1;
                 }

@@ -1,5 +1,6 @@
 import calendar
 import logging
+import math
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -259,12 +260,29 @@ def _market_state_from_metadata(metadata):
         if isinstance(regular_period, (dict, Mapping)):
             regular_start_raw = regular_period.get("start")
             regular_end_raw = regular_period.get("end")
-            if regular_start_raw is None or regular_end_raw is None:
+            if (
+                regular_start_raw is None
+                or regular_end_raw is None
+                or isinstance(regular_start_raw, bool)
+                or isinstance(regular_end_raw, bool)
+            ):
                 return None
             try:
-                regular_start = float(regular_start_raw)
-                regular_end = float(regular_end_raw)
-            except (TypeError, ValueError):
+                start_val = (
+                    regular_start_raw.timestamp()
+                    if hasattr(regular_start_raw, "timestamp")
+                    else regular_start_raw
+                )
+                end_val = (
+                    regular_end_raw.timestamp()
+                    if hasattr(regular_end_raw, "timestamp")
+                    else regular_end_raw
+                )
+                regular_start = float(start_val)
+                regular_end = float(end_val)
+            except (TypeError, ValueError, OSError):
+                return None
+            if not (math.isfinite(regular_start) and math.isfinite(regular_end)):
                 return None
             now_ts = time.time()
             return "REGULAR" if regular_start <= now_ts < regular_end else "CLOSED"

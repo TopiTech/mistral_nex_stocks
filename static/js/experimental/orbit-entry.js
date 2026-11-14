@@ -624,9 +624,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       // If stock count is low, supplement with /api/heatmap
-      if (rawList.length < 8 && market !== "all") {
+      if (rawList.length < 8) {
         try {
-          const hmUrl = `/api/heatmap?market=${market}`;
+          const hmMarket = market === "all" ? "us" : market;
+          const hmUrl = `/api/heatmap?market=${hmMarket}`;
           const hmInit = { signal: controller.signal };
           const hmRes = window.apiFetch
             ? await window.apiFetch(hmUrl, hmInit, { showToast: false })

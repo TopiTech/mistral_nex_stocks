@@ -212,11 +212,24 @@ def reset_app_state():
             keyring.set_keyring(_mem_keyring)
         yf_session_manager._reset_for_testing()
         config_store._reset_legacy_merge_flag()
+        config_store._CONFIG_CORRUPTED = False
+        try:
+            from app_state import app_state as _app_state
+
+            _sm = getattr(_app_state, "shutdown_manager", None)
+            if _sm is not None:
+                with _sm._lock:
+                    _sm.shutdown_token = None
+                    _sm.shutdown_token_used = False
+        except Exception:
+            pass
         for _f in (
             Path(test_temp_dir.name) / "ai_portfolios.json",
             Path(test_temp_dir.name) / "config.json",
             Path(test_temp_dir.name) / "user_stocks.json",
             Path(test_temp_dir.name) / "native_host_rate_limit.json",
+            Path(test_temp_dir.name) / ".mns_shutdown_token",
+            Path(test_temp_dir.name) / ".mns_shutdown_token.used",
         ):
             try:
                 _f.unlink(missing_ok=True)
@@ -262,12 +275,17 @@ def client():
     """Reusable Flask test client fixture with CSRF disabled for convenience."""
     from app import app
 
+    had_csrf = "WTF_CSRF_ENABLED" in app.config
     orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["WTF_CSRF_ENABLED"] = False
-    with app.test_client() as test_client:
-        yield test_client
-    if orig_csrf is not None:
-        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+    try:
+        with app.test_client() as test_client:
+            yield test_client
+    finally:
+        if had_csrf:
+            app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        else:
+            app.config.pop("WTF_CSRF_ENABLED", None)
 
 
 @pytest.fixture

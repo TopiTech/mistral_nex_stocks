@@ -22,8 +22,9 @@ def _parse_datetime_to_utc(value):
     # 1970s date). Real epoch values in this app's date range have >= 9 digits.
     if text.isdigit() and len(text) >= 9:
         try:
-            return datetime.fromtimestamp(int(text), UTC)
-        except (ValueError, OverflowError):
+            ts_val = int(text) / 1000.0 if len(text) >= 13 else float(text)
+            return datetime.fromtimestamp(ts_val, UTC)
+        except (ValueError, OverflowError, OSError):
             pass
 
     # RFC 2822 / RFC 1123 and other common formats

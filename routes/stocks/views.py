@@ -620,8 +620,13 @@ def api_reset_stocks() -> Any:
         ("jp", previous_jp),
         ("idx", previous_idx),
     ):
+        defaults = _common._default_stock_names(market)
         for symbol in previous:
             _common._sync_realtime_symbol(symbol, market, register=False)
+            if not any(
+                alias in defaults for alias in _stored_symbol_aliases(symbol, market)
+            ):
+                invalidate_stock_caches(symbol)
     try:
         app_state.payload_disk_cache.delete("indices_cache")
     except Exception as exc:

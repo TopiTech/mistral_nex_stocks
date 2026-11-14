@@ -142,7 +142,7 @@ def is_valid_symbol(symbol):
     # Coerce to str first: this validator's contract is "return bool", so a
     # non-string value (e.g. an int from a raw JSON body) must be rejected
     # with False, never raise TypeError.
-    if symbol is None:
+    if symbol is None or is_bool_like(symbol):
         return False
     symbol_raw = str(symbol)
     symbol_normalized = unicodedata.normalize("NFKC", symbol_raw).upper()

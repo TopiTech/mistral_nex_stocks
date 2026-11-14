@@ -412,7 +412,7 @@ def resolve_model_target(arg: str):
     Returns:
         {"name": "...", "badge": "..."} または None
     """
-    if not arg:
+    if not isinstance(arg, str) or not arg.strip():
         return None
     raw = arg.strip()
     if raw in MISTRAL_MODELS:

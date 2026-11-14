@@ -1,16 +1,22 @@
 param([ValidateSet('Chrome','Edge','Both')][string]$Browser = 'Both',[ValidateSet('CurrentUser','LocalMachine')][string]$Scope = 'CurrentUser',[string]$HostName = 'com.mistral_nex_stocks.host')
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 function Open-RegistryRoot { param([string]$InstallScope) if ($InstallScope -eq 'LocalMachine') { return [Microsoft.Win32.Registry]::LocalMachine } return [Microsoft.Win32.Registry]::CurrentUser }
 function Get-SubKeys { param([string]$BrowserName,[string]$Name) $keys=@(); if ($BrowserName -in @('Chrome','Both')) { $keys += 'SOFTWARE\Google\Chrome\NativeMessagingHosts\' + $Name }; if ($BrowserName -in @('Edge','Both')) { $keys += 'SOFTWARE\Microsoft\Edge\NativeMessagingHosts\' + $Name }; return $keys }
 $root = Open-RegistryRoot -InstallScope $Scope
 foreach ($subKey in (Get-SubKeys -BrowserName $Browser -Name $HostName)) {
   Write-Host "===== $Scope\$subKey =====" -ForegroundColor Cyan
-  $key = $root.OpenSubKey($subKey)
-  if (-not $key) { Write-Host 'Registry key: MISSING' -ForegroundColor Yellow; continue }
-  $manifestPath = $key.GetValue('', $null)
-  Write-Host "Manifest path : $manifestPath"
-  if (-not $manifestPath -or -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { Write-Host 'Manifest file : MISSING' -ForegroundColor Yellow; continue }
-  $raw = Get-Content -LiteralPath $manifestPath -Raw
+  $key = $null
+  try {
+    $key = $root.OpenSubKey($subKey)
+    if (-not $key) { Write-Host 'Registry key: MISSING' -ForegroundColor Yellow; continue }
+    $manifestPath = $key.GetValue('', $null)
+    Write-Host "Manifest path : $manifestPath"
+    if (-not $manifestPath -or -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { Write-Host 'Manifest file : MISSING' -ForegroundColor Yellow; continue }
+    $raw = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8
+  } finally {
+    if ($null -ne $key) { $key.Close() }
+  }
   try {
     $manifest = $raw | ConvertFrom-Json
     Write-Host "Name          : $($manifest.name)"

@@ -72,7 +72,12 @@ def get_openai_base_url() -> str:
 
 def is_local_openai_base_url(url: str | None = None) -> bool:
     """True if configured or given OpenAI-compatible base URL points to localhost/127.0.0.1/0.0.0.0."""
-    target = url if (isinstance(url, str) and url.strip()) else get_openai_base_url()
+    if url is None:
+        target = get_openai_base_url()
+    elif isinstance(url, str):
+        target = url.strip()
+    else:
+        return False
     if not target or not isinstance(target, str):
         return False
     clean_target = target.strip()
@@ -245,7 +250,7 @@ def has_alphavantage_api_key():
     return bool(get_alphavantage_api_key())
 
 
-_KEY_INSPECTION_FAILED = object()
+_KEY_INSPECTION_FAILED = crypto_utils._KEY_INSPECTION_FAILED
 
 
 def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
@@ -254,25 +259,14 @@ def _restore_secret_storage(previous_keyring_values, previous_ephemeral_values):
     Deliberately logs only the exception type name, never exception text: keyring
     backends may include the secret value in exception messages.
     """
-    if _keyring_available():
-        kr = _keyring()
-        if kr is not None:
-            for key_name, previous in previous_keyring_values.items():
-                try:
-                    if previous is _KEY_INSPECTION_FAILED:
-                        # Keyring inspection failed earlier; do not delete or overwrite.
-                        continue
-                    if previous is None:
-                        kr.delete_password(KEYRING_SERVICE_NAME, key_name)
-                    else:
-                        kr.set_password(KEYRING_SERVICE_NAME, key_name, previous)
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.error(
-                        "Failed to roll back credential %s: %s", key_name, type(exc).__name__
-                    )
-    with crypto_utils._EPHEMERAL_LOCK:
-        crypto_utils._EPHEMERAL_CREDENTIALS.clear()
-        crypto_utils._EPHEMERAL_CREDENTIALS.update(previous_ephemeral_values)
+    crypto_utils.restore_secret_storage(
+        previous_keyring_values,
+        previous_ephemeral_values,
+        keyring_available=_keyring_available(),
+        keyring_module=_keyring(),
+        service_name=KEYRING_SERVICE_NAME,
+        log=logger,
+    )
 
 
 def _require_string_setting(value: object, field_name: str) -> str:
@@ -331,26 +325,13 @@ def save_api_credentials(
         if value is not None and str(value).strip()
     }
     with config_store.config_update_lock():
-        previous_keyring_values = {}
-        if _keyring_available():
-            kr = _keyring()
-            if kr is not None:
-                for key_name in requested:
-                    try:
-                        previous_keyring_values[key_name] = kr.get_password(
-                            KEYRING_SERVICE_NAME, key_name
-                        )
-                    except Exception as exc:  # pylint: disable=broad-exception-caught
-                        # Log only the exception type: keyring backends may include
-                        # the secret value in exception messages.
-                        logger.debug(
-                            "Failed inspecting existing keyring state for %s (will rely on fallback): %s",
-                            key_name,
-                            type(exc).__name__,
-                        )
-                        previous_keyring_values[key_name] = _KEY_INSPECTION_FAILED
-        with crypto_utils._EPHEMERAL_LOCK:
-            previous_ephemeral_values = dict(crypto_utils._EPHEMERAL_CREDENTIALS)
+        previous_keyring_values, previous_ephemeral_values = crypto_utils.snapshot_secret_storage(
+            requested,
+            keyring_available=_keyring_available(),
+            keyring_module=_keyring(),
+            service_name=KEYRING_SERVICE_NAME,
+            log=logger,
+        )
         try:
             cfg = config_store.load_config()
             credentials = {
@@ -723,6 +704,19 @@ def set_custom_ai_prompt(prompt: str):
         config_store.save_config(cfg)
 
 
+def _resolve_valid_flask_secret(cfg: Any, master_key: str) -> str | None:
+    if not isinstance(cfg, dict):
+        return None
+    secret_entry = cfg.get("flask_secret_key")
+    if secret_entry:
+        secret = crypto_utils.unprotect_data(
+            secret_entry, "flask_secret_key", master_key=master_key
+        )
+        if secret and len(secret) >= 32:
+            return secret
+    return None
+
+
 def get_or_create_flask_secret_key() -> str:
     """
     Flaskのシークレットキーを取得、または生成して安全に保存する。
@@ -733,15 +727,19 @@ def get_or_create_flask_secret_key() -> str:
     # them can block this process indefinitely. Acquiring the master key first
     # also gives every caller the same lock ordering.
     master_key = config_store.get_or_create_master_key()
+    cached_secret = _resolve_valid_flask_secret(config_store.load_config(), master_key)
+    if cached_secret is not None:
+        return cached_secret
+
     with config_store.config_update_lock():
         cfg = config_store.load_config()
-        secret_entry = cfg.get("flask_secret_key")
-        if secret_entry:
-            secret = crypto_utils.unprotect_data(
-                secret_entry, "flask_secret_key", master_key=master_key
+        if config_store.is_config_corrupted():
+            raise RuntimeError(
+                "Refusing to generate flask_secret_key while configuration is corrupted."
             )
-            if secret and len(secret) >= 32:
-                return secret
+        secret = _resolve_valid_flask_secret(cfg, master_key)
+        if secret is not None:
+            return secret
 
         from utils.env_helpers import _is_production_env
 
@@ -762,6 +760,39 @@ def get_or_create_flask_secret_key() -> str:
         return new_secret
 
 
+def _resolve_valid_extension_token(cfg: Any, master_key: str) -> tuple[str | None, bool]:
+    """Decode an existing extension token and return ``(secret, needs_timestamp_backfill)``."""
+    if not isinstance(cfg, dict):
+        return None, False
+    secret_entry = cfg.get("extension_api_token")
+    if not secret_entry:
+        return None, False
+    secret = crypto_utils.unprotect_data(
+        secret_entry, "extension_api_token", master_key=master_key
+    )
+    if not secret or len(secret) < 32:
+        return None, False
+
+    from utils.env_helpers import _env_float
+
+    max_age_days = _env_float("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", 90.0, min_value=0.0)
+    max_age_sec = max_age_days * 86400.0
+    created_ts = cfg.get("extension_api_token_created", 0.0)
+    created_ts_f: float = 0.0
+    if isinstance(created_ts, (int, float, str)) and not isinstance(created_ts, bool):
+        try:
+            created_ts_f = float(created_ts) if created_ts else 0.0
+        except (ValueError, TypeError, OverflowError):
+            created_ts_f = 0.0
+    if not math.isfinite(created_ts_f) or created_ts_f <= 0:
+        # json.load accepts NaN/Infinity literals, so a corrupted config can persist
+        # a non-finite timestamp. Normalize to 0.0 so the caller backfills.
+        created_ts_f = 0.0
+    if max_age_sec > 0 and created_ts_f > 0 and (time.time() - created_ts_f) > max_age_sec:
+        return None, False
+    return secret, not created_ts_f
+
+
 def get_or_create_extension_api_token() -> str:
     """
     ブラウザ拡張機能からのAPIアクセス用トークンを取得または生成する。
@@ -775,48 +806,20 @@ def get_or_create_extension_api_token() -> str:
     # See get_or_create_flask_secret_key(): master-key initialization must
     # precede the generic config transaction to avoid a POSIX flock self-wait.
     master_key = config_store.get_or_create_master_key()
+    fast_secret, fast_needs_backfill = _resolve_valid_extension_token(
+        config_store.load_config(), master_key
+    )
+    if fast_secret is not None and not fast_needs_backfill:
+        return fast_secret
+
     with config_store.config_update_lock():
         cfg = config_store.load_config()
-        secret_entry = cfg.get("extension_api_token")
-        created_ts = cfg.get("extension_api_token_created", 0.0)
-        created_ts_f: float = 0.0
-        rotated = False
-        secret: str | None = None
-
-        if secret_entry:
-            secret = crypto_utils.unprotect_data(
-                secret_entry, "extension_api_token", master_key=master_key
+        if config_store.is_config_corrupted():
+            raise RuntimeError(
+                "Refusing to rotate or backfill extension_api_token while configuration is corrupted."
             )
-            if secret and len(secret) >= 32:
-                from utils.env_helpers import _env_float
-
-                max_age_days = _env_float("MNS_EXTENSION_TOKEN_MAX_AGE_DAYS", 90.0, min_value=0.0)
-                max_age_sec = max_age_days * 86400.0
-                created_ts_f = 0.0
-                if isinstance(created_ts, (int, float, str)) and not isinstance(created_ts, bool):
-                    try:
-                        created_ts_f = float(created_ts) if created_ts else 0.0
-                    except (ValueError, TypeError, OverflowError):
-                        created_ts_f = 0.0
-                if not math.isfinite(created_ts_f) or created_ts_f <= 0:
-                    # json.load accepts NaN/Infinity literals, so a corrupted
-                    # config can persist a non-finite timestamp. NaN and
-                    # negative values defeat BOTH consumers of this value:
-                    # `created_ts_f > 0` is False (rotation never triggers)
-                    # while `not created_ts_f` is also False (the self-heal
-                    # backfill never triggers), so a leaked token would never
-                    # rotate and never recover. Normalize non-positive values
-                    # to 0.0 so the backfill below heals the entry.
-                    created_ts_f = 0.0
-                if (
-                    max_age_sec > 0
-                    and created_ts_f > 0
-                    and (time.time() - created_ts_f) > max_age_sec
-                ):
-                    # Token expired by age -> rotate to a new value.
-                    secret = None
-
-        if not secret_entry or not secret or len(secret) < 32:
+        secret, needs_backfill = _resolve_valid_extension_token(cfg, master_key)
+        if secret is None:
             secret = secrets.token_urlsafe(32)
             protected_entry = crypto_utils.protect_data(
                 secret, "extension_api_token", master_key=master_key
@@ -824,15 +827,9 @@ def get_or_create_extension_api_token() -> str:
             cfg["extension_api_token"] = protected_entry
             cfg["extension_api_token_created"] = time.time()
             config_store.save_config(cfg)
-            rotated = True
+            return secret
 
-        if not rotated and not created_ts_f:
-            # Backfill creation timestamp for a pre-existing token (no rotation).
-            # Use the PARSED value: a truthy-but-non-numeric raw entry would
-            # otherwise skip the backfill forever, permanently disabling the
-            # age-based rotation (the rotation condition requires
-            # created_ts_f > 0). Backfilling on the parsed value self-heals
-            # the corrupted entry on the next call.
+        if needs_backfill:
             cfg["extension_api_token_created"] = time.time()
             config_store.save_config(cfg)
 

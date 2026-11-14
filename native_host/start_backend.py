@@ -142,10 +142,13 @@ def get_backend_port() -> int:
 def is_port_in_use(port: int) -> bool:
     """指定ポートが使用中か確認"""
     for host in ("127.0.0.1", "localhost"):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.5)
-            if s.connect_ex((host, port)) == 0:
-                return True
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex((host, port)) == 0:
+                    return True
+        except OSError:
+            continue
     return False
 
 
@@ -376,7 +379,13 @@ def _start(extension_id=None):
                         }
             # 実行中でない場合は古いPIDファイルを削除
             pid_source.unlink(missing_ok=True)
-        except (OSError, ValueError):
+        except ValueError:
+            logger.warning("Corrupt PID file %s; removing", pid_source, exc_info=True)
+            try:
+                pid_source.unlink(missing_ok=True)
+            except OSError:
+                pass
+        except OSError:
             logger.warning("Failed to read/cleanup stale pid file: %s", pid_source, exc_info=True)
 
     if port_in_use:
@@ -462,6 +471,7 @@ def _start(extension_id=None):
     # "starting" immediately and let the caller poll. We only do a very short health
     # probe so an instantly-healthy backend still reports ok without extra round trips.
     if wait_for_backend_ready(timeout_sec=2.0):
+        proc.returncode = 0
         return {
             "ok": True,
             "message": f"Backend started (pid={proc.pid})",
@@ -470,6 +480,7 @@ def _start(extension_id=None):
         }
 
     if is_running(proc.pid):
+        proc.returncode = 0
         return {
             "ok": True,
             "message": (

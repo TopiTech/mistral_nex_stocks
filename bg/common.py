@@ -220,8 +220,11 @@ def _raw_announce_current_market_state() -> None:
             # the unit cannot be misread as a serialized-size measure.  The
             # publish decision is therefore "is at least one row present?".
             changed_entry_count = sum(len(rows) for rows in diff.values())
+            status_changed = (
+                yf_limited != cached_yf or us_open != cached_us or jp_open != cached_jp
+            )
             stock_diff = {market: diff[market] for market in ("us", "jp", "idx")}
-            if changed_entry_count > 0:
+            if changed_entry_count > 0 or status_changed:
                 payload = json.dumps(
                     {
                         "stream_event": "diff",

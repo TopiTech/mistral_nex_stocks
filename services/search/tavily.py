@@ -41,6 +41,42 @@ def _report_tavily_circuit(success: bool) -> None:
         pass
 
 
+def _is_tavily_circuit_half_open() -> bool:
+    try:
+        from app_state import app_state
+
+        market = getattr(app_state, "market", None)
+        if market is not None and hasattr(market, "get_circuit_state"):
+            state = market.get_circuit_state(_TAVILY_CIRCUIT_NAME)
+            return isinstance(state, dict) and state.get("status") == "HALF_OPEN"
+    except Exception:
+        pass
+    return False
+
+
+def _try_claim_tavily_probe() -> bool:
+    try:
+        from app_state import app_state
+
+        market = getattr(app_state, "market", None)
+        if market is not None and hasattr(market, "try_claim_circuit_probe"):
+            return bool(market.try_claim_circuit_probe(_TAVILY_CIRCUIT_NAME))
+    except Exception:
+        pass
+    return True
+
+
+def _release_tavily_probe() -> None:
+    try:
+        from app_state import app_state
+
+        market = getattr(app_state, "market", None)
+        if market is not None and hasattr(market, "release_circuit_probe"):
+            market.release_circuit_probe(_TAVILY_CIRCUIT_NAME)
+    except Exception:
+        pass
+
+
 def _extract_tavily_status_code(exc: BaseException | None) -> int | None:
     if exc is None:
         return None
@@ -167,6 +203,13 @@ def tavily_search(
         logger.info("Tavily circuit is open; skipping search request")
         return []
 
+    circuit_probe_claimed = False
+    if _is_tavily_circuit_half_open():
+        if not _try_claim_tavily_probe():
+            logger.info("Tavily circuit recovery probe already in progress; skipping search request")
+            return []
+        circuit_probe_claimed = True
+
     time_range_map = {
         "d": "day",
         "w": "week",
@@ -193,6 +236,7 @@ def tavily_search(
 
         response = _tavily_client_search(client, kwargs)
         _report_tavily_circuit(True)
+        circuit_probe_claimed = False
         results = response.get("results", []) if isinstance(response, dict) else []
         return results if isinstance(results, list) else []
     except ImportError as exc:
@@ -204,6 +248,7 @@ def tavily_search(
         error_type, status = _external_error_metadata(exc)
         if _is_tavily_circuit_failure(exc):
             _report_tavily_circuit(False)
+            circuit_probe_claimed = False
         logger.warning(
             "Tavily search failed query_length=%s error_type=%s status=%s",
             len(normalized_query),
@@ -213,6 +258,9 @@ def tavily_search(
         if isinstance(errors_out, list):
             errors_out.append(exc)
         return []
+    finally:
+        if circuit_probe_claimed:
+            _release_tavily_probe()
 
 
 def _format_tavily_items(items):

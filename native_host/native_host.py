@@ -351,9 +351,9 @@ def _sliding_window_allow(bucket: str, timestamps: list, max_events: int, window
     several short-lived host processes is still counted once.
     """
     global _rate_limit_ledger_disabled
-    now = time.time()
-    cutoff = now - window
     with _rate_limit_lock:
+        now = time.time()
+        cutoff = now - window
         timestamps[:] = [t for t in timestamps if cutoff < t <= now + 1.0]
         merged = list(timestamps)
         fd = -1
@@ -373,6 +373,10 @@ def _sliding_window_allow(bucket: str, timestamps: list, max_events: int, window
         if fd >= 0:
             locked = _ledger_lock(fd)
             if locked:
+                now = time.time()
+                cutoff = now - window
+                timestamps[:] = [t for t in timestamps if cutoff < t <= now + 1.0]
+                merged = list(timestamps)
                 try:
                     payload = _ledger_read(fd)
                 except OSError:
@@ -626,19 +630,42 @@ def _get_posix_ancestor_process_names(
                     break
             if ppid is None or ppid <= 1 or ppid == curr_pid:
                 break
-            cmdline_file = proc_path / str(ppid) / "cmdline"
-            if cmdline_file.exists():
-                try:
-                    raw_bytes = cmdline_file.read_bytes()
-                    raw = raw_bytes.split(b"\x00")[0] if raw_bytes else b""
-                    name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
-                    if name:
-                        ancestors.append(name)
-                except Exception as cmd_exc:
-                    logger.debug("Failed reading cmdline for ppid %d: %s", ppid, cmd_exc)
+            resolved_name = ""
+            exe_link = proc_path / str(ppid) / "exe"
+            try:
+                target = os.readlink(exe_link)
+                target = target.removesuffix(" (deleted)")
+                resolved_name = Path(target).name.lower()
+            except OSError:
+                resolved_name = ""
+            if resolved_name:
+                ancestors.append(resolved_name)
+            else:
+                cmdline_file = proc_path / str(ppid) / "cmdline"
+                if cmdline_file.exists():
+                    try:
+                        raw_bytes = cmdline_file.read_bytes()
+                        raw = raw_bytes.split(b"\x00")[0] if raw_bytes else b""
+                        name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
+                        if name:
+                            ancestors.append(name)
+                    except Exception as cmd_exc:
+                        logger.debug("Failed reading cmdline for ppid %d: %s", ppid, cmd_exc)
             curr_pid = ppid
     except Exception as exc:
         logger.debug("Process tree lookup failed on POSIX: %s", exc)
+
+    if not ancestors and Path(proc_dir) == Path("/proc") and not Path(proc_dir).is_dir() and start_pid is None:
+        try:
+            psutil_mod = importlib.import_module("psutil")
+            for parent in psutil_mod.Process(os.getpid()).parents():
+                if len(ancestors) >= max_depth:
+                    break
+                name = str(parent.name() or "").strip().lower()
+                if name:
+                    ancestors.append(name)
+        except Exception as psutil_exc:
+            logger.debug("psutil ancestor fallback failed: %s", psutil_exc)
 
     return ancestors
 
@@ -908,9 +935,9 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
             return None
 
         subjects: list[str] = []
+        p_cert = None
         try:
             CERT_NAME_SIMPLE_DISPLAY_TYPE = 4
-            p_cert = None
             while True:
                 p_cert = crypt32.CertEnumCertificatesInStore(h_store, p_cert)
                 if not p_cert:
@@ -935,6 +962,8 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
                     )
                     subjects.append(buf.value)
         finally:
+            if p_cert:
+                crypt32.CertFreeCertificateContext(p_cert)
             crypt32.CertCloseStore(h_store, 0)
             if h_msg:
                 crypt32.CryptMsgClose(h_msg)
@@ -1773,6 +1802,8 @@ def main():
                     try:
                         fallback_port = int(os.environ.get("MNS_BACKEND_PORT", "5000") or "5000")
                     except ValueError:
+                        fallback_port = 5000
+                    if not (1 <= fallback_port <= 65535):
                         fallback_port = 5000
                     send_message({"ok": True, "port": fallback_port})
             elif action == "get_extension_api_token":

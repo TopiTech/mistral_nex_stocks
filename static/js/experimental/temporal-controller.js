@@ -500,8 +500,16 @@
     applyHistoricalData(symbol, period, history) {
       if (!this.isCurrentHistoryContext(symbol, period)) return;
       if (!history || !history.length) {
+        if (this.state && this.state.data) {
+          this.state.data.activeHistory = [];
+        }
         this.updateTimelineUI(this.state.state, false);
         return;
+      }
+
+      if (this.state && this.state.data) {
+        this.state.data.activeHistory = history;
+        this.state.data.historyMap?.set(`${symbol}:${period}`, history);
       }
 
       const maxIdx = history.length - 1;

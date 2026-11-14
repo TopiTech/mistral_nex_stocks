@@ -82,13 +82,21 @@ let currentBackendBase = fallbackBackendBase();
 // backendPort の storage.local 水和が完了するのを待つ共有 Promise。
 // ポップアップ起動直後のクリックで古い既定ポートへ遷移しないようにする(FE-ext-10)。
 const backendPortHydrated = new Promise((resolve) => {
-  chrome.storage.local.get(["backendPort"], (items) => {
-    if (items.backendPort) {
-      backendPort = normalizeBackendPort(items.backendPort);
-      currentBackendBase = fallbackBackendBase();
-    }
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    chrome.storage.local.get(["backendPort"], (items) => {
+      try {
+        if (chrome.runtime?.lastError) return;
+        if (items && items.backendPort) {
+          backendPort = normalizeBackendPort(items.backendPort);
+          currentBackendBase = fallbackBackendBase();
+        }
+      } finally {
+        resolve();
+      }
+    });
+  } else {
     resolve();
-  });
+  }
 });
 
 async function send(action, payload) {
@@ -562,6 +570,10 @@ function buildDiagnostics(ctx) {
 async function refresh() {
   const ctx = await send("getContext");
   if (!ctx?.ok) throw new Error(ctx?.error || "状態取得に失敗しました");
+  if (ctx.backendPort) {
+    backendPort = normalizeBackendPort(ctx.backendPort);
+    currentBackendBase = fallbackBackendBase();
+  }
   setSafeText(browserPill, ctx.browserName);
   setHealth(ctx.health);
   setSafeText(diagBox, buildDiagnostics(ctx));

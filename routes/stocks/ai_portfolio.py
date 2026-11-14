@@ -20,7 +20,7 @@ from cachetools import TTLCache
 from flask import Blueprint, current_app, g, request, session
 
 from app_state import app_state
-from constants import DEFAULT_USDJPY_RATE, PORTFOLIO_SHARES_MAX
+from constants import DEFAULT_USDJPY_RATE, MAX_STOCK_NAME_LENGTH, PORTFOLIO_SHARES_MAX
 from error_codes import ErrorCode
 from route_helpers import (
     _parse_ai_copy_to_my_request,
@@ -49,6 +49,7 @@ from services.ai_portfolio_service import (
     DEFAULT_PRESET_CONFIGS,
     VIRTUAL_INITIAL_CAPITAL_JPY,
     PortfolioStorageError,
+    _strip_html_tags,
     delete_custom_ai_portfolio,
     generate_ai_portfolio_by_theme,
     load_saved_ai_portfolios,
@@ -56,8 +57,9 @@ from services.ai_portfolio_service import (
     save_custom_ai_portfolio,
 )
 from services.ai_service import ProviderAPIError
-from utils.normalization import is_bool_like
+from utils.normalization import is_bool_like, normalize_symbol_for_market
 from utils.stock_payload import (
+    _default_stock_names,
     _get_stock_container,
     error_response,
     get_current_usdjpy_rate,
@@ -78,6 +80,15 @@ class FetchJob(TypedDict, total=False):
     step: str
     start_time: float
     message: str
+
+
+def _clean_copy_stock_name(raw_name: Any, *, max_len: int = 100) -> str:
+    """Sanitize an optional caller-supplied stock display name."""
+    if not isinstance(raw_name, str):
+        return ""
+    cleaned = _strip_html_tags(raw_name)
+    cleaned = "".join(ch for ch in cleaned if ord(ch) >= 32 and ord(ch) != 127)
+    return cleaned.strip()[: min(max_len, MAX_STOCK_NAME_LENGTH)]
 
 
 def _safe_provider_error_details(details: Any) -> dict[str, Any]:
@@ -799,6 +810,20 @@ def api_copy_ai_portfolio_to_my() -> Any:
             status_code=400,
         )
 
+    custom_names: dict[tuple[str, str], str] = {}
+    raw_items = data.get("items")
+    if isinstance(raw_items, list):
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            item_market = str(raw_item.get("market") or "us").strip().lower()
+            if item_market not in ("us", "jp"):
+                continue
+            item_symbol = normalize_symbol_for_market(raw_item.get("symbol"), item_market)
+            cleaned_name = _clean_copy_stock_name(raw_item.get("name"), max_len=100)
+            if item_symbol and cleaned_name:
+                custom_names[(item_symbol, item_market)] = cleaned_name
+
     parsed_items: list[tuple[str, str, float, float]] = []
     raw_validated_items: list[tuple[str, str, float, float]] = parsed_copy
     total_weight_pct = sum(weight for _, _, _, weight in raw_validated_items)
@@ -900,13 +925,18 @@ def api_copy_ai_portfolio_to_my() -> Any:
     # API-7: remember the exact holding dicts this request wrote so the
     # rollback below can be conditional on the write still being ours.
     written_entries: list[tuple[str, str, dict[str, Any]]] = []
+    default_names_by_market = {mkt: _default_stock_names(mkt) for mkt in ("us", "jp")}
     with app_state.market.user_stocks_lock:
         new_by_market: dict[str, int] = {}
         for symbol, market, _target, _shares in parsed_items:
             capacity_container = _get_stock_container(market)
             if capacity_container is None:
                 continue
-            if any(alias in capacity_container for alias in _stored_symbol_aliases(symbol, market)):
+            aliases = _stored_symbol_aliases(symbol, market)
+            if any(alias in capacity_container for alias in aliases):
+                continue
+            defaults = default_names_by_market.get(market, {})
+            if any(alias in defaults for alias in aliases):
                 continue
             new_by_market[market] = new_by_market.get(market, 0) + 1
         for market, new_count in new_by_market.items():
@@ -920,8 +950,13 @@ def api_copy_ai_portfolio_to_my() -> Any:
             if any(alias in container for alias in _stored_symbol_aliases(symbol, market)):
                 skipped_symbols.append(f"{symbol} ({market})")
                 continue
+            resolved_name = (
+                default_names_by_market.get(market, {}).get(symbol)
+                or custom_names.get((symbol, market))
+                or _stock_display_name(symbol, market)
+            )
             holding_entry: dict[str, Any] = {
-                "name": _stock_display_name(symbol, market),
+                "name": resolved_name,
                 "shares": shares,
                 "avg_price": target_price,
             }
@@ -958,9 +993,14 @@ def api_copy_ai_portfolio_to_my() -> Any:
     if added_symbols:
         for sym, mkt, target_price, shares, fx_rate in added_symbols:
             invalidate_stock_caches(sym)
+            resolved_name = (
+                default_names_by_market.get(mkt, {}).get(sym)
+                or custom_names.get((sym, mkt))
+                or _stock_display_name(sym, mkt)
+            )
             ensure_stock_placeholder_in_caches(
                 sym,
-                _stock_display_name(sym, mkt),
+                resolved_name,
                 mkt,
                 shares=shares,
                 avg_price=target_price,

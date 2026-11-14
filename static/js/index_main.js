@@ -875,12 +875,14 @@ function openPortfolioModal(stockKey) {
               shares: sharesParsed.value,
               avg_price: avgPriceParsed.value,
             };
-            const isNonUsMarket =
-              market === "JP" ||
-              market === "jp" ||
-              market === "idx" ||
-              market === "IDX";
-            if (!isNonUsMarket && fxRateParsed.value !== null) {
+            const isUsdHolding =
+              stock.currency === "USD" ||
+              (!stock.currency && (market === "us" || market === "US"));
+            if (
+              isUsdHolding &&
+              fxRateParsed.value !== null &&
+              fxRateParsed.value > 0
+            ) {
               updated.avg_fx_rate = fxRateParsed.value;
             } else {
               delete updated.avg_fx_rate;
@@ -888,6 +890,9 @@ function openPortfolioModal(stockKey) {
             // Keep the O(1) lookup index pointing at the replacement object;
             // a bare list[idx] assignment leaves getStockByKey() stale.
             state.replaceStock(market, stock.symbol, updated);
+            if (typeof renderStocks === "function") {
+              renderStocks();
+            }
           }
         }
         // Force refresh data

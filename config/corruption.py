@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import config_store
-from utils.threading import restrictive_umask_lock
+from utils.threading import restrictive_umask_lock, safe_fdopen
 
 logger = logging.getLogger("config_store")
 
@@ -40,6 +40,50 @@ def is_config_corrupted() -> bool:
 def clear_config_corruption_flag() -> None:
     """Clear the corruption flag (for recovery / test reset)."""
     config_store._CONFIG_CORRUPTED = False
+
+
+def _redact_json_object_field(raw_text: str, key_name: str, replacement: str) -> str:
+    """Replace ``"<key_name>": { ... }`` including nested JSON objects."""
+    import re as _re
+
+    pattern = _re.compile(r'"' + _re.escape(key_name) + r'"\s*:\s*\{')
+    out: list[str] = []
+    pos = 0
+    while True:
+        match = pattern.search(raw_text, pos)
+        if match is None:
+            out.append(raw_text[pos:])
+            return "".join(out)
+        out.append(raw_text[pos : match.start()])
+        idx = match.end() - 1  # pointing at '{'
+        depth = 0
+        in_string = False
+        escaped = False
+        end_idx = None
+        for cur in range(idx, len(raw_text)):
+            ch = raw_text[cur]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = cur + 1
+                    break
+        out.append(f'"{key_name}": {replacement}')
+        if end_idx is None:
+            # Truncated object: strip the remainder rather than leaving partial secrets.
+            return "".join(out)
+        pos = end_idx
 
 
 def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
@@ -74,22 +118,20 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
             with open(source, "r", encoding="utf-8") as f:
                 raw_text = f.read()
             for secret_key in ("flask_secret_key", "mns_master_key", "extension_api_token"):
+                raw_text = _redact_json_object_field(raw_text, secret_key, '"[REDACTED]"')
                 raw_text = _re.sub(
-                    r'"' + _re.escape(secret_key) + r'"\s*:\s*(\{[^}]*\}|\"[^\"]*\"|[^,\}\n]*)',
+                    r'"' + _re.escape(secret_key) + r'"\s*:\s*(\"[^\"]*\"|[^,\}\n]*)',
                     f'"{secret_key}": "[REDACTED]"',
                     raw_text,
                 )
-            raw_text = _re.sub(
-                r'"api_credentials"\s*:\s*\{[^}]*\}', '"api_credentials": {}', raw_text
-            )
+            raw_text = _redact_json_object_field(raw_text, "api_credentials", "{}")
             try:
                 parsed = json.loads(raw_text)
                 if isinstance(parsed, dict):
                     sanitized = parsed
                     sanitized["api_credentials"] = {}
                     for sk in ("flask_secret_key", "mns_master_key", "extension_api_token"):
-                        if sk in sanitized and sanitized[sk] == "[REDACTED]":
-                            sanitized.pop(sk, None)
+                        sanitized.pop(sk, None)
             except (json.JSONDecodeError, ValueError, RecursionError):
                 sanitized = {
                     "api_credentials": {},
@@ -116,15 +158,8 @@ def _sanitize_and_backup_corrupt_config(source: Path, dest: Path) -> None:
                 old_umask = os.umask(0o077)
                 try:
                     fd = os.open(str(tmp_dest), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                    try:
-                        with os.fdopen(fd, "w", encoding="utf-8") as f:
-                            json.dump(sanitized, f, ensure_ascii=False, indent=2)
-                    except Exception:
-                        try:
-                            os.close(fd)
-                        except OSError:
-                            pass
-                        raise
+                    with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(sanitized, f, ensure_ascii=False, indent=2)
                 finally:
                     os.umask(old_umask)
         os.replace(tmp_dest, dest)

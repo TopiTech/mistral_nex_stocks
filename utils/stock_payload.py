@@ -206,7 +206,12 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
     except (OSError, TypeError) as exc:
         logger.debug("Disk cache get failed for %s: %s", symbol, exc)
 
-    if isinstance(cached_disk, dict) and cached_disk:
+    if (
+        isinstance(cached_disk, dict)
+        and cached_disk
+        and not cached_disk.get("failed")
+        and not cached_disk.get("error")
+    ):
         with app_state.yfinance_short_cache_lock:
             app_state.yfinance_short_cache[short_cache_key] = dict(cached_disk)
         try:
@@ -257,7 +262,12 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
             if rate_limited or not acquire_yfinance_slot():
                 try:
                     fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
-                    if isinstance(fallback_disk, dict) and fallback_disk:
+                    if (
+                        isinstance(fallback_disk, dict)
+                        and fallback_disk
+                        and not fallback_disk.get("failed")
+                        and not fallback_disk.get("error")
+                    ):
                         logger.info(
                             "yfinance rate-limited/slot acquisition failed; returning expired disk cache for %s",
                             symbol,
@@ -270,7 +280,10 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
                 return {}
 
             fast: dict[str, Any] = {}
-            fast = app_state.stock_provider.get_fast_info(symbol)
+            try:
+                fast = app_state.stock_provider.get_fast_info(symbol) or {}
+            except Exception as fast_exc:
+                logger.debug("yfinance fast_info failed for %s: %s", symbol, fast_exc)
             if app_state.market.is_yf_rate_limited() or not fast:
                 fallback_quote = app_state.fallback_provider.get_latest_quote(symbol)
                 if fallback_quote:
@@ -310,7 +323,7 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
                 except Exception as exc:
                     logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
 
-            merged = {**fast, **full}
+            merged = {**(prior if isinstance(prior, dict) else {}), **fast, **full}
             if not merged:
                 from constants import NEGATIVE_CACHE_TTL
 
@@ -335,7 +348,12 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
             # Try to return expired disk cache on exception
             try:
                 fallback_disk = app_state.stock_disk_cache.get(disk_key, ignore_ttl=True)
-                if isinstance(fallback_disk, dict) and fallback_disk:
+                if (
+                    isinstance(fallback_disk, dict)
+                    and fallback_disk
+                    and not fallback_disk.get("failed")
+                    and not fallback_disk.get("error")
+                ):
                     return dict(fallback_disk)
             except (OSError, TypeError):
                 pass
@@ -357,6 +375,13 @@ def fetch_stock_info_async(symbol: str) -> None:
     try:
         res = get_stock_info_cached(symbol)
         if not res:
+            from utils.caching import global_cache, sanitize_cache_key
+
+            fetch_key = (sanitize_cache_key(f"info_{symbol}"), 86400)
+            with global_cache.fetch_events_lock:
+                in_flight = fetch_key in global_cache.fetch_events
+            if in_flight or peek_cached(f"info_{symbol}", duration=86400):
+                return
             # Prevent client-side infinite polling when fetch fails (e.g. rate limit/outage).
             # Write a failed placeholder to short cache so subsequent polls return it and stop.
             short_cache_key = f"info_short_{symbol}"
@@ -1172,9 +1197,8 @@ def _resolve_indices_for_response():
             if isinstance(app_state.market.target_indices_cache, dict)
             else {}
         )
-        if current:
-            return dict(current)
-        return dict(target)
+        source = current if current else target
+        return {k: (dict(v) if isinstance(v, dict) else v) for k, v in source.items()}
 
 
 def _has_ready_indices_snapshot() -> bool:

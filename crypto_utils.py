@@ -293,6 +293,109 @@ def _encode_secret(value: str, key_name: str = "default"):
     )
 
 
+_KEY_INSPECTION_FAILED = object()
+_EPHEMERAL_KEY_MISSING = object()
+
+
+def _is_password_delete_error(exc: Exception) -> bool:
+    """Return True if *exc* is ``keyring.errors.PasswordDeleteError``."""
+    try:
+        from keyring.errors import PasswordDeleteError
+    except ImportError:
+        return False
+    return isinstance(exc, PasswordDeleteError)
+
+
+def snapshot_secret_storage(
+    key_names: Any,
+    *,
+    keyring_available: bool | None = None,
+    keyring_module: Any = None,
+    service_name: str | None = None,
+    log: logging.Logger | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Capture current keyring and ephemeral state for *key_names* before mutation."""
+    names = list(key_names)
+    kr_avail = (
+        (KEYRING_AVAILABLE and keyring is not None)
+        if keyring_available is None
+        else keyring_available
+    )
+    kr = keyring if keyring_module is None else keyring_module
+    svc = KEYRING_SERVICE_NAME if service_name is None else service_name
+    active_logger = log or logger
+
+    previous_keyring_values: dict[str, Any] = {}
+    if kr_avail and kr is not None:
+        for key_name in names:
+            try:
+                previous_keyring_values[key_name] = kr.get_password(svc, key_name)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # Log only the exception type: keyring backends may include
+                # the secret value in exception messages.
+                active_logger.debug(
+                    "Failed inspecting existing keyring state for %s: %s",
+                    key_name,
+                    type(exc).__name__,
+                )
+                previous_keyring_values[key_name] = _KEY_INSPECTION_FAILED
+
+    with _EPHEMERAL_LOCK:
+        previous_ephemeral_values: dict[str, Any] = {
+            key_name: _EPHEMERAL_CREDENTIALS.get(key_name, _EPHEMERAL_KEY_MISSING)
+            for key_name in names
+        }
+    return previous_keyring_values, previous_ephemeral_values
+
+
+def restore_secret_storage(
+    previous_keyring_values: dict[str, Any],
+    previous_ephemeral_values: dict[str, Any],
+    *,
+    keyring_available: bool | None = None,
+    keyring_module: Any = None,
+    service_name: str | None = None,
+    log: logging.Logger | None = None,
+) -> None:
+    """Restore keyring and ephemeral state for previously snapshotted keys.
+
+    Deliberately logs only the exception type name, never exception text: keyring
+    backends may include the secret value in exception messages.
+    """
+    kr_avail = (
+        (KEYRING_AVAILABLE and keyring is not None)
+        if keyring_available is None
+        else keyring_available
+    )
+    kr = keyring if keyring_module is None else keyring_module
+    svc = KEYRING_SERVICE_NAME if service_name is None else service_name
+    active_logger = log or logger
+
+    if kr_avail and kr is not None:
+        for key_name, previous in previous_keyring_values.items():
+            try:
+                if previous is _KEY_INSPECTION_FAILED:
+                    continue
+                if previous is None:
+                    try:
+                        kr.delete_password(svc, key_name)
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        if not _is_password_delete_error(exc):
+                            raise
+                else:
+                    kr.set_password(svc, key_name, previous)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                active_logger.error(
+                    "Failed to roll back credential %s: %s", key_name, type(exc).__name__
+                )
+    with _EPHEMERAL_LOCK:
+        for key_name, previous in previous_ephemeral_values.items():
+            if previous is _EPHEMERAL_KEY_MISSING:
+                _EPHEMERAL_CREDENTIALS.pop(key_name, None)
+            else:
+                _EPHEMERAL_CREDENTIALS[key_name] = previous
+
+
 def _decode_secret(entry, key_name: str = "default") -> str:
     """エンコードされたAPI秘密情報をデコードする。
 

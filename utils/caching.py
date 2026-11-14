@@ -273,12 +273,23 @@ def peek_cached(key, duration=CACHE_DURATION):
 def clear_cache_prefix(prefix):
     """Clears all cached items starting with the given prefix."""
     prefix_text = sanitize_cache_key(str(prefix))
+    max_prefix_len = _CACHE_KEY_MAX_LENGTH - len(_CACHE_KEY_HASH_MARKER) - _CACHE_KEY_DIGEST_LENGTH
+    hashed_head = (
+        prefix_text[:max_prefix_len] + _CACHE_KEY_HASH_MARKER
+        if len(prefix_text) > max_prefix_len
+        else None
+    )
     with global_cache.cache_lock:
         for cache in global_cache.caches.values():
             keys_to_delete = [
                 k
                 for k in list(cache.keys())
-                if isinstance(k, str) and (k == prefix_text or k.startswith(prefix_text))
+                if isinstance(k, str)
+                and (
+                    k == prefix_text
+                    or k.startswith(prefix_text)
+                    or (hashed_head is not None and k.startswith(hashed_head))
+                )
             ]
             for k in keys_to_delete:
                 cache.pop(k, None)

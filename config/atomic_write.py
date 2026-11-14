@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from config.paths import _ensure_runtime_dir
-from utils.threading import restrictive_umask_lock
+from utils.threading import restrictive_umask_lock, safe_fdopen
 
 logger = logging.getLogger("config_store")
 
@@ -96,7 +96,7 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> bool:
         logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
         return False
     try:
-        with os.fdopen(fd, "wb") as dst, open(source, "rb") as src:
+        with safe_fdopen(fd, "wb", encoding=None) as dst, open(source, "rb") as src:
             shutil.copyfileobj(src, dst)
             # Match the durability of the other writers in this module: without
             # it a crash between the copy and the source unlink can leave an
@@ -179,20 +179,13 @@ def _durable_write_json(path: Path, data: dict) -> None:
                 old_umask = os.umask(0o077)
                 try:
                     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                    try:
-                        with os.fdopen(fd, "w", encoding="utf-8") as f:
-                            json.dump(data, f, ensure_ascii=False, indent=2)
-                            f.flush()
-                            try:
-                                os.fsync(f.fileno())
-                            except OSError:
-                                pass
-                    except Exception:
+                    with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                        f.flush()
                         try:
-                            os.close(fd)
+                            os.fsync(f.fileno())
                         except OSError:
                             pass
-                        raise
                 finally:
                     os.umask(old_umask)
         os.replace(tmp, path)
@@ -217,20 +210,13 @@ def _safe_write_json(tmp_file: Path, data: dict) -> None:
         old_umask = os.umask(0o077)
         try:
             fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                    f.flush()
-                    try:
-                        os.fsync(f.fileno())
-                    except OSError:
-                        pass
-            except Exception:
+            with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
                 try:
-                    os.close(fd)
+                    os.fsync(f.fileno())
                 except OSError:
                     pass
-                raise
         finally:
             os.umask(old_umask)
 

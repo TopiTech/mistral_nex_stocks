@@ -70,6 +70,10 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
     if not lock.acquire(blocking=False):
         if not _recover_stale_sync_state_if_needed() and not _is_wedged_sync_lock(lock):
             logger.info("Sync already in progress, skipping.")
+            with app_state.market.sync_schedule_lock:
+                app_state.market.sync_pending = True
+                if force_fetch:
+                    app_state.market.sync_forced = True
             return
         wait_sec = float(
             _get_app_bg_attr("SYNC_STALE_LOCK_WAIT_SEC", SYNC_STALE_LOCK_WAIT_SEC)
@@ -218,6 +222,18 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
                 lock.release()
             except RuntimeError:
                 pass
+            if not app_state.execution.shutdown_event.is_set():
+                should_reschedule = False
+                with app_state.market.sync_schedule_lock:
+                    if app_state.market.sync_pending and not app_state.market.sync_scheduled:
+                        app_state.market.sync_pending = False
+                        should_reschedule = True
+                if should_reschedule:
+                    schedule_fn = _get_app_bg_attr(
+                        "schedule_sync_all_stocks_now",
+                        schedule_sync_all_stocks_now,
+                    )
+                    schedule_fn()
 
 
 def _run_scheduled_sync_job() -> None:

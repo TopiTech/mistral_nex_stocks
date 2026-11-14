@@ -18,7 +18,7 @@ logger = logging.getLogger("backend")
 # so runtime state stays outside the source tree.
 _chat_db_dir = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
 if _chat_db_dir:
-    DB_PATH = Path(_chat_db_dir) / "chat_history.db"
+    DB_PATH = Path(_chat_db_dir).expanduser() / "chat_history.db"
 else:
     from config_store import APP_DATA_DIR
 
@@ -583,7 +583,11 @@ class SQLiteChatHistoryStore:
                     else:
                         to_insert = [system_msg]
                 else:
-                    to_insert = to_insert[-self.max_msgs_per_session:]
+                    to_insert = (
+                        to_insert[-self.max_msgs_per_session :]
+                        if self.max_msgs_per_session > 0
+                        else []
+                    )
             cursor.executemany(
                 """
                 INSERT INTO chat_messages (session_id, role, content, timestamp)

@@ -410,6 +410,8 @@ class StockDiskCache:
 
     def _maybe_run_cleanup(self, force: bool = False) -> None:
         """Run stale entry cleanup if enough time has passed since last run."""
+        if not force and not self._enable_cleanup:
+            return
         now = time.time()
         if not force and (now - self._last_cleanup_ts < _STALE_CLEANUP_INTERVAL):
             return
@@ -438,7 +440,8 @@ class StockDiskCache:
 
         try:
             with self._lock, self._process_lock():
-                self._maybe_run_cleanup()
+                if not ignore_ttl:
+                    self._maybe_run_cleanup()
                 if not path.exists():
                     return None
                 try:

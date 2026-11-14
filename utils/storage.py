@@ -18,7 +18,7 @@ from app_state import app_state
 from constants import DEFAULT_USDJPY_RATE
 from crypto_utils import _is_windows, protect_data, unprotect_data
 from utils.normalization import is_bool_like, normalize_symbol_for_market
-from utils.threading import restrictive_umask_lock
+from utils.threading import restrictive_umask_lock, safe_fdopen
 
 logger = logging.getLogger(__name__)
 
@@ -320,20 +320,13 @@ def _migrate_legacy_user_stocks() -> bool:
             if _is_windows():
                 fd = _open_exclusive_with_retry(target)
                 created_target = True
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(content)
-                        f.flush()
-                        try:
-                            os.fsync(f.fileno())
-                        except OSError:
-                            pass
-                except Exception:
+                with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                    f.flush()
                     try:
-                        os.close(fd)
+                        os.fsync(f.fileno())
                     except OSError:
                         pass
-                    raise
             else:
                 with restrictive_umask_lock():
                     old_umask = os.umask(0o077)
@@ -342,20 +335,13 @@ def _migrate_legacy_user_stocks() -> bool:
                             str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
                         )
                         created_target = True
-                        try:
-                            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                                f.write(content)
-                                f.flush()
-                                try:
-                                    os.fsync(f.fileno())
-                                except OSError:
-                                    pass
-                        except Exception:
+                        with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                            f.write(content)
+                            f.flush()
                             try:
-                                os.close(fd)
+                                os.fsync(f.fileno())
                             except OSError:
                                 pass
-                            raise
                     finally:
                         os.umask(old_umask)
                 os.chmod(target, 0o600)
@@ -697,11 +683,33 @@ def _backup_unreadable_user_stocks() -> None:
     the user can recover once the master key / keyring is fixed.
     """
     target_path = _get_user_stocks_path()
-    backup_path = target_path.with_suffix(
-        ".bak." + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
-    )
     try:
+        if not target_path.exists():
+            return
+        raw_bytes = target_path.read_bytes()
+        existing = sorted(
+            target_path.parent.glob("user_stocks.bak.*"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if existing:
+            latest = existing[-1]
+            try:
+                if latest.read_bytes() == raw_bytes:
+                    return
+            except OSError:
+                pass
+        ts = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
+        backup_path = target_path.with_suffix(f".bak.{ts}")
+        if backup_path.exists():
+            import uuid
+
+            backup_path = target_path.with_suffix(f".bak.{ts}.{uuid.uuid4().hex[:6]}")
         shutil.copy2(target_path, backup_path)
+        if not _is_windows():
+            try:
+                os.chmod(backup_path, 0o600)
+            except OSError:
+                pass
         logger.info("Backed up unreadable user_stocks.json to %s", backup_path)
         _rotate_user_stocks_backups(target_path.parent)
     except OSError as exc:
@@ -853,20 +861,13 @@ def _write_user_stocks_with_lock(
                     old_umask = os.umask(0o077)
                     try:
                         fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                        try:
-                            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                                f.write(data_encoded)
-                                f.flush()
-                                try:
-                                    os.fsync(f.fileno())
-                                except OSError:
-                                    pass
-                        except Exception:
+                        with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                            f.write(data_encoded)
+                            f.flush()
                             try:
-                                os.close(fd)
+                                os.fsync(f.fileno())
                             except OSError:
                                 pass
-                            raise
                     finally:
                         os.umask(old_umask)
                 # Promote inside the lock (no TOCTOU window).

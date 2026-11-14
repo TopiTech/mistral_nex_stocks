@@ -381,7 +381,7 @@ class AIState:
             # so an unrelated live client is never evicted needlessly.
             pool.pop(cache_key, None)
 
-        if len(pool) >= maxsize:
+        while len(pool) >= maxsize:
             try:
                 _, old_client = pool.popitem()
                 if not getattr(old_client, "is_closed", False):

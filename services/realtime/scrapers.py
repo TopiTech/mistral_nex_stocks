@@ -860,8 +860,9 @@ class YahooJPRealtimeScraper:
         ):
             return False
         price_f = float(price)
-        prev = self._last_dispatch_price.get(symbol)
-        self._last_dispatch_price[symbol] = price_f
+        with self.lock:
+            prev = self._last_dispatch_price.get(symbol)
+            self._last_dispatch_price[symbol] = price_f
         return prev is None or prev != price_f
 
     def _fetch_kabutan_symbol(self, symbol: str) -> TickerPayload | None:
@@ -1215,11 +1216,18 @@ class YahooJPRealtimeScraper:
                     target_tokens = {sym: self._symbol_tokens.get(sym) for sym in target_symbols}
 
                 if target_symbols:
-                    if len(self._last_dispatch_price) > len(target_symbols) * 2:
-                        target_set = set(target_symbols)
-                        self._last_dispatch_price = {
-                            k: v for k, v in self._last_dispatch_price.items() if k in target_set
-                        }
+                    target_set = {
+                        s
+                        for sym in target_symbols
+                        for s in (sym, f"{sym.removesuffix('.T').removesuffix('.t')}.T")
+                    }
+                    with self.lock:
+                        if len(self._last_dispatch_price) > len(target_symbols) * 2:
+                            self._last_dispatch_price = {
+                                k: v
+                                for k, v in self._last_dispatch_price.items()
+                                if k in target_set
+                            }
 
                     from constants import SCRAPER_MAX_WORKERS, SCRAPER_REQUEST_STAGGER_SEC
 
@@ -1251,7 +1259,10 @@ class YahooJPRealtimeScraper:
                                     exc,
                                 )
                                 break
-                            time.sleep(SCRAPER_REQUEST_STAGGER_SEC)
+                            _interruptible_sleep(
+                                lambda: self.running and self._epoch == my_epoch,
+                                SCRAPER_REQUEST_STAGGER_SEC,
+                            )
                         for future in as_completed(future_to_sym):
                             if not self._is_worker_current(my_epoch):
                                 break

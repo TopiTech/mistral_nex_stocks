@@ -781,13 +781,49 @@
       }
     }
 
+    _resolveTimelineViewStock(stock, stateData) {
+      if (
+        !stock ||
+        !stateData ||
+        !(stateData.timeCursor > 0) ||
+        stock.symbol !== stateData.selectedSymbol
+      ) {
+        return stock;
+      }
+      const historyKey = `${stock.symbol}:${stateData.timeGranularity}`;
+      const history =
+        (stateData.historyMap &&
+          typeof stateData.historyMap.get === "function" &&
+          stateData.historyMap.get(historyKey)) ||
+        stateData.activeHistory;
+      if (
+        !Array.isArray(history) ||
+        history.length === 0 ||
+        !global.ObservatoryDataAdapter ||
+        typeof global.ObservatoryDataAdapter.interpolateAtHistory !== "function"
+      ) {
+        return stock;
+      }
+      const maxIdx = history.length - 1;
+      const cursor = Math.min(stateData.timeCursor, maxIdx);
+      const historyIndex = Math.max(0, maxIdx - cursor);
+      return (
+        global.ObservatoryDataAdapter.interpolateAtHistory(
+          stock,
+          history,
+          historyIndex,
+        ) || stock
+      );
+    }
+
     renderSingleNode(ctx, stock, x, y, r, stateData, now) {
+      const viewStock = this._resolveTimelineViewStock(stock, stateData);
       const isHovered = stateData.hoveredSymbol === stock.symbol;
       const isSelected = stateData.selectedSymbol === stock.symbol;
       const isConnected = stateData.connectedSymbols.includes(stock.symbol);
       const isCenter = stock.isCenter;
 
-      const colors = this.getColorForChange(stock.changePercent);
+      const colors = this.getColorForChange(viewStock.changePercent);
       const displayRadius = isHovered ? r * 1.18 : r;
 
       ctx.save();
@@ -871,8 +907,8 @@
       ctx.fillText(stock.symbol, x, isCenter ? y - 7 : y - 4);
 
       // Price / Change Pill
-      const chg = Number.isFinite(stock.changePercent)
-        ? stock.changePercent
+      const chg = Number.isFinite(viewStock.changePercent)
+        ? viewStock.changePercent
         : 0;
       const chgSign = chg >= 0 ? "+" : "";
       const chgStr = `${chgSign}${chg.toFixed(1)}%`;
@@ -1011,6 +1047,7 @@
       const renderData = this.nodeRenderData.get(symbol);
       if (!stock || !renderData) return;
 
+      const viewStock = this._resolveTimelineViewStock(stock, stateData);
       const { currentX: x, currentY: y, currentRadius: r } = renderData;
       const paddingX = 12;
       const cardH = 92;
@@ -1022,14 +1059,17 @@
       const chgFont = "bold 11px 'Inter', sans-serif";
       const hintFont = "9px 'Inter', sans-serif";
 
-      const sectorText = stock.sector || "その他";
-      const fullName = String(stock.displayName || stock.name || "");
+      const sectorText = viewStock.sector || "その他";
+      const fullName = String(viewStock.displayName || viewStock.name || "");
       const priceStr =
-        stock.price > 0
-          ? global.ObservatoryDataAdapter.formatPrice(stock.price, stock)
+        viewStock.price > 0
+          ? global.ObservatoryDataAdapter.formatPrice(
+              viewStock.price,
+              viewStock,
+            )
           : "--";
-      const chg = Number.isFinite(stock.changePercent)
-        ? stock.changePercent
+      const chg = Number.isFinite(viewStock.changePercent)
+        ? viewStock.changePercent
         : 0;
       const chgSign = chg >= 0 ? "+" : "";
       const chgStr = `${chgSign}${chg.toFixed(2)}%`;

@@ -45,7 +45,9 @@ from services.realtime_engine import realtime_market_engine
 from utils.networking import (
     SSE_TICKET_TTL_SEC,
     SseTicketSessionUnavailable,
+    clear_consumed_sse_ticket,
     create_sse_ticket,
+    restore_sse_ticket,
 )
 from utils.stock_payload import (
     error_response,
@@ -143,6 +145,7 @@ def api_stocks_stream() -> Any:
 
     raw_mode = request.args.get("mode", "2").strip().lower()
     if raw_mode in ("0", "disabled", "off"):
+        restore_sse_ticket(request)
         return ok_response(
             {"status": "disabled", "sse_mode": 0, "message": "SSE streaming disabled by client"}
         )
@@ -151,12 +154,14 @@ def api_stocks_stream() -> Any:
 
     reservation = app_state.sse_listener_limiter.reserve()
     if reservation is None:
+        restore_sse_ticket(request)
         current_app.logger.warning("SSE listener limit exceeded id=%s", request_id)
         return error_response(
             ErrorCode.TOO_MANY_REQUESTS,
             status_code=429,
             details={"reason": "too many SSE connections"},
         )
+    clear_consumed_sse_ticket(request)
 
     announcer = app_state.sse_announcer_mode2 if sse_mode == 2 else app_state.sse_announcer_mode1
 
@@ -217,46 +222,46 @@ def api_stocks_stream() -> Any:
                     )
 
                     if send_initial:
-                        snapshot_gen = _sse_data_generation()
-                        snapshot_yf = bool(app_state.market.is_yf_rate_limited())
-                        snapshot_us_open = bool(is_market_open("us"))
-                        snapshot_jp_open = bool(is_market_open("jp"))
-                        with _initial_snapshot_lock:
-                            cached_snapshot = _initial_snapshot_cache.get(sse_mode)
-                        if (
-                            cached_snapshot is not None
-                            and cached_snapshot[:4]
-                            == (snapshot_gen, snapshot_yf, snapshot_us_open, snapshot_jp_open)
-                        ):
-                            initial_payload = cached_snapshot[4]
-                        else:
-                            stocks_payload = resolve_stocks_for_response(
-                                include_portfolio=False, real_data_only=(sse_mode == 2)
-                            )
-                            for market in ("us", "jp", "idx"):
-                                if market in stocks_payload and isinstance(
-                                    stocks_payload[market], list
-                                ):
-                                    for s in stocks_payload[market]:
-                                        if isinstance(s, dict) and "symbol" in s:
-                                            s["tv_symbol"] = s.get(
-                                                "tv_symbol"
-                                            ) or get_tradingview_symbol(
-                                                s["symbol"], exchange=s.get("exchange")
-                                            )
+                        with app_state.cache.sse_data_lock:
+                            snapshot_gen = _sse_data_generation()
+                            snapshot_yf = bool(app_state.market.is_yf_rate_limited())
+                            snapshot_us_open = bool(is_market_open("us"))
+                            snapshot_jp_open = bool(is_market_open("jp"))
+                            with _initial_snapshot_lock:
+                                cached_snapshot = _initial_snapshot_cache.get(sse_mode)
+                            if (
+                                cached_snapshot is not None
+                                and cached_snapshot[:4]
+                                == (snapshot_gen, snapshot_yf, snapshot_us_open, snapshot_jp_open)
+                            ):
+                                initial_payload = cached_snapshot[4]
+                            else:
+                                stocks_payload = resolve_stocks_for_response(
+                                    include_portfolio=False, real_data_only=(sse_mode == 2)
+                                )
+                                for market in ("us", "jp", "idx"):
+                                    if market in stocks_payload and isinstance(
+                                        stocks_payload[market], list
+                                    ):
+                                        for s in stocks_payload[market]:
+                                            if isinstance(s, dict) and "symbol" in s:
+                                                s["tv_symbol"] = s.get(
+                                                    "tv_symbol"
+                                                ) or get_tradingview_symbol(
+                                                    s["symbol"], exchange=s.get("exchange")
+                                                )
 
-                            indices_payload = resolve_indices_for_response()
-                            us_stocks = stocks_payload.get("us")
-                            jp_stocks = stocks_payload.get("jp")
-                            all_stocks_list = (
-                                us_stocks if isinstance(us_stocks, list) else []
-                            ) + (jp_stocks if isinstance(jp_stocks, list) else [])
-                            tv_ticker_tape = get_tradingview_ticker_tape_symbols(
-                                indices=indices_payload,
-                                stocks=all_stocks_list,
-                            )
+                                indices_payload = resolve_indices_for_response()
+                                us_stocks = stocks_payload.get("us")
+                                jp_stocks = stocks_payload.get("jp")
+                                all_stocks_list = (
+                                    us_stocks if isinstance(us_stocks, list) else []
+                                ) + (jp_stocks if isinstance(jp_stocks, list) else [])
+                                tv_ticker_tape = get_tradingview_ticker_tape_symbols(
+                                    indices=indices_payload,
+                                    stocks=all_stocks_list,
+                                )
 
-                            with app_state.cache.sse_data_lock:
                                 initial_payload = json.dumps(
                                     _json_safe(
                                         {
@@ -271,14 +276,14 @@ def api_stocks_stream() -> Any:
                                     ),
                                     allow_nan=False,
                                 )
-                            with _initial_snapshot_lock:
-                                _initial_snapshot_cache[sse_mode] = (
-                                    snapshot_gen,
-                                    snapshot_yf,
-                                    snapshot_us_open,
-                                    snapshot_jp_open,
-                                    initial_payload,
-                                )
+                                with _initial_snapshot_lock:
+                                    _initial_snapshot_cache[sse_mode] = (
+                                        snapshot_gen,
+                                        snapshot_yf,
+                                        snapshot_us_open,
+                                        snapshot_jp_open,
+                                        initial_payload,
+                                    )
                         initial_frame = f"retry: 3000\ndata: {initial_payload}\n\n"
                         initial_seq = sse_event_log.emit(sse_mode, "frame", initial_frame)
                         yield f"id: {initial_seq}\n{initial_frame}"

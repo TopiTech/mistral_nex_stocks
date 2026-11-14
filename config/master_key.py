@@ -10,6 +10,7 @@ import logging
 import os
 
 import config_store
+import crypto_utils
 
 logger = logging.getLogger("config_store")
 
@@ -84,6 +85,10 @@ def get_or_create_master_key() -> str:
     # serialized every ``user_stocks`` read/write behind one global lock and
     # re-read config.json on every call (CFG-01).
     cfg = config_store.load_config()
+    if config_store.is_config_corrupted():
+        raise RuntimeError(
+            "Refusing to access or generate mns_master_key while configuration is corrupted."
+        )
     if not isinstance(cfg, dict):
         cfg = {}
     key_entry = cfg.get("mns_master_key")
@@ -109,6 +114,10 @@ def get_or_create_master_key() -> str:
         config_store._CONFIG_CACHE["data"] = None
         config_store._CONFIG_CACHE["key"] = None
         cfg = config_store.load_config()
+        if config_store.is_config_corrupted():
+            raise RuntimeError(
+                "Refusing to access or generate mns_master_key while configuration is corrupted."
+            )
         if not isinstance(cfg, dict):
             cfg = {}
 
@@ -130,13 +139,24 @@ def get_or_create_master_key() -> str:
         from cryptography.fernet import Fernet
 
         new_key = Fernet.generate_key().decode("ascii")
-        cfg["mns_master_key"] = config_store._encode_secret(new_key, "mns_master_key")
-
+        previous_keyring_values, previous_ephemeral_values = crypto_utils.snapshot_secret_storage(
+            ("mns_master_key",),
+            log=logger,
+        )
         try:
-            config_store.save_config(cfg)
-        except Exception as exc:
-            logger.error("Failed to persist generated master key: %s", exc)
-            raise RuntimeError("Failed to persist generated master key") from exc
+            cfg["mns_master_key"] = config_store._encode_secret(new_key, "mns_master_key")
+            try:
+                config_store.save_config(cfg)
+            except Exception as exc:
+                logger.error("Failed to persist generated master key: %s", exc)
+                raise RuntimeError("Failed to persist generated master key") from exc
+        except Exception:
+            crypto_utils.restore_secret_storage(
+                previous_keyring_values,
+                previous_ephemeral_values,
+                log=logger,
+            )
+            raise
 
         config_store._CONFIG_CACHE["data"] = None
         config_store._CONFIG_CACHE["key"] = None

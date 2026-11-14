@@ -35,6 +35,7 @@ _ATOMIC_LOCK_STALE_SEC: float = 60.0
 
 _LEADER_LOCK_MUTEX = threading.RLock()
 _LEADER_LOCK_FILE: Any = None
+_LEADER_LOCK_PID: int | None = None
 # LIFECYCLE-7: "follower until elected" — a process must not claim leadership
 # before the election loop has won the leader lock, otherwise every worker in
 # multi-process mode fetches as leader during the startup window (the exact
@@ -43,15 +44,39 @@ _LEADER_LOCK_FILE: Any = None
 _is_sync_leader: bool = False
 
 
+def _detach_inherited_leader_lock_locked() -> None:
+    """Detach an inherited parent leader-lock handle after fork without closing it."""
+    global _LEADER_LOCK_FILE, _LEADER_LOCK_PID
+    if _LEADER_LOCK_PID is not None and _LEADER_LOCK_PID != os.getpid():
+        _LEADER_LOCK_FILE = None
+        _LEADER_LOCK_PID = None
+        _set_app_bg_attr("_LEADER_LOCK_FILE", None)
+        _set_is_sync_leader(False)
+
+
+def _reset_leader_lock_in_child() -> None:
+    """Reset inherited leader-lock state immediately in a forked child process."""
+    global _LEADER_LOCK_FILE, _LEADER_LOCK_PID
+    _LEADER_LOCK_FILE = None
+    _LEADER_LOCK_PID = None
+    _set_app_bg_attr("_LEADER_LOCK_FILE", None)
+    _set_is_sync_leader(False)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_leader_lock_in_child)
+
+
 def _get_leader_lock_file() -> Any:
     with _LEADER_LOCK_MUTEX:
         return _get_app_bg_attr("_LEADER_LOCK_FILE", _LEADER_LOCK_FILE)
 
 
 def _set_leader_lock_file(f: Any) -> None:
-    global _LEADER_LOCK_FILE
+    global _LEADER_LOCK_FILE, _LEADER_LOCK_PID
     with _LEADER_LOCK_MUTEX:
         _LEADER_LOCK_FILE = f
+        _LEADER_LOCK_PID = os.getpid() if f is not None else None
         _set_app_bg_attr("_LEADER_LOCK_FILE", f)
 
 
@@ -110,6 +135,7 @@ def _pid_is_alive(pid: int) -> bool:
 def _release_leader_lock() -> None:
     """Close the leader lock file handle on process exit without unlinking advisory lock files."""
     with _LEADER_LOCK_MUTEX:
+        _detach_inherited_leader_lock_locked()
         _lock_file = _get_leader_lock_file()
         _set_leader_lock_file(None)
         _set_is_sync_leader(False)
@@ -289,6 +315,8 @@ def _try_acquire_leader_lock() -> bool:
 
 def is_leader() -> bool:
     """Check if current worker is sync leader."""
+    with _LEADER_LOCK_MUTEX:
+        _detach_inherited_leader_lock_locked()
     return _get_app_bg_attr("_is_sync_leader", _is_sync_leader)
 
 

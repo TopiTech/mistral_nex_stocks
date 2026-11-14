@@ -66,6 +66,7 @@ def _handle_yfinance_error(exc: Exception, symbol: str = "") -> None:
 def _reset_yfinance_streak_on_success() -> None:
     """Clear the graduated 429 streak only after a successful yfinance fetch."""
     with app_state.market.yfinance_lock:
+        app_state.market.is_yf_rate_limited()
         if not app_state.market.is_yfinance_rate_limited:
             app_state.market.yfinance_429_streak = 0
 

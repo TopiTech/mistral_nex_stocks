@@ -214,11 +214,7 @@ class APIClient {
 
   private _resumeSSE(force = false): void {
     if (!this._lastSSEParams) return;
-    if (this.ssePendingReconnectTimeout) {
-      clearTimeout(this.ssePendingReconnectTimeout);
-      this.ssePendingReconnectTimeout = null;
-    }
-    this._reconnecting = false;
+    this._teardownSSE();
     if (force) this.sseReconnectAttempt = 0;
     this._openWithResolvedUrl(this._lastSSEParams);
   }

@@ -794,8 +794,7 @@ def extract_json_payload(content, required_fields=None):
         pass
 
     # Stage 1: Markdown fence
-    match_fence = re.search(r"```(?:json)?\s*(.*?)\s*(?:```|$)", text, re.DOTALL)
-    if match_fence:
+    for match_fence in re.finditer(r"```(?:json)?\s*(.*?)\s*(?:```|$)", text, re.DOTALL):
         candidate = match_fence.group(1).strip()
         try:
             obj, fixed_s = _try_json_parse(candidate)
@@ -803,7 +802,6 @@ def extract_json_payload(content, required_fields=None):
                 return fixed_s
         except RecursionError:
             pass
-        text = candidate
 
     # Truncate text only for progressive salvage stages if unusually large to avoid CPU exhaustion
     if len(text) > 100000:
@@ -1218,14 +1216,22 @@ def validate_analysis_result(result):
         return False, "result is not an object"
 
     normalized = _normalize_analysis_aliases(result)
-    # Require at least one core field to consider the result usable.
+    # Require at least one core field with a non-empty value to consider the result usable.
     core_fields = ("analysis_summary", "recommendation", "sentiment", "target_price_3m")
-    if not any(k in normalized for k in core_fields):
+
+    def _has_core_value(val: object) -> bool:
+        if val is None:
+            return False
+        if isinstance(val, str):
+            return bool(val.strip())
+        return True
+
+    if not any(_has_core_value(normalized.get(k)) for k in core_fields):
         return False, "missing core analysis fields"
 
-    # If specific fields are present, sanity-check their types (non-blocking)
-    if "target_price_3m" in normalized:
-        tpm = normalized.get("target_price_3m")
+    # If specific fields are present and non-null, sanity-check their types (non-blocking)
+    tpm = normalized.get("target_price_3m")
+    if tpm is not None:
         if is_bool_like(tpm):
             return False, "target_price_3m must be numeric"
         if not isinstance(tpm, (int, float)):
@@ -1236,9 +1242,15 @@ def validate_analysis_result(result):
         if _finite_float_or_none(tpm) is None:
             return False, "target_price_3m must be finite"
 
-    if "key_catalysts" in normalized and not isinstance(normalized.get("key_catalysts"), list):
+    if (
+        normalized.get("key_catalysts") is not None
+        and not isinstance(normalized.get("key_catalysts"), list)
+    ):
         return False, "key_catalysts must be an array"
-    if "risk_factors" in normalized and not isinstance(normalized.get("risk_factors"), list):
+    if (
+        normalized.get("risk_factors") is not None
+        and not isinstance(normalized.get("risk_factors"), list)
+    ):
         return False, "risk_factors must be an array"
 
     return True, ""

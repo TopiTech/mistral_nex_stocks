@@ -43,6 +43,7 @@ from credential_manager import (
 from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.networking import validate_outbound_base_url
+from utils.text_utils import _sanitize_error_message
 from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import extract_chat_content, extract_json_payload
 
@@ -702,6 +703,15 @@ def call_openai_chat(
     client: Any = None
     try:
         with app_state.ai.openai_call_semaphore:
+            if app_state.market.is_circuit_open("openai_compatible"):
+                logger.warning("OpenAI-compatible circuit opened while waiting for semaphore.")
+                return {
+                    "error": {
+                        "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+                        "status_code": 503,
+                        "provider": "openai_compatible",
+                    }
+                }
             # M7: probe claimed only after the call slot is held (see note at
             # the claim site removal above).
             circuit_state = app_state.market.get_circuit_state("openai_compatible")
@@ -994,7 +1004,7 @@ def call_openai_chat(
             endpoint,
             type(exc).__name__,
             status_code,
-            exc,
+            _sanitize_error_message(str(exc)),
         )
         return {
             "error": {
@@ -1107,6 +1117,15 @@ def stream_openai_chat(
     client: Any = None
     try:
         with app_state.ai.openai_stream_semaphore:
+            if app_state.market.is_circuit_open("openai_compatible"):
+                logger.warning(
+                    "OpenAI-compatible circuit opened while waiting for stream semaphore."
+                )
+                yield _stream_error_event(
+                    "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+                    503,
+                )
+                return
             # M7: probe claimed only after the stream slot is held.
             circuit_state = app_state.market.get_circuit_state("openai_compatible")
             if circuit_state.get("status") == "HALF_OPEN":
@@ -1193,7 +1212,7 @@ def stream_openai_chat(
                     logger.warning(
                         "OpenAI stream HTTP error status=%d detail=%s",
                         stream.status_code,
-                        err_detail,
+                        _sanitize_error_message(str(err_detail)),
                     )
                     if stream.status_code >= 500:
                         app_state.market.report_circuit_result("openai_compatible", success=False)
@@ -1286,7 +1305,7 @@ def stream_openai_chat(
             "OpenAI stream exception error_type=%s status=%d: %s",
             type(exc).__name__,
             status_code,
-            exc,
+            _sanitize_error_message(str(exc)),
         )
         yield _stream_error_event(_public_openai_error_message(exc, status_code), status_code)
     finally:
@@ -1482,6 +1501,7 @@ def call_openai_chat_with_tools(
         # the sanitized ids the tool results below use, otherwise the next
         # provider request is rejected for a dangling tool_call_id.
         normalized_tcs: list[dict[str, Any]] = []
+        invalid_tc_ids: set[str] = set()
         for idx, tc in enumerate(tool_calls):
             if not isinstance(tc, dict):
                 logger.warning(
@@ -1502,28 +1522,50 @@ def call_openai_chat_with_tools(
                 continue
 
             raw_id = tc.get("id")
-            tc_id = raw_id[:max_tool_call_id_chars] if isinstance(raw_id, str) else ""
+            if isinstance(raw_id, str) and len(raw_id) > max_tool_call_id_chars:
+                logger.warning("OpenAI agent loop rejected an oversized tool call id")
+                return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
+            tc_id = raw_id if isinstance(raw_id, str) and raw_id else ""
             if not tc_id:
                 tc_id = f"call_{iteration}_{idx}_{_gen_token()}"
 
             raw_name = fn.get("name")
-            fn_name = (
-                raw_name.strip()[:80]
-                if isinstance(raw_name, str) and raw_name.strip()
-                else "unknown_tool"
-            )
+            if isinstance(raw_name, str) and raw_name.strip():
+                fn_name = raw_name.strip()[:80]
+            else:
+                fn_name = "unknown_tool"
+                invalid_tc_ids.add(tc_id)
+
             fn_args = fn.get("arguments")
             if fn_args is None:
                 fn_args = "{}"
-            if not isinstance(fn_args, (str, dict)):
+            if isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                logger.warning("OpenAI agent loop rejected an oversized tool call payload")
+                return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
+            if isinstance(fn_args, dict):
+                try:
+                    serialized_args = json.dumps(fn_args, ensure_ascii=False)
+                except (TypeError, ValueError, RecursionError):
+                    logger.warning(
+                        "OpenAI agent loop rejected unserializable tool arguments: tool=%s",
+                        fn_name,
+                    )
+                    invalid_tc_ids.add(tc_id)
+                    fn_args = "{}"
+                else:
+                    if len(serialized_args) > max_tool_argument_chars:
+                        logger.warning(
+                            "OpenAI agent loop rejected an oversized tool call payload"
+                        )
+                        return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
+            elif not isinstance(fn_args, str):
                 logger.warning(
                     "OpenAI agent loop replaced a non-text tool argument payload: "
                     "tool=%s argument_type=%s",
                     fn_name,
                     type(fn_args).__name__,
                 )
-                fn_args = "{}"
-            elif isinstance(fn_args, str) and len(fn_args) > max_tool_argument_chars:
+                invalid_tc_ids.add(tc_id)
                 fn_args = "{}"
 
             normalized_tcs.append(
@@ -1547,13 +1589,17 @@ def call_openai_chat_with_tools(
         }
         current_messages.append(assistant_turn_msg)
 
-        def _exec_single_tool(tc: dict[str, Any]) -> dict[str, Any]:
+        def _exec_single_tool(
+            tc: dict[str, Any], invalid_ids: set[str] = invalid_tc_ids
+        ) -> dict[str, Any]:
             def _execute() -> dict[str, Any]:
                 tc_id = tc["id"]
                 fn = tc["function"]
                 fn_name = fn["name"]
                 fn_args = fn["arguments"]
                 try:
+                    if tc_id in invalid_ids:
+                        raise TypeError("tool function payload is malformed")
                     tool_output = execute_mistral_tool_call(fn_name, fn_args)
                     tool_content = _serialize_tool_result(tool_output)
                 except Exception as tool_err:
@@ -1750,59 +1796,97 @@ def get_openai_embeddings_batch(
     except (TypeError, ValueError):
         parsed_batch_size = 32
     effective_batch_size = max(1, parsed_batch_size)
-    for i in range(0, len(valid_items), effective_batch_size):
-        chunk = valid_items[i : i + effective_batch_size]
-        chunk_texts = [text for _, text in chunk]
-        payload = {
-            "model": target_model,
-            "input": chunk_texts,
-        }
-        client: Any = None
-        try:
-            client = _get_openai_client(base_url, api_key)
-            resp = client.post(endpoint, json=payload, headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                raw_data = data.get("data", []) if isinstance(data, dict) else []
-                for fallback_idx, item in enumerate(raw_data):
-                    if not isinstance(item, dict):
-                        continue
-                    pos = item.get("index")
-                    # bool is a subclass of int: ``index: true`` must not be
-                    # accepted as position 1 and map an embedding to the wrong
-                    # input text.
-                    if (
-                        isinstance(pos, bool)
-                        or not isinstance(pos, int)
-                        or pos < 0
-                        or pos >= len(chunk)
-                    ):
-                        pos = fallback_idx
-                    if 0 <= pos < len(chunk):
-                        orig_idx = chunk[pos][0]
-                        emb = item.get("embedding")
-                        if isinstance(emb, list) and orig_idx < len(results):
-                            results[orig_idx] = emb
-            else:
-                logger.debug(
-                    "OpenAI embeddings returned HTTP %d: %s (graceful fallback)",
-                    resp.status_code,
-                    resp.text[:200],
-                )
-                # M8 (2026-11-07 review): permanent client errors (auth
-                # failure, unknown model, malformed request) cannot succeed
-                # on the next batch; stop instead of burning one provider
-                # round-trip per remaining batch. Rate limits stay transient.
-                if 400 <= resp.status_code < 500 and resp.status_code != 429:
-                    logger.warning(
-                        "OpenAI embeddings aborted after client error (HTTP %d); "
-                        "remaining batches fall back to None",
+    circuit_probe_claimed = False
+    circuit_state = app_state.market.get_circuit_state("openai_compatible")
+    if circuit_state.get("status") == "HALF_OPEN":
+        if not app_state.market.try_claim_circuit_probe("openai_compatible"):
+            logger.warning(
+                "OpenAI-compatible circuit recovery probe already in progress. "
+                "Skipping embeddings call."
+            )
+            return results
+        circuit_probe_claimed = True
+
+    try:
+        for i in range(0, len(valid_items), effective_batch_size):
+            chunk = valid_items[i : i + effective_batch_size]
+            chunk_texts = [text for _, text in chunk]
+            payload = {
+                "model": target_model,
+                "input": chunk_texts,
+            }
+            client: Any = None
+            try:
+                client = _get_openai_client(base_url, api_key)
+                resp = client.post(endpoint, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    app_state.market.report_circuit_result("openai_compatible", success=True)
+                    circuit_probe_claimed = False
+                    data = resp.json()
+                    raw_data = data.get("data", []) if isinstance(data, dict) else []
+                    for fallback_idx, item in enumerate(raw_data):
+                        if not isinstance(item, dict):
+                            continue
+                        pos = item.get("index")
+                        # bool is a subclass of int: ``index: true`` must not be
+                        # accepted as position 1 and map an embedding to the wrong
+                        # input text.
+                        if (
+                            isinstance(pos, bool)
+                            or not isinstance(pos, int)
+                            or pos < 0
+                            or pos >= len(chunk)
+                        ):
+                            pos = fallback_idx
+                        if 0 <= pos < len(chunk):
+                            orig_idx = chunk[pos][0]
+                            emb = item.get("embedding")
+                            if isinstance(emb, list) and orig_idx < len(results):
+                                results[orig_idx] = emb
+                else:
+                    if resp.status_code >= 500:
+                        app_state.market.report_circuit_result("openai_compatible", success=False)
+                        circuit_probe_claimed = False
+                    elif circuit_probe_claimed:
+                        app_state.market.release_circuit_probe("openai_compatible")
+                        circuit_probe_claimed = False
+                    logger.debug(
+                        "OpenAI embeddings returned HTTP %d: %s (graceful fallback)",
                         resp.status_code,
+                        _sanitize_error_message(resp.text[:200]),
                     )
-                    break
-        except Exception as exc:
-            logger.debug("OpenAI embeddings call failed (fallback to None): %s", exc)
-        finally:
-            _close_call_owned_openai_client(client)
+                    # M8 (2026-11-07 review): permanent client errors (auth
+                    # failure, unknown model, malformed request) cannot succeed
+                    # on the next batch; stop instead of burning one provider
+                    # round-trip per remaining batch. Rate limits stay transient.
+                    if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                        logger.warning(
+                            "OpenAI embeddings aborted after client error (HTTP %d); "
+                            "remaining batches fall back to None",
+                            resp.status_code,
+                        )
+                        break
+            except Exception as exc:
+                raw_status = getattr(getattr(exc, "response", None), "status_code", None)
+                resp_status = raw_status if isinstance(raw_status, int) else None
+                is_provider_failure = isinstance(
+                    exc, (httpx.TransportError, ConnectionError, OSError)
+                ) or (resp_status is not None and resp_status >= 500)
+                if is_provider_failure:
+                    app_state.market.report_circuit_result("openai_compatible", success=False)
+                    circuit_probe_claimed = False
+                elif circuit_probe_claimed:
+                    app_state.market.release_circuit_probe("openai_compatible")
+                    circuit_probe_claimed = False
+                logger.debug(
+                    "OpenAI embeddings call failed (fallback to None): %s",
+                    _sanitize_error_message(str(exc)),
+                )
+            finally:
+                _close_call_owned_openai_client(client)
+    finally:
+        if circuit_probe_claimed:
+            app_state.market.release_circuit_probe("openai_compatible")
+            circuit_probe_claimed = False
 
     return results

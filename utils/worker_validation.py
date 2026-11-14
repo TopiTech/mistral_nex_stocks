@@ -191,6 +191,8 @@ def _resolve_uwsgi_module(uwsgi_module: Any) -> Any:
 
 def _is_enabled_uwsgi_value(value: Any) -> bool:
     """Whether a uWSGI option value enables a feature such as cheaper mode."""
+    while isinstance(value, (list, tuple)):
+        value = value[-1] if value else None
     if isinstance(value, bytes):
         try:
             value = value.decode("ascii")
@@ -218,7 +220,10 @@ def _uwsgi_cheaper_is_configured(
         token_sets.append(list(argv[1:]))
     for tokens in token_sets:
         for token in tokens:
-            if token == "--cheaper" or token.startswith("--cheaper="):
+            if token == "--cheaper" or (
+                token.startswith("--cheaper=")
+                and _is_enabled_uwsgi_value(token.split("=", 1)[1])
+            ):
                 return True
 
     try:

@@ -391,6 +391,65 @@ def create_sse_ticket(req, ttl_sec: float | None = None) -> str:
     return ticket
 
 
+def _remember_consumed_sse_ticket(
+    req: typing.Any, ticket: str, bound_session: str, expires_at: float
+) -> None:
+    """Remember a ticket redeemed during the current request in case pre-stream checks fail."""
+    entry = (ticket, bound_session, expires_at)
+    try:
+        from flask import g, has_request_context
+
+        if has_request_context():
+            g._consumed_sse_ticket = entry
+            return
+    except RuntimeError:
+        pass
+    environ = getattr(req, "environ", None)
+    if isinstance(environ, dict):
+        environ["mns.consumed_sse_ticket"] = entry
+
+
+def _pop_consumed_sse_ticket(req: typing.Any = None) -> tuple[str, str, float] | None:
+    """Pop the consumed SSE ticket marker from the current request if present."""
+    entry: tuple[str, str, float] | None = None
+    try:
+        from flask import g, has_request_context
+
+        if has_request_context():
+            raw_entry = getattr(g, "_consumed_sse_ticket", None)
+            if raw_entry is not None:
+                delattr(g, "_consumed_sse_ticket")
+                entry = raw_entry
+    except RuntimeError:
+        entry = None
+    if entry is None and req is not None:
+        environ = getattr(req, "environ", None)
+        if isinstance(environ, dict):
+            entry = environ.pop("mns.consumed_sse_ticket", None)
+    return entry
+
+
+def clear_consumed_sse_ticket(req: typing.Any = None) -> None:
+    """Discard any remembered consumed ticket once a stream begins."""
+    _pop_consumed_sse_ticket(req)
+
+
+def restore_sse_ticket(req: typing.Any = None) -> bool:
+    """Restore a just-consumed SSE ticket when an SSE request fails before streaming."""
+    entry = _pop_consumed_sse_ticket(req)
+    if entry is None:
+        return False
+    ticket, bound_session, expires_at = entry
+    if time.time() > expires_at:
+        return False
+    with _SSE_TICKETS_LOCK:
+        if len(_SSE_TICKETS) >= 500:
+            oldest_key = min(_SSE_TICKETS.keys(), key=lambda k: _SSE_TICKETS[k][1])
+            _SSE_TICKETS.pop(oldest_key, None)
+        _SSE_TICKETS.setdefault(ticket, (bound_session, expires_at))
+    return True
+
+
 def consume_sse_ticket(req, ticket: str) -> bool:
     """Consume a session-bound SSE ticket if it is valid, unexpired, and unused.
 
@@ -412,7 +471,10 @@ def consume_sse_ticket(req, ticket: str) -> bool:
     identity, session_backed = _session_id_for_sse(req)
     if not session_backed:
         return False
-    return secrets.compare_digest(bound_session, identity)
+    if secrets.compare_digest(bound_session, identity):
+        _remember_consumed_sse_ticket(req, ticket, bound_session, expires_at)
+        return True
+    return False
 
 
 def require_sse_auth(req, require_origin: bool = False):

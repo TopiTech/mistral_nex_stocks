@@ -387,7 +387,10 @@ class MarketDataState:
 
     def is_yf_rate_limited(self) -> bool:
         with self.yfinance_lock:
-            return yf_session_manager.is_rate_limited("yfinance")
+            limited = yf_session_manager.is_rate_limited("yfinance")
+            if not limited and time.time() >= self.yfinance_rate_limit_until:
+                self.is_yfinance_rate_limited = False
+            return limited
 
     # --- Previous-close cache (realtime producer hot path) ---
 
@@ -400,28 +403,31 @@ class MarketDataState:
         """
         if not symbol:
             return
+        variants = self._symbol_cache_variants(symbol)
         with self.previous_close_cache_lock:
-            if (
-                prev_close is not None
-                and not isinstance(prev_close, bool)
-                and type(prev_close).__name__ not in ("bool_", "bool")
-            ):
+            if prev_close is not None and not is_bool_like(prev_close):
                 try:
                     num = float(prev_close)
                     if math.isfinite(num) and num > 0:
-                        self.previous_close_cache[symbol] = num
+                        for variant in variants:
+                            self.previous_close_cache[variant] = num
                         return
                 except (ValueError, TypeError):
                     pass
-            self.previous_close_cache.pop(symbol, None)
+            for variant in variants:
+                self.previous_close_cache.pop(variant, None)
 
     def get_previous_close_cached(self, symbol: str) -> float | None:
         """Return the cached previous close for *symbol* without sse_data_lock."""
         if not symbol:
             return None
+        variants = self._symbol_cache_variants(symbol)
         with self.previous_close_cache_lock:
-            value = self.previous_close_cache.get(symbol)
-        return value if value is not None else None
+            for variant in variants:
+                value = self.previous_close_cache.get(variant)
+                if value is not None:
+                    return value
+        return None
 
     @staticmethod
     def _coerce_finite_float(raw: Any, default: float = 0.0) -> float:
@@ -526,8 +532,9 @@ class MarketDataState:
                 * (self.yfinance_429_backoff_multiplier ** (self.yfinance_429_streak - 1)),
                 self.yfinance_max_backoff_sec,
             )
-            if retry_after and retry_after > 0:
-                backoff = min(max(graduated, retry_after), self.yfinance_max_backoff_sec)
+            retry_after_val = self._coerce_finite_float(retry_after, 0.0)
+            if retry_after_val > 0:
+                backoff = min(max(graduated, retry_after_val), self.yfinance_max_backoff_sec)
             else:
                 backoff = graduated
             # Monotonic window: a later report of the same block event with a
@@ -586,8 +593,9 @@ class MarketDataState:
                 * (self.scraper_backoff_multiplier ** (self.scraper_block_streak - 1)),
                 self.scraper_max_backoff_sec,
             )
-            if retry_after and retry_after > 0:
-                backoff = min(max(graduated, retry_after), self.scraper_max_backoff_sec)
+            retry_after_val = self._coerce_finite_float(retry_after, 0.0)
+            if retry_after_val > 0:
+                backoff = min(max(graduated, retry_after_val), self.scraper_max_backoff_sec)
             else:
                 backoff = graduated
             # Monotonic window: a later report of the same block event with a

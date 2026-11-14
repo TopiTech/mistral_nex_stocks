@@ -187,7 +187,7 @@ $pythonExe = Resolve-PythonPath -Requested $PythonPath -RootDir $RootDir
 # would escape the closing quote in `"__PYTHON_EXE__" -u ...`, and (c) escape
 # '%' as '%%' because cmd expands % even inside quotes.
 if (-not (Test-SafePath -Path $pythonExe)) { throw "Unsafe Python path: $pythonExe" }
-if ($pythonExe -match '[\/]$' -and -not $pythonExe.EndsWith(':\') -and -not $pythonExe.EndsWith(':/')) {
+if ($pythonExe -match '[\\/]$' -and -not $pythonExe.EndsWith(':\') -and -not $pythonExe.EndsWith(':/')) {
   $pythonExe = $pythonExe.TrimEnd('\','/')
 }
 # Replace '%' as '%%' because cmd expands % even inside quotes. Caret escaping

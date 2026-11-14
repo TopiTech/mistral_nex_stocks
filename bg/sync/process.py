@@ -453,11 +453,10 @@ def _update_indices_data(
     if new_header_data:
         with app_state.cache.sse_data_lock:
             app_state.market.current_indices_cache.update(new_header_data)
+            indices_snapshot = copy.deepcopy(app_state.market.current_indices_cache)
 
         try:
-            app_state.payload_disk_cache.set(
-                "indices_cache", app_state.market.current_indices_cache
-            )
+            app_state.payload_disk_cache.set("indices_cache", indices_snapshot)
         except Exception as e:
             logger.debug("Failed to cache current_indices_cache to disk: %s", e)
 
@@ -555,6 +554,7 @@ def _auto_remove_invalid_symbols(
         for symbol in symbols_to_remove:
             if app_state.market.invalid_symbol_streak.get(symbol, 0) < threshold:
                 continue
+            found = False
             for market in ("us", "jp"):
                 container = get_cont_fn(market)
                 if container and symbol in container:
@@ -569,7 +569,10 @@ def _auto_remove_invalid_symbols(
                     )
                     removed.append((symbol, market, original_stock, streak))
                     removed_any = True
+                    found = True
                     break
+            if not found:
+                app_state.market.invalid_symbol_streak.pop(symbol, None)
 
     # C-03: persist outside the locks so slow disk I/O (encrypt + fsync)
     # never blocks SSE/readers. Roll back under the same lock order on

@@ -878,15 +878,39 @@ function connectSSE(overrideMode) {
         }
       }
 
+      // Apply queued realtime deltas before any snapshot/diff (including while
+      // the tab is hidden): paused rAF frames would otherwise run on return and
+      // overwrite newer hidden-tab state.
+      if (typeof window.flushPendingRealtimeDeltas === "function") {
+        window.flushPendingRealtimeDeltas();
+      }
+
       if (document.hidden) {
-        if (data.stocks)
+        if (data.stocks) {
+          const isInitialHiddenSnapshot =
+            data.stream_event === "initial_snapshot";
+          const isHiddenDiff = data.stream_event === "diff";
+          const { incomingData: hiddenIncomingData, removedEntries } =
+            _prepareSseIncomingStocks(data.stocks, {
+              isDiff: isHiddenDiff,
+              isInitialSnapshot: isInitialHiddenSnapshot,
+            });
           state.updateStocks(
             mergeStocksWithExistingHistory(
-              data.stocks,
+              hiddenIncomingData,
               state.stocks,
-              data.stream_event === "diff",
+              isHiddenDiff,
             ),
           );
+          removedEntries.forEach(({ market, symbol }) => {
+            const stockKey = makeStockKey(market, symbol);
+            if (typeof window.purgeStockKeyCaches === "function") {
+              window.purgeStockKeyCaches(stockKey);
+            } else {
+              stockHashMap.delete(stockKey);
+            }
+          });
+        }
         if (data.indices) {
           _indicesFetchGeneration++;
           state.updateIndices(data.indices);
@@ -895,12 +919,6 @@ function connectSSE(overrideMode) {
         return;
       }
 
-      // Apply queued realtime deltas before the snapshot/diff. They arrived
-      // earlier in stream order; leaving them in a later animation frame let
-      // an older replayed delta overwrite the newer snapshot price.
-      if (typeof window.flushPendingRealtimeDeltas === "function") {
-        window.flushPendingRealtimeDeltas();
-      }
       if (data.stocks) {
         updateStocksFromSseData(data);
       }
@@ -1098,19 +1116,10 @@ function connectSSE(overrideMode) {
   openSseWithTicket();
 }
 
-/**
- * Update stock cards from SSE data payload (differential update for performance).
- * @param {Object} data - SSE payload with stocks.us, stocks.jp, stocks.idx
- */
-function updateStocksFromSseData(data) {
-  if (!data) return;
-  const isInitialSnapshot = data.stream_event === "initial_snapshot";
-  const stocks = data.stocks || {};
-  // SSE diff で _removed として届いた銘柄は、state 更新後に DOM カードを
-  // 明示的に破棄する（差分更新パスは state に残る銘柄しか走査しないため、
-  // この処理が無いと削除済みカードが画面に残留する）。
+function _prepareSseIncomingStocks(rawStocks, { isDiff, isInitialSnapshot }) {
+  const stocks = rawStocks || {};
   const removedEntries = [];
-  if (data.stream_event === "diff") {
+  if (isDiff) {
     ["us", "jp", "idx"].forEach((market) => {
       (stocks[market] || []).forEach((s) => {
         if (s && s._removed && s.symbol) {
@@ -1138,10 +1147,26 @@ function updateStocksFromSseData(data) {
       __live_update: !isInitialSnapshot,
     }));
   }
+  return { incomingData, removedEntries };
+}
+
+/**
+ * Update stock cards from SSE data payload (differential update for performance).
+ * @param {Object} data - SSE payload with stocks.us, stocks.jp, stocks.idx
+ */
+function updateStocksFromSseData(data) {
+  if (!data) return;
+  const isInitialSnapshot = data.stream_event === "initial_snapshot";
+  const isDiff = data.stream_event === "diff";
+  const stocks = data.stocks || {};
+  const { incomingData, removedEntries } = _prepareSseIncomingStocks(stocks, {
+    isDiff,
+    isInitialSnapshot,
+  });
   const nextData = mergeStocksWithExistingHistory(
     incomingData,
     state.stocks,
-    data.stream_event === "diff",
+    isDiff,
   );
 
   const hasSkeleton = document.querySelector(".skeleton-card") !== null;

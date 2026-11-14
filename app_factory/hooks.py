@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 
-from flask import Response, current_app, g, request
+from flask import Request, Response, current_app, g, request
 
 from error_codes import ErrorCode
 from logging_config import DETAILED_API_LOG_PATHS, LOG_LEVEL
@@ -59,6 +59,16 @@ def _forbidden_cross_site_response() -> tuple[Response, int]:
     )
 
 
+def _is_remote_admin_authenticated(req: Request) -> bool:
+    """Return True when remote API mode is enabled and X-MNS-Admin-Token validates."""
+    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
+    admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
+    if not (allow_remote and admin_token):
+        return False
+    provided = req.headers.get("X-MNS-Admin-Token", "").strip()
+    return check_admin_token(provided)
+
+
 def _enforce_sec_fetch_site_check():
     """Enforce Sec-Fetch-Site metadata checks to block cross-site request forgery.
 
@@ -98,6 +108,7 @@ def _enforce_sec_fetch_site_check():
         and request.path not in _csrf_exempt_post_paths
         and not _has_csrf_header
         and not _is_allowed_shutdown_origin(request)
+        and not _is_remote_admin_authenticated(request)
     ):
         logger.warning(
             "Block mutating %s without trusted Origin: Sec-Fetch-Site=%s path=%s",
@@ -116,6 +127,7 @@ def _enforce_sec_fetch_site_check():
         and is_costly_get
         and sec_fetch_site in ("", "none")
         and not _is_allowed_shutdown_origin(request)
+        and not _is_remote_admin_authenticated(request)
     ):
         logger.warning(
             "Block costly GET without trusted Origin: Sec-Fetch-Site=%s path=%s",
@@ -145,12 +157,8 @@ def _enforce_sec_fetch_site_check():
         if not allowed:
             # Remote/admin-token mode: allow cross-site from remote origins when
             # the mandatory admin token authenticates the request.
-            allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
-            admin_token = os.environ.get("MNS_ADMIN_TOKEN", "").strip()
-            if allow_remote and admin_token:
-                provided = request.headers.get("X-MNS-Admin-Token", "").strip()
-                if check_admin_token(provided):
-                    return None
+            if _is_remote_admin_authenticated(request):
+                return None
             logger.warning(
                 "Block cross-site request to %s: Origin/Referer not allowed. Sec-Fetch-Site=%s",
                 request.path,

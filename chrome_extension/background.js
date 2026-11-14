@@ -510,7 +510,7 @@ if (chrome.sidePanel?.setPanelBehavior) {
     });
 } else if (chrome.action?.onClicked && chrome.sidePanel?.open) {
   chrome.action.onClicked.addListener((tab) => {
-    if (tab.windowId) {
+    if (tab && typeof tab.windowId === "number") {
       chrome.sidePanel.open({ windowId: tab.windowId }).catch((error) => {
         console.error(error);
         enableActionPopupFallback();
@@ -595,16 +595,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
     if (tab && typeof tab.windowId === "number") {
       chrome.sidePanel
-        .open({ windowId: tab.windowId })
-        .catch((error) =>
+        ?.open({ windowId: tab.windowId })
+        ?.catch((error) =>
           console.debug("Side panel open on window failed:", error),
         );
     } else {
       chrome.windows.getCurrent((win) => {
         if (win && typeof win.id === "number") {
           chrome.sidePanel
-            .open({ windowId: win.id })
-            .catch((error) =>
+            ?.open({ windowId: win.id })
+            ?.catch((error) =>
               console.debug("Side panel open on current window failed:", error),
             );
         }
@@ -853,6 +853,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 error:
                   tokenState.error ||
                   "シャットダウントークン取得のレート制限に達しました。少し待ってから再試行してください。",
+              });
+            }
+            if (!tokenState.ok && !mnsShutdownToken) {
+              return safeSendResponse({
+                ok: false,
+                error:
+                  tokenState.error ||
+                  "シャットダウントークンの取得に失敗しました。",
               });
             }
 

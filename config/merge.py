@@ -61,7 +61,11 @@ def _merge_configs(legacy_path: Path, runtime_path: Path) -> bool:
             return False
 
         if not isinstance(runtime_data, dict):
-            runtime_data = {}
+            logger.warning(
+                "Runtime config %s does not contain a JSON object; aborting legacy merge.",
+                runtime_path,
+            )
+            return False
 
         modified = False
 
@@ -116,6 +120,13 @@ def _remove_stale_legacy_config(legacy_path: Path, runtime_path: Path) -> bool:
 
     if not isinstance(runtime_data, dict) or not isinstance(legacy_data, dict):
         logger.debug("Keeping stale legacy config because its JSON root is not an object")
+        return False
+
+    if legacy_data.get("mns_master_key") and not runtime_data.get("mns_master_key"):
+        logger.warning(
+            "Keeping legacy config %s because runtime config lacks mns_master_key",
+            legacy_path,
+        )
         return False
 
     try:

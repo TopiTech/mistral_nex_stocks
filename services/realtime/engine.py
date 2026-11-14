@@ -115,6 +115,52 @@ class RealtimeMarketEngine:
             self._engine_epoch == epoch and self._registration_tokens.get((market, symbol)) is token
         )
 
+    def _resolve_volume_before_lock(
+        self,
+        store: dict[str, TickerPayload],
+        symbol: str,
+        payload: TickerPayload,
+        registration: tuple[str, str, object, int] | None,
+    ) -> tuple[bool, float, float | None]:
+        """Strip scraper volume and resolve yfinance fallback before acquiring store_lock."""
+        source = payload.get("source") or ""
+        if _is_scraper_source(source):
+            payload.pop("volume", None)
+
+        inc_vol_f = _finite_number(payload.get("volume"))
+        inc_vol_f = inc_vol_f if inc_vol_f is not None else 0.0
+        if inc_vol_f > 0:
+            return True, inc_vol_f, None
+
+        need_yf_vol = False
+        with self.store_lock:
+            if registration is not None and not self._registration_is_current_locked(registration):
+                return False, 0.0, None
+            existing = store.get(symbol)
+            ex_vol_f = _finite_number(existing.get("volume") if existing else None)
+            ex_vol_f = ex_vol_f if ex_vol_f is not None else 0.0
+            need_yf_vol = ex_vol_f <= 0
+
+        yf_vol = _get_yfinance_volume(symbol) if need_yf_vol else None
+        return True, 0.0, yf_vol
+
+    @staticmethod
+    def _apply_resolved_volume_locked(
+        existing: TickerPayload | None,
+        payload: TickerPayload,
+        inc_vol_f: float,
+        yf_vol_fallback: float | None,
+    ) -> None:
+        if inc_vol_f > 0:
+            payload["volume"] = int(inc_vol_f)
+            return
+        ex_vol_f = _finite_number(existing.get("volume") if existing else None)
+        ex_vol_f = ex_vol_f if ex_vol_f is not None else 0.0
+        if ex_vol_f > 0:
+            payload["volume"] = int(ex_vol_f)
+        elif yf_vol_fallback is not None and yf_vol_fallback > 0:
+            payload["volume"] = yf_vol_fallback
+
     def _registration_is_current(self, registration: tuple[str, str, object, int]) -> bool:
         with self.store_lock:
             return self._registration_is_current_locked(registration)
@@ -178,31 +224,17 @@ class RealtimeMarketEngine:
         ):
             payload["change_percent"] = round(float(raw_chp), 2)
 
+        should_continue, inc_vol_f, yf_vol_fallback = self._resolve_volume_before_lock(
+            self.market_store, symbol, payload, registration
+        )
+        if not should_continue:
+            return
+
         with self.store_lock:
             if registration is not None and not self._registration_is_current_locked(registration):
                 return
             existing = self.market_store.get(symbol)
-            source = payload.get("source") or ""
-            # Volume is strictly sourced from yfinance, never from scrapers
-            if _is_scraper_source(source):
-                payload.pop("volume", None)
-
-            inc_vol = payload.get("volume")
-            inc_vol_f = _finite_number(inc_vol)
-            inc_vol_f = inc_vol_f if inc_vol_f is not None else 0.0
-
-            if inc_vol_f > 0:
-                payload["volume"] = int(inc_vol_f)
-            else:
-                ex_vol = existing.get("volume") if existing else None
-                ex_vol_f = _finite_number(ex_vol)
-                ex_vol_f = ex_vol_f if ex_vol_f is not None else 0.0
-                if ex_vol_f > 0:
-                    payload["volume"] = int(ex_vol_f)
-                else:
-                    yf_vol = _get_yfinance_volume(symbol)
-                    if yf_vol is not None and yf_vol > 0:
-                        payload["volume"] = yf_vol
+            self._apply_resolved_volume_locked(existing, payload, inc_vol_f, yf_vol_fallback)
             self.market_store[symbol] = payload
             self._dirty_symbols.add(symbol)
             for pending in self._client_pending.values():
@@ -292,30 +324,17 @@ class RealtimeMarketEngine:
             if isinstance(chp_val, (int, float)) and not is_bool_like(chp_val) and math.isfinite(chp_val):
                 payload["change_percent"] = round(float(chp_val), 2)
 
+        should_continue, inc_vol_f, yf_vol_fallback = self._resolve_volume_before_lock(
+            self.pts_store, symbol, payload, registration
+        )
+        if not should_continue:
+            return
+
         with self.store_lock:
             if registration is not None and not self._registration_is_current_locked(registration):
                 return
             existing = self.pts_store.get(symbol)
-            source = payload.get("source") or ""
-            if _is_scraper_source(source):
-                payload.pop("volume", None)
-
-            inc_vol = payload.get("volume")
-            inc_vol_f = _finite_number(inc_vol)
-            inc_vol_f = inc_vol_f if inc_vol_f is not None else 0.0
-
-            if inc_vol_f > 0:
-                payload["volume"] = int(inc_vol_f)
-            else:
-                ex_vol = existing.get("volume") if existing else None
-                ex_vol_f = _finite_number(ex_vol)
-                ex_vol_f = ex_vol_f if ex_vol_f is not None else 0.0
-                if ex_vol_f > 0:
-                    payload["volume"] = int(ex_vol_f)
-                else:
-                    yf_vol = _get_yfinance_volume(symbol)
-                    if yf_vol is not None and yf_vol > 0:
-                        payload["volume"] = yf_vol
+            self._apply_resolved_volume_locked(existing, payload, inc_vol_f, yf_vol_fallback)
             self.pts_store[symbol] = payload
             self._dirty_pts_symbols.add(symbol)
             for pending in self._client_pts_pending.values():

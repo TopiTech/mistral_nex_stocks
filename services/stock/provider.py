@@ -12,6 +12,7 @@ import concurrent.futures
 import io
 import logging
 import math
+import numbers
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -26,6 +27,7 @@ import yfinance as yf
 from constants import CurlRequestsTimeout, RequestsTimeout
 from services.stock import _shim
 from services.stock.errors import (
+    YFRateLimitError,
     _is_yfinance_invalid_symbol_error,
     _is_yfinance_rate_limit_error,
 )
@@ -37,7 +39,7 @@ from utils.caching import (
     history_short_cache_key,
     legacy_history_frame_disk_key,
 )
-from utils.normalization import is_jp_stock_code, normalize_history_frame
+from utils.normalization import is_bool_like, is_jp_stock_code, normalize_history_frame
 from utils.threading import DaemonThreadPoolExecutor
 from utils.tradingview_mapper import get_ticker_exchange, resolve_exchange_prefix
 
@@ -414,6 +416,7 @@ class YFinanceProvider(BaseStockProvider):
                     logger.debug("Failed to save df to disk cache for %s: %s", symbol, cache_exc)
                 return df
         except (
+            YFRateLimitError,
             ValueError,
             TypeError,
             KeyError,
@@ -422,6 +425,10 @@ class YFinanceProvider(BaseStockProvider):
             OSError,
             TimeoutError,
         ) as exc:
+            if _is_yfinance_rate_limit_error(exc):
+                _shim()._handle_yf_rate_limit(
+                    exc, m_state, context=f"single_history symbol={symbol}"
+                )
             logger.warning("Failed to fetch history for %s: %s", symbol, exc)
         cached = self._load_history_disk_fallback(symbol, period, "1d")
         if cached is not None and not cached.empty:
@@ -793,6 +800,7 @@ class YFinanceProvider(BaseStockProvider):
                                 if df is not None and not df.empty:
                                     hist_by_symbol[sym] = df
                             except (
+                                YFRateLimitError,
                                 ValueError,
                                 TypeError,
                                 RuntimeError,
@@ -1202,6 +1210,25 @@ class YFinanceProvider(BaseStockProvider):
                 )
             return {}
 
+    @staticmethod
+    def _is_finite_value(val: Any) -> bool:
+        if isinstance(val, (float, numbers.Real)) and not is_bool_like(val):
+            try:
+                return math.isfinite(float(val))
+            except (TypeError, ValueError, OverflowError):
+                return False
+        return True
+
+    @classmethod
+    def _normalize_calendar_value(cls, val: Any) -> Any:
+        if isinstance(val, list):
+            return [cls._normalize_calendar_value(item) for item in val]
+        if val is pd.NaT or not cls._is_finite_value(val):
+            return None
+        if hasattr(val, "isoformat"):
+            return val.isoformat()
+        return val
+
     def get_analyst_targets(self, symbol: str) -> dict:
         """Fetch analyst price targets (mean, median, high, low)."""
         t = self.get_ticker(symbol)
@@ -1210,7 +1237,11 @@ class YFinanceProvider(BaseStockProvider):
         try:
             targets = t.get_analyst_price_targets()
             if isinstance(targets, dict):
-                return {k: v for k, v in targets.items() if v is not None}
+                return {
+                    k: v
+                    for k, v in targets.items()
+                    if v is not None and self._is_finite_value(v)
+                }
             return {}
         except Exception as exc:
             logger.debug("yfinance analyst_targets failed for %s: %s", symbol, exc)
@@ -1229,18 +1260,8 @@ class YFinanceProvider(BaseStockProvider):
         try:
             cal = t.get_calendar()
             if isinstance(cal, dict):
-                # Convert date objects to strings for JSON
-                result = {}
-                for k, v in cal.items():
-                    if hasattr(v, "isoformat"):
-                        result[k] = v.isoformat()
-                    elif isinstance(v, list):
-                        result[k] = [
-                            item.isoformat() if hasattr(item, "isoformat") else item for item in v
-                        ]
-                    else:
-                        result[k] = v
-                return result
+                # Convert date objects to strings and non-finite numbers to None for JSON
+                return {k: self._normalize_calendar_value(v) for k, v in cal.items()}
             return {}
         except Exception as exc:
             logger.debug("yfinance calendar failed for %s: %s", symbol, exc)

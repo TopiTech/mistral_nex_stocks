@@ -109,6 +109,19 @@
           } else {
             this.openModal(data.aiDiveSymbol, data);
           }
+        } else if (key === "stocks" && data.aiDiveOpen && data.aiDiveSymbol) {
+          const stock =
+            data.stocks && typeof data.stocks.get === "function"
+              ? data.stocks.get(data.aiDiveSymbol)
+              : null;
+          if (stock) {
+            if (this.els.nameSubtitle) {
+              this.els.nameSubtitle.textContent =
+                stock.displayName || stock.name || stock.symbol;
+            }
+            this.renderTier1Financials(stock);
+            this.renderTier2Technicals(stock);
+          }
         }
       });
     }

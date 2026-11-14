@@ -496,13 +496,36 @@ class YFinanceSessionManager:
                                 req_exc,
                             )
                             raise
-                        if "closed" in str(req_exc).lower():
+                        is_closed_retry = bool(
+                            getattr(self._local, "in_closed_session_retry", False)
+                        )
+                        if "closed" in str(req_exc).lower() and not is_closed_retry:
                             logger.warning(
                                 "Detected request on closed session; refreshing session and retrying: %s",
                                 req_exc,
                             )
-                            fresh_sess = self.get_session()
-                            resp = fresh_sess.request(*args, **kwargs)
+                            local_sessions = getattr(self._local, "sessions", None)
+                            if isinstance(local_sessions, dict):
+                                for sess_idx in [
+                                    k
+                                    for k, entry in local_sessions.items()
+                                    if isinstance(entry, tuple) and entry and entry[0] is session
+                                ]:
+                                    local_sessions.pop(sess_idx, None)
+                            with self._lock:
+                                self._all_sessions = [
+                                    entry for entry in self._all_sessions if entry[0] is not session
+                                ]
+                            try:
+                                session.close()
+                            except Exception:
+                                pass
+                            self._local.in_closed_session_retry = True
+                            try:
+                                fresh_sess = self.get_session()
+                                resp = fresh_sess.request(*args, **kwargs)
+                            finally:
+                                self._local.in_closed_session_retry = False
                         elif (
                             CURL_CFFI_AVAILABLE
                             and (

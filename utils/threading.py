@@ -6,6 +6,7 @@ duplication between app_state.py and trend_sources.py.
 """
 
 import logging
+import os
 import queue
 import threading
 import weakref
@@ -28,6 +29,25 @@ def restrictive_umask_lock() -> Iterator[None]:
     """Serialize process-global ``os.umask`` mutations across threads."""
     with PROCESS_UMASK_LOCK:
         yield
+
+
+def safe_fdopen(fd: int, mode: str = "w", encoding: str | None = "utf-8") -> Any:
+    """Wrap *fd* via ``os.fdopen``, closing *fd* only if ``os.fdopen`` itself fails.
+
+    Once ``os.fdopen`` succeeds, the returned file object owns *fd* and closes it on
+    ``close()`` / ``__exit__``; callers must not call ``os.close(fd)`` in an outer
+    exception handler around ``with safe_fdopen(...)``.
+    """
+    try:
+        if encoding is None:
+            return os.fdopen(fd, mode)
+        return os.fdopen(fd, mode, encoding=encoding)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
 
 
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):

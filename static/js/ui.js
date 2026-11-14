@@ -3968,7 +3968,9 @@ function openFullscreenChart(wrapper) {
   if (modalWasHidden && typeof lockBodyScroll === "function") {
     lockBodyScroll();
   }
-  modal._previousFocus = document.activeElement;
+  if (!modal.contains(document.activeElement)) {
+    modal._previousFocus = document.activeElement;
+  }
 
   const symbolEl = document.getElementById("fs-stock-symbol");
   const nameEl = document.getElementById("fs-stock-name");
@@ -4176,13 +4178,6 @@ function openFullscreenChart(wrapper) {
         triggerAiTechnicalLines(targetWrapper);
       });
   }
-
-  modal._previousFocus = document.activeElement;
-  modal.removeAttribute("inert");
-  modal.classList.remove("hidden");
-  modal.classList.add("show");
-  modal.style.display = "flex";
-  modal.setAttribute("aria-hidden", "false");
 
   const currentMode = typeof getSseMode === "function" ? getSseMode() : 2;
   const tvContainer = document.getElementById("tradingview-chart-container");

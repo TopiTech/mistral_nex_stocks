@@ -2501,28 +2501,6 @@ input {
   animation: flash-red 1.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes flash-green {
-  0% {
-    background-color: rgba(0, 255, 136, 0.45);
-    box-shadow: 0 0 12px rgba(0, 255, 136, 0.6);
-  }
-  100% {
-    background-color: transparent;
-    box-shadow: none;
-  }
-}
-
-@keyframes flash-red {
-  0% {
-    background-color: rgba(255, 51, 102, 0.45);
-    box-shadow: 0 0 12px rgba(255, 51, 102, 0.6);
-  }
-  100% {
-    background-color: transparent;
-    box-shadow: none;
-  }
-}
-
 .price-live-pulse {
   position: relative;
 }
@@ -4553,6 +4531,14 @@ textarea:focus-visible {
 
 .price-pulse-down {
   animation: tickPulseDown 0.8s ease-out 1;
+}
+
+body.theme-color-jp .price-pulse-up {
+  animation: tickPulseDown 0.8s ease-out 1;
+}
+
+body.theme-color-jp .price-pulse-down {
+  animation: tickPulseUp 0.8s ease-out 1;
 }
 
 /* --- Market Data Disclosure Note --- */

@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 
-from utils.threading import restrictive_umask_lock
+from utils.threading import restrictive_umask_lock, safe_fdopen
 
 
 def _write_atomic_restricted(path, content: str) -> None:
@@ -32,7 +32,7 @@ def _write_atomic_restricted(path, content: str) -> None:
             finally:
                 if old_umask is not None:
                     os.umask(old_umask)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with safe_fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
             f.flush()
             try:
@@ -117,7 +117,7 @@ class ShutdownTokenManager:
 
     def get_or_create_shutdown_token(self) -> str:
         with self._lock:
-            if self.shutdown_token and not self.used_marker.exists():
+            if self.shutdown_token and not self.shutdown_token_used and not self.used_marker.exists():
                 return self.shutdown_token
 
             # R1: One-time migration of a legacy project-root token into the

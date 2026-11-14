@@ -310,12 +310,25 @@
 
       try {
         let data = null;
+        // One token for this news operation: the server's polling-skip
+        // limiter recognises repeated tokens, so the 20 poll attempts below
+        // do not consume the whole /api/news quota (20/min). Without it the
+        // dashboard's own news refresh got a 429 after opening AI Dive.
+        const newsRequestToken =
+          typeof global.createRequestToken === "function"
+            ? global.createRequestToken()
+            : null;
         for (let attempt = 0; attempt < 20; attempt += 1) {
           const newsReqInit = {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             signal: newsAbortController.signal,
           };
+          if (newsRequestToken) {
+            newsReqInit.body = JSON.stringify({
+              request_token: newsRequestToken,
+            });
+          }
           const res = global.apiFetch
             ? await global.apiFetch("/api/news", newsReqInit, {
                 showToast: false,

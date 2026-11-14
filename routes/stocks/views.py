@@ -16,6 +16,7 @@ from app_state import app_state
 from constants import (
     CACHE_DURATION_HEATMAP,
     CACHE_DURATION_SEARCH,
+    DEFAULT_USDJPY_RATE,
     POPULAR_JP,
     POPULAR_US,
 )
@@ -65,9 +66,10 @@ from utils.stock_payload import (
     _get_stock_container,
     _stock_is_default_or_user,
     error_response,
+    get_current_usdjpy_rate,
     ok_response,
 )
-from utils.storage import UserStocksPersistError
+from utils.storage import UserStocksPersistError, load_user_stocks
 from utils.text_utils import _parse_json_request
 
 logger = logging.getLogger(__name__)
@@ -110,7 +112,7 @@ def api_screener() -> Any:
                 val = val.replace(",", "").replace("$", "").replace("¥", "").replace("%", "").strip()
             candidate = float(val)
             return candidate if math.isfinite(candidate) else None
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return None
 
     stocks_data = resolve_stocks_for_response(include_portfolio=False)
@@ -171,6 +173,23 @@ def api_screener() -> Any:
             if row is not None:
                 all_stocks.append(row)
 
+    # ``market=all`` mixes USD and JPY rows. ``market_cap`` is denominated in
+    # the listing currency, so comparing/sorting the raw values ranked Toyota
+    # (¥50T) above Apple ($3.5T). Normalize only for the mixed view; a single
+    # market keeps its native currency and the existing filter semantics.
+    use_normalized_cap = market_filter == "all"
+    if use_normalized_cap:
+        fx_rate, _fx_estimated = get_current_usdjpy_rate()
+        if not math.isfinite(fx_rate) or fx_rate <= 0:
+            fx_rate = DEFAULT_USDJPY_RATE
+        for item in all_stocks:
+            raw_cap = _parse_screener_float(item.get("market_cap"))
+            if raw_cap is None:
+                continue
+            item["market_cap_jpy"] = (
+                raw_cap * fx_rate if item.get("market") == "us" else raw_cap
+            )
+
     filtered = []
     for item in all_stocks:
         item_sec = str(item.get("sector") or "")
@@ -189,7 +208,9 @@ def api_screener() -> Any:
         if max_change is not None and (c_float is None or c_float > max_change):
             continue
 
-        mc_float = _parse_screener_float(item.get("market_cap"))
+        mc_float = _parse_screener_float(
+            item.get("market_cap_jpy") if use_normalized_cap else item.get("market_cap")
+        )
         if min_market_cap is not None and (mc_float is None or mc_float < min_market_cap):
             continue
         if max_market_cap is not None and (
@@ -224,7 +245,10 @@ def api_screener() -> Any:
     reverse = sort_order != "asc"
 
     def _safe_sort_key(item: dict[str, Any], field: str) -> Any:
-        val = item.get(field)
+        if field == "market_cap" and use_normalized_cap:
+            val = item.get("market_cap_jpy", item.get("market_cap"))
+        else:
+            val = item.get(field)
         if field == "pe_ratio" and val is None:
             val = (
                 item.get("trailingPE")
@@ -550,6 +574,7 @@ def api_reset_stocks() -> Any:
         )
 
     with app_state.market.user_stocks_lock:
+        rev_before = app_state.market.user_stocks_rev
         previous_us = dict(app_state.market.user_us)
         previous_jp = dict(app_state.market.user_jp)
         previous_idx = dict(app_state.market.user_idx)
@@ -558,12 +583,26 @@ def api_reset_stocks() -> Any:
     try:
         save_user_stocks()
     except UserStocksPersistError as exc:
+        reload_persisted = False
         with app_state.market.user_stocks_lock:
-            # API-7: merge instead of a full-dict restore — concurrent
-            # mutations committed after the reset must not be discarded.
-            app_state.market.user_us = {**previous_us, **app_state.market.user_us}
-            app_state.market.user_jp = {**previous_jp, **app_state.market.user_jp}
-            app_state.market.user_idx = {**previous_idx, **app_state.market.user_idx}
+            # API-7: a concurrent mutation may have persisted after this
+            # reset's snapshot. A plain merge resurrected symbols that a
+            # concurrent delete had already removed; only restore the
+            # pre-reset dicts when no other save committed in the meantime.
+            # Otherwise the on-disk state is authoritative, so reload it.
+            if app_state.market.user_stocks_rev == rev_before:
+                app_state.market.user_us = {**previous_us, **app_state.market.user_us}
+                app_state.market.user_jp = {**previous_jp, **app_state.market.user_jp}
+                app_state.market.user_idx = {**previous_idx, **app_state.market.user_idx}
+            else:
+                reload_persisted = True
+        if reload_persisted:
+            try:
+                load_user_stocks(force=True)
+            except Exception as reload_exc:
+                current_app.logger.warning(
+                    "Failed to reload user stocks after reset rollback: %s", reload_exc
+                )
         current_app.logger.error("Failed to persist stock reset: %s", exc)
         return error_response(
             ErrorCode.FILE_ERROR,

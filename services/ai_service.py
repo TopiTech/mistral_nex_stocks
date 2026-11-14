@@ -110,6 +110,70 @@ def _public_mistral_error_message(exc: BaseException, status_code: int) -> str:
     return "Mistral APIの呼び出しに失敗しました。設定と接続を確認してください。"
 
 
+def _exception_status_code(exc: BaseException | None) -> int:
+    """Best-effort HTTP status for an SDK/provider exception.
+
+    Shared by the non-agent and Agents-SDK stream paths so both classify the
+    same failure the same way. Returns 0 when the status cannot be determined.
+    """
+    if exc is None:
+        return 0
+    status = getattr(exc, "status_code", 0)
+    if isinstance(status, int) and not isinstance(status, bool) and status > 0:
+        return status
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        try:
+            return int(exc.response.status_code)
+        except (ValueError, TypeError):
+            return 0
+    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+        return 504
+    if isinstance(exc, (ConnectionError, httpx.NetworkError)):
+        return 503
+    return 0
+
+
+def _should_trip_mistral_circuit(
+    exc: BaseException | None,
+    status_code: int,
+    err_payload: Any,
+    *,
+    unknown_is_failure: bool = False,
+) -> bool:
+    """Classify whether a failure is a provider/infrastructure outage.
+
+    Auth errors (401/403), tier restrictions, invalid requests (4xx) and a
+    slow-but-healthy stream must not open the global Mistral circuit: doing so
+    turns a persistent misconfiguration (bad agent id, revoked key) or a slow
+    first token into a 60s outage for analysis, news, portfolio and chat.
+
+    ``unknown_is_failure`` is used by the Agents-SDK path, where the queue
+    transports arbitrary exception objects without an HTTP status. A bare
+    transport-style RuntimeError (e.g. "connection reset by peer") must still
+    be circuit-accounted, while known 4xx statuses remain excluded above.
+    """
+    try:
+        is_tier_err = _is_mistral_tier_restriction_error(exc, err_payload, status_code)
+    except Exception:
+        is_tier_err = False
+    if is_tier_err or status_code in (400, 401, 403, 404, 422, 429):
+        return False
+    if isinstance(
+        exc,
+        (
+            RequestsTimeout,
+            CurlRequestsTimeout,
+            ConnectionError,
+            httpx.TimeoutException,
+            httpx.NetworkError,
+        ),
+    ):
+        return True
+    if status_code >= 500:
+        return True
+    return bool(unknown_is_failure and status_code == 0)
+
+
 def _sanitize_repair_content(raw_content: Any) -> str:
     """Sanitize raw content for repair prompts to prevent prompt injection."""
     text = str(raw_content or "")
@@ -712,11 +776,21 @@ def _extract_mistral_wait_seconds(response) -> float:
             if raw:
                 try:
                     epoch = float(str(raw).strip())
+                    # X-RateLimit-Reset is conventionally epoch *seconds*,
+                    # but proxies/providers also emit milliseconds (1.7e12) or
+                    # microseconds (1.7e15). Treating milliseconds as seconds
+                    # produced a ~55,000-year wait that the 300s cooldown clamp
+                    # then turned into a full 5-minute AI outage after one
+                    # response. Normalize the unit and bound the result.
+                    if epoch > 1e14:
+                        epoch /= 1e6
+                    elif epoch > 1e11:
+                        epoch /= 1e3
                     if epoch > 1_000_000_000:
-                        waits.append(max(0.0, epoch - time.time()))
+                        waits.append(min(max(0.0, epoch - time.time()), 3600.0))
                     else:
-                        waits.append(max(0.0, epoch))
-                except (ValueError, TypeError):
+                        waits.append(min(max(0.0, epoch), 3600.0))
+                except (ValueError, TypeError, OverflowError):
                     waits.append(_parse_sec(raw))
     except Exception:
         pass
@@ -2727,21 +2801,33 @@ def stream_mistral_chat(
                 )
                 stream_thread.start()
 
-                def _report_agent_stream_failure() -> None:
+                def _report_agent_stream_failure(
+                    err_obj: BaseException | None = None, *, timed_out: bool = False
+                ) -> None:
                     """Circuit-account an agents-mode stream failure (M5).
 
                     The queue carries errors as items — not exceptions through
                     the communication-error handler — so without this report a
                     HALF_OPEN probe against a dead provider never re-opens the
                     circuit and every subsequent AI call claims a doomed probe.
-                    Mirrors the non-agent path's failure classification, and
-                    clears the claim flag the same way so the generator's
-                    finally does not double-release the probe.
+                    Mirrors the non-agent path's failure classification: only
+                    transport/5xx failures trip the circuit; 4xx, tier
+                    restrictions and a slow-but-healthy stream release the
+                    probe instead. ``timed_out`` means no event arrived within
+                    the read window (a slow first token or long tool call), not
+                    a provider outage.
                     """
                     nonlocal circuit_probe_claimed
-                    app_state.market.report_circuit_result(
-                        "mistral", success=False, threshold=3, open_sec=60
-                    )
+                    status_code = _exception_status_code(err_obj)
+                    err_payload = _extract_error_payload(err_obj) if err_obj is not None else None
+                    if not timed_out and _should_trip_mistral_circuit(
+                        err_obj, status_code, err_payload, unknown_is_failure=True
+                    ):
+                        app_state.market.report_circuit_result(
+                            "mistral", success=False, threshold=3, open_sec=60
+                        )
+                    elif circuit_probe_claimed:
+                        app_state.market.release_circuit_probe("mistral")
                     circuit_probe_claimed = False
 
                 try:
@@ -2750,7 +2836,7 @@ def stream_mistral_chat(
                             item = event_queue.get(timeout=MISTRAL_API_TIMEOUT_SEC)
                         except queue.Empty:
                             logger.warning("Agent SDK stream timed out waiting for events")
-                            _report_agent_stream_failure()
+                            _report_agent_stream_failure(timed_out=True)
                             yield {
                                 "type": "error",
                                 "message": "Agent stream timed out",
@@ -2773,7 +2859,7 @@ def stream_mistral_chat(
                                     type(err_obj).__name__ if err_obj else "unknown",
                                     err_obj,
                                 )
-                                _report_agent_stream_failure()
+                                _report_agent_stream_failure(err_obj)
                                 # M5b: never surface raw SDK exception text to
                                 # the browser; use the sanitized public message.
                                 yield {
@@ -2976,24 +3062,7 @@ def stream_mistral_chat(
                 )
                 return
 
-            is_tier_err = _is_mistral_tier_restriction_error(exc, err_payload, status_code)
-            is_circuit_failure = (
-                not is_tier_err
-                and status_code != 403
-                and (
-                    isinstance(
-                        exc,
-                        (
-                            RequestsTimeout,
-                            CurlRequestsTimeout,
-                            ConnectionError,
-                            httpx.TimeoutException,
-                            httpx.NetworkError,
-                        ),
-                    )
-                    or status_code >= 500
-                )
-            )
+            is_circuit_failure = _should_trip_mistral_circuit(exc, status_code, err_payload)
             if is_circuit_failure:
                 app_state.market.report_circuit_result(
                     "mistral", success=False, threshold=3, open_sec=60

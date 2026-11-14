@@ -425,8 +425,17 @@ class RealtimeMarketEngine:
         for sym in tv_symbols:
             self.tv_client.add_symbol(_normalize_tv_symbol(sym))
         for sym in jp_symbols:
+            # Idempotent like register_symbol(): save_user_stocks() calls this
+            # on every persistence, and re-tokenizing an already registered
+            # symbol invalidated the in-flight PTS fetch from the previous
+            # cycle (its result was dropped on token mismatch) while
+            # submitting another 4-provider fetch chain. Outside the PTS
+            # session that grew the unbounded executor queue every cycle.
+            with self.store_lock:
+                if ("jp", sym) in self._registration_tokens:
+                    continue
+                registration = self._activate_registration(sym, "jp")
             self.yahoojp_scraper.add_symbol(sym)
-            registration = self._activate_registration(sym, "jp")
             if self._pts_cached_payload(sym) is None:
 
                 def _bg_fetch(
@@ -828,6 +837,12 @@ class RealtimeMarketEngine:
                     self._bg_executor = DaemonThreadPoolExecutor(
                         max_workers=4, thread_name_prefix="RealtimeBg"
                     )
+                # stop() bumps _engine_epoch, which invalidates every old
+                # registration token. Clear them so the next register_symbols
+                # (load_user_stocks / sync) re-adds symbols and re-submits PTS
+                # fetches instead of being skipped as "already registered".
+                with self.store_lock:
+                    self._registration_tokens.clear()
                 self.tv_client.start()
                 self.yahoojp_scraper.start()
                 self._pts_epoch += 1

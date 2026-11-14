@@ -1010,13 +1010,29 @@ _CONFIDENCE_NORM_MAP: dict[str, str] = {
 }
 
 
+def _finite_float_or_none(val: Any) -> float | None:
+    """Coerce an untrusted LLM value to a finite float, or return ``None``.
+
+    ``float(10**400)`` raises ``OverflowError`` (not ``ValueError``); LLM JSON
+    can legitimately contain such integers. Every numeric boundary in this
+    module must treat that as "not a usable number" instead of letting the
+    exception escape and turn a malformed analysis into a 500.
+    """
+    if val is None or is_bool_like(val):
+        return None
+    try:
+        parsed = float(val)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
 def _clean_numeric_price(val: Any) -> float | None:
     """Safely parse and clean a numeric price from diverse LLM output shapes."""
     if val is None or is_bool_like(val):
         return None
     if isinstance(val, (int, float)):
-        f = float(val)
-        return f if math.isfinite(f) else None
+        return _finite_float_or_none(val)
     if isinstance(val, str):
         cleaned = re.sub(r"[¥$€£,]", "", val.strip())
         m = re.search(r"[-+]?\d+(?:\.\d+)?", cleaned)
@@ -1062,9 +1078,12 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
         for alias in ("upside", "upside_percent", "expected_upside", "expected_return"):
             if alias in res and res[alias] is not None:
                 val = res[alias]
-                if isinstance(val, (int, float)) and not is_bool_like(val) and math.isfinite(val):
-                    sign = "+" if val > 0 else ""
-                    res["upside_3m"] = f"{sign}{val}%"
+                numeric_val = (
+                    _finite_float_or_none(val) if isinstance(val, (int, float)) else None
+                )
+                if numeric_val is not None:
+                    sign = "+" if numeric_val > 0 else ""
+                    res["upside_3m"] = f"{sign}{numeric_val}%"
                 else:
                     res["upside_3m"] = str(val)
                 break
@@ -1212,9 +1231,9 @@ def validate_analysis_result(result):
         if not isinstance(tpm, (int, float)):
             try:
                 tpm = float(str(tpm))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return False, "target_price_3m must be numeric"
-        if not math.isfinite(float(tpm)):
+        if _finite_float_or_none(tpm) is None:
             return False, "target_price_3m must be finite"
 
     if "key_catalysts" in normalized and not isinstance(normalized.get("key_catalysts"), list):

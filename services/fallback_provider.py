@@ -194,10 +194,29 @@ class AlphaVantageProvider(BaseFallbackProvider):
 
     def __init__(self):
         self._base_url = "https://www.alphavantage.co/query"
+        # AlphaVantage is an API, not a scrape target. Its daily/minute quota
+        # exhaustion must not call the *global* scraper block: that flag pauses
+        # Yahoo JP, SBI, Nikkei225JP, Minkabu and Kabutan for 60-600s even
+        # though those origins are healthy. Keep the cooldown provider-local.
+        self._blocked_until = 0.0
+        self._block_lock = threading.Lock()
+
+    def _is_locally_blocked(self) -> bool:
+        with self._block_lock:
+            return time.time() < self._blocked_until
+
+    def _mark_locally_blocked(self, retry_after: float | None = None) -> None:
+        backoff = retry_after if retry_after and retry_after > 0 else 300.0
+        with self._block_lock:
+            self._blocked_until = max(
+                self._blocked_until, time.time() + min(backoff, 3600.0)
+            )
 
     def get_latest_quote(self, symbol: str) -> dict | None:
         api_key = get_alphavantage_api_key()
         if not api_key:
+            return None
+        if self._is_locally_blocked():
             return None
 
         from utils.normalization import is_valid_symbol
@@ -214,19 +233,21 @@ class AlphaVantageProvider(BaseFallbackProvider):
         try:
             resp = requests.get(self._base_url, params=params, timeout=10.0)
             if resp.status_code != 200:
-                _mark_yahoo_block(
-                    resp.status_code,
-                    resp.text[:500] if hasattr(resp, "text") else "",
-                    is_yahoo_host=False,
-                    response=resp,
-                )
+                status = resp.status_code if isinstance(resp.status_code, int) else 0
+                body_text = resp.text if isinstance(getattr(resp, "text", None), str) else ""
+                hint = body_text.lower()
+                if status in (401, 402, 403, 429, 439) or any(
+                    kw in hint
+                    for kw in ("rate limit", "too many requests", "invalid api key")
+                ):
+                    self._mark_locally_blocked(parse_retry_after(resp))
             resp.raise_for_status()
             data = resp.json()
 
             if "Note" in data or "Information" in data:
                 msg = data.get("Note") or data.get("Information")
                 logger.warning("AlphaVantage rate limit or info message for %s: %s", symbol, msg)
-                _mark_yahoo_block(None, str(msg), is_yahoo_host=False)
+                self._mark_locally_blocked(parse_retry_after(resp))
                 return None
             if "Error Message" in data:
                 logger.warning("AlphaVantage error for %s: %s", symbol, data.get("Error Message"))
@@ -311,15 +332,18 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
         parsed = _finite_number(m_price.group(1).replace(",", "").strip())
         if parsed is None or parsed <= 0:
             return None
-        p_val = parsed
         return {
             "symbol": symbol,
-            "regularMarketPrice": p_val,
+            "regularMarketPrice": parsed,
             "regularMarketPreviousClose": None,
             "regularMarketVolume": 0,
-            "regularMarketOpen": p_val,
-            "regularMarketDayHigh": p_val,
-            "regularMarketDayLow": p_val,
+            # The markers carry a price only. Reporting O=H=L=price fabricated
+            # a zero-range day and contradicted the documented M22 policy
+            # (unknown OHLC must stay None); the history synthesizer already
+            # substitutes the close when it needs a candle.
+            "regularMarketOpen": None,
+            "regularMarketDayHigh": None,
+            "regularMarketDayLow": None,
         }
 
     def get_latest_quote(self, symbol: str) -> dict | None:

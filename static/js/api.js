@@ -315,6 +315,10 @@ const sseState = {
   fallbackPolling: null,
   /** @type {boolean} */
   fallbackPollInFlight: false,
+  // True when SSE messages arrived while the tab was hidden. The hidden
+  // branch deliberately skips DOM work; the visibility handler reconciles
+  // once on return so a closed market / quiet stream cannot leave stale cards.
+  hiddenUpdatesPending: false,
   disconnectedSince: 0,
   lastNotifyAt: 0,
   skeletonShownAt: 0,
@@ -776,7 +780,24 @@ function connectSSE(overrideMode) {
   if (currentMode === 0) {
     $logger.info("SSE Mode 0 (Disabled). Switching to 60s background polling.");
     stopSseFallbackPolling();
-    pollingManager.setInterval("fallback-polling", fetchInitialStocks, 60000);
+    // fetchInitialStocks() aborts its predecessor. Without an in-flight
+    // guard, a request slower than 60s was aborted and restarted on every
+    // tick and never completed. Mirror startSseFallbackPolling().
+    pollingManager.setInterval(
+      "fallback-polling",
+      () => {
+        if (sseState.fallbackPollInFlight) return;
+        sseState.fallbackPollInFlight = true;
+        Promise.resolve(fetchInitialStocks())
+          .catch((err) => {
+            $logger.warn("[Mode0 polling] fetchInitialStocks failed:", err);
+          })
+          .finally(() => {
+            sseState.fallbackPollInFlight = false;
+          });
+      },
+      60000,
+    );
     return;
   }
 
@@ -866,14 +887,28 @@ function connectSSE(overrideMode) {
               data.stream_event === "diff",
             ),
           );
-        if (data.indices) state.updateIndices(data.indices);
+        if (data.indices) {
+          _indicesFetchGeneration++;
+          state.updateIndices(data.indices);
+        }
+        if (data.stocks || data.indices) sseState.hiddenUpdatesPending = true;
         return;
       }
 
+      // Apply queued realtime deltas before the snapshot/diff. They arrived
+      // earlier in stream order; leaving them in a later animation frame let
+      // an older replayed delta overwrite the newer snapshot price.
+      if (typeof window.flushPendingRealtimeDeltas === "function") {
+        window.flushPendingRealtimeDeltas();
+      }
       if (data.stocks) {
         updateStocksFromSseData(data);
       }
       if (data.indices) {
+        // Invalidate an in-flight /api/indices poll: its payload may have been
+        // computed before this SSE update, and applying it later would regress
+        // the bar and the FX rate used by the portfolio header.
+        _indicesFetchGeneration++;
         updateIndicesBar(data.indices);
       }
     } catch (e) {
@@ -1165,10 +1200,49 @@ function updateStocksFromSseData(data) {
   }
 
   const shouldFullRender = hasSkeleton || !hasAnyCards;
+
+  // Per-market reconciliation. The old decision used document-global flags:
+  // if *any* card existed, a new symbol in a diff (added in another tab) had
+  // no wrapper and was never created; a symbol removed while the tab was
+  // hidden kept its stale card. Compare each market's state keys with its
+  // container and fall back to the full reconciling render only for markets
+  // that actually diverged.
+  const marketsToReconcile = [];
+  if (!shouldFullRender) {
+    ["us", "jp", "idx"].forEach((market) => {
+      const container = document.getElementById(`${market}-stocks`);
+      if (!container) return;
+      const stateKeys = new Set(
+        (state.stocks[market] || []).map((stock) =>
+          makeStockKey(market, stock.symbol),
+        ),
+      );
+      const domKeys = new Set(
+        Array.from(container.querySelectorAll(".stock-wrapper"))
+          .map((wrapper) => wrapper.dataset.stockKey)
+          .filter(Boolean),
+      );
+      if (stateKeys.size !== domKeys.size) {
+        marketsToReconcile.push(market);
+        return;
+      }
+      for (const key of stateKeys) {
+        if (!domKeys.has(key)) {
+          marketsToReconcile.push(market);
+          return;
+        }
+      }
+    });
+  }
+
   if (shouldFullRender) {
     renderStocks("us", state.stocks.us);
     renderStocks("jp", state.stocks.jp);
     renderStocks("idx", state.stocks.idx);
+  } else if (marketsToReconcile.length > 0) {
+    marketsToReconcile.forEach((market) =>
+      renderStocks(market, state.stocks[market]),
+    );
   } else {
     // Differential update: only update changed cards
     ["us", "jp", "idx"].forEach((market) => {
@@ -2378,14 +2452,16 @@ async function sendChat(wrapper, inputEl = null) {
     resolvedMarket = isJp ? "jp" : "us";
   }
 
-  const payload = {
-    symbol: resolvedSymbol,
-    market: resolvedMarket,
-    message: msg,
-    request_token: createRequestToken(),
-  };
-
   try {
+    // Build the payload inside the try: createRequestToken() deliberately
+    // throws when Web Crypto is unavailable, and doing it before the
+    // try/finally left the input and send button permanently disabled.
+    const payload = {
+      symbol: resolvedSymbol,
+      market: resolvedMarket,
+      message: msg,
+      request_token: createRequestToken(),
+    };
     // C-2: ストリーミングを試み、失敗/非対応時は従来のポーリングへフォールバック。
     let reply;
     try {

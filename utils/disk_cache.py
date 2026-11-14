@@ -63,6 +63,11 @@ class DiskCacheLockTimeout(OSError):
 
 
 _DEGRADED_RETRY_AFTER_SEC = 10.0
+# A file mtime more than this far in the future means the wall clock was
+# stepped backwards (NTP correction, manual change, VM restore). Treating it
+# as age 0 would keep every entry written before the step "fresh" until the
+# clock catches up; the cache must fail closed instead.
+_FUTURE_MTIME_SKEW_SEC = 300.0
 _last_lock_timeout_ts: float = 0.0
 
 
@@ -106,6 +111,10 @@ def _entry_age_seconds(data: Any, path: Path, now: float | None = None) -> float
         mtime = path.stat().st_mtime
     except OSError:
         mtime = 0.0
+    if mtime > current + _FUTURE_MTIME_SKEW_SEC:
+        # Backward clock step: the entry's real age is unknowable, so report
+        # it as infinitely old and let the caller treat it as expired.
+        return math.inf
     return max(0.0, current - mtime)
 
 

@@ -146,6 +146,26 @@ def load_config() -> dict[str, Any]:
                             logger.warning("Failed to sync newer legacy config: %s", exc)
                 config_store._LEGACY_MERGE_DONE = True  # Mark done even if merge was skipped/failed
 
+    # First-run initialization must be serialized with the cross-process
+    # update lock, not only the process-local _CONFIG_LOCK. A credential or
+    # master-key transaction in another process holds config_update_lock and
+    # writes the real config; an unserialized DEFAULT_CONFIG write landing
+    # after it would erase api_credentials / flask_secret_key /
+    # extension_api_token / mns_master_key (and the .bak strips the secrets,
+    # so the loss is unrecoverable). Re-check existence under the lock so a
+    # concurrent initializer wins instead of being overwritten.
+    if not config_store.CONFIG_FILE.exists():
+        with config_store.config_update_lock():
+            if not config_store.CONFIG_FILE.exists():
+                written_key = config_store.save_config(config_store.DEFAULT_CONFIG)
+                config_store._CONFIG_CACHE["data"] = copy.deepcopy(
+                    config_store.DEFAULT_CONFIG
+                )
+                config_store._CONFIG_CACHE["key"] = (
+                    written_key if written_key is not None else _config_cache_key()
+                )
+                return copy.deepcopy(config_store._CONFIG_CACHE["data"])
+
     with config_store._CONFIG_LOCK:
         _ensure_runtime_dir()
 
@@ -163,19 +183,12 @@ def load_config() -> dict[str, Any]:
             except Exception as exc:
                 logger.debug("Failed to chmod config file: %s", exc)
         else:
-            written_key = config_store.save_config(config_store.DEFAULT_CONFIG)
-            config_store._CONFIG_CACHE["data"] = copy.deepcopy(config_store.DEFAULT_CONFIG)
-            # M16 (2026-11-07 review): key the freshly written defaults to the
-            # stat of the file this process just wrote (captured inside the
-            # write lock by save_config). A path stat taken after the write
-            # could observe a NEWER file written by another process (native
-            # host token rotation / second app instance) and cache defaults
-            # under the valid file's key, masking credentials until the file
-            # changed again.
-            config_store._CONFIG_CACHE["key"] = (
-                written_key if written_key is not None else _config_cache_key()
-            )
-            return copy.deepcopy(config_store._CONFIG_CACHE["data"])
+            # The serialized first-run initializer above normally prevents
+            # this branch. It is reachable only if the file was deleted
+            # between that check and this read; do not write DEFAULT_CONFIG
+            # here (we hold only _CONFIG_LOCK, not the cross-process update
+            # lock). Return the defaults and let the next save recreate it.
+            return copy.deepcopy(config_store.DEFAULT_CONFIG)
 
         # Acquire a shared process-level lock before reading the JSON file.
         lock_file = config_store.CONFIG_FILE.with_suffix(

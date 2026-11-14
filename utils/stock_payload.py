@@ -72,6 +72,21 @@ DEFAULT_IDX = {
     "^VIX": "VIX",
 }
 
+# Index holdings are valued in their listing currency. When the quote info
+# cache is empty (rate-limited, negative-cached, cache_only miss) the payload
+# builder must not guess USD for a JPY index: ``_build_portfolio_metrics``
+# would multiply the position by the USD/JPY rate and inflate a Nikkei holding
+# ~150x. Known US indices are USD; everything else defaults to the domestic
+# (JPY) model used by storage._normalize_idx_holding_fields.
+_USD_INDEX_SYMBOLS = frozenset(
+    {"^DJI", "^IXIC", "^GSPC", "^NDX", "^RUT", "^VIX", "^SOX", "^TNX"}
+)
+
+
+def _default_index_currency(symbol: Any) -> str:
+    """Return the listing currency for an index when quote info is missing."""
+    return "USD" if str(symbol or "").strip().upper() in _USD_INDEX_SYMBOLS else "JPY"
+
 
 def get_default_symbols():
     """Return default symbols grouped by market."""
@@ -765,7 +780,7 @@ def build_stock_payload(
         elif market == "jp":
             currency = "JPY"
         else:  # market == "idx"
-            currency = info.get("currency") or "USD"
+            currency = info.get("currency") or _default_index_currency(symbol)
 
         # Fetch next earnings date (skip index tickers to avoid 404s)
         next_earnings = None

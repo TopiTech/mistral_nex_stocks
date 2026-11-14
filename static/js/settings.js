@@ -943,7 +943,13 @@ document.addEventListener("DOMContentLoaded", () => {
         mistralKeyInput && mistralKeyInput.value
           ? mistralKeyInput.value.trim()
           : "";
-      const payload = typedKey ? { mistral_api_key: typedKey } : {};
+      // This button verifies Mistral. Without an explicit target provider the
+      // backend falls back to the *saved* provider, so a user who switched the
+      // radio to Mistral but has not saved yet would verify the OpenAI
+      // endpoint with the stored OpenAI key instead.
+      const payload = typedKey
+        ? { mistral_api_key: typedKey, ai_provider: "mistral" }
+        : { ai_provider: "mistral" };
       if (_currentCredentialsData?.api_mode === "agents") {
         payload.mistral_api_mode = "agents";
         const curAgentId =
@@ -1435,6 +1441,21 @@ document.addEventListener("DOMContentLoaded", () => {
         const oaKey = document
           .getElementById("openai-api-key-input")
           ?.value?.trim();
+
+        // Switching to the OpenAI-compatible provider without a base URL or
+        // model persisted a provider that cannot serve any AI request; the
+        // setup wizard already enforces this, settings did not.
+        if (!oaUrl || !/^https?:\/\//i.test(oaUrl)) {
+          showToast(
+            "OpenAI互換のBase URLを http:// または https:// から入力してください",
+            "#ff9800",
+          );
+          return;
+        }
+        if (!oaModel) {
+          showToast("OpenAI互換のモデル名を入力してください", "#ff9800");
+          return;
+        }
 
         if (oaUrl) payload.openai_base_url = oaUrl;
         if (oaModel) payload.openai_model = oaModel;

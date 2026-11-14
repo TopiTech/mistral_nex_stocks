@@ -156,6 +156,15 @@ def api_indices() -> Any:
     force = (request.args.get("force") or "").strip().lower() in ("true", "1", "yes")
     if force:
         schedule_sync_all_stocks_now(force=True)
+    # Mirror /api/stocks: when bootstrap is intentionally skipped the initial
+    # sync never starts, so waiting 6s for a snapshot would hold a worker for
+    # every indices poll and never produce data.
+    if (
+        _stocks_env_bool("MNS_SKIP_BOOTSTRAP")
+        and not app_state.bootstrap_ready.is_set()
+        and not _stocks_is_testing()
+    ):
+        return ok_response({"fetching": True})
     with app_state.cache.sse_data_lock:
         data = resolve_indices_for_response()
     if not data:
@@ -348,12 +357,33 @@ def api_stock_history() -> Any:
                 for key, value in payload.items()
                 if key not in ("error", "ok", "error_flag", "success")
             }
-            return error_response(
-                ErrorCode.SYMBOL_NOT_FOUND,
+            # The service returns one error payload for "no bars", transient
+            # rate limits/timeouts, and provider failures. Hardcoding
+            # SYMBOL_NOT_FOUND (1102) told API clients the ticker was invalid
+            # during a transient outage, so they could remove a valid symbol.
+            # Prefer the service's own error_code; otherwise use the transient
+            # flag to distinguish a retryable failure from a data gap.
+            raw_code = payload.get("error_code")
+            try:
+                error_code = ErrorCode(int(raw_code)) if raw_code is not None else None
+            except (TypeError, ValueError, OverflowError):
+                error_code = None
+            if error_code is None:
+                error_code = (
+                    ErrorCode.API_RATE_LIMITED
+                    if payload.get("transient") and app_state.market.is_yf_rate_limited()
+                    else ErrorCode.FETCH_FAILED
+                )
+            resp = error_response(
+                error_code,
                 status_code=200,
                 message=str(payload.get("error") or ""),
                 extra_fields=extra,
-            )
+            )[0]
+            # A 200 error body is not a cacheable success; without this a
+            # browser/proxy heuristic could serve the outage response later.
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
         if isinstance(payload, dict):
             resp = ok_response(payload)
         else:

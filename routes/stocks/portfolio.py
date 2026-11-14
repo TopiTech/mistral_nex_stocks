@@ -186,7 +186,11 @@ def api_update_portfolio() -> Any:
                 )
             if avg_fx_rate is not None:
                 val["avg_fx_rate"] = avg_fx_rate
-            else:
+            elif "avg_fx_rate" in parsed.model_fields_set:
+                # Explicit null clears the stored rate. An *omitted* field
+                # preserves it: a client that updates only shares/avg_price
+                # must not silently delete the user's FX basis (which changed
+                # the JPY valuation/P&L to the current rate).
                 val.pop("avg_fx_rate", None)
         elif market == "idx":
             # Indices/ETFs do not support FX rate tracking; reject avg_fx_rate

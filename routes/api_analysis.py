@@ -806,7 +806,21 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
         max_tool_iterations=5,
     )
     if is_mistral_error(response):
-        raise RuntimeError(response["error"].get("message", "Unknown error"))
+        err_payload = response.get("error")
+        if not isinstance(err_payload, dict):
+            err_payload = {"message": str(err_payload or "Unknown error")}
+        raw_status = err_payload.get("status_code", 502)
+        try:
+            status_code = int(raw_status)
+        except (TypeError, ValueError, OverflowError):
+            status_code = 502
+        if status_code < 400 or status_code > 599:
+            status_code = 502
+        raise ProviderAPIError(
+            str(err_payload.get("message") or "Unknown error"),
+            status_code=status_code,
+            details=err_payload,
+        )
 
     ai_content = extract_chat_content(response)
     if not ai_content:
@@ -820,12 +834,19 @@ def _call_mistral_chat_with_retry(api_key, messages_snapshot, market, symbol):
         )
         if is_mistral_error(retry_response):
             err_dict = retry_response.get("error", {})
-            err_msg = (
-                err_dict.get("message", "Unknown error")
-                if isinstance(err_dict, dict)
-                else str(err_dict)
+            if not isinstance(err_dict, dict):
+                err_dict = {"message": str(err_dict)}
+            err_msg = err_dict.get("message", "Unknown error")
+            raw_status = err_dict.get("status_code", 502)
+            try:
+                status_code = int(raw_status)
+            except (TypeError, ValueError, OverflowError):
+                status_code = 502
+            if status_code < 400 or status_code > 599:
+                status_code = 502
+            raise ProviderAPIError(
+                str(err_msg), status_code=status_code, details=err_dict
             )
-            raise RuntimeError(err_msg)
         ai_content = extract_chat_content(retry_response)
     return ai_content
 
@@ -1074,6 +1095,40 @@ def _chat_error_response(
         else:
             msg = safe_auth_default
         status_code = 401
+    elif isinstance(exc, ProviderAPIError):
+        # Preserve the provider's status class instead of collapsing every
+        # explicit error payload to 500. The previous RuntimeError path lost
+        # status_code, so a 429 surfaced as "chat failed" (500) and the client
+        # retried immediately, worsening the rate limit.
+        current_app.logger.warning(
+            "api_chat provider error id=%s status=%s",
+            req_id,
+            exc.status_code,
+        )
+        if exc.status_code == 401:
+            msg = "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
+            status_code = 401
+        elif exc.status_code == 429:
+            msg = (
+                "AI APIの利用上限またはレート制限に達しました (HTTP 429)。"
+                "しばらく待ってから再試行してください。"
+            )
+            status_code = 429
+        elif exc.status_code == 403:
+            msg = "AI APIへのアクセスが拒否されました (HTTP 403)。権限やモデル設定を確認してください。"
+            status_code = 403
+        elif exc.status_code == 404:
+            msg = "指定されたモデルまたはエンドポイントが見つかりません (HTTP 404)。Base URLとモデル名を確認してください。"
+            status_code = 404
+        elif exc.status_code in (400, 422):
+            msg = "リクエスト内容またはモデル設定が無効です。入力を確認してください。"
+            status_code = 400
+        elif exc.status_code >= 500:
+            msg = "AIサービスに接続できませんでした"
+            status_code = 503
+        else:
+            msg = "チャット処理に失敗しました"
+            status_code = 502
     elif isinstance(
         exc,
         (requests.ConnectionError, ConnectionError, httpx.NetworkError, httpx.ConnectError),
@@ -1758,22 +1813,33 @@ def api_analyze_v2():
                     time.time() - result_holder.get("start_time", time.time()),
                 )
 
-                # Store in chat history
+                # Store in chat history. A transient SQLite failure (lock,
+                # disk full) must not discard a successfully generated
+                # analysis: the history write is auxiliary, so log and keep
+                # the result instead of turning the whole request into a 500.
                 chat_key = f"{conversation_scope}:{market}:{symbol}"
-                with app_state.ai.chat_history_lock:
-                    app_state.ai.chat_history.record_turn(
-                        chat_key,
-                        init_messages=[
-                            {
-                                "role": "system",
-                                "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
-                            }
-                        ],
-                        append={
-                            "role": "assistant",
-                            "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
-                        },
-                        max_msgs=CHAT_HISTORY_MAX_MSGS,
+                try:
+                    with app_state.ai.chat_history_lock:
+                        app_state.ai.chat_history.record_turn(
+                            chat_key,
+                            init_messages=[
+                                {
+                                    "role": "system",
+                                    "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
+                                }
+                            ],
+                            append={
+                                "role": "assistant",
+                                "content": f"分析サマリー（v2）: {result.get('analysis_summary')}",
+                            },
+                            max_msgs=CHAT_HISTORY_MAX_MSGS,
+                        )
+                except Exception as hist_exc:
+                    current_app.logger.warning(
+                        "Analyze-v2 chat history write failed id=%s symbol=%s error_type=%s",
+                        req_id,
+                        symbol,
+                        type(hist_exc).__name__,
                     )
 
                 result_holder["step"] = "done"

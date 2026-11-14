@@ -280,6 +280,22 @@ function initVisibilityHandler() {
       typeof EventSource !== "undefined" ? EventSource.CLOSED : 2;
     // SSE が OPEN なら api_client.js の再接続・ストリーム更新で十分 —
     // タブ復帰のたびに /api/stocks を全取得して再描画する必要はない。
+    // ただし非表示中に届いた SSE は state だけ更新して DOM を触らないため、
+    // 復帰時に一度だけ state から再描画する (静かな市場で更新が止まり、
+    // 削除/追加カードが残留するのを防ぐ)。
+    if (sseState.hiddenUpdatesPending) {
+      ["us", "jp", "idx"].forEach((market) => {
+        renderStocks(market, state.stocks[market]);
+      });
+      if (
+        state.indices &&
+        Object.keys(state.indices).length > 0 &&
+        typeof updateIndicesBar === "function"
+      ) {
+        updateIndicesBar(state.indices);
+      }
+      sseState.hiddenUpdatesPending = false;
+    }
     if (activeSource && activeSource.readyState === openState) return;
     fetchInitialStocks();
     const isAlreadyResumingOrActive =
@@ -371,8 +387,14 @@ async function initializeApp() {
   setActiveTab("us");
   setBulkAnalyzeStatus("");
 
+  // Open the realtime stream immediately instead of waiting for the initial
+  // /api/stocks GET (which can be slow on a cold yfinance cache) and the
+  // portfolio snapshot. The SSE snapshot invalidates an in-flight initial
+  // fetch, so it is the faster recovery path; the GET remains a cache-first
+  // first paint.
+  connectSSE();
   // 初回データ取得 — force=false でキャッシュから即座に表示し、
-  // 直後の connectSSE() が SSE 経由で最新データに更新する。
+  // SSE が届けば invalidatePendingInitialStocksFetch() で上書きする。
   // force=true だと yfinance への不要なリクエストが発生し、
   // 429 レート制限のリスクが高まるため、初回はキャッシュ利用を優先する。
   void fetchInitialStocks(false)
@@ -381,13 +403,11 @@ async function initializeApp() {
         logger.warn("Initial stock fetch failed; continuing with SSE recovery");
       }
       await loadPortfolioSnapshot();
-      connectSSE();
     })
     .catch((error) => {
       // fetchInitialStocks normally returns a result value, but preserve the
       // startup path if an unexpected rendering error escapes it.
       logger.error("Unexpected initial stock fetch failure:", error);
-      connectSSE();
     });
   loadIndicesLoop();
   loadTrending();
@@ -820,10 +840,12 @@ function openPortfolioModal(stockKey) {
         market: stock.market,
         shares: sharesParsed.value,
         avg_price: avgPriceParsed.value,
+        // Always send the field: null is an explicit "clear the saved FX
+        // basis", while omission means "leave it unchanged" on the server.
+        // The previous omission-on-empty form made an unrelated shares/price
+        // update silently delete a stored avg_fx_rate.
+        avg_fx_rate: fxRateParsed.value,
       };
-      if (fxRateParsed.value !== null) {
-        requestBody.avg_fx_rate = fxRateParsed.value;
-      }
 
       const res = await csrfFetch("/api/stocks/portfolio", {
         method: "POST",

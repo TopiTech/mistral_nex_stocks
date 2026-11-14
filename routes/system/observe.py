@@ -222,13 +222,24 @@ def api_metrics():
     with app_state.market.yfinance_lock:
         engine_metrics["yf_rate_limited"] = app_state.market.is_yf_rate_limited()
 
+    # Disk-cache stats are best-effort observability; a transient OSError
+    # here must not turn the whole metrics endpoint into a 500 (the sibling
+    # /api/cache-stats already isolates each cache).
+    disk_stats: dict[str, Any] = {}
+    for _disk_cache in (app_state.stock_disk_cache, app_state.payload_disk_cache):
+        try:
+            disk_stats.update(_disk_cache.stats())
+        except Exception as exc:
+            current_app.logger.debug(
+                "Failed to read disk cache stats for /api/metrics: %s", exc
+            )
+
     return ok_response(
         {
             "timestamp": datetime.now(UTC).isoformat(),
             "cache": {
                 "sizes": cache_sizes,
-                **app_state.stock_disk_cache.stats(),
-                **app_state.payload_disk_cache.stats(),
+                **disk_stats,
             },
             "market_data": {
                 "yfinance": yfinance_metrics,

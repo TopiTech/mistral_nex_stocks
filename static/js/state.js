@@ -337,6 +337,7 @@ window.state = state;
 // #region Registry & Cache
 const chartInstances = new WeakMap();
 const stockDetailsCache = new Map();
+const stockDetailsCacheAt = new Map();
 const historyPrefetchCache = new Map();
 const historyPrefetchInFlight = new Map();
 const stockRealtimeUpdateAt = new Map();
@@ -520,6 +521,9 @@ const PREFETCH_CACHE_MAX_SIZE = 50;
 // 永続キャッシュしていた(銘柄の削除・リスト変更後も残る)ため、
 // historyPrefetchCache と同じ 50 銘柄上限の FIFO 退避に統一する。
 const STOCK_DETAILS_CACHE_MAX_SIZE = 50;
+// Fundamentals (PER, market cap, sector) move slowly but not never. Without
+// a TTL a tab left open all day served the first fetch's values forever.
+const STOCK_DETAILS_CACHE_TTL_MS = 15 * 60 * 1000;
 
 function _enforcePrefetchCacheLimit() {
   // FIFO eviction: remove oldest entries when exceeding maxSize
@@ -538,6 +542,7 @@ function _enforceStockDetailsCacheLimit() {
     const firstKey = stockDetailsCache.keys().next().value;
     if (firstKey) {
       stockDetailsCache.delete(firstKey);
+      stockDetailsCacheAt.delete(firstKey);
     }
   }
 }
@@ -675,7 +680,17 @@ function purgeStockKeyCaches(stockKey) {
   sparklineUpdateAt.delete(stockKey);
   sparklineSignatureMap.delete(stockKey);
   stockDetailsCache.delete(stockKey);
+  stockDetailsCacheAt.delete(stockKey);
   historyPrefetchCache.delete(stockKey);
+  // Prefetched history is keyed `${stockKey}|${period}|${interval}`, so the
+  // bare delete above never matched. Sweep the full prefix; otherwise a
+  // removed-and-re-added symbol can render the old cached history for the
+  // prefetch TTL instead of fetching current bars.
+  for (const key of Array.from(historyPrefetchCache.keys())) {
+    if (typeof key === "string" && key.startsWith(`${stockKey}|`)) {
+      historyPrefetchCache.delete(key);
+    }
+  }
   try {
     localStorage.removeItem(`ai_prev_${stockKey}`);
   } catch {

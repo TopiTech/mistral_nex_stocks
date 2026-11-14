@@ -13,6 +13,27 @@ import config_store
 
 logger = logging.getLogger("config_store")
 
+_UNDECODABLE_MASTER_KEY_MESSAGE = (
+    "FATAL: mns_master_key exists in config but could not be decoded "
+    "(keyring/DPAPI read failure, corrupted entry, or ciphertext "
+    "encrypted by another identity). Refusing to overwrite it: doing "
+    "so would make all encrypted data permanently unreadable. "
+    "Restore the secret store backing this key or set MNS_MASTER_KEY "
+    "to the correct key, then retry."
+)
+
+
+def _reject_undecodable_master_key() -> None:
+    """Fail closed for an existing-but-unusable ``mns_master_key`` entry.
+
+    A truthy non-dict entry (legacy base64 string, hand-edited scalar, or a
+    list written by a broken tool) is *not* "no key generated yet". Treating
+    it as absent regenerates the key and overwrites the only copy, which
+    permanently orphans every Fernet-encrypted value. The dict-but-undecodable
+    branch already failed closed; this keeps both shapes on the same contract.
+    """
+    raise RuntimeError(_UNDECODABLE_MASTER_KEY_MESSAGE)
+
 
 def get_or_create_master_key() -> str:
     """Get or create the master key for Fernet symmetric encryption.
@@ -66,7 +87,9 @@ def get_or_create_master_key() -> str:
     if not isinstance(cfg, dict):
         cfg = {}
     key_entry = cfg.get("mns_master_key")
-    if key_entry and isinstance(key_entry, dict):
+    if key_entry:
+        if not isinstance(key_entry, dict):
+            _reject_undecodable_master_key()
         key = config_store._decode_secret(key_entry, "mns_master_key")
         if key:
             return key
@@ -76,14 +99,7 @@ def get_or_create_master_key() -> str:
         # encrypted value protected with the original key (user_stocks.json,
         # flask_secret_key, extension_api_token). Fail closed instead of
         # silently destroying data.
-        raise RuntimeError(
-            "FATAL: mns_master_key exists in config but could not be decoded "
-            "(keyring/DPAPI read failure, corrupted entry, or ciphertext "
-            "encrypted by another identity). Refusing to overwrite it: doing "
-            "so would make all encrypted data permanently unreadable. "
-            "Restore the secret store backing this key or set MNS_MASTER_KEY "
-            "to the correct key, then retry."
-        )
+        _reject_undecodable_master_key()
 
     # The read/generate/write sequence must be serialized inside a process.
     # save_config() already has an OS-level atomic replacement lock, while this
@@ -97,7 +113,9 @@ def get_or_create_master_key() -> str:
             cfg = {}
 
         key_entry = cfg.get("mns_master_key")
-        if key_entry and isinstance(key_entry, dict):
+        if key_entry:
+            if not isinstance(key_entry, dict):
+                _reject_undecodable_master_key()
             key = config_store._decode_secret(key_entry, "mns_master_key")
             if key:
                 return key
@@ -107,14 +125,7 @@ def get_or_create_master_key() -> str:
             # encrypted value protected with the original key (user_stocks.json,
             # flask_secret_key, extension_api_token). Fail closed instead of
             # silently destroying data.
-            raise RuntimeError(
-                "FATAL: mns_master_key exists in config but could not be decoded "
-                "(keyring/DPAPI read failure, corrupted entry, or ciphertext "
-                "encrypted by another identity). Refusing to overwrite it: doing "
-                "so would make all encrypted data permanently unreadable. "
-                "Restore the secret store backing this key or set MNS_MASTER_KEY "
-                "to the correct key, then retry."
-            )
+            _reject_undecodable_master_key()
 
         from cryptography.fernet import Fernet
 

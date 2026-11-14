@@ -99,7 +99,7 @@ def get_mistral_embeddings_batch(
     from constants import MISTRAL_MIN_INTERVAL_SEC
     from credential_manager import get_openai_api_key, is_openai_provider
     from services.ai_service import (
-        _acquire_mistral_call_slot,
+        _acquire_mistral_call_slot_with_reservation,
         _extract_error_payload,
         _extract_error_response,
         _extract_mistral_wait_seconds,
@@ -149,12 +149,16 @@ def get_mistral_embeddings_batch(
         chunk_hashes = uncached_hashes[i : i + effective_batch_size]
         chunk_indices = uncached_indices[i : i + effective_batch_size]
 
-        wait_before = _acquire_mistral_call_slot(MISTRAL_MIN_INTERVAL_SEC)
+        wait_before, reserved_ts = _acquire_mistral_call_slot_with_reservation(
+            MISTRAL_MIN_INTERVAL_SEC
+        )
         wait_status = _wait_for_rate_limit_slot(wait_before)
         if wait_status != "ready":
             # Abort without issuing a request: roll the unused pacing
             # reservation back so recovery traffic is not delayed (SVC-02).
-            _release_mistral_call_slot()
+            # The reservation token makes the rollback conditional: a newer
+            # chat/stream reservation made by another thread must survive.
+            _release_mistral_call_slot(reserved_ts)
             if wait_status == "rate_limited":
                 logger.warning(
                     "Mistral rate-limit cooldown exceeds the wait cap; "

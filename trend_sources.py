@@ -74,6 +74,12 @@ _GOOGLE_TRENDS_MIN_INTERVAL = 1.5  # seconds between calls
 # failure keeps the client honest: the next call rebuilds it fresh.
 _GOOGLE_TRENDS_CLIENTS: dict[str, Any] = {}
 _GOOGLE_TRENDS_CLIENT_LOCK = threading.Lock()
+# pytrends' TrendReq keeps the current payload/related-query state on the
+# client instance. ``_GOOGLE_TRENDS_LOCK`` only spaces request *start* times,
+# so two keywords (name + symbol are submitted to the 6-worker trend executor)
+# can overlap on the same cached client and overwrite each other's payload.
+# Serialize the complete suggestions/build/related sequence per client.
+_GOOGLE_TRENDS_CLIENT_CALL_LOCK = threading.Lock()
 
 
 def _invalidate_google_trends_client(market_key: str) -> None:
@@ -485,42 +491,43 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
         if delay > 0:
             time.sleep(delay)
 
-        pytrends = _google_trends_client(market)
-        suggestions = pytrends.suggestions(keyword) or []
-        out: list[str] = []
-        try:
-            for entry in suggestions:
-                title = _safe_text(entry.get("title"))
-                if title and title not in out:
-                    out.append(title)
-                if len(out) >= limit:
-                    return out
-
+        with _GOOGLE_TRENDS_CLIENT_CALL_LOCK:
+            pytrends = _google_trends_client(market)
+            suggestions = pytrends.suggestions(keyword) or []
+            out: list[str] = []
             try:
-                market_key = _market_key(market)
-                geo = "JP" if market_key == "jp" else "US"
-                pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
-                related = pytrends.related_queries() or {}
-                related_data: dict[str, Any] = related.get(keyword) or next(
-                    iter(related.values()), {}
-                )
-                for key in ("top", "rising"):
-                    df = related_data.get(key)
-                    if df is None or getattr(df, "empty", True):
-                        continue
-                    for value in df.iloc[:, 0].tolist():
-                        text = _safe_text(value)
-                        if text and text not in out:
-                            out.append(text)
-                        if len(out) >= limit:
-                            return out
-            except (AttributeError, KeyError, TypeError, ValueError):
-                pass
+                for entry in suggestions:
+                    title = _safe_text(entry.get("title"))
+                    if title and title not in out:
+                        out.append(title)
+                    if len(out) >= limit:
+                        return out
 
-            return out[:limit]
-        finally:
-            with _GOOGLE_TRENDS_LOCK:
-                _GOOGLE_TRENDS_LAST_CALL = max(_GOOGLE_TRENDS_LAST_CALL, time.time())
+                try:
+                    market_key = _market_key(market)
+                    geo = "JP" if market_key == "jp" else "US"
+                    pytrends.build_payload([keyword], geo=geo, timeframe="today 12-m")
+                    related = pytrends.related_queries() or {}
+                    related_data: dict[str, Any] = related.get(keyword) or next(
+                        iter(related.values()), {}
+                    )
+                    for key in ("top", "rising"):
+                        df = related_data.get(key)
+                        if df is None or getattr(df, "empty", True):
+                            continue
+                        for value in df.iloc[:, 0].tolist():
+                            text = _safe_text(value)
+                            if text and text not in out:
+                                out.append(text)
+                            if len(out) >= limit:
+                                return out
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    pass
+
+                return out[:limit]
+            finally:
+                with _GOOGLE_TRENDS_LOCK:
+                    _GOOGLE_TRENDS_LAST_CALL = max(_GOOGLE_TRENDS_LAST_CALL, time.time())
     except Exception as exc:
         is_expected = isinstance(
             exc,

@@ -798,14 +798,15 @@ def get_or_create_extension_api_token() -> str:
                         created_ts_f = float(created_ts) if created_ts else 0.0
                     except (ValueError, TypeError, OverflowError):
                         created_ts_f = 0.0
-                if not math.isfinite(created_ts_f):
+                if not math.isfinite(created_ts_f) or created_ts_f <= 0:
                     # json.load accepts NaN/Infinity literals, so a corrupted
-                    # config can persist a non-finite timestamp. NaN defeats
-                    # BOTH consumers of this value: `created_ts_f > 0` is
-                    # False (rotation never triggers) while `not created_ts_f`
-                    # is also False (the self-heal backfill never triggers),
-                    # so a leaked token would never rotate and never recover.
-                    # Normalize to 0.0 so the backfill below heals the entry.
+                    # config can persist a non-finite timestamp. NaN and
+                    # negative values defeat BOTH consumers of this value:
+                    # `created_ts_f > 0` is False (rotation never triggers)
+                    # while `not created_ts_f` is also False (the self-heal
+                    # backfill never triggers), so a leaked token would never
+                    # rotate and never recover. Normalize non-positive values
+                    # to 0.0 so the backfill below heals the entry.
                     created_ts_f = 0.0
                 if (
                     max_age_sec > 0

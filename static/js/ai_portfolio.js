@@ -1266,14 +1266,18 @@
     if (totalPlEl) {
       const plPct = (simulatedPlJpy / VIRTUAL_BASE_CAPITAL_JPY) * 100;
       const sign = simulatedPlJpy >= 0 ? "+" : "";
-      totalPlEl.textContent = `${sign}¥${Math.round(Math.abs(simulatedPlJpy)).toLocaleString()} (${sign}${plPct.toFixed(1)}%)`;
+      // Keep the sign on the amount as well as the percentage: printing the
+      // absolute value made a loss read as "¥500,000 (-5.0%)".
+      const amount = Math.round(simulatedPlJpy).toLocaleString();
+      totalPlEl.textContent = `${sign}¥${amount} (${sign}${plPct.toFixed(1)}%)`;
       totalPlEl.classList.toggle("pos", simulatedPlJpy >= 0);
       totalPlEl.classList.toggle("neg", simulatedPlJpy < 0);
     }
 
     if (todayPlEl) {
       const sign = simulatedTodayPlJpy >= 0 ? "+" : "";
-      todayPlEl.textContent = `${sign}¥${Math.round(Math.abs(simulatedTodayPlJpy)).toLocaleString()}`;
+      const amount = Math.round(simulatedTodayPlJpy).toLocaleString();
+      todayPlEl.textContent = `${sign}¥${amount}`;
       todayPlEl.classList.toggle("pos", simulatedTodayPlJpy >= 0);
       todayPlEl.classList.toggle("neg", simulatedTodayPlJpy < 0);
     }

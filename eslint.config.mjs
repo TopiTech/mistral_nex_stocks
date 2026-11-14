@@ -133,6 +133,8 @@ export default [
         TextDecoder: "readonly",
         TextEncoder: "readonly",
         stockDetailsCache: "writable",
+        stockDetailsCacheAt: "writable",
+        STOCK_DETAILS_CACHE_TTL_MS: "readonly",
         renderDetailExtras: "readonly",
         stockRealtimeUpdateAt: "writable",
         getStockByKey: "readonly",

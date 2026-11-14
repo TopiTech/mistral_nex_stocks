@@ -831,12 +831,15 @@ def call_openai_chat(
                         )
                 except Exception:
                     pass
+                # Provider error bodies are untrusted and can echo the request
+                # (prompt, portfolio/analysis content) for self-hosted
+                # OpenAI-compatible servers. Log only the status; the message
+                # is still used locally to choose the public error text.
                 logger.error(
-                    "OpenAI-compat error id=%s model=%s status=%d detail=%s",
+                    "OpenAI-compat error id=%s model=%s status=%d",
                     req_id,
                     model,
                     resp.status_code,
-                    err_detail,
                 )
                 if resp.status_code >= 500:
                     app_state.market.report_circuit_result("openai_compatible", success=False)

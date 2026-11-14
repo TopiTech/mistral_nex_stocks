@@ -1254,13 +1254,17 @@ def _portfolio_numeric_error(field: str, err: Mapping[str, Any]) -> str:
     if err_type == "greater_than_equal":
         return f"{field} must be >= 0"
     if err_type == "greater_than":
+        # avg_fx_rate is gt=0.0, not ge=0.0. Telling a caller with -1 to retry
+        # with ">= 0" sent them into a second failure (0 is also rejected).
+        if field == "avg_fx_rate":
+            return "avg_fx_rateは正の数値である必要があります"
         raw_input = err.get("input")
         try:
             if raw_input is not None and float(raw_input) < 0:
                 return f"{field} must be >= 0"
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             pass
-        return "avg_fx_rateは正の数値である必要があります"
+        return f"{field} must be greater than 0"
     return f"{field} must be a number"
 
 
@@ -2191,6 +2195,14 @@ def ensure_stock_placeholder_in_caches(
     avg_fx_rate: float | None = None,
 ) -> None:
     """Ensure a placeholder entry exists in the stock caches for a symbol and update holdings atomically."""
+    # Explicit user intent (add / portfolio update / AI-portfolio copy)
+    # overrides a cached transient failure. Without this, a symbol that was
+    # negative-cached after a 404/rate-limit showed no data for up to 600s
+    # even though the user had just added it.
+    try:
+        app_state.market.clear_negative_symbol_cache(symbol)
+    except Exception:
+        pass
     norm_market = market.lower() if isinstance(market, str) else str(market).lower()
     with app_state.cache.sse_data_lock:
         for cache in (

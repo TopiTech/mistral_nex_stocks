@@ -569,7 +569,12 @@ def _tool_get_market_news(args: dict[str, Any]) -> dict[str, Any]:
             snippet_str = _bounded_tool_text(snippet)
             source_str = _bounded_tool_text(source, max_length=200)
             haystack = f"{title_str}\n{snippet_str}".lower()
-            if any(tok in haystack for tok in tokens):
+            # A multi-word query is a phrase requirement: every token must
+            # appear somewhere in the headline/snippet. ``any`` matched a
+            # headline containing only one word (e.g. "Apple earnings" matched
+            # any article mentioning "earnings"), and the tool reported it as
+            # relevant news for the requested stock.
+            if tokens and all(tok in haystack for tok in tokens):
                 items.append(
                     {
                         "title": title_str,

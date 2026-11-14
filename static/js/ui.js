@@ -132,11 +132,22 @@ if (
 }
 
 // #region Detail Panel Management
+function isStockDetailsCacheFresh(stockKey) {
+  if (!stockDetailsCache.has(stockKey)) return false;
+  const cachedAt = stockDetailsCacheAt.get(stockKey);
+  if (!Number.isFinite(cachedAt)) return false;
+  return Date.now() - cachedAt < STOCK_DETAILS_CACHE_TTL_MS;
+}
+
 async function ensureStockDetails(wrapper) {
   const stockKey = wrapper.dataset.stockKey;
-  if (stockDetailsCache.has(stockKey)) {
+  if (isStockDetailsCacheFresh(stockKey)) {
     renderDetailExtras(wrapper, stockDetailsCache.get(stockKey));
     return;
+  }
+  if (stockDetailsCache.has(stockKey)) {
+    stockDetailsCache.delete(stockKey);
+    stockDetailsCacheAt.delete(stockKey);
   }
 
   // 進行中の取得があれば破棄してから再実行する(リトライボタン/再オープンで
@@ -278,6 +289,7 @@ async function ensureStockDetails(wrapper) {
     if (data && data.ok === true && !data.fetching) {
       if (!stockDetailsCache.has(stockKey)) _enforceStockDetailsCacheLimit();
       stockDetailsCache.set(stockKey, data);
+      stockDetailsCacheAt.set(stockKey, Date.now());
       renderDetailExtras(wrapper, data);
     } else if (data && data.fetching) {
       // Still pending after polling window: keep "取得中..." placeholder;
@@ -705,7 +717,7 @@ function updateStockUI(wrapper, stock) {
         }
       }
     });
-    if (stockDetailsCache.has(stockKey))
+    if (isStockDetailsCacheFresh(stockKey))
       renderDetailExtras(wrapper, stockDetailsCache.get(stockKey));
   }
 }

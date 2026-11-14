@@ -83,6 +83,10 @@
       // instead of leaving it in a map that grows for the whole session and
       // makes a re-added card flash against a price it never displayed.
       this.domCache = new Map();
+      // Pending rAF batches. A snapshot is applied synchronously by api.js;
+      // without flushing these first, a replayed delta queued before the
+      // snapshot could run afterwards and regress the displayed price.
+      this._pendingDeltaFrames = [];
       this.reconnectAttempt = 0;
       this.reconnectTimer = null;
       this.baseReconnectDelay = 1000;
@@ -227,6 +231,39 @@
     }
 
     /**
+     * Queue one delta batch for the next animation frame and remember it so a
+     * synchronous snapshot can flush (and thereby order) it first.
+     * @param {Function} apply
+     */
+    _scheduleDelta(apply) {
+      const entry = { frame: 0, apply };
+      entry.frame = window.requestAnimationFrame(() => {
+        const index = this._pendingDeltaFrames.indexOf(entry);
+        if (index !== -1) this._pendingDeltaFrames.splice(index, 1);
+        apply();
+      });
+      this._pendingDeltaFrames.push(entry);
+    }
+
+    /**
+     * Apply every queued delta batch immediately, in arrival order, and cancel
+     * its pending animation frame. Called by api.js before a snapshot/diff is
+     * applied so an older queued delta cannot overwrite newer snapshot data.
+     */
+    flushPendingDeltas() {
+      const pending = this._pendingDeltaFrames;
+      this._pendingDeltaFrames = [];
+      pending.forEach((entry) => {
+        try {
+          window.cancelAnimationFrame(entry.frame);
+        } catch {
+          // no-op: the frame may already have run
+        }
+        entry.apply();
+      });
+    }
+
+    /**
      * Apply PTS (after-hours) quote deltas to matching stock cards.
      * @param {Object} deltas - Map of symbol -> { price, pts_trading, ... }
      */
@@ -240,7 +277,7 @@
         this._applyPtsDeltasNow(deltas);
         return;
       }
-      window.requestAnimationFrame(() => this._applyPtsDeltasNow(deltas));
+      this._scheduleDelta(() => this._applyPtsDeltasNow(deltas));
     }
 
     _applyPtsDeltasNow(deltas) {
@@ -289,7 +326,7 @@
         this._applyDeltasNow(deltas);
         return;
       }
-      window.requestAnimationFrame(() => this._applyDeltasNow(deltas));
+      this._scheduleDelta(() => this._applyDeltasNow(deltas));
     }
 
     _applyDeltasNow(deltas) {
@@ -488,6 +525,11 @@
     window.handlePtsDeltas = (deltas) => {
       if (window.realtimeClient && deltas) {
         window.realtimeClient.handlePtsDeltas(deltas);
+      }
+    };
+    window.flushPendingRealtimeDeltas = () => {
+      if (window.realtimeClient) {
+        window.realtimeClient.flushPendingDeltas();
       }
     };
   };

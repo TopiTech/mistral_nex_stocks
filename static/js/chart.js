@@ -1246,6 +1246,10 @@ function _safeDestroyChart(el) {
 }
 
 function drawChart(wrapper, data, ohlcData, options = {}) {
+  // A fetch/rAF that resolves after the card was removed must not create a
+  // Chart instance on a detached canvas (Chart.js keeps it in its registry).
+  // ``=== false`` keeps non-DOM test harnesses (undefined) working.
+  if (wrapper && wrapper.isConnected === false && !options.targetCanvas) return;
   const animate = getChartAnimationEnabled(options.animate);
   const canvas =
     options.targetCanvas ||
@@ -1735,6 +1739,10 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
       options.aiTechnicalLines || (wrapper ? wrapper.__aiTechnicalLines : null);
     if (aiLines && Array.isArray(aiLines.lines)) {
       chart.$aiTechnicalLines = aiLines.lines;
+      // With animation disabled Chart.js renders during construction, before
+      // the plugin can see $aiTechnicalLines; redraw once so the lines appear
+      // on the initial render instead of waiting for the next SSE update.
+      chart.update("none");
     }
   }
 
@@ -1911,6 +1919,7 @@ function drawFullscreenChartIfActive(
 }
 
 async function refreshStockChart(wrapper, period, interval) {
+  if (!wrapper || wrapper.isConnected === false) return;
   const stockKey = wrapper.dataset.stockKey;
   const stock = getStockByKey(stockKey);
   if (!stock) return;

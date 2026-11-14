@@ -144,6 +144,10 @@ def test_u2_01_agent_sdk_error_marks_429_preserves_status_and_sanitizes_log(
             patch("services.ai_service.is_agents_mode", return_value=True),
             patch("services.ai_service.get_agent_id", return_value="ag_123"),
             patch("services.ai_service.HAS_AGENTS_SDK", True),
+            # The optional agents SDK is not installed on every supported
+            # Python (the dependency is 3.12+), so simulate its module too;
+            # patching HAS_AGENTS_SDK alone still took the API-agents path.
+            patch("services.ai_service.mistral_agents", SimpleNamespace(TextDelta=None)),
             patch("services.ai_service.load_sdk_agent", return_value=_FakeAgent()),
             patch("services.ai_service._get_mistral_client", return_value=MagicMock()),
             patch("services.ai_service._wait_for_rate_limit_slot", return_value="ready"),

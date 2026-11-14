@@ -656,6 +656,33 @@ function findWrapperByStockKey(stockKey) {
   return set?.values().next().value ?? null;
 }
 
+/**
+ * Drop every per-stockKey cache entry owned by a removed symbol.
+ *
+ * All stock-keyed Maps (change-detection hash, realtime/sparkline timestamps
+ * and signatures, cached details) plus the `ai_prev_<stockKey>` localStorage
+ * entry are created lazily per symbol and would otherwise survive symbol
+ * removal forever — an unbounded leak across add/remove cycles in a long
+ * session, and stale analysis payloads lingering in localStorage after the
+ * user deleted the stock. Both removal paths (SSE `_removed` diff in
+ * api.js and the full renderStocks reconciliation in ui.js) call this so
+ * the lifecycle stays single-owned.
+ */
+function purgeStockKeyCaches(stockKey) {
+  if (!stockKey) return;
+  stockHashMap.delete(stockKey);
+  stockRealtimeUpdateAt.delete(stockKey);
+  sparklineUpdateAt.delete(stockKey);
+  sparklineSignatureMap.delete(stockKey);
+  stockDetailsCache.delete(stockKey);
+  historyPrefetchCache.delete(stockKey);
+  try {
+    localStorage.removeItem(`ai_prev_${stockKey}`);
+  } catch {
+    // storage blocked/full — the in-memory entries above are already gone
+  }
+}
+
 function scheduleCompactLayoutAfterTransition(
   targetEl,
   listContainer,
@@ -829,4 +856,5 @@ if (typeof window !== "undefined") {
   window.hasAiAccess = () => HAS_MISTRAL_API_KEY;
   window._hasAiAccess = _hasAiAccess;
   window.getWrapperRegistryVersion = () => _wrapperRegistryVersion;
+  window.purgeStockKeyCaches = purgeStockKeyCaches;
 }

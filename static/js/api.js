@@ -1119,7 +1119,14 @@ function updateStocksFromSseData(data) {
   // 削除された銘柄の DOM カードを破棄（renderStocks のクリーンアップと同等）
   removedEntries.forEach(({ market, symbol }) => {
     const stockKey = makeStockKey(market, symbol);
-    stockHashMap.delete(stockKey);
+    // Single owner for every per-stockKey cache (hash/timestamps/details
+    // Maps + the ai_prev_* localStorage entry) so a removed symbol leaves
+    // no residue in long sessions.
+    if (typeof window.purgeStockKeyCaches === "function") {
+      window.purgeStockKeyCaches(stockKey);
+    } else {
+      stockHashMap.delete(stockKey);
+    }
     findAllWrappersByStockKey(stockKey).forEach((wrapper) => {
       // 詳細ドロワーに内容を貸し出しているカードは先にドロワーを閉じる
       // (renderStocks のクリーンアップと同一パターン。閉じないまま削除すると

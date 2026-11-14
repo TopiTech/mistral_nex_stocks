@@ -409,6 +409,20 @@ async function executeDeleteStock(market, symbol) {
       body: JSON.stringify({ symbol, market }),
     });
     await readSettingsApiResponse(res);
+    // Purge per-stock caches (incl. the ai_prev_* localStorage entry) for the
+    // deleted symbol; settings.html loads api.js but not state.js, so guard.
+    if (
+      typeof window !== "undefined" &&
+      typeof window.purgeStockKeyCaches === "function"
+    ) {
+      window.purgeStockKeyCaches(`${market}:${symbol}`);
+    } else {
+      try {
+        localStorage.removeItem(`ai_prev_${market}:${symbol}`);
+      } catch {
+        // storage blocked — nothing else to clean on this page
+      }
+    }
     loadStocks();
     showToast(`✓ ${symbol} を削除しました`, "#10b981");
   } catch (e) {
@@ -459,6 +473,19 @@ async function resetAllStocks() {
       localStorage.removeItem("sort_us");
       localStorage.removeItem("sort_jp");
       localStorage.removeItem("sort_idx");
+    } catch (_e) {
+      // Storage can be unavailable in restricted browser contexts.
+    }
+    // Reset drops every watchlist symbol: sweep the per-symbol ai_prev_*
+    // analysis-diff entries too, otherwise deleted/reset symbols keep
+    // stale AI payloads in localStorage forever. Kept outside the sort-key
+    // try/catch (whose exact shape is pinned by a legacy test) but still
+    // guarded so a blocked storage never aborts the reset flow.
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("ai_prev_")) localStorage.removeItem(k);
+      }
     } catch (_e) {
       // Storage can be unavailable in restricted browser contexts.
     }

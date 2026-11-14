@@ -171,7 +171,7 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
             new_price = price * change_factor
             prev_close = price - change
 
-            if prev_close != 0:
+            if prev_close != 0 and math.isfinite(prev_close):
                 new_change = new_price - prev_close
                 new_percent = (new_change / prev_close) * 100
 
@@ -182,6 +182,15 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
                     info["price"] = round(new_price, 2)
                     info["change"] = round(new_change, 2)
                 info["percent"] = round(new_percent, 2)
+            else:
+                # prev_close == 0 (or non-finite): a percent change is
+                # undefined. Keep the price/change fresh but leave percent
+                # untouched rather than emitting NaN/inf into the SSE frame
+                # (allow_nan=False would drop the whole payload downstream).
+                if key in ("USDJPY", "EURJPY"):
+                    info["price"] = round(new_price, 3)
+                else:
+                    info["price"] = round(new_price, 2)
 
 
 def bg_interpolate_loop() -> None:

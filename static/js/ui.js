@@ -1499,6 +1499,14 @@ function renderStocks(market, stocks) {
     cardIntersectionObserver
       ? cardIntersectionObserver.unobserve(wrapper)
       : void 0;
+    // Purge every per-stockKey cache (incl. ai_prev_* localStorage) for the
+    // removed card — same single-owner helper the SSE _removed path uses.
+    if (
+      typeof window !== "undefined" &&
+      typeof window.purgeStockKeyCaches === "function"
+    ) {
+      window.purgeStockKeyCaches(wrapper.dataset.stockKey);
+    }
     unregisterWrapper(wrapper.dataset.stockKey, wrapper);
     wrapper.remove();
   });

@@ -101,6 +101,7 @@ ENV/
 .mimocode/
 .kilo/
 .freebuff/
+.letta/
 .agent/
 
 # Node.js

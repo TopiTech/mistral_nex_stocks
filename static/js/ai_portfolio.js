@@ -359,9 +359,8 @@
       theme.textContent = portfolio.theme || "カスタムテーマ";
       const meta = document.createElement("span");
       meta.className = "ai-saved-portfolio-meta";
-      meta.textContent = `${portfolio.items ? portfolio.items.length : 0}銘柄・${
-        portfolio.expected_return || "---"
-      }`;
+      meta.textContent = `${portfolio.items ? portfolio.items.length : 0}銘柄・${portfolio.expected_return || "---"
+        }`;
       selectButton.appendChild(title);
       selectButton.appendChild(theme);
       selectButton.appendChild(meta);
@@ -1014,7 +1013,7 @@
         let excess =
           Math.round(
             (scaledItems.reduce((sum, it) => sum + it.weight_pct, 0) - 100) *
-              10,
+            10,
           ) / 10;
         if (excess > 0) {
           scaledItems.sort((a, b) => b.weight_pct - a.weight_pct);
@@ -1540,7 +1539,8 @@
 
     // 1. Sector/Stock Distribution Doughnut Chart
     const sectorCanvas = document.getElementById("ai-pf-sector-canvas");
-    if (sectorCanvas) {
+    const sectorCtx = sectorCanvas ? sectorCanvas.getContext("2d") : null;
+    if (sectorCanvas && sectorCtx) {
       const items = portfolio.items || [];
       const labels = items.map((it) => it.symbol);
       const dataValues = items.map((it) => it.weight_pct || 0);
@@ -1565,7 +1565,7 @@
         },
       };
 
-      aiSectorChartInstance = new Chart(sectorCanvas, {
+      aiSectorChartInstance = new Chart(sectorCtx, {
         type: "doughnut",
         data: {
           labels: labels,
@@ -1627,9 +1627,12 @@
 
     // 2. Performance Simulation Line Chart
     const summaryCanvas = document.getElementById("ai-pf-summary-canvas");
-    if (summaryCanvas) {
-      if (aiSummaryChartInstance) aiSummaryChartInstance.destroy();
-
+    const summaryCtx = summaryCanvas ? summaryCanvas.getContext("2d") : null;
+    if (summaryCanvas && aiSummaryChartInstance) {
+      aiSummaryChartInstance.destroy();
+      aiSummaryChartInstance = null;
+    }
+    if (summaryCanvas && summaryCtx) {
       const sim = computeAiSimulation(portfolio);
       const labels = [
         "1ヶ月前",
@@ -1638,20 +1641,23 @@
         "1週間前",
         "現在 (シミュレーション)",
       ];
-      const fillGradient = summaryCanvas
-        .getContext("2d")
-        .createLinearGradient(0, 0, 0, summaryCanvas.clientHeight || 240);
+      const fillGradient = summaryCtx.createLinearGradient(
+        0,
+        0,
+        0,
+        summaryCanvas.clientHeight || 240,
+      );
       fillGradient.addColorStop(0, "rgba(168, 85, 247, 0.35)");
       fillGradient.addColorStop(1, "rgba(168, 85, 247, 0.02)");
 
       const formatYen = (value) =>
         value == null ||
-        typeof value === "boolean" ||
-        !Number.isFinite(Number(value))
+          typeof value === "boolean" ||
+          !Number.isFinite(Number(value))
           ? "¥--"
           : `¥${Number(value).toLocaleString()}`;
 
-      aiSummaryChartInstance = new Chart(summaryCanvas, {
+      aiSummaryChartInstance = new Chart(summaryCtx, {
         type: "line",
         data: {
           labels: labels,

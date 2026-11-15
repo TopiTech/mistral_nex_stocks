@@ -652,7 +652,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (!res.ok || data?.ok === false) {
       console.error(
         "Add stock API failed:",
-        data?.error || `HTTP ${res.status}`,
+        data?.details?.reason ||
+          data?.message ||
+          data?.error ||
+          `HTTP ${res.status}`,
       );
       setBadgeMessage("NG", "#ff7d7d");
       return;
@@ -701,7 +704,7 @@ async function updateBadge() {
       const pctRaw = n225 ? (n225.percent ?? n225.change_percent) : null;
       if (pctRaw !== null && pctRaw !== undefined) {
         const pctValue = parseFloat(pctRaw);
-        if (!Number.isNaN(pctValue)) {
+        if (Number.isFinite(pctValue)) {
           const text =
             (pctValue >= 0 ? "+" : "") + Math.round(pctValue).toString() + "%";
           const color = pctValue >= 0 ? "#7dffb0" : "#ff7d7d";
@@ -963,7 +966,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (!res.ok || data?.ok === false) {
             return safeSendResponse({
               ok: false,
-              error: data?.error || `HTTP ${res.status}`,
+              error:
+                data?.details?.reason ||
+                data?.message ||
+                data?.error ||
+                `HTTP ${res.status}`,
             });
           }
           return safeSendResponse({ ok: true });

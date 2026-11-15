@@ -31,6 +31,7 @@ except Exception as e:
 
 import trend_sources as ts
 from utils.env_helpers import _env_int
+from utils.normalization import normalize_search_limit
 from utils.threading import DaemonThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,9 @@ def ddgs_news_search(
     normalized_query = _sanitize_ddgs_query(query)
     if not normalized_query:
         return []
+    eff_max_results = normalize_search_limit(max_results, default=8, max_value=50)
+    if eff_max_results is None:
+        return []
 
     selected_backend = backend or _get_ddgs_backends("news")
     short_query = " ".join(normalized_query.split()[:3]).strip()
@@ -227,7 +231,7 @@ def ddgs_news_search(
             "query": q,
             "region": r,
             "safesearch": "moderate",
-            "max_results": max_results,
+            "max_results": eff_max_results,
         }
         if t:
             kwargs["timelimit"] = t
@@ -318,6 +322,9 @@ def ddgs_text_search(
     normalized_query = _sanitize_ddgs_query(query)
     if not normalized_query:
         return []
+    eff_max_results = normalize_search_limit(max_results, default=8, max_value=50)
+    if eff_max_results is None:
+        return []
 
     selected_backend = backend or _get_ddgs_backends("text")
     short_query = " ".join(normalized_query.split()[:3]).strip()
@@ -327,7 +334,7 @@ def ddgs_text_search(
             "query": q,
             "region": region,
             "safesearch": "moderate",
-            "max_results": max_results,
+            "max_results": eff_max_results,
         }
         if t:
             kwargs["timelimit"] = t
@@ -444,19 +451,22 @@ def _collect_ddgs_items(queries, region, timelimit, news_n, text_n, limit=10, qu
     count is capped at ``limit * 2`` so the overall request volume stays
     bounded.
     """
-    try:
-        eff_limit = int(limit)
-        eff_query_limit = int(query_limit)
-        eff_news_n = int(news_n)
-        eff_text_n = int(text_n)
-    except (TypeError, ValueError):
-        return []
-    if eff_limit <= 0 or eff_query_limit <= 0 or (eff_news_n <= 0 and eff_text_n <= 0):
+    eff_limit = normalize_search_limit(limit)
+    eff_query_limit = normalize_search_limit(query_limit)
+    eff_news_n = normalize_search_limit(news_n, min_value=0, max_value=50)
+    eff_text_n = normalize_search_limit(text_n, min_value=0, max_value=50)
+    if (
+        eff_limit is None
+        or eff_query_limit is None
+        or eff_news_n is None
+        or eff_text_n is None
+        or (eff_news_n <= 0 and eff_text_n <= 0)
+    ):
         return []
 
     items: list[dict[str, Any]] = []
     try:
-        target_queries = list(queries)[: max(1, eff_query_limit)]
+        target_queries = list(queries)[:eff_query_limit]
         if not target_queries:
             return []
 

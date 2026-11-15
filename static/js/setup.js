@@ -306,7 +306,10 @@ async function getCredentialState() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
     throw new Error(
-      data.error || data.message || "APIキー状態の取得に失敗しました",
+      data.details?.reason ||
+        data.error ||
+        data.message ||
+        "APIキー状態の取得に失敗しました",
     );
   }
   return data;

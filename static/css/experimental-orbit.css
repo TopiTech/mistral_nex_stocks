@@ -938,11 +938,11 @@ kbd {
 
 /* ── Utility & Color Tokens ── */
 .text-pos {
-  color: var(--cosmic-emerald) !important;
+  color: var(--color-positive, var(--cosmic-emerald)) !important;
 }
 
 .text-neg {
-  color: var(--cosmic-rose) !important;
+  color: var(--color-negative, var(--cosmic-rose)) !important;
 }
 
 .text-secondary {

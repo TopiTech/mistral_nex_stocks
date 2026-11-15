@@ -316,7 +316,7 @@ class StateManager {
     this.indices = data;
     if (data?.USDJPY) {
       const price = Number(data.USDJPY.price) || null;
-      if (price !== null && !isNaN(price) && price > 0) {
+      if (price !== null && Number.isFinite(price) && price > 0) {
         this.exchangeRate = price;
       } else if (!this.exchangeRate || this.exchangeRate <= 1.0) {
         this.exchangeRate = 150.0;

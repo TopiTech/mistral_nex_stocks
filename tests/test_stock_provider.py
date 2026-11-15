@@ -623,5 +623,92 @@ class DownloadBatchRateLimitGuardTestCase(unittest.TestCase):
             mock_fetch.assert_called_once()
 
 
+class SearchAndNewsLimitNormalizationTestCase(unittest.TestCase):
+    """Edge-case regression tests for normalize_search_limit and YFinanceProvider limits."""
+
+    def setUp(self):
+        self.provider = YFinanceProvider()
+
+    def test_normalize_search_limit_edge_cases(self):
+        from utils.normalization import normalize_search_limit
+
+        self.assertIsNone(normalize_search_limit(None))
+        self.assertEqual(normalize_search_limit(None, default=8, max_value=20), 8)
+        self.assertIsNone(normalize_search_limit(True, default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit(False, default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit(0, default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit(-3, default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit("bad", default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit("", default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit("nan", default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit("inf", default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit(object(), default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit(float("nan"), default=8, max_value=20))
+        self.assertIsNone(normalize_search_limit(float("inf"), default=8, max_value=20))
+        self.assertEqual(normalize_search_limit("10", default=8, max_value=20), 10)
+        self.assertEqual(normalize_search_limit("3.9", default=8, max_value=20), 3)
+        self.assertEqual(normalize_search_limit(10.0, default=8, max_value=20), 10)
+        self.assertEqual(normalize_search_limit(0, min_value=0, max_value=20), 0)
+        self.assertIsNone(normalize_search_limit(-1, min_value=0, max_value=20))
+
+        class _CustomInt:
+            def __int__(self):
+                return 7
+
+        self.assertEqual(normalize_search_limit(_CustomInt(), max_value=20), 7)
+        self.assertEqual(normalize_search_limit(100, default=8, max_value=20), 20)
+
+    def test_get_news_invalid_limit_skips_yfinance(self):
+        mock_state = MagicMock()
+        mock_state.is_yf_rate_limited.return_value = False
+        mock_state.is_circuit_open.return_value = False
+        with (
+            patch.object(self.provider, "_get_market_state", return_value=mock_state),
+            patch.object(
+                self.provider, "get_ticker", side_effect=AssertionError("must not be called")
+            ) as mock_get_ticker,
+        ):
+            for bad_limit in (0, -3, True, False, "bad", float("nan")):
+                self.assertEqual(self.provider.get_news("AAPL", limit=bad_limit), [])
+            mock_get_ticker.assert_not_called()
+
+    def test_search_invalid_limit_skips_search_and_fallback(self):
+        mock_state = MagicMock()
+        mock_state.is_yf_rate_limited.return_value = False
+        mock_state.is_circuit_open.return_value = False
+        with (
+            patch.object(self.provider, "_get_market_state", return_value=mock_state),
+            patch.object(
+                self.provider, "_search_fallback", side_effect=AssertionError("must not be called")
+            ) as mock_fb,
+            patch("services.stock_provider.yf") as mock_yf,
+        ):
+            mock_yf.Search.side_effect = AssertionError("must not be called")
+            for bad_limit in (0, -3, True, False, "bad", None, float("nan")):
+                self.assertEqual(self.provider.search("AAPL", max_results=bad_limit), [])
+            mock_fb.assert_not_called()
+            mock_yf.Search.assert_not_called()
+
+    def test_search_fallback_validates_limit_and_clamps_to_50(self):
+        mock_state = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "quotes": [{"symbol": f"SYM{i}", "shortname": f"Name {i}"} for i in range(60)]
+        }
+        mock_sess = MagicMock()
+        mock_sess.get.return_value = mock_resp
+        with patch("services.stock_provider.yf_session_manager") as mock_mgr:
+            mock_mgr.get_session.return_value = mock_sess
+            for bad_limit in (0, -3, True, False, "bad", None):
+                self.assertEqual(
+                    self.provider._search_fallback("AAPL", bad_limit, mock_state), []
+                )
+            mock_sess.get.assert_not_called()
+
+            res = self.provider._search_fallback("AAPL", 100, mock_state)
+            self.assertEqual(len(res), 50)
+            self.assertEqual(mock_sess.get.call_args[1]["params"]["quotesCount"], 50)
+
+
 if __name__ == "__main__":
     unittest.main()

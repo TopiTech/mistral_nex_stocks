@@ -296,7 +296,11 @@ async function ensureStockDetails(wrapper) {
       // reopening the detail panel (or a user refresh) will re-poll.
       logger.info("stock-details still fetching after poll window; deferring");
     } else {
-      const errMsg = data?.error || "データ取得失敗";
+      const errMsg =
+        data?.details?.reason ||
+        data?.message ||
+        data?.error ||
+        "データ取得失敗";
       showErrorBanner(errMsg);
     }
   } catch (e) {
@@ -2001,6 +2005,7 @@ function drawPortfolioSummaryChart(holdings) {
     return;
   }
 
+  if (!ctx) return;
   pfSummaryChartInstance = new Chart(ctx, {
     type: "line",
     data: {
@@ -2239,6 +2244,7 @@ function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
     return;
   }
 
+  if (!ctx) return;
   pfSectorChartInstance = new Chart(ctx, {
     type: "doughnut",
     data: {
@@ -2665,6 +2671,7 @@ const drawSparkline = (wrapper, data) => {
   }
 
   const ctx = canvas.getContext("2d");
+  if (!ctx) return;
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
@@ -3957,8 +3964,14 @@ function openFullscreenChart(wrapper) {
   if (!modal) return;
   // 再オープン時にスクロールロックを重複取得しない
   // (単一クローズで解除しきれずページがスクロール不能になるのを防ぐ)。
+  const bumpFsToolbarReqId = () => {
+    const nextId = String((Number(modal.dataset.fsToolbarReqId) || 0) + 1);
+    modal.dataset.fsToolbarReqId = nextId;
+    return nextId;
+  };
   const modalWasHidden = modal.classList.contains("hidden");
   modal.dataset.stockKey = stockKey;
+  bumpFsToolbarReqId();
   modal.removeAttribute("inert");
   modal.setAttribute("aria-hidden", "false");
   modal.classList.remove("hidden");
@@ -4146,29 +4159,34 @@ function openFullscreenChart(wrapper) {
           }
           const p = getChartPref(stockKey, "period", "3mo");
           const inv = getChartPref(stockKey, "interval", "auto");
-          refreshStockChart(targetWrapper, p, inv);
-          setTimeout(() => {
-            if (
-              modal.classList.contains("hidden") ||
-              modal.dataset.stockKey !== stockKey
-            ) {
-              return;
-            }
-            const prefetch = getFreshPrefetchedHistory(stockKey, p, inv);
-            if (prefetch) {
-              drawChart(
-                targetWrapper,
-                prefetch.formattedData,
-                prefetch.ohlcData,
-                {
-                  targetCanvas: canvas,
-                  aiTechnicalLines: targetWrapper.__aiTechnicalLines,
-                  period: p,
-                  interval: inv,
-                },
-              );
-            }
-          }, 50);
+          const toolbarReqId = bumpFsToolbarReqId();
+          Promise.resolve(refreshStockChart(targetWrapper, p, inv))
+            .then(() => {
+              if (
+                modal.classList.contains("hidden") ||
+                modal.dataset.stockKey !== stockKey ||
+                modal.dataset.fsToolbarReqId !== toolbarReqId
+              ) {
+                return;
+              }
+              const prefetch = getFreshPrefetchedHistory(stockKey, p, inv);
+              if (prefetch) {
+                drawChart(
+                  targetWrapper,
+                  prefetch.formattedData,
+                  prefetch.ohlcData,
+                  {
+                    targetCanvas: canvas,
+                    aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+                    period: p,
+                    interval: inv,
+                  },
+                );
+              }
+            })
+            .catch((err) => {
+              console.debug("Fullscreen toolbar chart refresh failed:", err);
+            });
         });
       });
 
@@ -4233,6 +4251,7 @@ function openFullscreenChart(wrapper) {
 
       const period = getChartPref(stockKey, "period", "3mo");
       const interval = getChartPref(stockKey, "interval", "auto");
+      const toolbarReqId = bumpFsToolbarReqId();
       const prefetch = getFreshPrefetchedHistory(stockKey, period, interval);
       if (prefetch) {
         drawChart(targetWrapper, prefetch.formattedData, prefetch.ohlcData, {
@@ -4242,23 +4261,28 @@ function openFullscreenChart(wrapper) {
           interval: interval,
         });
       } else {
-        refreshStockChart(targetWrapper, period, interval).then(() => {
-          if (
-            modal.classList.contains("hidden") ||
-            modal.dataset.stockKey !== stockKey
-          ) {
-            return;
-          }
-          const fresh = getFreshPrefetchedHistory(stockKey, period, interval);
-          if (fresh) {
-            drawChart(targetWrapper, fresh.formattedData, fresh.ohlcData, {
-              targetCanvas: canvas,
-              aiTechnicalLines: targetWrapper.__aiTechnicalLines,
-              period: period,
-              interval: interval,
-            });
-          }
-        });
+        Promise.resolve(refreshStockChart(targetWrapper, period, interval))
+          .then(() => {
+            if (
+              modal.classList.contains("hidden") ||
+              modal.dataset.stockKey !== stockKey ||
+              modal.dataset.fsToolbarReqId !== toolbarReqId
+            ) {
+              return;
+            }
+            const fresh = getFreshPrefetchedHistory(stockKey, period, interval);
+            if (fresh) {
+              drawChart(targetWrapper, fresh.formattedData, fresh.ohlcData, {
+                targetCanvas: canvas,
+                aiTechnicalLines: targetWrapper.__aiTechnicalLines,
+                period: period,
+                interval: interval,
+              });
+            }
+          })
+          .catch((err) => {
+            console.debug("Fullscreen mode chart refresh failed:", err);
+          });
       }
     }
   };

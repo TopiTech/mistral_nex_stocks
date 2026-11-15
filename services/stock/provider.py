@@ -39,7 +39,12 @@ from utils.caching import (
     history_short_cache_key,
     legacy_history_frame_disk_key,
 )
-from utils.normalization import is_bool_like, is_jp_stock_code, normalize_history_frame
+from utils.normalization import (
+    is_bool_like,
+    is_jp_stock_code,
+    normalize_history_frame,
+    normalize_search_limit,
+)
 from utils.threading import DaemonThreadPoolExecutor
 from utils.tradingview_mapper import get_ticker_exchange, resolve_exchange_prefix
 
@@ -1275,11 +1280,8 @@ class YFinanceProvider(BaseStockProvider):
 
     def get_news(self, symbol: str, limit: int = 10) -> list[dict]:
         """Fetch recent news for a stock ticker."""
-        try:
-            eff_limit = int(limit)
-        except (TypeError, ValueError):
-            return []
-        if eff_limit <= 0:
+        eff_limit = normalize_search_limit(limit)
+        if eff_limit is None:
             return []
         t = self.get_ticker(symbol)
         if not t:
@@ -1423,6 +1425,9 @@ class YFinanceProvider(BaseStockProvider):
         """Search for stocks/instruments via yfinance Search."""
         if not query or len(query.strip()) < 2:
             return []
+        eff_max = normalize_search_limit(max_results, max_value=50)
+        if eff_max is None:
+            return []
         m_state = self._get_market_state()
         if m_state.is_yf_rate_limited():
             return []
@@ -1436,14 +1441,14 @@ class YFinanceProvider(BaseStockProvider):
                 "yfinance.Search not available in yfinance %s, using fallback",
                 getattr(yf, "__version__", "<unknown>"),
             )
-            return self._search_fallback(query, max_results, m_state)
+            return self._search_fallback(query, eff_max, m_state)
 
         try:
             sess = _shim().yf_session_manager.get_session()
             s = yf.Search(query, session=sess)
             quotes = getattr(s, "quotes", []) or []
             results = []
-            for item in quotes[:max_results]:
+            for item in quotes[:eff_max]:
                 sym = item.get("symbol")
                 if not sym:
                     continue
@@ -1477,12 +1482,15 @@ class YFinanceProvider(BaseStockProvider):
         Makes a direct HTTP request to the Yahoo Finance v1 search endpoint.
         This mirrors the internal implementation of yfinance.Search.
         """
+        eff_max = normalize_search_limit(max_results, max_value=50)
+        if eff_max is None:
+            return []
         try:
             sess = _shim().yf_session_manager.get_session()
             url = "https://query2.finance.yahoo.com/v1/finance/search"
             params = {
                 "q": query,
-                "quotesCount": max_results,
+                "quotesCount": eff_max,
                 "newsCount": 0,
             }
             resp = sess.get(url, params=params, timeout=10)
@@ -1490,7 +1498,7 @@ class YFinanceProvider(BaseStockProvider):
             data = resp.json()
             quotes = data.get("quotes", []) or []
             results = []
-            for item in quotes[:max_results]:
+            for item in quotes[:eff_max]:
                 sym = item.get("symbol")
                 if not sym:
                     continue

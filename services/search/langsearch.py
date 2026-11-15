@@ -27,7 +27,7 @@ from constants import (
     LANGSEARCH_TOTAL_TIMEOUT_SEC,
 )
 from utils.http_utils import parse_retry_after
-from utils.normalization import is_bool_like
+from utils.normalization import is_bool_like, normalize_search_limit
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +414,10 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=N
     if not api_key:
         raise ValueError("LangSearch API key is required")
 
+    eff_max_results = normalize_search_limit(max_results, default=8, max_value=50)
+    if eff_max_results is None:
+        return []
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -423,7 +427,7 @@ def langsearch_search(query, api_key, max_results=8, timelimit="d", errors_out=N
         "query": normalized_query,
         "freshness": _map_langsearch_freshness(timelimit),
         "summary": True,
-        "count": max(1, int(max_results or 8)),
+        "count": eff_max_results,
     }
     try:
         return _extract_langsearch_entries(
@@ -542,6 +546,10 @@ def _collect_langsearch_items(
     """Sequentially searches multiple queries and collects unique results."""
     if not api_key:
         return []
+    eff_limit = normalize_search_limit(limit)
+    eff_query_limit = normalize_search_limit(query_limit)
+    if eff_limit is None or eff_query_limit is None:
+        return []
 
     items: list[dict[str, Any]] = []
     deadline_token = _LANGSEARCH_SHARED_DEADLINE.set(
@@ -549,8 +557,8 @@ def _collect_langsearch_items(
     )
     try:
         query_list = list(queries)
-        for q in query_list[: max(1, int(query_limit))]:
-            if len(items) >= limit * 2:
+        for q in query_list[:eff_query_limit]:
+            if len(items) >= eff_limit * 2:
                 break
             try:
                 results = langsearch_search(
@@ -575,9 +583,9 @@ def _collect_langsearch_items(
         # Reranking is bypassed by default to prevent HTTP errors and latency.
         # If the API is revived upstream, set MNS_LANGSEARCH_RERANK_ENABLED=true or
         # enable LANGSEARCH_RERANK_ENABLED to reactivate reranking.
-        if LANGSEARCH_RERANK_ENABLED and len(unique_items) > limit and query_list:
+        if LANGSEARCH_RERANK_ENABLED and len(unique_items) > eff_limit and query_list:
             unique_items = langsearch_rerank(query_list[0], unique_items, api_key)
 
-        return unique_items[:limit]
+        return unique_items[:eff_limit]
     finally:
         _LANGSEARCH_SHARED_DEADLINE.reset(deadline_token)

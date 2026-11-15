@@ -23,6 +23,55 @@ def is_bool_like(value: Any) -> bool:
     return isinstance(value, bool) or type(value).__name__ in ("bool_", "bool")
 
 
+def normalize_search_limit(
+    value: Any,
+    *,
+    default: int | None = None,
+    max_value: int | None = None,
+    min_value: int = 1,
+) -> int | None:
+    """Normalize a search/list result limit, returning None when invalid or out of range.
+
+    Returns ``default`` only when *value* is ``None``. Rejects booleans,
+    non-finite floats, unparseable values, and values below ``min_value`` by
+    returning ``None`` so callers avoid outbound requests or negative slice bugs.
+    """
+    if value is None:
+        return default
+    if is_bool_like(value):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        parsed = int(value)
+    elif isinstance(value, int):
+        parsed = int(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = int(stripped)
+        except ValueError:
+            try:
+                fval = float(stripped)
+            except ValueError:
+                return None
+            if not math.isfinite(fval):
+                return None
+            parsed = int(fval)
+    else:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if parsed < min_value:
+        return None
+    if max_value is not None:
+        return min(parsed, max_value)
+    return parsed
+
+
 def normalize_market(market, default="us"):
     """Validates and normalizes market identifier."""
     value = str(market or default).strip().lower()

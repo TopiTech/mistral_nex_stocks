@@ -698,7 +698,7 @@ function updatePortfolioModalTotalCost() {
     const windowStateRate =
       typeof window !== "undefined" ? Number(window.State?.exchangeRate) : NaN;
     const fxRate =
-      !isNaN(fxVal) && fxVal > 0
+      Number.isFinite(fxVal) && fxVal > 0
         ? fxVal
         : Number.isFinite(stateRate) && stateRate > 1.0
           ? stateRate

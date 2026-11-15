@@ -11,7 +11,10 @@
   class OrbitRenderer {
     constructor(canvas, state) {
       this.canvas = canvas;
-      this.ctx = canvas.getContext("2d");
+      this.ctx =
+        canvas && typeof canvas.getContext === "function"
+          ? canvas.getContext("2d")
+          : null;
       this.state = state;
 
       this.width = 0;
@@ -415,6 +418,7 @@
       const animTime = this._ambientTime;
 
       const ctx = this.ctx;
+      if (!ctx) return;
       ctx.save();
       ctx.scale(this.dpr, this.dpr);
 
@@ -1128,7 +1132,7 @@
       ctx.stroke();
 
       // Content text
-      const colors = this.getColorForChange(stock.changePercent);
+      const colors = this.getColorForChange(viewStock.changePercent);
 
       // Symbol Title (left)
       ctx.fillStyle = "#ffffff";

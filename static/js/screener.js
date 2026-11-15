@@ -405,7 +405,12 @@
       );
       if (requestGeneration !== screenerRequestGeneration) return;
       if (!data || !data.ok) {
-        throw new Error(data?.error || "データの取得に失敗しました");
+        throw new Error(
+          data?.details?.reason ||
+            data?.message ||
+            data?.error ||
+            "データの取得に失敗しました",
+        );
       }
 
       if (countEl) {
@@ -552,7 +557,7 @@
       const changeVal = parseFloat(stock.change_percent);
       let changeClass = "neutral";
       let changeSign = "";
-      if (!isNaN(changeVal)) {
+      if (Number.isFinite(changeVal)) {
         if (changeVal > 0) {
           changeClass = "plus";
           changeSign = "+";
@@ -560,7 +565,7 @@
           changeClass = "minus";
         }
       }
-      const pctStr = !isNaN(changeVal)
+      const pctStr = Number.isFinite(changeVal)
         ? `${changeSign}${changeVal.toFixed(2)}%`
         : "--%";
 
@@ -648,9 +653,29 @@
         "aria-label",
         `${stock.name || stock.symbol} をウォッチリストに追加`,
       );
+      let revertTimerId = null;
+      const clearRevertTimer = () => {
+        if (revertTimerId !== null) {
+          clearTimeout(revertTimerId);
+          revertTimerId = null;
+        }
+      };
+      const scheduleRevertLabel = () => {
+        clearRevertTimer();
+        revertTimerId = setTimeout(() => {
+          revertTimerId = null;
+          if (
+            addBtn.dataset.inFlight !== "true" &&
+            !addBtn.classList.contains("added")
+          ) {
+            addBtn.textContent = "➕ 追加";
+          }
+        }, 2500);
+      };
       addBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (addBtn.dataset.inFlight === "true") return;
+        clearRevertTimer();
         addBtn.dataset.inFlight = "true";
         addBtn.disabled = true;
         addBtn.textContent = "追加中...";
@@ -693,11 +718,7 @@
             addBtn.textContent = "再試行";
             addBtn.title = reason;
             addBtn.disabled = false;
-            setTimeout(() => {
-              if (!addBtn.classList.contains("added")) {
-                addBtn.textContent = "➕ 追加";
-              }
-            }, 2500);
+            scheduleRevertLabel();
             if (typeof showToast === "function") {
               showToast(reason, "#ff5555");
             }
@@ -705,11 +726,7 @@
         } catch (_err) {
           addBtn.textContent = "エラー";
           addBtn.disabled = false;
-          setTimeout(() => {
-            if (!addBtn.classList.contains("added")) {
-              addBtn.textContent = "➕ 追加";
-            }
-          }, 2500);
+          scheduleRevertLabel();
           if (typeof showToast === "function") {
             showToast("通信エラーが発生しました", "#ff5555");
           }

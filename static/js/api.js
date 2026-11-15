@@ -531,7 +531,7 @@ function updateSingleIndexChip(chip, idx) {
       if (oldPriceStr !== "--") {
         const oldP = parseFloat(oldPriceStr.replace(/,/g, ""));
         const newP = parseFloat(nextPrice.replace(/,/g, ""));
-        if (!isNaN(oldP) && !isNaN(newP) && oldP !== newP) {
+        if (Number.isFinite(oldP) && Number.isFinite(newP) && oldP !== newP) {
           const flashCls = newP > oldP ? "flash-up" : "flash-down";
           priceEl.classList.remove("flash-up", "flash-down");
           void priceEl.offsetWidth;

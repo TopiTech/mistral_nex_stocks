@@ -10,6 +10,7 @@ from tenacity import (
 )
 
 import trend_sources as ts
+from utils.normalization import normalize_search_limit
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,9 @@ def tavily_search(
         return []
     if not api_key:
         raise ValueError("Tavily API key is required")
+    eff_max_results = normalize_search_limit(max_results, default=8, max_value=20)
+    if eff_max_results is None:
+        return []
     if _is_tavily_circuit_open():
         logger.info("Tavily circuit is open; skipping search request")
         return []
@@ -223,9 +227,9 @@ def tavily_search(
         req_timeout = _TAVILY_REQUEST_TIMEOUT_SEC if timeout is None else max(1.0, float(timeout))
         kwargs: dict[str, Any] = {
             "query": normalized_query,
-            "search_depth": "advanced" if max_results > 5 else "basic",
+            "search_depth": "advanced" if eff_max_results > 5 else "basic",
             "topic": topic,
-            "max_results": min(max(1, int(max_results or 8)), 20),
+            "max_results": eff_max_results,
             "include_answer": False,
             "include_raw_content": False,
             "include_images": False,
@@ -296,12 +300,9 @@ def _collect_tavily_items(
     """Collects search items from Tavily API across multiple queries."""
     if not api_key:
         return []
-    try:
-        eff_limit = int(limit)
-        eff_query_limit = int(query_limit)
-    except (TypeError, ValueError):
-        return []
-    if eff_limit <= 0 or eff_query_limit <= 0:
+    eff_limit = normalize_search_limit(limit)
+    eff_query_limit = normalize_search_limit(query_limit)
+    if eff_limit is None or eff_query_limit is None:
         return []
 
     items: list[dict[str, Any]] = []
@@ -309,7 +310,7 @@ def _collect_tavily_items(
     deadline = time.monotonic() + _TAVILY_TOTAL_DEADLINE_SEC
     local_errors = errors_out if isinstance(errors_out, list) else []
 
-    for q in query_list[: max(1, eff_query_limit)]:
+    for q in query_list[:eff_query_limit]:
         if len(items) >= eff_limit * 2:
             break
         if time.monotonic() >= deadline or _is_tavily_circuit_open():

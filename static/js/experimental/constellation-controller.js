@@ -244,6 +244,7 @@
       const chartColors = ["#6366f1", "#38bdf8", "#f59e0b"];
 
       const ctx = canvas.getContext("2d");
+      if (!ctx) return;
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
@@ -437,12 +438,18 @@
 
           if (res && typeof res.ok === "boolean" && !res.ok) {
             const errorMsg =
-              data?.message || data?.error || `HTTP ${res.status}`;
+              data?.details?.reason ||
+              data?.message ||
+              data?.error ||
+              `HTTP ${res.status}`;
             throw new Error(errorMsg);
           }
           if (data && (data.ok === false || (data.error && !data.fetching))) {
             throw new Error(
-              data.message || data.error || "AI分析エラーが発生しました",
+              data?.details?.reason ||
+                data.message ||
+                data.error ||
+                "AI分析エラーが発生しました",
             );
           }
           if (!data?.fetching) break;
@@ -456,7 +463,10 @@
         }
         if (data && (data.ok === false || data.error)) {
           throw new Error(
-            data.message || data.error || "AI分析エラーが発生しました",
+            data?.details?.reason ||
+              data.message ||
+              data.error ||
+              "AI分析エラーが発生しました",
           );
         }
         aiResultContainer.textContent = "";
@@ -490,7 +500,10 @@
           aiResultContainer.appendChild(resultCard);
         } else {
           throw new Error(
-            data?.message || data?.error || "AI応答を取得できませんでした",
+            data?.details?.reason ||
+              data?.message ||
+              data?.error ||
+              "AI応答を取得できませんでした",
           );
         }
       } catch (err) {

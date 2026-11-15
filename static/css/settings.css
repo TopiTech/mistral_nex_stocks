@@ -1040,6 +1040,12 @@ select {
     inset 0 0 12px rgba(0, 242, 254, 0.05);
 }
 
+.provider-toggle-label:focus-within .provider-toggle-card,
+.provider-toggle-label input[type="radio"]:focus-visible + .provider-toggle-card {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
 .provider-card-header {
   display: flex;
   justify-content: space-between;
@@ -1137,6 +1143,9 @@ select {
 }
 
 .model-chip {
+  appearance: none;
+  font: inherit;
+  line-height: 1.4;
   background: rgba(107, 182, 255, 0.12);
   border: 1px solid rgba(107, 182, 255, 0.3);
   color: #93c5fd;
@@ -1148,8 +1157,14 @@ select {
   transition: all 0.14s ease;
 }
 
-.model-chip:hover {
+.model-chip:hover,
+.model-chip:focus-visible {
   background: rgba(107, 182, 255, 0.25);
   border-color: #60a5fa;
   color: #ffffff;
+}
+
+.model-chip:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
 }

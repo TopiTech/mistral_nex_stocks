@@ -481,7 +481,9 @@ async function fetchStockHistoryPayload(
    * null when the caller should poll again.
    */
   const applyHistoryResponse = (data) => {
-    if (data?.error) throw new Error(data.error);
+    if (data?.error) {
+      throw new Error(data?.details?.reason || data?.message || data.error);
+    }
     if (Array.isArray(data?.history) && data.history.length > 0) {
       return normalizeHistoryData(data.history);
     }
@@ -1266,6 +1268,10 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   }
 
   const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    _safeDestroyChart(canvas);
+    return;
+  }
   if (!data || data.length < 2) {
     // 描画不能データでは旧チャートを(新しい期間のチャートとして)残さず、
     // 破棄してから情報表示を出す(空データで旧チャートが残るのを防ぐ)。
@@ -1752,6 +1758,10 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
 function drawPnLChart(canvas, data, avgPrice, options = {}) {
   const animate = getChartAnimationEnabled(options.animate);
   const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    _safeDestroyChart(canvas);
+    return;
+  }
   if (!avgPrice || avgPrice <= 0 || !data || data.length < 2) {
     _safeDestroyChart(canvas);
     return;

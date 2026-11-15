@@ -701,5 +701,52 @@ class LangsearchAcquireSlotTestCase(unittest.TestCase):
         self.assertGreaterEqual(app_state.ai.langsearch_next_allowed_ts, before + 5)
 
 
+class LangsearchLimitNormalizationTestCase(unittest.TestCase):
+    """Edge-case regression tests for langsearch_search max_results normalization."""
+
+    def setUp(self):
+        app_state.ai.langsearch_min_interval_sec = 0.0
+        app_state.ai.langsearch_next_allowed_ts = 0.0
+
+    def test_invalid_or_non_positive_max_results_skips_http(self):
+        with patch.object(ls, "_langsearch_post_json") as mock_post:
+            for bad_limit in (0, -3, True, False, "bad", float("nan"), float("inf")):
+                self.assertEqual(
+                    ls.langsearch_search("query", api_key="key", max_results=bad_limit),
+                    [],
+                )
+            mock_post.assert_not_called()
+
+    def test_none_string_and_clamped_max_results(self):
+        with patch.object(
+            ls, "_langsearch_post_json", return_value={"data": {"webPages": {"value": []}}}
+        ) as mock_post:
+            ls.langsearch_search("query", api_key="key", max_results=None)
+            self.assertEqual(mock_post.call_args[0][1]["count"], 8)
+
+            ls.langsearch_search("query", api_key="key", max_results="10")
+            self.assertEqual(mock_post.call_args[0][1]["count"], 10)
+
+            ls.langsearch_search("query", api_key="key", max_results=100)
+            self.assertEqual(mock_post.call_args[0][1]["count"], 50)
+
+    def test_collect_langsearch_items_invalid_limits_skip_search(self):
+        with patch.object(ls, "langsearch_search") as mock_search:
+            for bad_limit in (None, 0, -2, True, False, "bad", float("nan")):
+                self.assertEqual(
+                    ls._collect_langsearch_items(
+                        ["q1"], "key", "d", limit=bad_limit, query_limit=2
+                    ),
+                    [],
+                )
+                self.assertEqual(
+                    ls._collect_langsearch_items(
+                        ["q1"], "key", "d", limit=5, query_limit=bad_limit
+                    ),
+                    [],
+                )
+            mock_search.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -320,5 +320,46 @@ class CollectTavilyItemsTestCase(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TavilyLimitNormalizationTestCase(unittest.TestCase):
+    """Edge-case regression tests for tavily_search max_results normalization."""
+
+    def test_invalid_or_non_positive_max_results_skips_client(self):
+        with patch("services.search.tavily._get_tavily_client") as mock_get_client:
+            for bad_limit in (0, -3, True, False, "bad", float("nan"), float("inf")):
+                self.assertEqual(
+                    tavily_search("test query", api_key="test-key", max_results=bad_limit),
+                    [],
+                )
+            mock_get_client.assert_not_called()
+
+    def test_none_string_and_clamped_max_results(self):
+        mock_client = MagicMock()
+        mock_client.search.return_value = {"results": []}
+        with patch("services.search.tavily._get_tavily_client", return_value=mock_client):
+            tavily_search("query", api_key="test-key", max_results=None)
+            self.assertEqual(mock_client.search.call_args[1]["max_results"], 8)
+            self.assertEqual(mock_client.search.call_args[1]["search_depth"], "advanced")
+
+            tavily_search("query", api_key="test-key", max_results="3")
+            self.assertEqual(mock_client.search.call_args[1]["max_results"], 3)
+            self.assertEqual(mock_client.search.call_args[1]["search_depth"], "basic")
+
+            tavily_search("query", api_key="test-key", max_results=100)
+            self.assertEqual(mock_client.search.call_args[1]["max_results"], 20)
+
+    def test_collect_tavily_items_invalid_limits_skip_search(self):
+        with patch("services.search.tavily.tavily_search") as mock_search:
+            for bad_limit in (None, 0, -2, True, False, "bad", float("nan")):
+                self.assertEqual(
+                    _collect_tavily_items(["q1"], "test-key", "d", limit=bad_limit, query_limit=2),
+                    [],
+                )
+                self.assertEqual(
+                    _collect_tavily_items(["q1"], "test-key", "d", limit=5, query_limit=bad_limit),
+                    [],
+                )
+            mock_search.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

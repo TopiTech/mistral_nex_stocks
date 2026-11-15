@@ -390,7 +390,9 @@ async function readSettingsApiResponse(res) {
         `HTTP ${res.status}: ${res.statusText}`,
     );
   }
-  if (data.error) throw new Error(data.error);
+  if (data.error) {
+    throw new Error(data.details?.reason || data.message || data.error);
+  }
   return data;
 }
 
@@ -526,7 +528,10 @@ function logout() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) {
         const detail =
-          data.error || data.message || `Server error: ${response.status}`;
+          data.details?.reason ||
+          data.error ||
+          data.message ||
+          `Server error: ${response.status}`;
         throw new Error(detail);
       }
       try {
@@ -969,7 +974,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data?.ok) {
           throw new Error(
-            data?.error || `接続テストに失敗しました (HTTP ${res.status})`,
+            data?.details?.reason ||
+              data?.message ||
+              data?.error ||
+              `接続テストに失敗しました (HTTP ${res.status})`,
           );
         }
 
@@ -1239,7 +1247,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data?.ok) {
           throw new Error(
-            data?.error || `接続テストに失敗しました (HTTP ${res.status})`,
+            data?.details?.reason ||
+              data?.message ||
+              data?.error ||
+              `接続テストに失敗しました (HTTP ${res.status})`,
           );
         }
 
@@ -1265,7 +1276,8 @@ document.addEventListener("DOMContentLoaded", () => {
           openaiDiscoveredModels.appendChild(header);
 
           data.models.forEach((mId) => {
-            const chip = document.createElement("span");
+            const chip = document.createElement("button");
+            chip.type = "button";
             chip.className = "model-chip";
             chip.textContent = mId;
             chip.addEventListener("click", () => {

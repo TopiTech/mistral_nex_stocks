@@ -224,7 +224,7 @@ function renderStockItem(
   let changeClass = "neutral";
   let changeSign = "";
   const val = parseFloat(changePercent);
-  if (!isNaN(val)) {
+  if (Number.isFinite(val)) {
     if (val > 0) {
       changeClass = "plus";
       changeSign = "+";
@@ -965,12 +965,34 @@ async function loadDetectedTickers() {
       addBtn.type = "button";
       addBtn.className = "mini-add-btn";
       addBtn.textContent = "➕ 追加";
+      let revertTimerId = null;
+      const clearRevertTimer = () => {
+        if (revertTimerId !== null) {
+          clearTimeout(revertTimerId);
+          revertTimerId = null;
+        }
+      };
+      const scheduleRevertLabel = () => {
+        clearRevertTimer();
+        revertTimerId = setTimeout(() => {
+          revertTimerId = null;
+          if (
+            addBtn.dataset.inFlight !== "true" &&
+            addBtn.textContent !== "✓ 追加済"
+          ) {
+            addBtn.textContent = "➕ 追加";
+          }
+        }, 2500);
+      };
       addBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        setCardError("");
-        addBtn.disabled = true;
-        addBtn.textContent = "追加中...";
+        if (addBtn.dataset.inFlight === "true") return;
+        clearRevertTimer();
+        addBtn.dataset.inFlight = "true";
         try {
+          setCardError("");
+          addBtn.disabled = true;
+          addBtn.textContent = "追加中...";
           const response = await send("addDetectedStock", {
             symbol: item.symbol,
             market: item.market,
@@ -986,11 +1008,7 @@ async function loadDetectedTickers() {
             addBtn.title = errorMsg;
             addBtn.textContent = "失敗";
             addBtn.disabled = false;
-            setTimeout(() => {
-              if (addBtn.textContent !== "✓ 追加済") {
-                addBtn.textContent = "➕ 追加";
-              }
-            }, 2500);
+            scheduleRevertLabel();
           }
         } catch (err) {
           const errorMsg =
@@ -999,11 +1017,9 @@ async function loadDetectedTickers() {
           addBtn.title = errorMsg;
           addBtn.textContent = "エラー";
           addBtn.disabled = false;
-          setTimeout(() => {
-            if (addBtn.textContent !== "✓ 追加済") {
-              addBtn.textContent = "➕ 追加";
-            }
-          }, 2500);
+          scheduleRevertLabel();
+        } finally {
+          delete addBtn.dataset.inFlight;
         }
       });
 

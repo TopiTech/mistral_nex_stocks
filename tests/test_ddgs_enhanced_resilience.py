@@ -195,3 +195,38 @@ class DdgsEnhancedResilienceTestCase(unittest.TestCase):
                 # When ddgs_news_search and ddgs_text_search return [] (their resilient behavior), items is empty
                 res = _collect_ddgs_items(["query1"], "us-en", "d", 2, 2)
                 self.assertEqual(res, [])
+
+    def test_invalid_or_non_positive_max_results_skips_ddgs(self):
+        """Non-positive, boolean, NaN, Inf, or unparseable max_results must return [] before calling DDGS."""
+        with patch("services.search.ddgs.DDGS") as mock_ddgs:
+            for bad_limit in (0, -3, True, False, "bad", float("nan"), float("inf")):
+                self.assertEqual(ddgs_text_search("query", max_results=bad_limit), [])
+                self.assertEqual(ddgs_news_search("query", max_results=bad_limit), [])
+            mock_ddgs.assert_not_called()
+
+    def test_none_string_and_clamped_max_results(self):
+        """None defaults to 8, numeric strings coerce, and >50 clamps to 50."""
+        with patch("services.search.ddgs.DDGS") as mock_ddgs_cls:
+            mock_session = MagicMock()
+            mock_session.text.return_value = []
+            mock_session.news.return_value = []
+            mock_ddgs_cls.return_value.__enter__.return_value = mock_session
+
+            ddgs_text_search("query", max_results=None)
+            self.assertEqual(mock_session.text.call_args[1]["max_results"], 8)
+            ddgs_news_search("query", max_results="10")
+            self.assertEqual(mock_session.news.call_args[1]["max_results"], 10)
+            ddgs_text_search("query", max_results=100)
+            self.assertEqual(mock_session.text.call_args[1]["max_results"], 50)
+            ddgs_news_search("query", max_results=100)
+            self.assertEqual(mock_session.news.call_args[1]["max_results"], 50)
+
+    def test_collect_ddgs_items_rejects_boolean_and_negative_counts(self):
+        """Boolean, None, negative, or unparseable limits/counts skip thread pool submission."""
+        with patch("services.search.ddgs._get_ddgs_search_pool") as mock_pool:
+            for bad in (None, True, False, -1, "bad", float("nan")):
+                self.assertEqual(_collect_ddgs_items(["q"], "us-en", "d", bad, 2), [])
+                self.assertEqual(_collect_ddgs_items(["q"], "us-en", "d", 2, bad), [])
+                self.assertEqual(_collect_ddgs_items(["q"], "us-en", "d", 2, 2, limit=bad), [])
+                self.assertEqual(_collect_ddgs_items(["q"], "us-en", "d", 2, 2, query_limit=bad), [])
+            mock_pool.assert_not_called()

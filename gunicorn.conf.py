@@ -96,6 +96,14 @@ def on_starting(server):
     # consistent with the guard in wsgi.py (reserved for environments that have
     # externalized all shared state). Keep the falsy-value spelling set in sync
     # with utils/worker_validation.py ("off" must disable here too).
+    if getattr(getattr(server, "cfg", None), "preload_app", False):
+        sys.stderr.write(
+            "FATAL: preload_app is not supported. The application owns in-memory\n"
+            "singletons, background threads, and executor state that do not survive\n"
+            "fork. Remove --preload / preload_app=True and let the worker import the app.\n"
+        )
+        sys.exit(1)
+
     if server.num_workers > 1 and os.environ.get("MNS_WORKER_VALIDATION", "1").strip().lower() not in (
         "0",
         "false",

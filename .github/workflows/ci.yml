@@ -48,11 +48,14 @@ jobs:
       - name: Run TypeScript typecheck
         run: npm run typecheck
 
+      - name: Verify generated frontend artifact
+        # Must run BEFORE compile: compile overwrites the tracked artifact, so
+        # a stale committed api_client.js would otherwise be regenerated and
+        # then compared against itself (a tautological check).
+        run: npm run verify-generated
+
       - name: Compile frontend artifact
         run: npm run compile
-
-      - name: Verify generated frontend artifact
-        run: npm run verify-generated
 
       - name: Run ESLint
         run: npm run lint
@@ -281,5 +284,5 @@ jobs:
         run: >
           uv run --locked --group test python -m pytest tests/
           -q --timeout=60 --timeout-method=thread
-          -k "posix or flock or fcntl or 0600 or 0o600 or permission or umask"
+          -k "posix or flock or fcntl or 0600 or 0o600 or permission or umask or locked_user_stocks or process_lock_times_out or degrade_when_lock_busy"
           -m "not network" --no-header -p no:randomly

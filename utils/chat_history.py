@@ -166,15 +166,17 @@ def _run_migration(conn: sqlite3.Connection) -> None:
         )
         current_version = 1
     if current_version < 2:
-        # v2: add metadata columns for better observability
-        try:
+        # v2: add metadata columns for better observability. Check PRAGMA
+        # table_info instead of swallowing every OperationalError: a transient
+        # "database is locked"/"disk full" must not advance user_version and
+        # leave the schema permanently half-migrated.
+        existing_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(chat_sessions)").fetchall()
+        }
+        if "created_at" not in existing_columns:
             conn.execute("ALTER TABLE chat_sessions ADD COLUMN created_at REAL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # column may already exist
-        try:
+        if "message_count" not in existing_columns:
             conn.execute("ALTER TABLE chat_sessions ADD COLUMN message_count INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
         current_version = 2
     conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     conn.commit()
@@ -230,6 +232,45 @@ def init_db() -> None:
 # NOTE: init_db() is intentionally NOT called at module import time.
 # The database is initialized lazily when the first SQLiteChatHistoryStore
 # instance is created. This avoids side effects at import time.
+
+
+class _ThreadConnectionGuard:
+    """Close a thread-local SQLite connection when its owning thread exits.
+
+    ``sqlite3.Connection`` is not weak-referenceable, so the store's strong
+    ``_active_conns`` set used to keep a connection alive forever when a
+    worker thread exited without calling ``close()``. A guard stored only in
+    that thread's ``threading.local`` dict is released when the thread dies,
+    which closes the connection and removes it from the active set.
+    """
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        active_conns: set[sqlite3.Connection],
+        conns_lock: threading.Lock,
+    ) -> None:
+        self.conn: sqlite3.Connection | None = conn
+        self.active_conns = active_conns
+        self.conns_lock = conns_lock
+
+    def close(self) -> None:
+        conn = self.conn
+        if conn is None:
+            return
+        self.conn = None
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            with self.conns_lock:
+                self.active_conns.discard(conn)
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        self.close()
 
 
 class SQLiteChatHistoryStore:
@@ -291,6 +332,10 @@ class SQLiteChatHistoryStore:
 
     @staticmethod
     def _close_local_conn(local, active_conns=None, conns_lock=None) -> None:
+        guard = getattr(local, "guard", None)
+        if guard is not None:
+            guard.close()
+            local.guard = None
         conn = getattr(local, "conn", None)
         if conn is not None:
             try:
@@ -324,6 +369,11 @@ class SQLiteChatHistoryStore:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is not None:
             return conn
+        # A transient failure during the one-shot init (locked DB, WAL
+        # recovery, disk error) used to leave the process without a schema
+        # until restart. Retry lazily before opening the first connection.
+        if not _db_initialized:
+            init_db()
         # isolation_level=None gives us manual transaction control so
         # _execute_in_transaction can span BOTH the read and the write of a
         # read-modify-write in one transaction (C-2). Python's legacy implicit
@@ -347,6 +397,9 @@ class SQLiteChatHistoryStore:
                 pass
             raise
         self._local.conn = conn
+        self._local.guard = _ThreadConnectionGuard(
+            conn, self._active_conns, self._conns_lock
+        )
         with self._conns_lock:
             self._active_conns.add(conn)
         return conn
@@ -381,14 +434,18 @@ class SQLiteChatHistoryStore:
         to avoid leaking SQLite connections over the process lifetime.
         """
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is not None:
+        guard = getattr(self._local, "guard", None)
+        if guard is not None:
+            guard.close()
+        elif conn is not None:
             try:
                 conn.close()
             except (sqlite3.Error, OSError) as exc:
                 logger.debug("Error closing thread-local chat history connection: %s", exc)
             with self._conns_lock:
                 self._active_conns.discard(conn)
-            self._local.conn = None  # type: ignore[attr-defined]
+        self._local.conn = None  # type: ignore[attr-defined]
+        self._local.guard = None  # type: ignore[attr-defined]
 
     def close_all(self) -> None:
         """Close all active SQLite connections across all threads."""

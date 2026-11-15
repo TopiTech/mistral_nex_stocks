@@ -224,8 +224,10 @@ def _reset_caches_and_sessions(app_state: object) -> None:
         from routes import api_analysis as _api_analysis
 
         _api_analysis.analyze_result_cache.clear()
+        _api_analysis.analyze_result_fingerprints.clear()
         _api_analysis.analyze_fetch_inflight.clear()
         _api_analysis.chat_result_cache.clear()
+        _api_analysis.chat_result_fingerprints.clear()
         _api_analysis.chat_fetch_inflight.clear()
         with _api_analysis.news_fetch_lock:
             _api_analysis.news_fetch_inflight.clear()

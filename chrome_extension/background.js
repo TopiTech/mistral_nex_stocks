@@ -32,6 +32,9 @@ const SHUTDOWN_TIMEOUT_MS = 5000;
 let mnsShutdownToken = null;
 let mnsExtensionToken = null;
 let backendPort = DEFAULT_BACKEND_PORT;
+// null = native host could not verify (legacy/manual backend); false = the
+// listening port is known NOT to belong to this app's backend process.
+let backendVerified = null;
 
 function normalizeBackendPort(value) {
   const port = Number(value);
@@ -44,37 +47,77 @@ function normalizeBackendPort(value) {
 /**
  * fetch with a bounded wait for the backend to answer. A stalled backend must
  * never leave the service worker waiting forever (badge updates hold a lock,
- * and add/stop flows hold the popup's button state). The timer is cleared as
- * soon as the response arrives so streaming bodies are not cut off.
+ * and add/stop flows hold the popup's button state).
+ *
+ * The budget covers body consumption too: a server can send response headers
+ * and then stall the body forever, so the timer is cleared only after the
+ * caller has read the body (or the request failed). Without this, `res.json()`
+ * could hang indefinitely even though `fetch()` had already resolved.
  */
 function fetchWithTimeout(url, options = {}, timeoutMs = ADD_STOCK_TIMEOUT_MS) {
   const controller = new AbortController();
   let timedOut = false;
-  const timeoutId = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
+  let timeoutId = null;
   const callerSignal = options.signal;
   const abortFromCaller = () => controller.abort();
+  const cleanup = () => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  };
+  const makeTimeoutError = () => {
+    const timeoutError = new Error("リクエストがタイムアウトしました");
+    timeoutError.name = "TimeoutError";
+    return timeoutError;
+  };
+  timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    cleanup();
+  }, timeoutMs);
   if (callerSignal) {
     if (callerSignal.aborted) controller.abort();
     else
       callerSignal.addEventListener("abort", abortFromCaller, { once: true });
   }
-  const cleanup = () => {
-    clearTimeout(timeoutId);
-    callerSignal?.removeEventListener("abort", abortFromCaller);
-  };
   return fetch(url, { ...options, signal: controller.signal })
-    .catch((error) => {
-      if (timedOut) {
-        const timeoutError = new Error("リクエストがタイムアウトしました");
-        timeoutError.name = "TimeoutError";
-        throw timeoutError;
+    .then((response) => {
+      // Keep the timeout armed until every body-reading method completes.
+      // Response objects are extensible; if a host freezes one, fall back to
+      // the original method (the timer still aborts the underlying stream).
+      for (const method of [
+        "json",
+        "text",
+        "arrayBuffer",
+        "blob",
+        "formData",
+      ]) {
+        const original = response[method];
+        if (typeof original !== "function") continue;
+        try {
+          response[method] = async (...args) => {
+            try {
+              return await original.apply(response, args);
+            } catch (error) {
+              if (timedOut) throw makeTimeoutError();
+              throw error;
+            } finally {
+              cleanup();
+            }
+          };
+        } catch (error) {
+          console.warn("Failed to wrap response body reader:", error);
+        }
       }
-      throw error;
+      return response;
     })
-    .finally(cleanup);
+    .catch((error) => {
+      cleanup();
+      if (timedOut) throw makeTimeoutError();
+      throw error;
+    });
 }
 
 function buildBackendUrls(port = backendPort) {
@@ -213,59 +256,90 @@ if (mnsSessionStorage && typeof mnsSessionStorage.get === "function") {
 }
 
 let mnsExtensionTokenInflight = null;
+let mnsExtensionTokenForceInflight = null;
+// Incremented on every forced refresh so an older in-flight acquisition that
+// resolves late cannot overwrite the newer token (or resurrect a rejected one).
+let mnsExtensionTokenGeneration = 0;
+
+async function _acquireExtensionToken(forceRefresh, generation) {
+  const isCurrent = () => generation === mnsExtensionTokenGeneration;
+  // After a forced refresh the persisted copy is known to be rejected (or
+  // could not be removed), so only the native host can provide a valid one.
+  if (!forceRefresh) {
+    try {
+      const sessionStorage = getMnsSessionStorage();
+      if (sessionStorage && typeof sessionStorage.get === "function") {
+        const items = await sessionStorage.get("mnsExtensionToken");
+        if (items && items.mnsExtensionToken) {
+          if (isCurrent()) {
+            mnsExtensionToken = items.mnsExtensionToken;
+            return mnsExtensionToken;
+          }
+          return mnsExtensionTokenForceInflight || mnsExtensionToken || "";
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to get token from storage.session:", e);
+    }
+  }
+  try {
+    const res = await sendNativeMessage({
+      action: "get_extension_api_token",
+    });
+    if (res && res.ok && res.token) {
+      if (isCurrent()) {
+        setMnsExtensionToken(res.token);
+        return res.token;
+      }
+      return mnsExtensionTokenForceInflight || mnsExtensionToken || "";
+    }
+  } catch (e) {
+    console.warn("Failed to query extension api token via native host:", e);
+  }
+  return "";
+}
 
 async function getOrFetchExtensionToken(forceRefresh = false) {
   if (forceRefresh) {
     // The backend rejected the cached value, so drop both copies and ask the
-    // native host again (it owns the token's rotation).
+    // native host again (it owns the token's rotation). Concurrent forced
+    // callers share one acquisition: clearing the in-flight promise here
+    // instead would let each caller spend one native token-read from the
+    // host's small per-window budget.
     mnsExtensionToken = null;
-    mnsExtensionTokenInflight = null;
-    try {
-      const sessionStorage = getMnsSessionStorage();
-      if (sessionStorage && typeof sessionStorage.remove === "function") {
-        await sessionStorage.remove("mnsExtensionToken");
+    if (mnsExtensionTokenForceInflight) return mnsExtensionTokenForceInflight;
+    mnsExtensionTokenGeneration += 1;
+    const generation = mnsExtensionTokenGeneration;
+
+    const acquisition = (async () => {
+      try {
+        const sessionStorage = getMnsSessionStorage();
+        if (sessionStorage && typeof sessionStorage.remove === "function") {
+          await sessionStorage.remove("mnsExtensionToken");
+        }
+      } catch (e) {
+        console.warn("Failed to clear stale extension token:", e);
       }
-    } catch (e) {
-      console.warn("Failed to clear stale extension token:", e);
+      return _acquireExtensionToken(true, generation);
+    })();
+    mnsExtensionTokenForceInflight = acquisition;
+    try {
+      return await acquisition;
+    } finally {
+      if (mnsExtensionTokenForceInflight === acquisition) {
+        mnsExtensionTokenForceInflight = null;
+      }
     }
   }
   if (mnsExtensionToken) return mnsExtensionToken;
 
   // The native host only returns a few secrets per window: concurrent callers
   // share one acquisition, and getContext/startBackend never read this token.
+  if (mnsExtensionTokenForceInflight) return mnsExtensionTokenForceInflight;
   if (mnsExtensionTokenInflight) return mnsExtensionTokenInflight;
 
-  const acquisition = (async () => {
-    // After a forced refresh the persisted copy is known to be rejected (or
-    // could not be removed), so only the native host can provide a valid one.
-    if (!forceRefresh) {
-      try {
-        const sessionStorage = getMnsSessionStorage();
-        if (sessionStorage && typeof sessionStorage.get === "function") {
-          const items = await sessionStorage.get("mnsExtensionToken");
-          if (items && items.mnsExtensionToken) {
-            mnsExtensionToken = items.mnsExtensionToken;
-            return mnsExtensionToken;
-          }
-        }
-      } catch (e) {
-        console.warn("Failed to get token from storage.session:", e);
-      }
-    }
-    try {
-      const res = await sendNativeMessage({
-        action: "get_extension_api_token",
-      });
-      if (res && res.ok && res.token) {
-        setMnsExtensionToken(res.token);
-        return res.token;
-      }
-    } catch (e) {
-      console.warn("Failed to query extension api token via native host:", e);
-    }
-    return "";
-  })();
-
+  const generation = mnsExtensionTokenGeneration;
+  const acquisition = _acquireExtensionToken(false, generation);
   mnsExtensionTokenInflight = acquisition;
   try {
     return await acquisition;
@@ -283,6 +357,13 @@ async function getOrFetchExtensionToken(forceRefresh = false) {
  * final response without retrying indefinitely.
  */
 async function addStockViaExtension(base, symbol, market) {
+  if (typeof backendVerified !== "undefined" && backendVerified === false) {
+    // The native host proved that the listening port is not owned by this
+    // app's backend process. Never hand the extension token to that process.
+    throw new Error(
+      "バックエンドの正当性を確認できません。別のプロセスがポートを使用している可能性があります。",
+    );
+  }
   let forceRefresh = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = await getOrFetchExtensionToken(forceRefresh);
@@ -308,7 +389,17 @@ async function addStockViaExtension(base, symbol, market) {
       ADD_STOCK_TIMEOUT_MS,
     );
     const data = await res.json().catch(() => ({}));
-    if ((res.status === 401 || res.status === 403) && !forceRefresh) {
+    // Only a rejected extension credential justifies spending another native
+    // token read. A 403 for remote mode / untrusted origin / a missing
+    // extension marker means the request itself is disallowed; refreshing the
+    // token cannot fix it and would exhaust the native host's 3/30s budget.
+    const reason = data?.details?.reason || data?.error || data?.message || "";
+    const tokenRejected =
+      res.status === 401 ||
+      (res.status === 403 &&
+        typeof reason === "string" &&
+        reason.toLowerCase().includes("extension token"));
+    if (tokenRejected && !forceRefresh) {
       forceRefresh = true;
       continue;
     }
@@ -323,9 +414,12 @@ async function refreshBackendPort() {
     const response = await sendNativeMessage({ action: "get_backend_port" });
     if (response && response.ok) {
       setBackendPort(response.port);
+      backendVerified =
+        typeof response.verified === "boolean" ? response.verified : null;
     }
   } catch (e) {
     console.warn("Failed to query backend port:", e);
+    backendVerified = null;
     BACKEND_URLS = buildBackendUrls(backendPort);
   }
   return backendPort;

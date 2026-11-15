@@ -335,6 +335,8 @@ def api_generate_ai_portfolio() -> Any:
         )
 
     api_key = extract_api_key(request)
+    # A missing key intentionally falls through to the service's deterministic
+    # fallback portfolio; AI-portfolio generation is usable without an LLM.
 
     conversation_scope = _get_conversation_scope(data)
     inflight_key = f"generate:{conversation_scope}:{theme}"
@@ -497,6 +499,7 @@ def api_rebalance_ai_portfolio() -> Any:
         )
 
     api_key = extract_api_key(request)
+    # Missing key falls through to the service's fallback path (see generate).
 
     conversation_scope = _get_conversation_scope(data)
     inflight_key = f"rebalance:{conversation_scope}:{theme}"

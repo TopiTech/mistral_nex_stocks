@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask, request
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.test import EnvironBuilder
 
 from app import create_app
@@ -70,7 +71,8 @@ def test_json_parsers_reject_oversized_chunked_bodies(parser) -> None:
 
     with app.request_context(environ):
         assert request.content_length is None
-        assert parser(max_size=max_size) is None
+        with pytest.raises(RequestEntityTooLarge):
+            parser(max_size=max_size)
 
 
 def test_json_parser_accepts_chunked_body_exactly_at_limit() -> None:

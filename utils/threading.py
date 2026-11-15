@@ -97,6 +97,21 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
         raises RuntimeError, so the previous best-effort approach could leave
         process shutdown blocked by a stuck network call.
         """
+        # A forked child inherits the parent's ``_threads`` set and idle
+        # semaphore, but none of those threads exist in the child. Without
+        # pruning, ``submit()`` believes every worker slot is occupied (and
+        # may consume an inherited idle token) and queues work forever.
+        try:
+            live_threads = {thread for thread in self._threads if thread.is_alive()}
+            if not live_threads:
+                # A forked child inherits an idle-token count but no workers;
+                # reset it even when the inherited set was already empty.
+                self._threads = live_threads
+                self._idle_semaphore = threading.Semaphore(0)
+            elif len(live_threads) != len(self._threads):
+                self._threads = live_threads
+        except AttributeError:
+            pass
         if self._idle_semaphore.acquire(timeout=0):
             return
 

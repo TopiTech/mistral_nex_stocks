@@ -105,13 +105,6 @@ endblock %} {% block meta %}
       aria-label="主要市場指数ティッカー"
       aria-live="off"
     ></div>
-    <div
-      id="indices-bar-sr"
-      class="sr-only"
-      role="status"
-      aria-live="polite"
-      aria-atomic="false"
-    ></div>
     <button
       id="indices-pause-btn"
       class="indices-pause-btn"
@@ -123,6 +116,15 @@ endblock %} {% block meta %}
       <span class="indices-pause-icon" aria-hidden="true">⏸</span>
     </button>
   </div>
+  <!-- Kept outside .indices-bar-wrapper: mode 2 hides the visual marquee, but
+       screen-reader users must still receive index updates. -->
+  <div
+    id="indices-bar-sr"
+    class="sr-only"
+    role="status"
+    aria-live="polite"
+    aria-atomic="false"
+  ></div>
   <div
     id="tradingview-ticker-tape-container"
     class="tradingview-ticker-tape-container"

@@ -79,6 +79,7 @@ def api_update_portfolio() -> Any:
     warnings: list[str] = []
 
     with app_state.market.user_stocks_lock:
+        rev_before = app_state.market.user_stocks_rev
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
@@ -221,20 +222,35 @@ def api_update_portfolio() -> Any:
     try:
         save_user_stocks()
     except UserStocksPersistError as exc:
+        reload_persisted = False
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
             if container is not None:
                 # API-7: conditional rollback — only undo this request's own
                 # write and never overwrite a concurrent mutation committed
-                # between the persist attempt and this re-entry.
-                if container.get(symbol) == written_snapshot:
-                    container.pop(symbol, None)
-                if (
-                    matching_symbol is not None
-                    and previous_value is not None
-                    and matching_symbol not in container
-                ):
-                    container[matching_symbol] = previous_value
+                # between the persist attempt and this re-entry. If another
+                # save committed (e.g. a reset/delete), the on-disk state is
+                # authoritative and a plain restore would resurrect it.
+                if app_state.market.user_stocks_rev == rev_before:
+                    if container.get(symbol) == written_snapshot:
+                        container.pop(symbol, None)
+                    if (
+                        matching_symbol is not None
+                        and previous_value is not None
+                        and matching_symbol not in container
+                    ):
+                        container[matching_symbol] = previous_value
+                else:
+                    reload_persisted = True
+        if reload_persisted:
+            try:
+                from utils.storage import load_user_stocks
+
+                load_user_stocks(force=True)
+            except Exception as reload_exc:
+                current_app.logger.warning(
+                    "Failed to reload user stocks after portfolio rollback: %s", reload_exc
+                )
         current_app.logger.error("Failed to persist portfolio update for %s: %s", symbol, exc)
         return error_response(
             ErrorCode.FILE_ERROR,

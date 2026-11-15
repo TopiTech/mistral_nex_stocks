@@ -57,6 +57,19 @@ foreach ($root in $targetRoots) {
 # deletion of shared launcher/manifest files.
 $liveManifestPaths = New-Object System.Collections.Generic.List[string]
 $expectedManifestPath = Join-Path $scriptDir 'com.mistral_nex_stocks.host.json'
+# Resolve both sides before comparing: a surviving registration may use an
+# 8.3 short path (C:\PROGRA~1\...) while $expectedManifestPath is long, and a
+# raw -ieq would miss it and delete files the surviving registration needs.
+function Get-ComparableManifestPath([string]$path) {
+  if ([string]::IsNullOrWhiteSpace($path)) { return '' }
+  try {
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    return [System.IO.Path]::GetFullPath($item.FullName).TrimEnd('\')
+  } catch {
+    try { return [System.IO.Path]::GetFullPath($path).TrimEnd('\') } catch { return $path.TrimEnd('\') }
+  }
+}
+$expectedComparablePath = Get-ComparableManifestPath $expectedManifestPath
 foreach ($root in $allRoots) {
   foreach ($subKey in $allHostKeyNames) {
     try {
@@ -65,7 +78,7 @@ foreach ($root in $allRoots) {
         try {
           $manifestPath = [string]$key.GetValue('', '')
           if ((-not [string]::IsNullOrWhiteSpace($manifestPath)) -and
-              ($manifestPath -ieq $expectedManifestPath)) {
+              ((Get-ComparableManifestPath $manifestPath) -ieq $expectedComparablePath)) {
             [void]$liveManifestPaths.Add($manifestPath)
           }
         } finally {

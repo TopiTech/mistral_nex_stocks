@@ -321,6 +321,7 @@ def api_add_stock() -> Any:
         )
 
     with app_state.market.user_stocks_lock:
+        rev_before = app_state.market.user_stocks_rev
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
@@ -335,13 +336,24 @@ def api_add_stock() -> Any:
     try:
         save_user_stocks()
     except UserStocksPersistError as exc:
+        reload_persisted = False
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
             # API-7: conditional rollback — only undo this request's own write.
             # An unconditional pop could discard a concurrent mutation
             # committed between the persist attempt and this re-entry.
-            if container is not None and container.get(symbol) == name:
-                container.pop(symbol, None)
+            if app_state.market.user_stocks_rev == rev_before:
+                if container is not None and container.get(symbol) == name:
+                    container.pop(symbol, None)
+            else:
+                reload_persisted = True
+        if reload_persisted:
+            try:
+                load_user_stocks(force=True)
+            except Exception as reload_exc:
+                current_app.logger.warning(
+                    "Failed to reload user stocks after add rollback: %s", reload_exc
+                )
         current_app.logger.error("Failed to persist added stock %s: %s", symbol, exc)
         return error_response(
             ErrorCode.FILE_ERROR,
@@ -388,6 +400,7 @@ def api_delete_stock() -> Any:
     storage_aliases = _stored_symbol_aliases(symbol, market)
 
     with app_state.market.user_stocks_lock:
+        rev_before = app_state.market.user_stocks_rev
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
@@ -400,14 +413,25 @@ def api_delete_stock() -> Any:
     try:
         save_user_stocks()
     except UserStocksPersistError as exc:
+        reload_persisted = False
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
-            if container is not None:
-                # API-7: restore only keys a concurrent request has not
-                # rewritten since this request removed them.
-                for stored_symbol, previous in previous_values.items():
-                    if stored_symbol not in container:
-                        container[stored_symbol] = previous
+            if app_state.market.user_stocks_rev == rev_before:
+                if container is not None:
+                    # API-7: restore only keys a concurrent request has not
+                    # rewritten since this request removed them.
+                    for stored_symbol, previous in previous_values.items():
+                        if stored_symbol not in container:
+                            container[stored_symbol] = previous
+            else:
+                reload_persisted = True
+        if reload_persisted:
+            try:
+                load_user_stocks(force=True)
+            except Exception as reload_exc:
+                current_app.logger.warning(
+                    "Failed to reload user stocks after delete rollback: %s", reload_exc
+                )
         current_app.logger.error("Failed to persist deleted stock %s: %s", symbol, exc)
         return error_response(
             ErrorCode.FILE_ERROR,

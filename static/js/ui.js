@@ -2570,13 +2570,26 @@ function triggerPriceFlash(priceEl, flashClass) {
 // 出せなかった。ラッパー → 開いているドロワーの順で設置先を解決する。
 function chartErrorHosts(wrapper) {
   const hosts = [];
+  const stockKey = wrapper.dataset.stockKey;
+  // The fullscreen modal is the visible surface when open; its inline
+  // container is display:none, so an error banner written only there is
+  // invisible. Prefer the fullscreen host when it belongs to this stock.
+  const fsModal = document.getElementById("chart-fullscreen-modal");
+  if (
+    fsModal &&
+    !fsModal.classList.contains("hidden") &&
+    stockKey &&
+    fsModal.dataset.stockKey === stockKey
+  ) {
+    const fsHost = document.getElementById("fs-chart-canvas-wrapper");
+    if (fsHost) hosts.push(fsHost);
+  }
   const inline =
     wrapper.querySelector(".chart-container") ||
     wrapper.querySelector(".chart-canvas-container");
   if (inline) hosts.push(inline);
 
   const drawerEl = document.getElementById("stock-detail-drawer");
-  const stockKey = wrapper.dataset.stockKey;
   const isDrawerActive =
     (typeof currentDrawerActiveWrapper !== "undefined" &&
       currentDrawerActiveWrapper === wrapper) ||
@@ -2608,6 +2621,7 @@ function showChartError(wrapper, msg, type = "error") {
 
   destroyChart(
     container.querySelector(".chart-canvas") ||
+      container.querySelector("canvas") ||
       wrapper.querySelector(".chart-canvas"),
   );
   clearChartError(wrapper);

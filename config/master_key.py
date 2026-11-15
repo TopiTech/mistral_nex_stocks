@@ -24,6 +24,28 @@ _UNDECODABLE_MASTER_KEY_MESSAGE = (
 )
 
 
+def _validate_master_key(key: str) -> str:
+    """Return *key* only when it is a valid Fernet key.
+
+    An invalid env/stored key used to be returned as-is; ``protect_data()``
+    then caught the Fernet constructor error and silently downgraded new
+    secrets to keyring/DPAPI, while every existing ``scheme="fernet"`` value
+    became unreadable. Fail closed instead.
+    """
+    from cryptography.fernet import Fernet
+
+    try:
+        Fernet(key.encode("ascii"))
+    except (ValueError, TypeError, UnicodeEncodeError) as exc:
+        raise RuntimeError(
+            "FATAL: the configured master key is not a valid Fernet key. "
+            "Set MNS_MASTER_KEY (or restore the stored mns_master_key) to the "
+            "original 32-byte URL-safe base64 key; refusing to downgrade "
+            "encrypted data to a different storage scheme."
+        ) from exc
+    return key
+
+
 def _reject_undecodable_master_key() -> None:
     """Fail closed for an existing-but-unusable ``mns_master_key`` entry.
 
@@ -49,7 +71,7 @@ def get_or_create_master_key() -> str:
     """
     env_key = os.environ.get("MNS_MASTER_KEY", "").strip()
     if env_key:
-        return env_key
+        return _validate_master_key(env_key)
 
     # Production check: MNS_MASTER_KEY must be set in production mode to prevent data loss.
     from utils.env_helpers import _is_production_env
@@ -97,7 +119,7 @@ def get_or_create_master_key() -> str:
             _reject_undecodable_master_key()
         key = config_store._decode_secret(key_entry, "mns_master_key")
         if key:
-            return key
+            return _validate_master_key(key)
         # The entry exists but could not be decoded. This is NOT the same as
         # "no key generated yet": silently generating a new key here would
         # overwrite mns_master_key and permanently orphan every Fernet-
@@ -127,7 +149,7 @@ def get_or_create_master_key() -> str:
                 _reject_undecodable_master_key()
             key = config_store._decode_secret(key_entry, "mns_master_key")
             if key:
-                return key
+                return _validate_master_key(key)
             # The entry exists but could not be decoded. This is NOT the same as
             # "no key generated yet": silently generating a new key here would
             # overwrite mns_master_key and permanently orphan every Fernet-

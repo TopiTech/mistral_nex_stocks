@@ -61,6 +61,25 @@ function renderStocksLoading() {
   });
 }
 
+function renderStocksError(message) {
+  ["us", "jp", "idx"].forEach((market) => {
+    const listEl = document.getElementById(`${market}-list`);
+    if (!listEl) return;
+    listEl.textContent = "";
+    const error = document.createElement("li");
+    error.className = "empty-message";
+    error.textContent = message;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "retry-btn";
+    retry.textContent = "再試行";
+    retry.addEventListener("click", () => loadStocks(0));
+    error.appendChild(document.createTextNode(" "));
+    error.appendChild(retry);
+    listEl.appendChild(error);
+  });
+}
+
 async function loadStocks(retryAttempt = 0) {
   const requestGeneration = ++stocksLoadGeneration;
   if (stocksLoadAbortController) stocksLoadAbortController.abort();
@@ -81,9 +100,10 @@ async function loadStocks(retryAttempt = 0) {
     if (data?.fetching) {
       renderStocksLoading();
       if (retryAttempt >= STOCKS_LOAD_MAX_RETRIES) {
-        showSettingsMessage(
-          "銘柄データの準備に時間がかかっています。しばらくして再度お試しください。",
-        );
+        const message =
+          "銘柄データの準備に時間がかかっています。しばらくして再度お試しください。";
+        showSettingsMessage(message);
+        renderStocksError(message);
         return;
       }
       stocksLoadRetryTimer = setTimeout(() => {
@@ -114,9 +134,10 @@ async function loadStocks(retryAttempt = 0) {
       return;
     }
     logger.error("Failed to load stocks:", e);
-    showSettingsMessage(
-      "銘柄リストの取得に失敗しました。しばらくして再度お試しください。",
-    );
+    const message =
+      "銘柄リストの取得に失敗しました。しばらくして再度お試しください。";
+    showSettingsMessage(message);
+    renderStocksError(message);
   }
 }
 

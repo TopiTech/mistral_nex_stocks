@@ -72,7 +72,9 @@ def _is_valid_api_key(value, min_length=8):
     token = value.strip()
     if len(token) < min_length:
         return False
-    return not re.search(r"\s", token)
+    # Reject control characters as well as whitespace: a NUL cannot be placed
+    # in os.environ and would otherwise fail after the config was committed.
+    return not re.search(r"[\s\x00-\x1f\x7f]", token)
 
 
 def _read_bounded_request_body(*, max_size: int) -> bytes | None:
@@ -86,7 +88,9 @@ def _read_bounded_request_body(*, max_size: int) -> bytes | None:
     """
     content_length = request.content_length
     if content_length is not None and content_length > max_size:
-        return None
+        # Let Flask's 413 handler produce the canonical PAYLOAD_TOO_LARGE
+        # envelope instead of every route collapsing this into MALFORMED_INPUT.
+        raise RequestEntityTooLarge()
 
     try:
         # Flask/Werkzeug enforce this limit for WSGI streams marked as
@@ -94,12 +98,14 @@ def _read_bounded_request_body(*, max_size: int) -> bytes | None:
         # a LimitedStream does not raise after returning exactly its limit.
         request.max_content_length = max_size + 1
         body = request.get_data(cache=True)
-    except (BadRequest, RequestEntityTooLarge, ValueError, TypeError, OSError):
+    except (BadRequest, ValueError, TypeError, OSError):
         return None
     except Exception:
         return None
 
-    return body if len(body) <= max_size else None
+    if len(body) > max_size:
+        raise RequestEntityTooLarge()
+    return body
 
 
 # Lone UTF-16 surrogates (U+D800..U+DFFF) are not Unicode scalar values, so they
@@ -155,7 +161,7 @@ def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
         payload = request.get_json(force=False, silent=False)
     except (ValueError, TypeError, AttributeError):
         return None
-    except (BadRequest, UnsupportedMediaType, RequestEntityTooLarge):
+    except (BadRequest, UnsupportedMediaType):
         return None
     except Exception:
         return None
@@ -221,7 +227,7 @@ def parse_non_negative_float(value, field_name, max_value=None):
         raise ValueError(f"{field_name} must be a number")
     try:
         parsed = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{field_name} must be a number") from exc
     if not math.isfinite(parsed):
         raise ValueError(f"{field_name} must be finite")

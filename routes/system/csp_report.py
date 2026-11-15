@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from flask import current_app
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from constants import MAX_JSON_SIZE
 from route_helpers import rate_limit
@@ -121,6 +121,10 @@ def api_csp_report():
             "CSP report received: %s",
             json.dumps(sanitized_reports, ensure_ascii=False)[:2000],
         )
+    except RequestEntityTooLarge:
+        # CSP reports are fire-and-forget: an oversized report is ignored
+        # exactly like an empty one (the endpoint still returns 204).
+        current_app.logger.info("CSP report received: %s", "[{}]")
     except (BadRequest, RecursionError, TypeError, ValueError) as exc:
         current_app.logger.debug("Failed to parse CSP report error_type=%s", type(exc).__name__)
     # Return 204 No Content as recommended for CSP reports

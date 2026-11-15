@@ -13,6 +13,7 @@ import os
 import threading
 import time
 from logging.handlers import RotatingFileHandler
+from typing import Any, cast
 
 from utils.threading import restrictive_umask_lock
 
@@ -305,10 +306,19 @@ def init_logging(app) -> None:
         or os.environ.get("MNS_DATA_DIR")
         or os.environ.get("MNS_APP_DATA_DIR")
     )
-    # Default log destination is BASE_DIR (repository root), preserving local backend.log
-    # and error.log visibility in the development workspace. Overrides via MNS_LOG_DIR,
-    # MNS_DATA_DIR, or MNS_APP_DATA_DIR are respected when set.
-    log_dir = Path(data_dir_override) if data_dir_override else BASE_DIR
+    # Default log destination is the writable runtime data directory, matching
+    # the startup crash-log policy. The source tree may be read-only in a
+    # packaged/container deployment; logging must not prevent startup there.
+    # Explicit MNS_LOG_DIR / MNS_DATA_DIR / MNS_APP_DATA_DIR overrides win.
+    if data_dir_override:
+        log_dir = Path(data_dir_override)
+    else:
+        try:
+            from config_store import APP_DATA_DIR
+
+            log_dir = Path(APP_DATA_DIR)
+        except Exception:
+            log_dir = BASE_DIR
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -320,23 +330,40 @@ def init_logging(app) -> None:
     # Log content is sanitized, but the files themselves live next to
     # secrets-adjacent runtime state; create them 0o600 like the config /
     # user_stocks / DB files so other local users cannot read them.
-    with restrictive_umask_lock():
-        _old_umask = os.umask(0o077)
+    rotating_handler: logging.Handler = logging.NullHandler()
+    error_handler: logging.Handler = logging.NullHandler()
+    try:
+        with restrictive_umask_lock():
+            _old_umask = os.umask(0o077)
+            try:
+                rotating_handler = _RestrictiveRotatingFileHandler(
+                    str(log_file),
+                    maxBytes=5 * 1024 * 1024,  # 5MB
+                    backupCount=3,
+                    encoding="utf-8",
+                )
+                error_handler = _RestrictiveRotatingFileHandler(
+                    str(error_log_file),
+                    maxBytes=2 * 1024 * 1024,  # 2MB
+                    backupCount=5,
+                    encoding="utf-8",
+                )
+            finally:
+                os.umask(_old_umask)
+    except OSError as exc:
+        # A read-only/non-directory log path must not prevent the app from
+        # starting; keep logging available on stderr instead.
+        logging.getLogger(__name__).warning(
+            "File logging unavailable at %s (%s); falling back to stderr.",
+            log_dir,
+            exc,
+        )
         try:
-            rotating_handler = _RestrictiveRotatingFileHandler(
-                str(log_file),
-                maxBytes=5 * 1024 * 1024,  # 5MB
-                backupCount=3,
-                encoding="utf-8",
-            )
-            error_handler = _RestrictiveRotatingFileHandler(
-                str(error_log_file),
-                maxBytes=2 * 1024 * 1024,  # 2MB
-                backupCount=5,
-                encoding="utf-8",
-            )
-        finally:
-            os.umask(_old_umask)
+            rotating_handler.close()
+        except Exception:
+            pass
+        rotating_handler = logging.StreamHandler()
+        error_handler = logging.StreamHandler()
     rotating_handler.setLevel(LOG_LEVEL)
     # Pass the configured level so DEBUG records survive when LOG_LEVEL=DEBUG;
     # with the default (INFO) the filter still drops all DEBUG output.
@@ -344,7 +371,7 @@ def init_logging(app) -> None:
     rotating_handler.addFilter(BackendLogFilter(log_level=LOG_LEVEL))
     rotating_handler.addFilter(WarningDeduplicationFilter())
     rotating_handler.setFormatter(_log_formatter)
-    rotating_handler._mns_logging_initialized = True  # type: ignore[attr-defined]
+    cast(Any, rotating_handler)._mns_logging_initialized = True
     logging.getLogger().addHandler(rotating_handler)
 
     # --- Dedicated error log (ERROR and above) ---

@@ -10,6 +10,7 @@ import os
 import shutil
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -268,18 +269,26 @@ def _release_lock_fd(fd: int) -> None:
         pass
 
 
-def _open_exclusive_with_retry(target: Path) -> int:
-    """Create *target* via ``O_EXCL``, retrying transient Windows AV locks."""
-    for attempt in range(4):
-        try:
-            return os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            raise
-        except PermissionError:
-            if attempt >= 3:
-                raise
-            time.sleep(0.015 * (attempt + 1))
-    raise PermissionError(f"Failed to exclusively open {target}")
+def _user_stocks_target_is_complete(path: Path) -> bool:
+    """Return True when *path* holds a non-empty, parseable portfolio object.
+
+    A crash between O_EXCL creation and the write leaves a 0-byte/partial
+    target. Treating mere existence as "already migrated" then permanently
+    blocks the legacy migration and forces every save to fail closed.
+    """
+    try:
+        if path.stat().st_size <= 0:
+            return False
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(data, dict) or not data:
+        return False
+    if "scheme" in data:
+        # Encrypted envelope: an empty ciphertext is a partial write.
+        return bool(data.get("value"))
+    return True
 
 
 def _migrate_legacy_user_stocks() -> bool:
@@ -293,10 +302,29 @@ def _migrate_legacy_user_stocks() -> bool:
     legacy = _get_legacy_user_stocks_path()
     target = _get_user_stocks_path()
     with _LEGACY_MIGRATION_LOCK:
-        if target.exists() or not legacy.exists():
+        if target.exists():
+            if _user_stocks_target_is_complete(target):
+                return True
+            if not legacy.exists():
+                # Nothing to retry from; let the normal load path report the
+                # corrupt target (and fail closed on save).
+                return True
+            # A previous migration was interrupted after creating the target
+            # but before writing it. Remove the unusable partial file and
+            # retry from the only complete copy.
+            try:
+                target.unlink()
+            except OSError as unlink_exc:
+                logger.warning(
+                    "Could not remove partial user stocks target %s: %s",
+                    target,
+                    unlink_exc,
+                )
+                return False
+        if not legacy.exists():
             return True
         lock_fd: int | None = None
-        created_target = False
+        tmp_target: Path | None = None
         try:
             with legacy.open("r", encoding="utf-8") as source:
                 data = json.load(source)
@@ -315,12 +343,16 @@ def _migrate_legacy_user_stocks() -> bool:
             lock_file = target.with_suffix(".lock")
             lock_fd = _acquire_exclusive_lock_fd(lock_file)
             if target.exists():
-                return True
+                if _user_stocks_target_is_complete(target):
+                    return True
+                target.unlink(missing_ok=True)
 
+            # Write a complete temp file, fsync it, then atomically replace the
+            # target. A crash can no longer leave a partial target that blocks
+            # every later migration attempt.
+            tmp_target = target.with_suffix(f".{uuid.uuid4().hex}.tmp")
             if _is_windows():
-                fd = _open_exclusive_with_retry(target)
-                created_target = True
-                with safe_fdopen(fd, "w", encoding="utf-8") as f:
+                with open(tmp_target, "w", encoding="utf-8") as f:
                     f.write(content)
                     f.flush()
                     try:
@@ -332,9 +364,8 @@ def _migrate_legacy_user_stocks() -> bool:
                     old_umask = os.umask(0o077)
                     try:
                         fd = os.open(
-                            str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                            str(tmp_target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
                         )
-                        created_target = True
                         with safe_fdopen(fd, "w", encoding="utf-8") as f:
                             f.write(content)
                             f.flush()
@@ -344,6 +375,17 @@ def _migrate_legacy_user_stocks() -> bool:
                                 pass
                     finally:
                         os.umask(old_umask)
+            for attempt in range(4):
+                try:
+                    os.replace(tmp_target, target)
+                    break
+                except PermissionError:
+                    if _is_windows() and attempt < 3:
+                        time.sleep(0.015 * (attempt + 1))
+                        continue
+                    raise
+            tmp_target = None
+            if not _is_windows():
                 os.chmod(target, 0o600)
                 _fsync_directory_strict(target.parent)
             logger.info("Migrated and encrypted legacy user stocks file %s -> %s", legacy, target)
@@ -360,9 +402,9 @@ def _migrate_legacy_user_stocks() -> bool:
             # Another thread/process atomically won O_EXCL creation; leave it intact.
             return True
         except (OSError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
-            if created_target:
+            if tmp_target is not None:
                 try:
-                    target.unlink(missing_ok=True)
+                    tmp_target.unlink(missing_ok=True)
                 except OSError:
                     pass
             logger.warning("Failed to migrate legacy user stocks file %s: %s", legacy, exc)

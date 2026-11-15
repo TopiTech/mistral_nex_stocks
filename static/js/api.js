@@ -559,6 +559,8 @@ function updateSingleIndexChip(chip, idx) {
   if (volEl) volEl.textContent = formatIndexNumber(idx.volume);
 }
 
+let lastIndicesSignature = "";
+
 function updateIndicesBar(indices) {
   if (!indices) return;
   state.updateIndices(indices);
@@ -566,6 +568,27 @@ function updateIndicesBar(indices) {
   const srBar = document.getElementById("indices-bar-sr");
   if (!bar) return;
   ensureIndicesBarStructure(bar);
+
+  // Mode 2 sends the full indices map with every diff frame. Re-writing 14
+  // chips (and forcing layout via offsetWidth) for an unchanged payload is
+  // pure layout thrash and spams the polite live region.
+  const signature = JSON.stringify(
+    INDEX_BAR_CONFIG.map(({ key }) => {
+      const idx = indices[key];
+      if (!idx) return null;
+      return [
+        idx.price,
+        idx.change,
+        idx.percent,
+        idx.open,
+        idx.high,
+        idx.low,
+        idx.volume,
+      ];
+    }),
+  );
+  if (signature === lastIndicesSignature) return;
+  lastIndicesSignature = signature;
 
   INDEX_BAR_CONFIG.forEach(({ key }) => {
     const idx = indices[key];
@@ -801,7 +824,11 @@ function connectSSE(overrideMode) {
     return;
   }
 
-  if (state.stocks.us.length === 0 && state.stocks.jp.length === 0) {
+  if (
+    state.stocks.us.length === 0 &&
+    state.stocks.jp.length === 0 &&
+    state.stocks.idx.length === 0
+  ) {
     renderSkeletons();
   }
 

@@ -270,17 +270,20 @@ def api_stock_details() -> Any:
                     "pe_ratio": None,
                 },
             )
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             return resp
         info = cached_short
     else:
         _submit_async_info_fetch(symbol)
-        return ok_response(
+        resp = ok_response(
             {
                 "symbol": symbol,
                 "fetching": True,
                 "message": "銘柄詳細を取得中です。しばらくしてから再読み込みしてください。",
             }
         )
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
     return ok_response(
         {
             "symbol": symbol,

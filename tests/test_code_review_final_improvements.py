@@ -237,7 +237,7 @@ def test_disk_cache_remove_fields_recursive_retries_on_transient_permission_erro
 
 
 def test_storage_migrate_legacy_user_stocks_retries_on_transient_permission_error(tmp_path, monkeypatch):
-    """Verify _migrate_legacy_user_stocks retries O_EXCL creation on transient PermissionError."""
+    """Verify the atomic tmp+replace migration retries a transient PermissionError."""
     import config_store
 
     # Ensure master key is initialized prior to test so config save doesn't consume open calls
@@ -250,24 +250,24 @@ def test_storage_migrate_legacy_user_stocks_retries_on_transient_permission_erro
     monkeypatch.setattr("utils.storage.LEGACY_USER_STOCKS_FILE", str(legacy_file))
     monkeypatch.setattr("utils.storage.USER_STOCKS_FILE", str(target_file))
 
-    open_calls = 0
-    orig_open = os.open
+    replace_calls = 0
+    orig_replace = os.replace
 
-    def mock_open(path, flags, mode=0o777):
-        nonlocal open_calls
-        if str(path) == str(target_file) and (flags & os.O_EXCL):
-            open_calls += 1
-            if open_calls < 3:
+    def mock_replace(src, dst):
+        nonlocal replace_calls
+        if str(dst) == str(target_file):
+            replace_calls += 1
+            if replace_calls < 3:
                 raise PermissionError("Simulated WinError 32 file lock")
-        return orig_open(path, flags, mode)
+        return orig_replace(src, dst)
 
     with (
-        patch("utils.storage.os.open", mock_open),
+        patch("utils.storage.os.replace", mock_replace),
         patch("utils.storage._is_windows", return_value=True),
     ):
         result = _migrate_legacy_user_stocks()
 
     assert result is True
-    assert open_calls == 3
+    assert replace_calls == 3
     assert target_file.exists()
 

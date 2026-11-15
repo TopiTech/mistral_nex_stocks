@@ -122,7 +122,7 @@ def _read_stale_payload(path):
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data.get("value")
-    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError, TypeError, RecursionError) as exc:
         logger.debug("Failed to read stale payload %s: %s", path, exc)
         return None
 
@@ -439,7 +439,7 @@ class StockDiskCache:
         path = self._entry_path(key)
 
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 if not ignore_ttl:
                     self._maybe_run_cleanup()
                 if not path.exists():
@@ -468,7 +468,14 @@ class StockDiskCache:
                         path.unlink(missing_ok=True)
                         return None
                     return data.get("value")
-                except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError, AttributeError) as exc:
+                except (
+                    json.JSONDecodeError,
+                    UnicodeDecodeError,
+                    KeyError,
+                    TypeError,
+                    AttributeError,
+                    RecursionError,
+                ) as exc:
                     logger.warning(
                         "Disk cache corrupt entry detected for %s; unlinking: %s", key, exc
                     )
@@ -526,7 +533,7 @@ class StockDiskCache:
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 if not path.exists():
                     return False
                 try:
@@ -534,7 +541,7 @@ class StockDiskCache:
                     if not isinstance(data, dict):
                         return False
                     return _entry_age_seconds(data, path) <= effective_ttl
-                except (OSError, ValueError, TypeError, AttributeError):
+                except (OSError, ValueError, TypeError, AttributeError, RecursionError):
                     return False
         except DiskCacheLockTimeout as exc:
             _note_lock_timeout()
@@ -558,7 +565,7 @@ class StockDiskCache:
         # (threading.get_ident() IDs can be recycled by the OS).
         tmp_path = path.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 try:
                     # Ensure cache directory exists before writing
                     self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -632,7 +639,7 @@ class StockDiskCache:
         """
         path = self._entry_path(key)
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 if path.exists():
                     try:
                         path.unlink()
@@ -669,7 +676,7 @@ class StockDiskCache:
         safe_prefix = safe_prefix[:120]
         removed = 0
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 for entry in self._cache_dir.glob("*.json"):
                     # ``entry.stem`` is always ``<safe_key>_<digest>``, so an
                     # equality check against the bare prefix can never match.
@@ -720,7 +727,7 @@ class StockDiskCache:
         acquired within ``_PROCESS_LOCK_TIMEOUT_SEC``.
         """
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 for entry in self._cache_dir.glob("*.json"):
                     try:
                         entry.unlink()
@@ -760,7 +767,7 @@ class StockDiskCache:
         for idx, entry in enumerate(entries):
             tmp_path = entry.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
             try:
-                with self._lock, self._process_lock():
+                with self._process_lock(), self._lock:
                     try:
                         with entry.open("r", encoding="utf-8") as handle:
                             payload = json.load(handle)
@@ -834,7 +841,7 @@ class StockDiskCache:
         """
         removed = 0
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 removed += self._remove_stale_entries()
                 before = len(list(self._cache_dir.glob("*.json")))
                 self._evict_if_needed()
@@ -869,7 +876,7 @@ class StockDiskCache:
             "disk_cache_last_cleanup_ts": self._last_cleanup_ts,
         }
         try:
-            with self._lock, self._process_lock():
+            with self._process_lock(), self._lock:
                 try:
                     entries = list(self._cache_dir.glob("*.json"))
                     total_size = sum(e.stat().st_size for e in entries)

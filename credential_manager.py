@@ -324,6 +324,11 @@ def save_api_credentials(
         }.items()
         if value is not None and str(value).strip()
     }
+    for key_name, value in requested.items():
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+            # os.environ rejects NUL and control characters after the config
+            # write; reject before any durable state changes.
+            raise ValueError(f"{key_name} contains control characters")
     with config_store.config_update_lock():
         previous_keyring_values, previous_ephemeral_values = crypto_utils.snapshot_secret_storage(
             requested,
@@ -449,7 +454,14 @@ def _restore_cleared_credentials(
 
 
 def clear_api_credentials() -> list[str]:
-    """全API認証情報を削除。削除に失敗したキー名のリストを返す。"""
+    """全API認証情報を削除。削除に失敗したキー名のリストを返す。
+
+    Crash-consistency order: the config is cleared first, then keyring entries
+    are deleted. A crash in between leaves orphaned keyring entries but no
+    config that references a deleted secret. The previous order deleted the
+    keyring first, so a crash left config.json pointing at secrets that no
+    longer existed and every later read decoded them as empty.
+    """
     with config_store.config_update_lock():
         cfg = config_store.load_config()
         previous_config = copy.deepcopy(cfg)
@@ -458,43 +470,17 @@ def clear_api_credentials() -> list[str]:
             previous_ephemeral_values = dict(crypto_utils._EPHEMERAL_CREDENTIALS)
             previous_ephemeral_key = crypto_utils._EPHEMERAL_KEY
 
-        failed_keys = []
-        if _keyring_available():
-            kr = _keyring()
-            if kr is not None:
-                keyring_del_err: type[BaseException] | None = None
+        failed_keys: list[str] = []
+        kr = _keyring() if _keyring_available() else None
+        if kr is not None:
+            for key_name in _CREDENTIAL_KEY_NAMES:
                 try:
-                    from keyring.errors import PasswordDeleteError
-
-                    keyring_del_err = PasswordDeleteError
-                except ImportError:
-                    pass
-
-                for key_name in _CREDENTIAL_KEY_NAMES:
-                    try:
-                        try:
-                            previous_keyring_values[key_name] = kr.get_password(
-                                KEYRING_SERVICE_NAME, key_name
-                            )
-                        except Exception:  # pylint: disable=broad-exception-caught
-                            failed_keys.append(key_name)
-                            logger.warning(
-                                "Failed to inspect keyring credential state for %s", key_name
-                            )
-                            continue
-                        try:
-                            kr.delete_password(KEYRING_SERVICE_NAME, key_name)
-                        except Exception as exc:  # pylint: disable=broad-exception-caught
-                            if keyring_del_err is not None and isinstance(exc, keyring_del_err):
-                                pass
-                            else:
-                                logger.warning(
-                                    "Keyring credential deletion failed for %s", key_name
-                                )
-                                failed_keys.append(key_name)
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        logger.warning("Keyring credential check/deletion failed for %s", key_name)
-                        failed_keys.append(key_name)
+                    previous_keyring_values[key_name] = kr.get_password(
+                        KEYRING_SERVICE_NAME, key_name
+                    )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    failed_keys.append(key_name)
+                    logger.warning("Failed to inspect keyring credential state for %s", key_name)
 
         if failed_keys:
             _restore_cleared_credentials(
@@ -505,19 +491,56 @@ def clear_api_credentials() -> list[str]:
             )
             return failed_keys
 
+        cleared_cfg = copy.deepcopy(cfg)
+        cleared_cfg["api_credentials"] = {}
+        cleared_cfg["mistral_api_mode"] = API_MODE_CHAT
+        cleared_cfg["mistral_agent_id"] = ""
+        cleared_cfg["preview_mode"] = False
+        if "ai_provider" in cleared_cfg:
+            cleared_cfg["ai_provider"] = PROVIDER_MISTRAL
+        cleared_cfg.pop("openai_base_url", None)
+        cleared_cfg.pop("openai_model", None)
+        cleared_cfg.pop("openai_embeddings_model", None)
+
+        try:
+            config_store.save_config(cleared_cfg, create_backup=False)
+        except Exception:
+            _restore_cleared_credentials(
+                previous_keyring_values,
+                previous_ephemeral_values,
+                previous_ephemeral_key,
+                previous_config,
+            )
+            raise
+
+        if kr is not None:
+            keyring_del_err: type[BaseException] | None = None
+            try:
+                from keyring.errors import PasswordDeleteError
+
+                keyring_del_err = PasswordDeleteError
+            except ImportError:
+                pass
+            for key_name in _CREDENTIAL_KEY_NAMES:
+                try:
+                    kr.delete_password(KEYRING_SERVICE_NAME, key_name)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    if keyring_del_err is not None and isinstance(exc, keyring_del_err):
+                        continue
+                    logger.warning("Keyring credential deletion failed for %s", key_name)
+                    failed_keys.append(key_name)
+
+        if failed_keys:
+            _restore_cleared_credentials(
+                previous_keyring_values,
+                previous_ephemeral_values,
+                previous_ephemeral_key,
+                previous_config,
+            )
+            return failed_keys
+
         try:
             crypto_utils.clear_ephemeral_credentials(exclude={"mns_master_key"})
-            cfg["api_credentials"] = {}
-            cfg["mistral_api_mode"] = API_MODE_CHAT
-            cfg["mistral_agent_id"] = ""
-            cfg["preview_mode"] = False
-            if "ai_provider" in cfg:
-                cfg["ai_provider"] = PROVIDER_MISTRAL
-            cfg.pop("openai_base_url", None)
-            cfg.pop("openai_model", None)
-            cfg.pop("openai_embeddings_model", None)
-            config_store.save_config(cfg, create_backup=False)
-
             for env_name in (
                 "OPENAI_API_KEY",
                 "MISTRAL_API_KEY",

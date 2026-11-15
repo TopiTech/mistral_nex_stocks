@@ -188,13 +188,24 @@ for _handler in logging.getLogger().handlers:
 
 try:
     try:
-        from native_host.start_backend import get_backend_port, is_backend_healthy_once, start
+        from native_host.start_backend import (
+            get_backend_port,
+            get_backend_verification,
+            is_backend_healthy_once,
+            start,
+        )
     except ImportError:
-        from start_backend import get_backend_port, is_backend_healthy_once, start  # type: ignore
+        from start_backend import (  # type: ignore
+            get_backend_port,
+            get_backend_verification,
+            is_backend_healthy_once,
+            start,
+        )
 except ImportError:
     logger.exception("Failed to import start_backend")
     start = None  # type: ignore
     get_backend_port = None  # type: ignore
+    get_backend_verification = None  # type: ignore
     is_backend_healthy_once = None  # type: ignore
 
 try:
@@ -607,6 +618,31 @@ def _get_proc_creation_time(pid: int) -> int | None:
         return None
 
 
+def _posix_executable_path_is_trusted(path: str) -> bool:
+    """Return False for an executable in a world-writable directory.
+
+    On POSIX the ancestry check only sees a basename, so a local process could
+    copy a shell to ``/tmp/chrome`` and present a forged browser name. Reject
+    world-writable executables and parents so that trick no longer satisfies
+    ``_is_caller_authorized_browser``. Legitimate browser installs live under
+    root-owned or user-owned non-world-writable directories.
+    """
+    if not path:
+        return False
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    if st.st_mode & 0o002:
+        return False
+    parent = os.path.dirname(os.path.abspath(path)) or "."
+    try:
+        parent_st = os.stat(parent)
+    except OSError:
+        return False
+    return not (parent_st.st_mode & 0o002)
+
+
 def _get_posix_ancestor_process_names(
     max_depth: int = 5,
     proc_dir: Path | str = "/proc",
@@ -615,6 +651,9 @@ def _get_posix_ancestor_process_names(
     """Return lower-case executable basenames of ancestor processes on POSIX systems."""
     ancestors: list[str] = []
     proc_path = Path(proc_dir)
+    # Path trust only makes sense for the real procfs. Tests/mock proc trees
+    # use synthetic paths that do not exist on the host filesystem.
+    enforce_path_trust = proc_path == Path("/proc")
     try:
         # Check the procfs mount once: on platforms without procfs (macOS,
         # Windows) every status lookup would fail anyway, and the psutil
@@ -644,7 +683,8 @@ def _get_posix_ancestor_process_names(
                 try:
                     target = os.readlink(exe_link)
                     target = target.removesuffix(" (deleted)")
-                    resolved_name = Path(target).name.lower()
+                    if not enforce_path_trust or _posix_executable_path_is_trusted(target):
+                        resolved_name = Path(target).name.lower()
                 except OSError:
                     resolved_name = ""
                 if resolved_name:
@@ -655,8 +695,12 @@ def _get_posix_ancestor_process_names(
                         try:
                             raw_bytes = cmdline_file.read_bytes()
                             raw = raw_bytes.split(b"\x00")[0] if raw_bytes else b""
-                            name = Path(raw.decode("utf-8", errors="ignore")).name.lower()
-                            if name:
+                            target = raw.decode("utf-8", errors="ignore")
+                            name = Path(target).name.lower()
+                            if name and (
+                                not enforce_path_trust
+                                or _posix_executable_path_is_trusted(target)
+                            ):
                                 ancestors.append(name)
                         except Exception as cmd_exc:
                             logger.debug("Failed reading cmdline for ppid %d: %s", ppid, cmd_exc)
@@ -675,6 +719,15 @@ def _get_posix_ancestor_process_names(
             for parent in psutil_mod.Process(os.getpid()).parents():
                 if len(ancestors) >= max_depth:
                     break
+                try:
+                    exe_path = str(parent.exe() or "").removesuffix(" (deleted)")
+                except Exception:
+                    # Minimal psutil test doubles may not expose exe(); an
+                    # unknown path cannot be path-verified, so fall back to
+                    # the name-only behavior in that case.
+                    exe_path = ""
+                if exe_path and not _posix_executable_path_is_trusted(exe_path):
+                    continue
                 name = str(parent.name() or "").strip().lower()
                 if name:
                     ancestors.append(name)
@@ -1551,6 +1604,12 @@ def read_message():
     except UnicodeDecodeError as e:
         logger.error("Invalid UTF-8 native message: %s", e)
         return SKIP_FRAME
+    except (RecursionError, MemoryError) as e:
+        # Deeply nested JSON can exhaust the parser's recursion limit. The
+        # frame has already been consumed, so skipping it keeps the channel
+        # alive instead of letting main()'s broad handler exit the host.
+        logger.error("Unparseable native message (type=%s): %s", type(e).__name__, e)
+        return SKIP_FRAME
     except (OSError, ValueError, struct.error) as e:
         logger.error("Read error (type=%s): %s", type(e).__name__, e)
         return FATAL_FRAME
@@ -1811,7 +1870,7 @@ def main():
                     )
             elif action == "get_backend_port":
                 if get_backend_port is not None:
-                    send_message({"ok": True, "port": get_backend_port()})
+                    response = {"ok": True, "port": get_backend_port()}
                 else:
                     try:
                         fallback_port = int(os.environ.get("MNS_BACKEND_PORT", "5000") or "5000")
@@ -1819,7 +1878,15 @@ def main():
                         fallback_port = 5000
                     if not (1 <= fallback_port <= 65535):
                         fallback_port = 5000
-                    send_message({"ok": True, "port": fallback_port})
+                    response = {"ok": True, "port": fallback_port}
+                if get_backend_verification is not None:
+                    try:
+                        verified = get_backend_verification(response["port"])
+                    except Exception:
+                        verified = None
+                    if isinstance(verified, bool):
+                        response["verified"] = verified
+                send_message(response)
             elif action == "get_extension_api_token":
                 if not _token_action_allowed():
                     send_message({"ok": False, "error": "Token action rate limit exceeded"})

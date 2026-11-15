@@ -103,11 +103,29 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
 
         for l_dir in log_dirs:
             try:
-                l_dir.mkdir(parents=True, exist_ok=True)
+                l_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+                if os.name != "nt":
+                    try:
+                        os.chmod(l_dir, 0o700)
+                    except OSError:
+                        pass
                 for name in ("backend.log", "error.log"):
                     target = l_dir / name
-                    with target.open("a", encoding="utf-8") as f:
-                        f.write(entry)
+                    if os.name != "nt":
+                        fd = os.open(
+                            str(target),
+                            os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                            0o600,
+                        )
+                        with os.fdopen(fd, "a", encoding="utf-8") as f:
+                            f.write(entry)
+                        try:
+                            os.chmod(target, 0o600)
+                        except OSError:
+                            pass
+                    else:
+                        with target.open("a", encoding="utf-8") as f:
+                            f.write(entry)
             except Exception:
                 pass
     except Exception:

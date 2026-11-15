@@ -64,13 +64,24 @@ const HTML_SINK_PATTERNS = [
 for (const file of jsFiles) {
   const lines = read(file).split(/\r?\n/);
   lines.forEach((line, index) => {
-    const code = line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
-    if (!code.trim() || code.trim().startsWith("*")) return;
+    // Do not strip `//` with a regex: it also removes the tail of a string
+    // literal such as "http://x", which could hide a real sink on that line.
+    // Skip only whole-line comments; a sink inside an inline comment is
+    // vanishingly rare and a false positive is safer than a missed sink.
+    const trimmed = line.trim();
+    if (
+      !trimmed ||
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("*") ||
+      trimmed.startsWith("/*")
+    ) {
+      return;
+    }
     for (const pattern of HTML_SINK_PATTERNS) {
       checks += 1;
-      if (pattern.test(code)) {
+      if (pattern.test(line)) {
         fail(
-          `${file}:${index + 1}: HTML-string sink is forbidden -> ${code.trim()}`,
+          `${file}:${index + 1}: HTML-string sink is forbidden -> ${trimmed}`,
         );
       }
     }
@@ -152,9 +163,22 @@ for (const file of jsFiles.filter((f) => f.startsWith("chrome_extension/"))) {
   lines.forEach((line, index) => {
     if (!/onMessage\.addListener/.test(line)) return;
     checks += 1;
-    const window = lines.slice(index, index + 30).join("\n");
-    if (!/sender\b/.test(window) || !/runtime\.id/.test(window)) {
-      fail(`${file}:${index + 1}: onMessage handler must validate sender.id`);
+    const window = lines.slice(index, index + 40).join("\n");
+    // Require an actual rejection guard, not merely mentions of `sender` and
+    // `runtime.id`: a handler that logs sender.id but continues would pass a
+    // proximity-only check.
+    const comparesSenderId =
+      /sender\s*(?:&&\s*sender\s*)?\??\.\s*id\s*!==?\s*chrome\.runtime\.id/.test(
+        window,
+      );
+    const rejectsForeignSender =
+      /if\s*\([^)]*sender[^)]*\)\s*\{[\s\S]{0,500}?(?:return|sendResponse|safeSendResponse)/.test(
+        window,
+      );
+    if (!comparesSenderId || !rejectsForeignSender) {
+      fail(
+        `${file}:${index + 1}: onMessage handler must reject a foreign sender.id`,
+      );
     }
   });
 }

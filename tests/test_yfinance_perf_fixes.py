@@ -222,10 +222,10 @@ class InferExchangeTestCase(unittest.TestCase):
 
 
 class SingleRateLimitMarkTestCase(unittest.TestCase):
-    """P1-2: one 429 must be recorded exactly once per retry attempt."""
+    """P1-2: one upstream 429 must be recorded exactly once per logical call."""
 
     @patch("services.stock_provider._handle_yf_rate_limit")
-    def test_get_history_records_rate_limit_once_per_attempt(self, mock_handle):
+    def test_get_history_records_rate_limit_once_per_call(self, mock_handle):
         from yfinance.exceptions import YFRateLimitError
 
         mock_state = MagicMock()
@@ -241,10 +241,10 @@ class SingleRateLimitMarkTestCase(unittest.TestCase):
             with self.assertRaises(YFRateLimitError):
                 provider.get_history("AAPL", "3mo")
 
-        # get_history uses max_retries=3 -> 1 initial + 3 retries = 4 attempts.
-        # Each attempt must mark the rate limit exactly once (the decorator is
-        # the single recording path; the method no longer double-marks).
-        self.assertEqual(mock_handle.call_count, 4)
+        # get_history uses max_retries=3 -> 1 initial + 3 retries = 4 attempts,
+        # but all attempts belong to one logical call: recording each attempt
+        # multiplied the cooldown (15/30/60/120s) for a single upstream 429.
+        self.assertEqual(mock_handle.call_count, 1)
 
 
 class DownloadBatchThreadsTestCase(unittest.TestCase):

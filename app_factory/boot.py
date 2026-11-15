@@ -96,9 +96,13 @@ def bootstrap(app: Flask) -> None:
             # a single disposable cache entry must not crash the bootstrap.
             # Market-data cache is disposable and must not make core
             # application bootstrap fail.
-            except (OSError, TypeError, ValueError) as cache_exc:
+            except (OSError, TypeError, ValueError, RecursionError) as cache_exc:
                 logger.warning("Could not migrate legacy payload cache: %s", cache_exc)
-            load_user_stocks(force=True)
+            # force=False still performs the first load (last_loaded_rev starts
+            # at -1) but cannot publish the on-disk snapshot over an in-memory
+            # mutation that is between its lock-protected change and
+            # save_user_stocks()'s save-pending increment.
+            load_user_stocks()
         except Exception as exc:
             logger.error("Bootstrap initialization failed: %s", exc)
             app_state.bootstrap_ready.clear()

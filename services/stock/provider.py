@@ -430,10 +430,8 @@ class YFinanceProvider(BaseStockProvider):
             OSError,
             TimeoutError,
         ) as exc:
-            if _is_yfinance_rate_limit_error(exc):
-                _shim()._handle_yf_rate_limit(
-                    exc, m_state, context=f"single_history symbol={symbol}"
-                )
+            # @with_yfinance_retry owns rate-limit recording; re-marking here
+            # would add a second strike for the same upstream 429.
             logger.warning("Failed to fetch history for %s: %s", symbol, exc)
         cached = self._load_history_disk_fallback(symbol, period, "1d")
         if cached is not None and not cached.empty:
@@ -766,10 +764,8 @@ class YFinanceProvider(BaseStockProvider):
                     "Batch yf.download failed: %s. Falling back to parallel individual fetches.",
                     exc,
                 )
-                if _is_yfinance_rate_limit_error(exc):
-                    _shim()._handle_yf_rate_limit(
-                        exc, m_state, context="batch yf.download"
-                    )
+                # @with_yfinance_retry owns rate-limit recording for the
+                # decorated batch call; re-marking here would double-count it.
 
             # Fallback for any symbols that still missed
             remaining_miss = [sym for sym in cache_miss_symbols if sym not in hist_by_symbol]

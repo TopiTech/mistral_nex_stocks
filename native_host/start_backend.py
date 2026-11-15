@@ -172,6 +172,76 @@ def is_running(pid: int) -> bool:
         return False
 
 
+def _pid_is_backend_process(pid: int) -> bool | None:
+    """Return whether *pid* is this application's backend process.
+
+    ``True``/``False`` are definitive; ``None`` means the process exists but
+    its command line could not be inspected (for example ``AccessDenied``).
+    A PID file alone only proves that *some* process with that PID is alive:
+    after a crash the OS can reuse the PID for an unrelated program, which
+    used to make ``start()`` report ``warming_up`` forever instead of spawning
+    the backend.
+    """
+    try:
+        proc = psutil.Process(pid)
+        cmdline = proc.cmdline()
+    except psutil.NoSuchProcess:
+        return False
+    except (psutil.AccessDenied, OSError):
+        return None
+    except Exception as exc:
+        logger.debug("PID identity check failed for pid=%s: %s", pid, exc)
+        return None
+    if not cmdline:
+        return False
+    for arg in cmdline:
+        try:
+            if Path(arg).name.lower() == "app.py":
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def get_backend_verification(port: int | None = None) -> bool | None:
+    """Return whether the listening port belongs to this app's backend PID.
+
+    ``True`` means the PID file points at a live ``app.py`` process and that
+    process owns the listening socket. ``False`` means the PID file points at
+    an unrelated process, or another process owns the port. ``None`` means the
+    check is unavailable (no PID file, psutil permission denied, or an OS that
+    cannot map socket owners to PIDs), so callers keep the legacy health-only
+    behavior instead of breaking manually started backends.
+    """
+    target_port = get_backend_port() if port is None else port
+    pid_source = PID_FILE if PID_FILE.exists() else _LEGACY_PID_FILE
+    if not pid_source.exists():
+        return None
+    try:
+        pid = int(pid_source.read_text(encoding="utf-8").strip())
+    except (OSError, TypeError, ValueError):
+        return False
+    identity = _pid_is_backend_process(pid)
+    if identity is False:
+        return False
+    if identity is None:
+        return None
+    try:
+        connections = psutil.net_connections(kind="inet")
+    except (psutil.AccessDenied, OSError):
+        return None
+    unknown_owner = False
+    for connection in connections:
+        local = getattr(connection, "laddr", None)
+        if local is None or getattr(local, "port", None) != target_port:
+            continue
+        if getattr(connection, "pid", None) == pid:
+            return True
+        if getattr(connection, "pid", None) is None:
+            unknown_owner = True
+    return None if unknown_owner else False
+
+
 def wait_for_backend_ready(timeout_sec: float = 20.0) -> bool:  # 個人利用向けに最適化
     """バックエンドのヘルスチェックが通るまで待機"""
     deadline = time.time() + timeout_sec
@@ -184,7 +254,14 @@ def wait_for_backend_ready(timeout_sec: float = 20.0) -> bool:  # 個人利用�
         for url in health_urls:
             try:
                 # Use requests for health checks to avoid unsafe urlopen patterns flagged by security linters
-                resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=1.5)
+                resp = requests.get(
+                    url,
+                    headers={"Cache-Control": "no-store"},
+                    timeout=1.5,
+                    # Loopback health checks must never be routed through an
+                    # HTTP_PROXY inherited from the user's environment.
+                    proxies={"http": "", "https": ""},
+                )
                 try:
                     if _is_expected_backend_response(resp):
                         return True
@@ -208,7 +285,12 @@ def is_backend_healthy_once(timeout_sec: float = 1.5) -> bool:
     ]
     for url in health_urls:
         try:
-            resp = requests.get(url, headers={"Cache-Control": "no-store"}, timeout=timeout_sec)
+            resp = requests.get(
+                url,
+                headers={"Cache-Control": "no-store"},
+                timeout=timeout_sec,
+                proxies={"http": "", "https": ""},
+            )
             try:
                 if _is_expected_backend_response(resp):
                     return True
@@ -339,11 +421,51 @@ def _start(extension_id=None):
                             "pid": pid,
                             "port": port,
                         }
-                    # A live PID is not proof that it owns the backend. In
-                    # particular, accepting a non-healthy listener as ours
-                    # makes the extension report success while all API calls
-                    # are routed to a different or wedged process.
-                    if port_in_use:
+                    try:
+                        pid_file_age_sec = max(
+                            0.0, time.time() - float(pid_source.stat().st_mtime)
+                        )
+                    except (OSError, TypeError, ValueError):
+                        # Unknown age must not be treated as "fresh warming up"
+                        # forever; fall back to the stale path.
+                        pid_file_age_sec = PID_WARMUP_GRACE_SEC + 1.0
+                    # A live PID is not proof that it owns the backend: after a
+                    # crash the OS can reuse the PID for an unrelated program.
+                    # Reject that case so the caller spawns instead of waiting
+                    # PID_WARMUP_GRACE_SEC for a backend that will never start.
+                    pid_identity = _pid_is_backend_process(pid)
+                    if pid_identity is False:
+                        logger.warning(
+                            "PID file %s points to an unrelated process (pid=%s); "
+                            "removing stale PID file.",
+                            pid_source,
+                            pid,
+                        )
+                        pid_source.unlink(missing_ok=True)
+                    elif port_in_use:
+                        # A backend that has bound the port but is still
+                        # warming up must not be mistaken for a foreign
+                        # listener: the first start() call returns
+                        # warming_up, and a second call during bootstrap used
+                        # to delete the live PID file and report an error.
+                        if pid_file_age_sec <= PID_WARMUP_GRACE_SEC:
+                            logger.info(
+                                "Backend port %s is bound while PID %s is still "
+                                "warming up (age=%.1fs).",
+                                port,
+                                pid,
+                                pid_file_age_sec,
+                            )
+                            return {
+                                "ok": True,
+                                "message": (
+                                    f"Backend process is still starting (pid={pid});"
+                                    " waiting for health check."
+                                ),
+                                "pid": pid,
+                                "port": port,
+                                "warming_up": True,
+                            }
                         logger.warning(
                             "Backend port %s is occupied but health check failed; "
                             "PID %s is not accepted as a healthy backend.",
@@ -358,8 +480,7 @@ def _start(extension_id=None):
                         }
                     # PID が生きていてもヘルス応答が長時間得られない場合は
                     # PID再利用や別プロセス混入を疑い、古いPID情報として破棄する。
-                    pid_file_age_sec = max(0.0, time.time() - pid_source.stat().st_mtime)
-                    if pid_file_age_sec > PID_WARMUP_GRACE_SEC:
+                    elif pid_file_age_sec > PID_WARMUP_GRACE_SEC:
                         logger.warning(
                             "Stale backend PID detected (pid=%s age=%.1fs). Removing pid file.",
                             pid,

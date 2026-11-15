@@ -23,16 +23,22 @@ class StartBackendTests(unittest.TestCase):
         response.json.return_value["ready"] = True
         self.assertTrue(sb._is_expected_backend_response(response))
 
-    def test_live_pid_with_unhealthy_occupied_port_is_not_reported_as_running(self):
+    def test_stale_live_pid_with_unhealthy_occupied_port_is_not_reported_as_running(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            pid_file = Path(tmp) / ".backend.pid"
+            tmpdir = Path(tmp)
+            pid_file = tmpdir / ".backend.pid"
             pid_file.write_text("12345", encoding="utf-8")
+            stale = 1_600_000_000
+            os.utime(pid_file, (stale, stale))
 
             with (
                 patch.object(sb, "PID_FILE", pid_file),
+                patch.object(sb, "STARTUP_LOCK_FILE", tmpdir / ".backend.start.lock"),
                 patch.object(sb, "is_port_in_use", return_value=True),
                 patch.object(sb, "is_running", return_value=True),
+                patch.object(sb, "_pid_is_backend_process", return_value=True),
                 patch.object(sb, "is_backend_healthy_once", return_value=False),
+                patch.object(sb.time, "time", return_value=stale + sb.PID_WARMUP_GRACE_SEC + 5),
                 patch.object(sb.subprocess, "Popen") as popen,
             ):
                 result = sb.start()

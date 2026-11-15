@@ -142,6 +142,10 @@ def with_yfinance_retry(
                         initial_rate_limited = True
 
             last_exception: Exception | None = None
+            # One logical call must record one upstream 429 event. Recording
+            # on every retry attempt multiplied the graduated cooldown (and
+            # rotated the UA/session once per attempt) for a single failure.
+            rate_limit_recorded = False
             for attempt in range(max_retries + 1):
                 try:
                     already_rate_limited = initial_rate_limited
@@ -241,7 +245,8 @@ def with_yfinance_retry(
                             app_state_ref = _get_app_state_cached()
                             if app_state_ref:
                                 m_state = getattr(app_state_ref, "market", None)
-                        if m_state:
+                        if m_state and not rate_limit_recorded:
+                            rate_limit_recorded = True
                             try:
                                 _shim()._handle_yf_rate_limit(
                                     exc, m_state, context=f"retry {attempt + 1}/{max_retries}"

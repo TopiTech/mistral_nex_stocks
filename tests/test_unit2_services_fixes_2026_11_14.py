@@ -434,8 +434,9 @@ def test_u2_04_yfinance_rate_limit_caught_and_calendar_targets_sanitized() -> No
         hist = provider._fetch_single_history("AAPL", "1mo", app_state.market)
     assert not hist.empty
     assert float(hist["Close"].iloc[0]) == pytest.approx(123.4)
+    assert mock_rate_limit.call_count == 1
     assert any(
-        c.kwargs.get("context") == "single_history symbol=AAPL"
+        str(c.kwargs.get("context", "")).startswith("retry ")
         for c in mock_rate_limit.call_args_list
     )
 

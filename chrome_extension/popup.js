@@ -35,6 +35,10 @@ function normalizeBackendPort(value) {
 /**
  * fetch with a bounded wait for the backend to answer. A stalled backend must
  * not freeze the 5-second poll chain (or leave the last result looking fresh).
+ *
+ * The budget covers body consumption too: a server can send response headers
+ * and then stall the body forever, so the timer is cleared only after the
+ * caller has read the body (or the request failed).
  */
 function fetchWithTimeout(
   url,
@@ -43,31 +47,64 @@ function fetchWithTimeout(
 ) {
   const controller = new AbortController();
   let timedOut = false;
-  const timeoutId = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
+  let timeoutId = null;
   const callerSignal = options.signal;
   const abortFromCaller = () => controller.abort();
+  const cleanup = () => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  };
+  const makeTimeoutError = () => {
+    const timeoutError = new Error("リクエストがタイムアウトしました");
+    timeoutError.name = "TimeoutError";
+    return timeoutError;
+  };
+  timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    cleanup();
+  }, timeoutMs);
   if (callerSignal) {
     if (callerSignal.aborted) controller.abort();
     else
       callerSignal.addEventListener("abort", abortFromCaller, { once: true });
   }
-  const cleanup = () => {
-    clearTimeout(timeoutId);
-    callerSignal?.removeEventListener("abort", abortFromCaller);
-  };
   return fetch(url, { ...options, signal: controller.signal })
-    .catch((error) => {
-      if (timedOut) {
-        const timeoutError = new Error("リクエストがタイムアウトしました");
-        timeoutError.name = "TimeoutError";
-        throw timeoutError;
+    .then((response) => {
+      for (const method of [
+        "json",
+        "text",
+        "arrayBuffer",
+        "blob",
+        "formData",
+      ]) {
+        const original = response[method];
+        if (typeof original !== "function") continue;
+        try {
+          response[method] = async (...args) => {
+            try {
+              return await original.apply(response, args);
+            } catch (error) {
+              if (timedOut) throw makeTimeoutError();
+              throw error;
+            } finally {
+              cleanup();
+            }
+          };
+        } catch (error) {
+          console.warn("Failed to wrap response body reader:", error);
+        }
       }
-      throw error;
+      return response;
     })
-    .finally(cleanup);
+    .catch((error) => {
+      cleanup();
+      if (timedOut) throw makeTimeoutError();
+      throw error;
+    });
 }
 
 // Fallback base used before/without a successful health check. background.js
@@ -897,9 +934,23 @@ async function loadDetectedTickers() {
       return;
     }
 
+    if (response && response.ok === false) {
+      // A content-script failure is not "no tickers": showing the empty-state
+      // text here would claim data absence for a permission/parse error.
+      container.textContent = "";
+      const errorDiv = document.createElement("div");
+      errorDiv.className = "detector-empty";
+      errorDiv.setAttribute?.("role", "alert");
+      errorDiv.textContent =
+        typeof response.error === "string" && response.error.trim()
+          ? response.error
+          : "ティッカー検出に失敗しました。ページを再読み込みして再試行してください。";
+      container.appendChild(errorDiv);
+      return;
+    }
+
     if (
       !response ||
-      !response.ok ||
       !Array.isArray(response.tickers) ||
       response.tickers.length === 0
     ) {

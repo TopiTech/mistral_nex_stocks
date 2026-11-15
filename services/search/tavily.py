@@ -49,7 +49,10 @@ def _is_tavily_circuit_half_open() -> bool:
         market = getattr(app_state, "market", None)
         if market is not None and hasattr(market, "get_circuit_state"):
             state = market.get_circuit_state(_TAVILY_CIRCUIT_NAME)
-            return isinstance(state, dict) and state.get("status") == "HALF_OPEN"
+            # CircuitState is a class with dict-style access, not a dict
+            # subclass; isinstance(state, dict) was always False and disabled
+            # the single-probe guard in HALF_OPEN.
+            return state is not None and state.get("status") == "HALF_OPEN"
     except Exception:
         pass
     return False
@@ -316,6 +319,16 @@ def _collect_tavily_items(
         if time.monotonic() >= deadline or _is_tavily_circuit_open():
             break
         err_start = len(local_errors)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        # The retry helper can make up to three attempts plus exponential
+        # backoff. Reserve the remaining total budget for that whole sequence
+        # instead of letting one query spend 3 x the per-request timeout.
+        per_attempt_timeout = max(
+            1.0,
+            min(_TAVILY_REQUEST_TIMEOUT_SEC, remaining / 4.0),
+        )
         try:
             results = tavily_search(
                 q,
@@ -324,6 +337,7 @@ def _collect_tavily_items(
                 timelimit=timelimit,
                 topic=topic,
                 errors_out=local_errors,
+                timeout=per_attempt_timeout,
             )
             items.extend(_format_tavily_items(results))
         except (ValueError, RuntimeError) as exc:

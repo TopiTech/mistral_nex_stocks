@@ -169,6 +169,25 @@ def load_config() -> dict[str, Any]:
                 if sync_done:
                     config_store._LEGACY_MERGE_DONE = True
 
+    # A legacy config that exists while the runtime config does not is the
+    # only copy of this installation's secrets. If the migration above failed
+    # (transient I/O, permissions, partial copy), creating DEFAULT_CONFIG here
+    # would make the legacy file look stale on the next start and permanently
+    # orphan every Fernet-encrypted value. Leave the runtime file absent and
+    # return defaults for this call only; the next load retries the migration.
+    if (
+        not config_store.CONFIG_FILE.exists()
+        and config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
+        and config_store.LEGACY_CONFIG_FILE.exists()
+        and not _is_same_path(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE)
+    ):
+        logger.warning(
+            "Legacy config %s exists but migration did not complete; refusing to "
+            "create a defaults-only runtime config.",
+            config_store.LEGACY_CONFIG_FILE,
+        )
+        return copy.deepcopy(config_store.DEFAULT_CONFIG)
+
     # First-run initialization must be serialized with the cross-process
     # update lock, not only the process-local _CONFIG_LOCK. A credential or
     # master-key transaction in another process holds config_update_lock and
@@ -372,7 +391,20 @@ def load_config() -> dict[str, Any]:
             config_store._CONFIG_CACHE["key"] = read_key
             config_store._CONFIG_CORRUPTED = False
             return copy.deepcopy(cfg)
-        except (json.JSONDecodeError, OSError, TypeError, ValueError, RecursionError) as e:
+        except OSError as e:
+            # A transient read failure (AV/backup tool holding the file,
+            # permission hiccup, network filesystem) is not corruption. Do not
+            # set the corruption flag, do not create a corrupt backup, and do
+            # not negative-cache defaults under the file's stat: any later
+            # save could then persist those defaults and drop every secret.
+            # Return defaults for this call only; the next load retries.
+            logger.warning(
+                "Transient failure reading config %s: %s. Using defaults for this call only.",
+                config_store.CONFIG_FILE,
+                e,
+            )
+            return copy.deepcopy(config_store.DEFAULT_CONFIG)
+        except (json.JSONDecodeError, TypeError, ValueError, RecursionError) as e:
             # RecursionError: json.load parses arbitrarily deep structures, but
             # the deepcopy of the parsed value (and later sanitize dumps) recurs
             # per nesting level; a hand-crafted 10k-deep config would otherwise
@@ -427,6 +459,17 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 f"Refusing to save config over corrupted configuration file {config_store.CONFIG_FILE}. "
                 "Manual recovery required or remove corrupted file first."
             )
+        if (
+            not config_store.CONFIG_FILE.exists()
+            and config_store.CONFIG_FILE.parent == config_store.APP_DATA_DIR
+            and config_store.LEGACY_CONFIG_FILE.exists()
+            and not _is_same_path(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE)
+        ):
+            # Writing defaults here would make the legacy file look stale on
+            # the next start and orphan every secret it contains.
+            raise RuntimeError(
+                "Refusing to save config before the legacy config migration completes."
+            )
         _ensure_runtime_dir()
 
         # DATA-5: a non-dict payload is a caller bug, not a "reset to
@@ -444,6 +487,27 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
             data.setdefault(k, copy.deepcopy(v))
         if not isinstance(data.get("api_credentials"), dict):
             data["api_credentials"] = {}
+
+        # Defense in depth against a caller that obtained defaults from a
+        # transient read failure: never let such a write erase the trust
+        # anchors that protect every encrypted store. These keys are absent
+        # from DEFAULT_CONFIG, so only an explicit caller value suppresses
+        # the merge.
+        try:
+            if config_store.CONFIG_FILE.exists():
+                with config_store.CONFIG_FILE.open("r", encoding="utf-8") as existing_file:
+                    existing_data = json.load(existing_file)
+                if isinstance(existing_data, dict):
+                    for protected_key in (
+                        "mns_master_key",
+                        "flask_secret_key",
+                        "extension_api_token",
+                        "extension_api_token_created",
+                    ):
+                        if protected_key not in data and protected_key in existing_data:
+                            data[protected_key] = copy.deepcopy(existing_data[protected_key])
+        except (OSError, ValueError, TypeError, RecursionError) as merge_exc:
+            logger.debug("Could not merge protected config keys before save: %s", merge_exc)
 
         # 既存の設定があれば、秘密情報を除いたバックアップを作成 (.bak)
         if create_backup and config_store.CONFIG_FILE.exists():
@@ -491,6 +555,11 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 if config_store._is_windows():
                     with open(backup_tmp, "w", encoding="utf-8") as f:
                         json.dump(backup_data, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        try:
+                            os.fsync(f.fileno())
+                        except OSError:
+                            pass
                 else:
                     # Write with 0o600 umask so the file is never world-readable
                     with restrictive_umask_lock():
@@ -499,6 +568,11 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                             fd = os.open(str(backup_tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                             with safe_fdopen(fd, "w", encoding="utf-8") as f:
                                 json.dump(backup_data, f, ensure_ascii=False, indent=2)
+                                f.flush()
+                                try:
+                                    os.fsync(f.fileno())
+                                except OSError:
+                                    pass
                         finally:
                             os.umask(old_umask)
                 backup_file = config_store.CONFIG_FILE.with_suffix(

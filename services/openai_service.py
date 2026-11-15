@@ -47,6 +47,18 @@ from utils.text_utils import _sanitize_error_message
 from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import extract_chat_content, extract_json_payload
 
+
+def _safe_base_url_for_log(base_url: str) -> str:
+    """Return scheme/host/path only; never log a query string that may hold a key."""
+    try:
+        parsed = urlparse(base_url or "")
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        return str(base_url or "").split("?", 1)[0]
+    except (TypeError, ValueError):
+        return "[invalid-url]"
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -537,7 +549,11 @@ def call_openai_chat(
     base_url = get_openai_base_url()
     ok_url, url_reason = validate_outbound_base_url(base_url)
     if not ok_url:
-        logger.warning("Blocked OpenAI chat call to invalid base_url %r: %s", base_url, url_reason)
+        logger.warning(
+            "Blocked OpenAI chat call to invalid base_url %r: %s",
+            _safe_base_url_for_log(base_url),
+            url_reason,
+        )
         return {
             "error": {
                 "message": f"OpenAI互換APIのベースURLが無効です: {url_reason}",
@@ -697,7 +713,7 @@ def call_openai_chat(
         "OpenAI-compat call start id=%s model=%s base_url=%s",
         req_id,
         model,
-        base_url,
+        _safe_base_url_for_log(base_url),
     )
 
     client: Any = None
@@ -1077,7 +1093,9 @@ def stream_openai_chat(
     ok_url, url_reason = validate_outbound_base_url(base_url)
     if not ok_url:
         logger.warning(
-            "Blocked OpenAI stream call to invalid base_url %r: %s", base_url, url_reason
+            "Blocked OpenAI stream call to invalid base_url %r: %s",
+            _safe_base_url_for_log(base_url),
+            url_reason,
         )
         yield _stream_error_event(f"OpenAI互換APIのベースURLが無効です: {url_reason}", 400)
         return
@@ -1112,7 +1130,11 @@ def stream_openai_chat(
         payload["reasoning_effort"] = reasoning_effort.lower()
 
     full_parts: list[str] = []
-    logger.info("OpenAI stream start model=%s base_url=%s", model, base_url)
+    logger.info(
+        "OpenAI stream start model=%s base_url=%s",
+        model,
+        _safe_base_url_for_log(base_url),
+    )
 
     client: Any = None
     try:
@@ -1773,7 +1795,9 @@ def get_openai_embeddings_batch(
     ok_url, url_reason = validate_outbound_base_url(base_url)
     if not ok_url:
         logger.warning(
-            "Blocked OpenAI embeddings call to invalid base_url %r: %s", base_url, url_reason
+            "Blocked OpenAI embeddings call to invalid base_url %r: %s",
+            _safe_base_url_for_log(base_url),
+            url_reason,
         )
         return [None] * len(texts)
     endpoint = f"{base_url}/embeddings"

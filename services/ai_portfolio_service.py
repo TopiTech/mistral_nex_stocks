@@ -133,7 +133,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             else:
                 try:
                     weight_pct = float(weight_raw)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     continue
             if not math.isfinite(weight_pct) or not (0.0 <= weight_pct <= 100.0):
                 continue
@@ -144,7 +144,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
                     continue
                 try:
                     target_price = float(target_raw)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     continue
                 if (
                     not math.isfinite(target_price)

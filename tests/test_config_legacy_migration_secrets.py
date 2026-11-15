@@ -96,10 +96,13 @@ def test_failed_copy_keeps_legacy_file(store_paths: tuple[Path, Path]) -> None:
 
     assert legacy.exists(), "a failed migration must keep the only copy of the secrets"
     assert _read_json(legacy).get("mns_master_key") == "MASTERKEY"
-    # The runtime config falls back to defaults; nothing secret was copied.
-    assert runtime.exists()
-    assert "mns_master_key" not in _read_json(runtime)
+    # Creating a defaults-only runtime file here would make the legacy file
+    # look stale on the next start and orphan every encrypted value. The
+    # in-memory result is defaults, but nothing is written and the next load
+    # retries the migration.
+    assert not runtime.exists()
     assert cfg.get("mns_master_key") is None
+    assert config_store._LEGACY_MERGE_DONE is False
 
 
 def test_peer_won_race_syncs_preferences_and_removes_legacy(

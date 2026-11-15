@@ -144,16 +144,19 @@ def test_require_extension_token_still_accepts_valid_bearer() -> None:
 
 
 def test_get_or_create_master_key_read_path_skips_update_lock() -> None:
+    from cryptography.fernet import Fernet
+
     from config.master_key import get_or_create_master_key
 
+    valid_key = Fernet.generate_key().decode("ascii")
     with (
         patch.object(
             config_store, "load_config", return_value={"mns_master_key": {"x": 1}}
         ),
-        patch.object(config_store, "_decode_secret", return_value="k" * 44),
+        patch.object(config_store, "_decode_secret", return_value=valid_key),
         patch.object(config_store, "_master_key_update_lock") as mock_update_lock,
     ):
-        assert get_or_create_master_key() == "k" * 44
+        assert get_or_create_master_key() == valid_key
 
     mock_update_lock.assert_not_called()
 

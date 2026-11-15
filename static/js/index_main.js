@@ -464,6 +464,36 @@ document.addEventListener("DOMContentLoaded", initializeApp);
 // retained because an abort can race with a response already being decoded.
 let fetchInitialStocksGeneration = 0;
 let fetchInitialStocksAbortController = null;
+let initialSkeletonWatchdogId = null;
+
+function clearInitialSkeletonWatchdog() {
+  if (initialSkeletonWatchdogId !== null) {
+    clearTimeout(initialSkeletonWatchdogId);
+    initialSkeletonWatchdogId = null;
+  }
+}
+
+function armInitialSkeletonWatchdog() {
+  if (initialSkeletonWatchdogId !== null) return;
+  const delay =
+    typeof INITIAL_SKELETON_MAX_WAIT_MS !== "undefined"
+      ? INITIAL_SKELETON_MAX_WAIT_MS
+      : (typeof window !== "undefined" &&
+          window.INITIAL_SKELETON_MAX_WAIT_MS) ||
+        8000;
+  initialSkeletonWatchdogId = setTimeout(() => {
+    initialSkeletonWatchdogId = null;
+    const stillSkeleton = document.querySelector(".skeleton-card") !== null;
+    const stillNoData =
+      (state.stocks.us?.length || 0) +
+        (state.stocks.jp?.length || 0) +
+        (state.stocks.idx?.length || 0) ===
+      0;
+    if (stillSkeleton && stillNoData) {
+      renderInitialLoadingTimeoutState();
+    }
+  }, delay);
+}
 
 const INITIAL_STOCKS_FETCH_RESULT = Object.freeze({
   UPDATED: "updated",
@@ -508,28 +538,12 @@ async function fetchInitialStocks(force = false) {
         (state.stocks.jp?.length || 0) +
         (state.stocks.idx?.length || 0) ===
       0;
-    if (!hasAnyCards && !hasSkeleton && noStateData) {
-      renderSkeletons();
-      // Set timeout to show timeout state if skeleton persists beyond max wait
-      setTimeout(
-        () => {
-          const stillSkeleton =
-            document.querySelector(".skeleton-card") !== null;
-          const stillNoData =
-            (state.stocks.us?.length || 0) +
-              (state.stocks.jp?.length || 0) +
-              (state.stocks.idx?.length || 0) ===
-            0;
-          if (stillSkeleton && stillNoData) {
-            renderInitialLoadingTimeoutState();
-          }
-        },
-        typeof INITIAL_SKELETON_MAX_WAIT_MS !== "undefined"
-          ? INITIAL_SKELETON_MAX_WAIT_MS
-          : (typeof window !== "undefined" &&
-              window.INITIAL_SKELETON_MAX_WAIT_MS) ||
-              8000,
-      );
+    if (!hasAnyCards && noStateData) {
+      // connectSSE() may already have rendered skeletons. Arm the watchdog
+      // regardless: previously it was skipped in exactly that startup path,
+      // leaving a hung /api/stocks with skeletons forever.
+      if (!hasSkeleton) renderSkeletons();
+      armInitialSkeletonWatchdog();
     }
 
     const url = force ? "/api/stocks?force=true" : "/api/stocks";
@@ -579,6 +593,7 @@ async function fetchInitialStocks(force = false) {
         ?.setAttribute("aria-busy", "false");
     });
     sseState.skeletonShownAt = 0;
+    clearInitialSkeletonWatchdog();
     scheduleHistoryPrefetchWarmup();
 
     // ポートフォリオタブが表示されている場合は再描画
@@ -600,6 +615,33 @@ async function fetchInitialStocks(force = false) {
     // value let the SSE watchdog flip the NEXT session's fresh skeletons to
     // the timeout state well before the intended window.
     sseState.skeletonShownAt = 0;
+    clearInitialSkeletonWatchdog();
+    const hasAnyCards = document.querySelectorAll(".stock-wrapper").length > 0;
+    const hasStateData =
+      (state.stocks.us?.length || 0) +
+        (state.stocks.jp?.length || 0) +
+        (state.stocks.idx?.length || 0) >
+      0;
+    if (hasAnyCards || hasStateData) {
+      // A failed refresh is not "there is no data": keep the healthy board
+      // (or rebuild it from state) and surface a non-destructive warning.
+      if (!hasAnyCards && hasStateData) {
+        renderStocks("us", state.stocks.us);
+        renderStocks("jp", state.stocks.jp);
+        renderStocks("idx", state.stocks.idx);
+        updateTabCounts();
+      }
+      ["us", "jp", "idx"].forEach((market) => {
+        document
+          .getElementById(`${market}-stocks`)
+          ?.setAttribute("aria-busy", "false");
+      });
+      showToast(
+        "⚠️ 株価データの更新に失敗しました。表示中のデータを継続します。",
+        "#ffd166",
+      );
+      return INITIAL_STOCKS_FETCH_RESULT.FAILED;
+    }
     ["us", "jp", "idx"].forEach((market) => {
       const container = document.getElementById(`${market}-stocks`);
       if (!container) return;
@@ -891,7 +933,7 @@ function openPortfolioModal(stockKey) {
             // a bare list[idx] assignment leaves getStockByKey() stale.
             state.replaceStock(market, stock.symbol, updated);
             if (typeof renderStocks === "function") {
-              renderStocks();
+              renderStocks(market, state.stocks[market]);
             }
           }
         }

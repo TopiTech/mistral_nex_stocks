@@ -78,7 +78,8 @@ class DetectedStockAddTestCase(unittest.TestCase):
         helper_start = self.background_source.index("async function addStockViaExtension")
         helper_end = self.background_source.index("async function refreshBackendPort")
         helper = self.background_source[helper_start:helper_end]
-        self.assertIn("res.status === 401 || res.status === 403", helper)
+        self.assertIn("res.status === 401", helper)
+        self.assertIn('reason.toLowerCase().includes("extension token")', helper)
         self.assertIn("getOrFetchExtensionToken(forceRefresh)", helper)
         self.assertIn("function getMnsSessionStorage()", self.background_source)
         self.assertIn('sessionStorage.remove("mnsExtensionToken")', self.background_source)

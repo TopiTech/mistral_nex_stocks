@@ -392,7 +392,13 @@ def start_background_worker() -> None:
             try:
                 func()
                 consecutive_errors = 0
-            except Exception as e:
+            except BaseException as e:
+                # KeyboardInterrupt/SystemExit are process-level signals and
+                # must propagate. Other BaseExceptions (e.g. a third-party
+                # library raising CancelledError in a worker) used to kill the
+                # loop permanently; restart it like an ordinary failure.
+                if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                    raise
                 consecutive_errors += 1
                 if consecutive_errors > max_consecutive_errors:
                     logger.critical(

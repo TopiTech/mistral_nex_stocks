@@ -606,6 +606,7 @@ def _build_mistral_cache_key(
     cache_key_override=None,
     credential_scope=None,
     temperature=None,
+    execution_mode: str = "chat",
 ) -> str:
     """キャッシュ用のユニークキー（SHA256ハッシュ）を生成。
 
@@ -644,6 +645,7 @@ def _build_mistral_cache_key(
             "temperature": temperature,
             "cache_key_override": cache_key_override,
             "credential_scope": credential_scope,
+            "execution_mode": execution_mode,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -717,7 +719,7 @@ def _is_mistral_tier_restriction_error(
                 return True
     if exc is not None:
         exc_str = str(exc).lower()
-        if "403" in exc_str or any(
+        if re.search(r"\b403\b", exc_str) or any(
             term in exc_str
             for term in (
                 "forbidden",
@@ -884,6 +886,11 @@ def _wait_for_rate_limit_slot(wait_before: float) -> _MistralWaitStatus:
     ``is_set()`` for this path; sub-cap waits still observe it by returning
     ``True`` from ``shutdown_event.wait``.
     """
+    if app_state.execution.shutdown_event.is_set():
+        # Even a zero-wait call must not start a provider request during
+        # shutdown: it would hold a semaphore slot for the SDK retry budget
+        # and delay teardown.
+        return "shutdown"
     if not math.isfinite(wait_before):
         # NaN/inf cannot be slept on (``Event.wait`` raises) and cannot be
         # proven safe, so fail closed onto the retryable path.
@@ -1128,6 +1135,7 @@ def call_mistral_chat(
     use_agents, agent_id = _resolve_agents_target()
     use_sdk_agents = bool(use_agents and HAS_AGENTS_SDK and mistral_agents is not None)
     use_api_agents = bool(use_agents and not use_sdk_agents and agent_id)
+    execution_mode = "agents_sdk" if use_sdk_agents else ("agents_api" if use_api_agents else "chat")
     if use_api_agents or (use_sdk_agents and agent_id):
         model = f"agent:{agent_id}"
         effective_reasoning = None
@@ -1153,6 +1161,7 @@ def call_mistral_chat(
             cache_key_override,
             credential_scope,
             temperature,
+            execution_mode=execution_mode,
         )
         if use_cache
         else None
@@ -1281,6 +1290,19 @@ def call_mistral_chat(
                     text_content = getattr(result, "text", "") or ""
 
                 stop_reason = getattr(result, "stop_reason", "stop") or "stop"
+                raw_usage = getattr(result, "usage", None)
+
+                def _agent_usage_value(name: str) -> int:
+                    raw = (
+                        raw_usage.get(name)
+                        if isinstance(raw_usage, dict)
+                        else getattr(raw_usage, name, 0)
+                    )
+                    try:
+                        return max(0, int(raw or 0))
+                    except (TypeError, ValueError, OverflowError):
+                        return 0
+
                 agent_response: dict[str, Any] = {
                     "id": f"agent-{agent_id or 'sdk'}-{int(time.time())}",
                     "object": "chat.completion",
@@ -1297,9 +1319,9 @@ def call_mistral_chat(
                         }
                     ],
                     "usage": {
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
+                        "prompt_tokens": _agent_usage_value("prompt_tokens"),
+                        "completion_tokens": _agent_usage_value("completion_tokens"),
+                        "total_tokens": _agent_usage_value("total_tokens"),
                     },
                 }
                 if output_obj is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -2196,7 +2218,7 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                             "description": str(line.get("description") or ""),
                         }
                     )
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, OverflowError):
                     continue
 
         return {

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import math
@@ -56,6 +57,7 @@ from route_helpers import (
     extract_langsearch_api_key,
     extract_tavily_api_key,
     rate_limit,
+    sanitize_client_upstream_text,
     sanitize_upstream_log_message,
 )
 from services.ai_service import (
@@ -114,6 +116,7 @@ _OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 # between call sites (M-1: 許可/拒否文字クラスを単一定義に集約).
 _SYMBOL_PROMPT_STRIP_RE = re.compile(r"[^\w.=\^\-]")
 _HTTP_401_CODE_RE = re.compile(r"(?<!\d)401(?!\d)")
+_EMPTY_CHAT_REPLY = "(応答を生成できませんでした)"
 
 
 def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
@@ -172,6 +175,28 @@ def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
     except Exception:
         pass
     return scope
+
+
+def _request_fingerprint(payload: dict[str, Any]) -> str:
+    """Bind an idempotency token to the request payload it was issued for.
+
+    A client that reuses ``request_token`` with a different symbol/message
+    must not receive the first request's cached answer (or append it to the
+    new symbol's history). The fingerprint deliberately excludes transport
+    flags such as ``stream`` so SSE-to-polling fallback for the same logical
+    request still finds the cached result.
+    """
+    try:
+        raw = json.dumps(
+            payload,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+    except (TypeError, ValueError, RecursionError):
+        raw = repr(payload)
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
 def _normalize_for_history(content: object) -> str:
@@ -241,6 +266,7 @@ class FetchJob(TypedDict, total=False):
     step: str
     start_time: float
     message: str
+    fingerprint: str
 
 
 class _ReleaseOnce:
@@ -292,12 +318,22 @@ ANALYZE_RESULT_CACHE_TTL = 180.0
 analyze_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=256, ttl=ANALYZE_RESULT_CACHE_TTL
 )
+analyze_result_fingerprints: TTLCache[str, str] = TTLCache(
+    maxsize=256, ttl=ANALYZE_RESULT_CACHE_TTL
+)
 
 # Completed-chat result cache so that a re-poll (after the request thread
 # returned {"fetching": True} on the first call) can return the already-finished
 # reply instead of silently dropping it. Keyed by inflight_key.
 CHAT_RESULT_CACHE_TTL = 180.0
 chat_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
+    maxsize=256, ttl=CHAT_RESULT_CACHE_TTL
+)
+# Fingerprint of the payload that produced each cached result. A token reused
+# with a different symbol/message must not return the previous request's
+# answer. Kept separate from the tuple so existing cache consumers keep their
+# (timestamp, result, error) shape.
+chat_result_fingerprints: TTLCache[str, str] = TTLCache(
     maxsize=256, ttl=CHAT_RESULT_CACHE_TTL
 )
 
@@ -428,6 +464,9 @@ def api_chat():
         len(user_msg),
     )
     conversation_scope = _get_conversation_scope(data)
+    chat_fingerprint = _request_fingerprint(
+        {"symbol": symbol, "market": market, "message": user_msg}
+    )
     inflight_key = f"chat:{conversation_scope}:{operation_token}"
     chat_key = f"{conversation_scope}:{market}:{symbol}"
 
@@ -443,6 +482,17 @@ def api_chat():
     already_fetching = False
     with chat_fetch_lock:
         cached = chat_result_cache.get(inflight_key)
+        stored_fingerprint = chat_result_fingerprints.get(inflight_key)
+        if (
+            cached is not None
+            and stored_fingerprint is not None
+            and stored_fingerprint != chat_fingerprint
+        ):
+            # The token was reused for a different symbol/message. The old
+            # cached answer is not a valid idempotent result for this request.
+            chat_result_cache.pop(inflight_key, None)
+            chat_result_fingerprints.pop(inflight_key, None)
+            cached = None
         if (
             cached is not None
             and not parsed_chat.stream
@@ -453,6 +503,7 @@ def api_chat():
             # marker so the non-streaming fallback runs cleanly while keeping
             # _finish_stream's cached abort entry intact for SSE observers.
             chat_result_cache.pop(inflight_key, None)
+            chat_result_fingerprints.pop(inflight_key, None)
             cached = None
         if cached is None:
             if inflight_key in chat_fetch_inflight:
@@ -466,6 +517,7 @@ def api_chat():
                     "step": "started",
                     "start_time": time.time(),
                     "message": "AIチャット処理を開始しました",
+                    "fingerprint": chat_fingerprint,
                 }
                 chat_fetch_inflight[inflight_key] = new_result_holder
                 result_holder = new_result_holder
@@ -475,8 +527,8 @@ def api_chat():
         if cached_err is not None:
             return _chat_error_response(cached_err, g, operation_token)
         if cached_result is not None:
-            ai_content = cached_result
-            normalized_cached_result = _normalize_for_history(cached_result)
+            ai_content = cached_result or _EMPTY_CHAT_REPLY
+            normalized_cached_result = _normalize_for_history(ai_content)
             try:
                 with app_state.ai.chat_history_lock:
                     app_state.ai.chat_history.append_message_if_not_duplicate(
@@ -643,6 +695,7 @@ def api_chat():
             with chat_fetch_lock:
                 chat_fetch_inflight.pop(inflight_key, None)
                 chat_result_cache.pop(inflight_key, None)
+                chat_result_fingerprints.pop(inflight_key, None)
             _rollback_user_message()
             try:
                 app_state.ai.chat_history.close()
@@ -687,8 +740,11 @@ def api_chat():
                         chat_fetch_inflight.pop(inflight_key, None)
                         chat_result_cache[inflight_key] = (
                             time.time(),
-                            result_holder["result"],
+                            result_holder["result"] or _EMPTY_CHAT_REPLY,
                             result_holder["error"],
+                        )
+                        chat_result_fingerprints[inflight_key] = result_holder.get(
+                            "fingerprint", ""
                         )
                     result_holder["done"].set()
 
@@ -948,12 +1004,31 @@ def _stream_chat_response(
             app_logger.debug("Failed to close chat DB after stream job: %s", close_exc)
         with chat_fetch_lock:
             chat_fetch_inflight.pop(inflight_key, None)
-            chat_result_cache[inflight_key] = (time.time(), final_result, final_error)
+            # An aborted/partial stream must stay a cached failure (None
+            # result), not be converted into a successful fallback reply.
+            cached_final_result = (
+                final_result
+                if final_error is not None
+                else (final_result or _EMPTY_CHAT_REPLY)
+            )
+            chat_result_cache[inflight_key] = (
+                time.time(),
+                cached_final_result,
+                final_error,
+            )
+            if result_holder is not None:
+                chat_result_fingerprints[inflight_key] = result_holder.get(
+                    "fingerprint", ""
+                )
         if result_holder is not None:
             # 同時に同トークンでポーリング待機しているリクエストが、
             # done後に result_holder["result"] を読めるように設定する。
             # 未設定だと待機中のポーリングが空応答フォールバックを返す(レビュー指摘)。
-            result_holder["result"] = final_result
+            result_holder["result"] = (
+                final_result
+                if final_error is not None
+                else (final_result or _EMPTY_CHAT_REPLY)
+            )
             result_holder["error"] = final_error
             result_holder["done"].set()
 
@@ -1527,6 +1602,15 @@ def api_analyze_v2():
 
     operation_token = parsed_v2.request_token
     conversation_scope = _get_conversation_scope(data)
+    analyze_fingerprint = _request_fingerprint(
+        {
+            "symbol": symbol,
+            "market": market,
+            "name": name,
+            "price": price,
+            "chart_data": chart_data,
+        }
+    )
     inflight_key = f"analyze:{conversation_scope}:{operation_token}"
 
     # Fast path: a previous analysis for this symbol finished and its result is
@@ -1543,6 +1627,15 @@ def api_analyze_v2():
     already_fetching = False
     with analyze_fetch_lock:
         cached = analyze_result_cache.get(inflight_key)
+        stored_fingerprint = analyze_result_fingerprints.get(inflight_key)
+        if (
+            cached is not None
+            and stored_fingerprint is not None
+            and stored_fingerprint != analyze_fingerprint
+        ):
+            analyze_result_cache.pop(inflight_key, None)
+            analyze_result_fingerprints.pop(inflight_key, None)
+            cached = None
         cache_satisfied = cached is not None and (
             cached[1] is not None or cached[2] is not None
         )
@@ -1562,6 +1655,7 @@ def api_analyze_v2():
                     "step": "started",
                     "start_time": time.time(),
                     "message": "AI分析処理を開始しました",
+                    "fingerprint": analyze_fingerprint,
                 }
                 analyze_fetch_inflight[inflight_key] = new_result_holder
                 result_holder = new_result_holder
@@ -1584,7 +1678,10 @@ def api_analyze_v2():
                         sc_int = 502
                     return error_response(
                         ErrorCode.API_SERVICE_ERROR,
-                        details={"reason": _sanitize_error_message(str(err_msg)), "provider_error": prov_err},
+                        details={
+                            "reason": _sanitize_error_message(str(err_msg)),
+                            **_safe_provider_error_details({"provider_error": prov_err}),
+                        },
                         status_code=sc_int,
                     )
                 if cached_result.get("step") == "error":
@@ -1915,6 +2012,9 @@ def api_analyze_v2():
                         result_holder["result"],
                         result_holder["error"],
                     )
+                    analyze_result_fingerprints[inflight_key] = result_holder.get(
+                        "fingerprint", ""
+                    )
                 result_holder["done"].set()
 
         try:
@@ -1968,7 +2068,12 @@ def api_analyze_v2():
                             sc_int = 502
                         return error_response(
                             ErrorCode.API_SERVICE_ERROR,
-                            details={"reason": _sanitize_error_message(str(err_msg)), "provider_error": prov_err},
+                            details={
+                                "reason": _sanitize_error_message(str(err_msg)),
+                                **_safe_provider_error_details(
+                                    {"provider_error": prov_err}
+                                ),
+                            },
                             status_code=sc_int,
                         )
                     if cached_result.get("step") == "error":
@@ -2004,7 +2109,10 @@ def api_analyze_v2():
                 sc_int = 502
             return error_response(
                 ErrorCode.API_SERVICE_ERROR,
-                details={"reason": _sanitize_error_message(str(err_msg)), "provider_error": prov_err},
+                details={
+                    "reason": _sanitize_error_message(str(err_msg)),
+                    **_safe_provider_error_details({"provider_error": prov_err}),
+                },
                 status_code=sc_int,
             )
         if result_holder.get("step") == "error":
@@ -2019,6 +2127,41 @@ def api_analyze_v2():
 
 
 # ProviderAPIError is imported from services.ai_service and re-exported for callers.
+
+
+def _safe_provider_error_details(details: Any) -> dict[str, Any]:
+    """Allowlist non-sensitive structured metadata from ProviderAPIError.details.
+
+    Provider error dicts may include the prompt, request body, or response
+    text; forwarding them verbatim disclosed user data to the browser.
+    """
+    if not isinstance(details, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    retry_after = details.get("retry_after")
+    if isinstance(retry_after, (int, float)) and not isinstance(retry_after, bool):
+        safe["retry_after"] = retry_after
+    provider_error = details.get("provider_error")
+    if isinstance(provider_error, dict):
+        safe_pe: dict[str, Any] = {}
+        status_code = provider_error.get("status_code")
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            safe_pe["status_code"] = status_code
+        for key in ("code", "type", "provider"):
+            val = provider_error.get(key)
+            if isinstance(val, int) and not isinstance(val, bool):
+                safe_pe[key] = val
+            elif isinstance(val, str):
+                cleaned_val = sanitize_client_upstream_text(val, "")
+                if cleaned_val:
+                    safe_pe[key] = cleaned_val
+        if "message" in provider_error and provider_error["message"] is not None:
+            safe_pe["message"] = sanitize_client_upstream_text(
+                provider_error["message"], "upstream provider error"
+            )
+        if safe_pe:
+            safe["provider_error"] = safe_pe
+    return safe
 
 
 def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
@@ -2044,7 +2187,11 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
         )
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
-            details={"reason": err_msg, "error_type": err_type, **job_err.details},
+            details={
+                "reason": err_msg,
+                "error_type": err_type,
+                **_safe_provider_error_details(job_err.details),
+            },
             status_code=job_err.status_code,
         )
 

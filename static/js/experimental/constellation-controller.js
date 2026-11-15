@@ -366,7 +366,7 @@
         typeof getAiProviderLabel === "function"
           ? getAiProviderLabel()
           : typeof APP_CONFIG !== "undefined" &&
-              APP_CONFIG?.ai_provider === "openai_compatible"
+            APP_CONFIG?.ai_provider === "openai_compatible"
             ? "OpenAI互換 AI"
             : "Mistral AI";
       loadingDiv.appendChild(
@@ -447,9 +447,9 @@
           if (data && (data.ok === false || (data.error && !data.fetching))) {
             throw new Error(
               data?.details?.reason ||
-                data.message ||
-                data.error ||
-                "AI分析エラーが発生しました",
+              data.message ||
+              data.error ||
+              "AI分析エラーが発生しました",
             );
           }
           if (!data?.fetching) break;
@@ -464,9 +464,9 @@
         if (data && (data.ok === false || data.error)) {
           throw new Error(
             data?.details?.reason ||
-              data.message ||
-              data.error ||
-              "AI分析エラーが発生しました",
+            data.message ||
+            data.error ||
+            "AI分析エラーが発生しました",
           );
         }
         aiResultContainer.textContent = "";
@@ -494,16 +494,16 @@
             typeof rawDisclaimer === "string" && rawDisclaimer.trim()
               ? rawDisclaimer
               : (rawDisclaimer && (rawDisclaimer.ja || rawDisclaimer.en)) ||
-                "※ AIによる比較分析は客観的データに基づく情報提供のみを目的としており、特定の投資行動を推奨するものではありません。";
+              "※ AIによる比較分析は客観的データに基づく情報提供のみを目的としており、特定の投資行動を推奨するものではありません。";
           resultCard.appendChild(disclaimer);
 
           aiResultContainer.appendChild(resultCard);
         } else {
           throw new Error(
             data?.details?.reason ||
-              data?.message ||
-              data?.error ||
-              "AI応答を取得できませんでした",
+            data?.message ||
+            data?.error ||
+            "AI応答を取得できませんでした",
           );
         }
       } catch (err) {

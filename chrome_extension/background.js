@@ -403,7 +403,7 @@ async function sendNativeMessage(message, retries = 3) {
             reject(
               new Error(
                 err.message ||
-                  "Error when communicating with the native messaging host",
+                "Error when communicating with the native messaging host",
               ),
             );
           } else {
@@ -652,10 +652,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (!res.ok || data?.ok === false) {
       console.error(
         "Add stock API failed:",
-        data?.details?.reason ||
-          data?.message ||
-          data?.error ||
-          `HTTP ${res.status}`,
+        data?.details?.reason || data?.message || data?.error || `HTTP ${res.status}`,
       );
       setBadgeMessage("NG", "#ff7d7d");
       return;

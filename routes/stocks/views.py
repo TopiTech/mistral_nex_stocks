@@ -549,6 +549,7 @@ def api_add_stock_ext() -> Any:
 
     name = parsed["name"] or _stock_display_name(symbol, market)
     with app_state.market.user_stocks_lock:
+        rev_before = app_state.market.user_stocks_rev
         container = _get_stock_container(market)
         if container is None:
             return error_response(ErrorCode.INVALID_MARKET)
@@ -565,11 +566,22 @@ def api_add_stock_ext() -> Any:
     try:
         save_user_stocks()
     except UserStocksPersistError as exc:
+        reload_persisted = False
         with app_state.market.user_stocks_lock:
             container = _get_stock_container(market)
             # API-7: conditional rollback — never clobber a concurrent write.
-            if container is not None and container.get(symbol) == name:
-                container.pop(symbol, None)
+            if app_state.market.user_stocks_rev == rev_before:
+                if container is not None and container.get(symbol) == name:
+                    container.pop(symbol, None)
+            else:
+                reload_persisted = True
+        if reload_persisted:
+            try:
+                load_user_stocks(force=True)
+            except Exception as reload_exc:
+                current_app.logger.warning(
+                    "Failed to reload user stocks after extension add rollback: %s", reload_exc
+                )
         current_app.logger.error("Failed to persist extension-added stock %s: %s", symbol, exc)
         return error_response(
             ErrorCode.FILE_ERROR,

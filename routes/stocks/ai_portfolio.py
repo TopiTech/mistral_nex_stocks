@@ -65,7 +65,7 @@ from utils.stock_payload import (
     get_current_usdjpy_rate,
     ok_response,
 )
-from utils.storage import UserStocksPersistError
+from utils.storage import UserStocksPersistError, load_user_stocks
 from utils.text_utils import _parse_json_request
 
 logger = logging.getLogger(__name__)
@@ -932,6 +932,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
     written_entries: list[tuple[str, str, dict[str, Any]]] = []
     default_names_by_market = {mkt: _default_stock_names(mkt) for mkt in ("us", "jp")}
     with app_state.market.user_stocks_lock:
+        rev_before = app_state.market.user_stocks_rev
         new_by_market: dict[str, int] = {}
         for symbol, market, _target, _shares in parsed_items:
             capacity_container = _get_stock_container(market)
@@ -982,13 +983,24 @@ def api_copy_ai_portfolio_to_my() -> Any:
             save_user_stocks()
         except UserStocksPersistError as exc:
             logger.warning("save_user_stocks during copy-to-my: %s", exc)
+            reload_persisted = False
             with app_state.market.user_stocks_lock:
                 # API-7: conditional rollback — only remove entries this
                 # request wrote that no concurrent mutation has replaced.
-                for sym, mkt, written_entry in written_entries:
-                    container = _get_stock_container(mkt)
-                    if container is not None and container.get(sym) == written_entry:
-                        container.pop(sym, None)
+                if app_state.market.user_stocks_rev == rev_before:
+                    for sym, mkt, written_entry in written_entries:
+                        container = _get_stock_container(mkt)
+                        if container is not None and container.get(sym) == written_entry:
+                            container.pop(sym, None)
+                else:
+                    reload_persisted = True
+            if reload_persisted:
+                try:
+                    load_user_stocks(force=True)
+                except Exception as reload_exc:
+                    logger.warning(
+                        "Failed to reload user stocks after copy-to-my rollback: %s", reload_exc
+                    )
             return error_response(
                 ErrorCode.FILE_ERROR,
                 details={"reason": "銘柄設定の保存に失敗しました。再試行してください。"},

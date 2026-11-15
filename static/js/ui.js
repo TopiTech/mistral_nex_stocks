@@ -66,7 +66,7 @@ function initCardIntersectionObserver() {
     cardIntersectionObserver = _createCardIntersectionObserver();
   }
   if (!cardIntersectionObserver) {
-    return { observe() {}, unobserve() {}, disconnect() {} };
+    return { observe() { }, unobserve() { }, disconnect() { } };
   }
   return cardIntersectionObserver;
 }
@@ -297,10 +297,7 @@ async function ensureStockDetails(wrapper) {
       logger.info("stock-details still fetching after poll window; deferring");
     } else {
       const errMsg =
-        data?.details?.reason ||
-        data?.message ||
-        data?.error ||
-        "データ取得失敗";
+        data?.details?.reason || data?.message || data?.error || "データ取得失敗";
       showErrorBanner(errMsg);
     }
   } catch (e) {
@@ -644,8 +641,8 @@ function updateStockUI(wrapper, stock) {
           wrapper.querySelector(".chart-canvas-pnl") ||
           (isDrawerOpen
             ? document.querySelector(
-                "#drawerTabChartContent .chart-canvas-pnl, #stock-detail-drawer .chart-canvas-pnl",
-              )
+              "#drawerTabChartContent .chart-canvas-pnl, #stock-detail-drawer .chart-canvas-pnl",
+            )
             : null);
         if (pnlCanvas)
           drawPnLChart(pnlCanvas, stock.chart_data || [], stock.avg_price, {
@@ -670,8 +667,8 @@ function updateStockUI(wrapper, stock) {
               wrapper.querySelector(".chart-canvas") ||
               (isDrawerOpen
                 ? document.querySelector(
-                    "#drawerTabChartContent .chart-canvas, #stock-detail-drawer .chart-canvas",
-                  )
+                  "#drawerTabChartContent .chart-canvas, #stock-detail-drawer .chart-canvas",
+                )
                 : null);
             const chart = canvas ? chartInstances.get(canvas) : null;
             if (
@@ -696,8 +693,8 @@ function updateStockUI(wrapper, stock) {
             wrapper.querySelector(".chart-canvas") ||
             (isDrawerOpen
               ? document.querySelector(
-                  "#drawerTabChartContent .chart-canvas, #stock-detail-drawer .chart-canvas",
-                )
+                "#drawerTabChartContent .chart-canvas, #stock-detail-drawer .chart-canvas",
+              )
               : null);
           if (canvas) {
             const chart = chartInstances.get(canvas);
@@ -1360,12 +1357,12 @@ function createStockCard(stock, marketContext) {
         const isOn =
           btn.dataset.ind !== undefined
             ? getChartPref(
-                stockKey,
-                btn.dataset.ind,
-                btn.dataset.ind === "ind_ma5" || btn.dataset.ind === "ind_ma25"
-                  ? "on"
-                  : "off",
-              ) === "on"
+              stockKey,
+              btn.dataset.ind,
+              btn.dataset.ind === "ind_ma5" || btn.dataset.ind === "ind_ma25"
+                ? "on"
+                : "off",
+            ) === "on"
             : getChartPref(stockKey, "volume", "on") === "on";
         btn.setAttribute("aria-pressed", String(isOn));
       }
@@ -2463,18 +2460,18 @@ function setBulkAnalyzeStatus(message = "", type = "", structuredData = null) {
             : null) ||
           (stockKey
             ? document.querySelector(
-                `.stock-wrapper[data-stock-key="${CSS.escape(stockKey)}"]`,
-              )
+              `.stock-wrapper[data-stock-key="${CSS.escape(stockKey)}"]`,
+            )
             : null) ||
           document.querySelector(
             `.stock-wrapper[data-symbol="${CSS.escape(item.symbol || "")}"]`,
           );
         const stockData = matchingWrapper?.__stockData ||
           (stockKey ? getStockByKey(stockKey) : null) || {
-            symbol: item.symbol,
-            market: item.market,
-            name: item.name,
-          };
+          symbol: item.symbol,
+          market: item.market,
+          name: item.name,
+        };
         openStockDetailDrawer(stockData, matchingWrapper);
       });
       card.appendChild(btn);
@@ -2608,7 +2605,7 @@ function showChartError(wrapper, msg, type = "error") {
 
   destroyChart(
     container.querySelector(".chart-canvas") ||
-      wrapper.querySelector(".chart-canvas"),
+    wrapper.querySelector(".chart-canvas"),
   );
   clearChartError(wrapper);
 
@@ -3007,15 +3004,15 @@ async function sendAiDrawerMessage() {
             ? apiFetch
             : typeof csrfFetch === "function"
               ? async (url, opts) => {
-                  const res = await csrfFetch(url, opts);
-                  const json = await res.json().catch(() => ({}));
-                  return { response: res, data: json };
-                }
+                const res = await csrfFetch(url, opts);
+                const json = await res.json().catch(() => ({}));
+                return { response: res, data: json };
+              }
               : async (url, opts) => {
-                  const res = await fetchWithTimeout(url, opts);
-                  const json = await res.json().catch(() => ({}));
-                  return { response: res, data: json };
-                };
+                const res = await fetchWithTimeout(url, opts);
+                const json = await res.json().catch(() => ({}));
+                return { response: res, data: json };
+              };
         for (let attempt = 0; attempt <= pollMax; attempt++) {
           if (!isCurrentGeneration()) return;
           const { response: res, data: fetched } = await fetchFn("/api/chat", {
@@ -3112,22 +3109,22 @@ async function sendAiDrawerMessage() {
 function updateTabCounts() {
   const usCount =
     typeof state !== "undefined" &&
-    state?.stocks?.us &&
-    Array.isArray(state.stocks.us)
+      state?.stocks?.us &&
+      Array.isArray(state.stocks.us)
       ? state.stocks.us.length
       : document.querySelectorAll("#us-stocks .stock-wrapper").length;
 
   const jpCount =
     typeof state !== "undefined" &&
-    state?.stocks?.jp &&
-    Array.isArray(state.stocks.jp)
+      state?.stocks?.jp &&
+      Array.isArray(state.stocks.jp)
       ? state.stocks.jp.length
       : document.querySelectorAll("#jp-stocks .stock-wrapper").length;
 
   const idxCount =
     typeof state !== "undefined" &&
-    state?.stocks?.idx &&
-    Array.isArray(state.stocks.idx)
+      state?.stocks?.idx &&
+      Array.isArray(state.stocks.idx)
       ? state.stocks.idx.length
       : document.querySelectorAll("#idx-stocks .stock-wrapper").length;
 
@@ -3792,8 +3789,8 @@ async function triggerAiTechnicalLines(wrapper) {
       } else {
         showToast(
           data?.details?.reason ||
-            data?.error ||
-            `AIテクニカル線の生成に失敗しました (HTTP ${res.status})`,
+          data?.error ||
+          `AIテクニカル線の生成に失敗しました (HTTP ${res.status})`,
           "error",
         );
       }

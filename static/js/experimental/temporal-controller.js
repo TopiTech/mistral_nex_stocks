@@ -412,10 +412,14 @@
           // 「別銘柄への切替(=表示銘柄の交代)」時のみ発生し、各 fetch は
           // activeHistoryKey を自分自身に再設定するため、退避されるのは
           // 常時「もう表示されていない」エントリに限られる。
+          if (this.historyCache.has(cacheKey)) {
+            this.historyCache.delete(cacheKey);
+          }
           while (this.historyCache.size >= HISTORY_CACHE_MAX_ENTRIES) {
             const oldestKey = this.historyCache.keys().next().value;
             if (oldestKey === undefined) break;
             this.historyCache.delete(oldestKey);
+            this.state?.data?.historyMap?.delete?.(oldestKey);
           }
           this.historyCache.set(cacheKey, normalized);
           if (this.isCurrentHistoryContext(cleanSymbol, period)) {
@@ -521,7 +525,19 @@
 
       if (this.state && this.state.data) {
         this.state.data.activeHistory = history;
-        this.state.data.historyMap?.set(`${symbol}:${period}`, history);
+        const hMap = this.state.data.historyMap;
+        if (hMap && typeof hMap.set === "function") {
+          const historyKey = `${symbol}:${period}`;
+          if (hMap.has(historyKey)) {
+            hMap.delete(historyKey);
+          }
+          while (hMap.size >= HISTORY_CACHE_MAX_ENTRIES) {
+            const oldestKey = hMap.keys().next().value;
+            if (oldestKey === undefined) break;
+            hMap.delete(oldestKey);
+          }
+          hMap.set(historyKey, history);
+        }
       }
 
       const maxIdx = history.length - 1;

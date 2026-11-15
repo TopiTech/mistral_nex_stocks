@@ -731,9 +731,15 @@ class YahooJPRealtimeScraper:
                 return token is None or self._symbol_tokens.get(alias) is token
             return False
 
+    def _is_worker_current_locked(self, epoch: int) -> bool:
+        return bool(self.running and self._epoch == epoch)
+
     def _is_worker_current(self, epoch: int) -> bool:
-        with self.lock:
-            return self.running and self._epoch == epoch
+        lock = getattr(self, "_lifecycle_lock", None)
+        if lock is None:
+            return self._is_worker_current_locked(epoch)
+        with lock:
+            return self._is_worker_current_locked(epoch)
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
@@ -1165,12 +1171,18 @@ class YahooJPRealtimeScraper:
         with self.lock:
             return [sym for sym in symbols if self._pause_until.get((sym, kind), 0.0) <= now_ts]
 
-    def _worker_loop(self) -> None:
-        my_epoch = self._epoch
-        while self.running and self._epoch == my_epoch:
+    def _worker_loop(self, my_epoch: int | None = None) -> None:
+        if my_epoch is None:
+            lock = getattr(self, "_lifecycle_lock", None)
+            if lock is None:
+                my_epoch = self._epoch
+            else:
+                with lock:
+                    my_epoch = self._epoch
+        while self._is_worker_current(my_epoch):
             try:
                 if not self._is_startup_ready():
-                    _interruptible_sleep(lambda: self.running and self._epoch == my_epoch, 1.0)
+                    _interruptible_sleep(lambda: self._is_worker_current(my_epoch), 1.0)
                     continue
 
                 if _is_scraper_blocked() or _is_yf_rate_limited():
@@ -1182,7 +1194,7 @@ class YahooJPRealtimeScraper:
                     )
                     sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
                     _interruptible_sleep(
-                        lambda: self.running and self._epoch == my_epoch, sleep_time
+                        lambda: self._is_worker_current(my_epoch), sleep_time
                     )
                     continue
 
@@ -1234,7 +1246,7 @@ class YahooJPRealtimeScraper:
                     workers = min(SCRAPER_MAX_WORKERS, len(target_symbols))
                     if workers > 1:
                         with self._lifecycle_lock:
-                            if not self.running or not self._is_worker_current(my_epoch):
+                            if not self._is_worker_current_locked(my_epoch):
                                 break
                             if self._executor is None:
                                 self._executor = DaemonThreadPoolExecutor(
@@ -1244,7 +1256,7 @@ class YahooJPRealtimeScraper:
                             executor = self._executor
                         future_to_sym = {}
                         for sym in target_symbols:
-                            if not self.running or not self._is_worker_current(my_epoch):
+                            if not self._is_worker_current(my_epoch):
                                 break
                             try:
                                 fut = executor.submit(
@@ -1260,7 +1272,7 @@ class YahooJPRealtimeScraper:
                                 )
                                 break
                             _interruptible_sleep(
-                                lambda: self.running and self._epoch == my_epoch,
+                                lambda: self._is_worker_current(my_epoch),
                                 SCRAPER_REQUEST_STAGGER_SEC,
                             )
                         for future in as_completed(future_to_sym):
@@ -1300,18 +1312,22 @@ class YahooJPRealtimeScraper:
                                     self.on_update_callback(payload)
 
                 self._last_cycle_updates = cycle_updates
-                _interruptible_sleep(lambda: self.running and self._epoch == my_epoch, interval)
+                _interruptible_sleep(lambda: self._is_worker_current(my_epoch), interval)
             except Exception as exc:
                 logger.error("[Yahoo JP Scraper] Worker loop error: %s", exc)
-                _interruptible_sleep(lambda: self.running and self._epoch == my_epoch, 2.0)
+                _interruptible_sleep(lambda: self._is_worker_current(my_epoch), 2.0)
 
     def start(self) -> None:
         with self._lifecycle_lock:
             if not self.running:
                 self.running = True
                 self._epoch += 1
+                epoch = self._epoch
                 self.thread = threading.Thread(
-                    target=self._worker_loop, daemon=True, name="YahooJPScraperWorker"
+                    target=self._worker_loop,
+                    args=(epoch,),
+                    daemon=True,
+                    name="YahooJPScraperWorker",
                 )
                 self.thread.start()
 

@@ -40,6 +40,7 @@ from utils.caching import (
     legacy_history_frame_disk_key,
 )
 from utils.normalization import (
+    coerce_datetime_index,
     is_bool_like,
     is_jp_stock_code,
     normalize_history_frame,
@@ -455,7 +456,7 @@ class YFinanceProvider(BaseStockProvider):
                 if json_str:
                     df = pd.read_json(io.StringIO(json_str), orient="split")
                     if not df.empty:
-                        df.index = pd.to_datetime(df.index)
+                        df.index = coerce_datetime_index(df.index)
                         return df
         except (OSError, ValueError, KeyError, TypeError) as disk_exc:
             logger.debug("Disk cache retrieval failed for %s: %s", disk_key, disk_exc)

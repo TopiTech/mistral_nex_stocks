@@ -39,7 +39,7 @@ class _RestrictiveRotatingFileHandler(RotatingFileHandler):
 from pathlib import Path
 
 from app_state import BackendLogFilter, PollingFilter
-from utils.text_utils import _sanitize_error_message
+from utils.text_utils import _sanitize_error_message, sanitize_log_record_data
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -112,9 +112,9 @@ if _use_json_format and _JsonFormatter is not None:
             log_data["timestamp"] = self.formatTime(record, self.datefmt)
 
     class SanitizedJsonFormatter(CustomJsonFormatter):
-        def format(self, record):
-            formatted = super().format(record)
-            return _sanitize_error_message(formatted)
+        def process_log_record(self, log_data):
+            processed = super().process_log_record(log_data)
+            return sanitize_log_record_data(processed)
 
     _log_formatter: logging.Formatter = SanitizedJsonFormatter(
         "%(timestamp)s %(level)s %(name)s %(message)s",

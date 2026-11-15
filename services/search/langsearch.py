@@ -26,6 +26,7 @@ from constants import (
     LANGSEARCH_TIMEOUT,
     LANGSEARCH_TOTAL_TIMEOUT_SEC,
 )
+from utils.http_utils import extract_external_error_metadata as _external_error_metadata
 from utils.http_utils import parse_retry_after
 from utils.normalization import is_bool_like, normalize_search_limit
 
@@ -39,22 +40,6 @@ LANGSEARCH_WEB_SEARCH_ENDPOINT = f"{LANGSEARCH_BASE_URL}/v1/web-search"
 _LANGSEARCH_SHARED_DEADLINE: ContextVar[float | None] = ContextVar(
     "langsearch_shared_deadline", default=None
 )
-
-
-def _external_error_metadata(exc: BaseException | None) -> tuple[str, str]:
-    """Return safe diagnostics for an external-provider exception.
-
-    Error text and response bodies are controlled by a remote service and can
-    reflect request data or credentials, so only log the exception class and
-    HTTP status.
-    """
-    if exc is None:
-        return "UnknownError", "unknown"
-    response = getattr(exc, "response", None)
-    status = getattr(response, "status_code", None)
-    if status is None:
-        status = getattr(exc, "status_code", None)
-    return type(exc).__name__, str(status) if status is not None else "unknown"
 
 
 def _log_langsearch_retry(retry_state: Any) -> None:

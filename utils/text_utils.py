@@ -9,6 +9,7 @@ import hashlib
 import logging
 import math
 import re
+from typing import Any
 
 from flask import request
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge, UnsupportedMediaType
@@ -256,6 +257,68 @@ def _sanitize_error_message(error_msg):
     for pattern in sensitive_patterns:
         sanitized = re.sub(pattern, "[REDACTED]", sanitized, flags=re.IGNORECASE)
     return sanitized
+
+
+_SENSITIVE_LOG_KEY_RE = re.compile(
+    r"^(?:.*_)?(?:api_key|apikey|secret|client_secret|password|passwd|authorization|"
+    r"auth_token|bearer_token|access_token|refresh_token|admin_token|shutdown_token|"
+    r"extension_token|csrf_token|master_key|private_key|token)$"
+)
+_NON_SECRET_KEY_PREFIXES = ("has_", "is_", "use_", "enable_", "allow_", "num_", "count_", "max_")
+
+
+def _is_sensitive_log_key(key: Any) -> bool:
+    """Return True when a structured log key holds a credential/secret rather than metadata."""
+    normalized = str(key).strip().lower().replace("-", "_")
+    if not normalized or normalized == "request_token":
+        return False
+    if normalized.startswith(_NON_SECRET_KEY_PREFIXES) or normalized.endswith(("_count", "_length", "_len")):
+        return False
+    return bool(_SENSITIVE_LOG_KEY_RE.match(normalized))
+
+
+def sanitize_log_record_data(value: Any, *, _seen: set[int] | None = None) -> Any:
+    """Recursively sanitize structured log values BEFORE JSON serialization.
+
+    Redacts secret-bearing dict keys in-place-safe copies and applies
+    ``_sanitize_error_message`` to string leaves without corrupting JSON delimiters.
+    """
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _sanitize_error_message(value)
+    if _seen is None:
+        _seen = set()
+    obj_id = id(value)
+    if isinstance(value, dict):
+        if obj_id in _seen:
+            return "[circular]"
+        _seen.add(obj_id)
+        try:
+            sanitized_dict: dict[Any, Any] = {}
+            for k, v in value.items():
+                if _is_sensitive_log_key(k):
+                    if isinstance(v, (bool, int, float)) or v is None:
+                        sanitized_dict[k] = v
+                    elif isinstance(v, str):
+                        sanitized_dict[k] = "[REDACTED]" if v else ""
+                    else:
+                        sanitized_dict[k] = "[REDACTED]"
+                else:
+                    sanitized_dict[k] = sanitize_log_record_data(v, _seen=_seen)
+            return sanitized_dict
+        finally:
+            _seen.discard(obj_id)
+    if isinstance(value, (list, tuple)):
+        if obj_id in _seen:
+            return "[circular]"
+        _seen.add(obj_id)
+        try:
+            items = [sanitize_log_record_data(item, _seen=_seen) for item in value]
+            return tuple(items) if isinstance(value, tuple) else items
+        finally:
+            _seen.discard(obj_id)
+    return _sanitize_error_message(str(value))
 
 
 def parse_non_negative_float(value, field_name, max_value=None):

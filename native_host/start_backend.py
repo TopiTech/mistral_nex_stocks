@@ -235,6 +235,13 @@ def get_backend_verification(port: int | None = None) -> bool | None:
         local = getattr(connection, "laddr", None)
         if local is None or getattr(local, "port", None) != target_port:
             continue
+        status = getattr(connection, "status", None)
+        if (
+            status is not None
+            and status != getattr(psutil, "CONN_LISTEN", "LISTEN")
+            and str(status).upper() != "LISTEN"
+        ):
+            continue
         if getattr(connection, "pid", None) == pid:
             return True
         if getattr(connection, "pid", None) is None:

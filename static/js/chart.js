@@ -493,6 +493,24 @@ async function fetchStockHistoryPayload(
   };
 
   const doFetch = async () => {
+    const waitWithAbort = (ms, sig) =>
+      new Promise((resolve) => {
+        if (sig?.aborted) {
+          resolve();
+          return;
+        }
+        let timerId = null;
+        const onAbort = () => {
+          if (timerId !== null) clearTimeout(timerId);
+          sig?.removeEventListener("abort", onAbort);
+          resolve();
+        };
+        timerId = setTimeout(() => {
+          sig?.removeEventListener("abort", onAbort);
+          resolve();
+        }, ms);
+        sig?.addEventListener("abort", onAbort, { once: true });
+      });
     let attempts = 0;
     const maxAttempts = 6;
     const delay = 1500;
@@ -516,7 +534,7 @@ async function fetchStockHistoryPayload(
             "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
           );
         }
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await waitWithAbort(delay, controller.signal);
         continue;
       } catch (err) {
         if (
@@ -563,7 +581,7 @@ async function fetchStockHistoryPayload(
             if (retried) return retried;
             attempts++;
             if (attempts < maxAttempts) {
-              await new Promise((resolve) => setTimeout(resolve, delay));
+              await waitWithAbort(delay, controller.signal);
               continue;
             }
             throw new Error(
@@ -2074,7 +2092,23 @@ async function refreshStockChart(wrapper, period, interval) {
         );
         clearChartError(wrapper);
         showChartError(wrapper, "データを読み込み中です...", "info");
-        await new Promise((r) => setTimeout(r, 3000));
+        await new Promise((resolve) => {
+          if (signal.aborted) {
+            resolve();
+            return;
+          }
+          let timerId = null;
+          const onAbort = () => {
+            if (timerId !== null) clearTimeout(timerId);
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+          };
+          timerId = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, 3000);
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
         if (signal.aborted || wrapper.dataset.chartFetchId !== currentFetchId)
           return;
         // 再試行前にプレフェッチキャッシュを再チェック

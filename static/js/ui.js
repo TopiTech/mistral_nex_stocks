@@ -282,12 +282,32 @@ async function ensureStockDetails(wrapper) {
       return body ?? { error: "サーバー応答の解析に失敗しました" };
     };
 
+    const waitWithAbort = (ms, sig) =>
+      new Promise((resolve) => {
+        if (sig?.aborted) {
+          resolve();
+          return;
+        }
+        let timerId = null;
+        const onAbort = () => {
+          if (timerId !== null) clearTimeout(timerId);
+          sig?.removeEventListener("abort", onAbort);
+          resolve();
+        };
+        timerId = setTimeout(() => {
+          sig?.removeEventListener("abort", onAbort);
+          resolve();
+        }, ms);
+        sig?.addEventListener("abort", onAbort, { once: true });
+      });
+
     let data = null;
     for (let attempt = 0; attempt <= MAX_DETAILS_POLLS; attempt++) {
       data = await pollOnce();
       if (!data || !data.fetching) break;
-      if (controller.signal.aborted) break;
-      await new Promise((r) => setTimeout(r, 700));
+      if (controller.signal.aborted || !isCurrentRequest()) break;
+      await waitWithAbort(700, controller.signal);
+      if (controller.signal.aborted || !isCurrentRequest()) break;
     }
 
     clearTimeout(timeoutId);
@@ -2781,15 +2801,24 @@ function openAiDrawer(symbol, name, market) {
     aiDrawerAbortController = null;
   }
 
-  aiDrawerTrigger =
+  const overlay = document.getElementById("ai-drawer-overlay");
+  const activeEl =
     document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+  const isReopenWhileOpen =
+    Boolean(overlay) &&
+    !overlay.classList.contains("hidden") &&
+    overlay.getAttribute("aria-hidden") === "false" &&
+    Boolean(aiDrawerTrigger) &&
+    aiDrawerTrigger.isConnected !== false;
+  if (!isReopenWhileOpen || (activeEl && !overlay.contains?.(activeEl))) {
+    aiDrawerTrigger = activeEl;
+  }
   currentDrawerSymbol = symbol || "MNS";
   currentDrawerName = name || symbol || "銘柄";
   currentDrawerMarket = market || "us";
 
-  const overlay = document.getElementById("ai-drawer-overlay");
   const symEl = document.getElementById("ai-drawer-symbol");
   const nameEl = document.getElementById("ai-drawer-name");
   const messagesEl = document.getElementById("ai-drawer-chat-messages");
@@ -3414,9 +3443,16 @@ function openStockDetailDrawer(stock, wrapper) {
 
   // 前のドロワーを先に閉じる(同一ラッパー再オープン時も移動済み要素を一旦復元する)。
   // open 設定後に close すると close 側が new 側の状態を壊すため順序を固定する。
-  const sameWrapperTrigger =
-    currentDrawerActiveWrapper === wrapper ? stockDetailDrawerTrigger : null;
+  // 切替時は closeStockDetailDrawer() が前のトリガーへ focus() を戻して
+  // document.activeElement を上書きしないよう、閉鎖前に新トリガーを退避する。
+  const isSameWrapper = currentDrawerActiveWrapper === wrapper;
+  const incomingTrigger =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  const preservedTrigger = isSameWrapper ? stockDetailDrawerTrigger : null;
   if (currentDrawerActiveWrapper) {
+    stockDetailDrawerTrigger = null;
     closeStockDetailDrawer();
   }
 
@@ -3431,10 +3467,10 @@ function openStockDetailDrawer(stock, wrapper) {
 
   currentDrawerActiveWrapper = wrapper;
   stockDetailDrawerTrigger =
-    sameWrapperTrigger && sameWrapperTrigger.isConnected !== false
-      ? sameWrapperTrigger
-      : document.activeElement instanceof HTMLElement
-        ? document.activeElement
+    preservedTrigger && preservedTrigger.isConnected !== false
+      ? preservedTrigger
+      : incomingTrigger && incomingTrigger.isConnected !== false
+        ? incomingTrigger
         : null;
 
   renderStockDetailDrawerHeader(stock);

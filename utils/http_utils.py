@@ -82,3 +82,19 @@ def parse_retry_after(resp_or_exc: Any) -> float | None:
             return _clamp_retry_after(dt.timestamp() - time.time())
         except Exception:
             return None
+
+
+def extract_external_error_metadata(exc: BaseException | None) -> tuple[str, str]:
+    """Return safe diagnostics for an external-provider exception.
+
+    Error text and response bodies are controlled by a remote service and can
+    reflect request data or credentials, so only expose the exception class and
+    HTTP status.
+    """
+    if exc is None:
+        return "UnknownError", "unknown"
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    return type(exc).__name__, str(status) if status is not None else "unknown"

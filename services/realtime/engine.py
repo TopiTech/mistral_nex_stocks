@@ -8,7 +8,7 @@ import math
 import threading
 import time
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from constants import SSE_MODE2_FULL_SNAPSHOT_INTERVAL_SEC
 from services.realtime.scrapers import (
@@ -82,6 +82,7 @@ class RealtimeMarketEngine:
 
         self.running = False
         self._lifecycle_lock = threading.RLock()
+        self._lifecycle_op_lock = threading.RLock()
         self.pts_thread: threading.Thread | None = None
         self._pts_epoch = 0
         # Set when no PTS fetch is in flight. stop() drains on this so a
@@ -697,9 +698,22 @@ class RealtimeMarketEngine:
                 logger.debug("Minkabu PTS fallback failed for %s: %s", symbol, exc)
         return payload
 
-    def _pts_worker_loop(self) -> None:
-        my_epoch = self._pts_epoch
-        while self.running and self._pts_epoch == my_epoch:
+    def _is_pts_worker_current_locked(self, epoch: int) -> bool:
+        return bool(self.running and self._pts_epoch == epoch)
+
+    def _is_pts_worker_current(self, epoch: int) -> bool:
+        lock = getattr(self, "_lifecycle_lock", None)
+        if lock is None:
+            return self._is_pts_worker_current_locked(epoch)
+        with lock:
+            return self._is_pts_worker_current_locked(epoch)
+
+    def _pts_worker_loop(self, my_epoch: int | None = None) -> None:
+        if my_epoch is None:
+            lock = getattr(self, "_lifecycle_lock", None) or nullcontext()
+            with lock:
+                my_epoch = self._pts_epoch
+        while self._is_pts_worker_current(my_epoch):
             try:
                 now_ts = time.time()
                 if (now_ts - self._last_stale_client_purge) > 60.0:
@@ -707,7 +721,7 @@ class RealtimeMarketEngine:
                     self._purge_stale_clients()
 
                 if not self.yahoojp_scraper._is_startup_ready():
-                    _interruptible_sleep(lambda: self.running and self._pts_epoch == my_epoch, 1.0)
+                    _interruptible_sleep(lambda: self._is_pts_worker_current(my_epoch), 1.0)
                     continue
 
                 if _is_scraper_blocked() or _is_yf_rate_limited():
@@ -719,7 +733,7 @@ class RealtimeMarketEngine:
                     )
                     sleep_time = max(2.0, min(remains, 5.0)) if remains > 0 else 2.0
                     _interruptible_sleep(
-                        lambda: self.running and self._pts_epoch == my_epoch, sleep_time
+                        lambda: self._is_pts_worker_current(my_epoch), sleep_time
                     )
                     continue
 
@@ -749,7 +763,7 @@ class RealtimeMarketEngine:
 
                 now_ts = time.time()
                 for sym in target_symbols:
-                    if not self.running or self._pts_epoch != my_epoch:
+                    if not self._is_pts_worker_current(my_epoch):
                         break
                     cached_payload = self._pts_cached_payload(sym)
                     is_stale = (
@@ -770,8 +784,7 @@ class RealtimeMarketEngine:
                                 fetch_tracker.set()
                         if (
                             payload
-                            and self.running
-                            and self._pts_epoch == my_epoch
+                            and self._is_pts_worker_current(my_epoch)
                             and self.yahoojp_scraper._is_symbol_current(sym)
                         ):
                             self._handle_pts_update(payload)
@@ -780,48 +793,69 @@ class RealtimeMarketEngine:
                         # Interruptible: a plain sleep keeps stop()/restart()
                         # waiting for the full stagger after shutdown begins.
                         _interruptible_sleep(
-                            lambda: self.running and self._pts_epoch == my_epoch,
+                            lambda: self._is_pts_worker_current(my_epoch),
                             SCRAPER_REQUEST_STAGGER_SEC,
                         )
 
-                _interruptible_sleep(lambda: self.running and self._pts_epoch == my_epoch, interval)
+                _interruptible_sleep(lambda: self._is_pts_worker_current(my_epoch), interval)
             except Exception as exc:
                 logger.error("[Realtime Engine] PTS worker loop error: %s", exc)
-                _interruptible_sleep(lambda: self.running and self._pts_epoch == my_epoch, 2.0)
+                _interruptible_sleep(lambda: self._is_pts_worker_current(my_epoch), 2.0)
 
     def worker_threads(self) -> list[threading.Thread]:
         """Return the engine's internal producer threads (watchdog target)."""
         threads: list[threading.Thread] = []
-        if self.tv_client.thread is not None:
-            threads.append(self.tv_client.thread)
-        if self.yahoojp_scraper.thread is not None:
-            threads.append(self.yahoojp_scraper.thread)
-        if self.pts_thread is not None:
-            threads.append(self.pts_thread)
+        lifecycle_lock = getattr(self, "_lifecycle_lock", None) or nullcontext()
+        with lifecycle_lock:
+            tv_lock = getattr(self.tv_client, "_lifecycle_lock", None) or nullcontext()
+            with tv_lock:
+                tv_thread = self.tv_client.thread
+            scraper_lock = getattr(self.yahoojp_scraper, "_lifecycle_lock", None) or nullcontext()
+            with scraper_lock:
+                scraper_thread = self.yahoojp_scraper.thread
+            pts_thread = self.pts_thread
+        if tv_thread is not None:
+            threads.append(tv_thread)
+        if scraper_thread is not None:
+            threads.append(scraper_thread)
+        if pts_thread is not None:
+            threads.append(pts_thread)
         return threads
 
     def missing_worker_names(self) -> list[str]:
         """Return expected producer thread names missing while the engine is running."""
-        if not self.running:
-            return []
+        lifecycle_lock = getattr(self, "_lifecycle_lock", None) or nullcontext()
+        with lifecycle_lock:
+            if not self.running:
+                return []
+            tv_lock = getattr(self.tv_client, "_lifecycle_lock", None) or nullcontext()
+            with tv_lock:
+                tv_thread = self.tv_client.thread
+            scraper_lock = getattr(self.yahoojp_scraper, "_lifecycle_lock", None) or nullcontext()
+            with scraper_lock:
+                scraper_thread = self.yahoojp_scraper.thread
+            pts_thread = self.pts_thread
         missing: list[str] = []
-        if self.tv_client.thread is None:
+        if tv_thread is None:
             missing.append("TradingViewWSWorker")
-        if self.yahoojp_scraper.thread is None:
+        if scraper_thread is None:
             missing.append("YahooJPScraperWorker")
-        if self.pts_thread is None:
+        if pts_thread is None:
             missing.append("JPPTSWorker")
         return missing
 
     def restart(self) -> None:
         """Stop and restart the engine producers (crash recovery)."""
-        with self._lifecycle_lock:
+        op_lock = getattr(self, "_lifecycle_op_lock", None) or nullcontext()
+        state_lock = getattr(self, "_lifecycle_lock", None) or nullcontext()
+        with op_lock:
             try:
                 stopped_cleanly = self.stop()
             except Exception as exc:
                 logger.warning("Realtime engine stop during restart failed: %s", exc)
                 stopped_cleanly = False
-            thread = self.pts_thread
+            with state_lock:
+                thread = self.pts_thread
             if (
                 thread is not None
                 and thread is not threading.current_thread()
@@ -846,7 +880,9 @@ class RealtimeMarketEngine:
                 logger.warning("Realtime engine restart failed: %s", exc)
 
     def start(self) -> None:
-        with self._lifecycle_lock:
+        op_lock = getattr(self, "_lifecycle_op_lock", None) or nullcontext()
+        state_lock = getattr(self, "_lifecycle_lock", None) or nullcontext()
+        with op_lock, state_lock:
             if not self.running:
                 if self.pts_thread is not None and self.pts_thread.is_alive():
                     raise RuntimeError("previous PTS worker is still running")
@@ -865,8 +901,12 @@ class RealtimeMarketEngine:
                 self.tv_client.start()
                 self.yahoojp_scraper.start()
                 self._pts_epoch += 1
+                pts_epoch = self._pts_epoch
                 self.pts_thread = threading.Thread(
-                    target=self._pts_worker_loop, daemon=True, name="JPPTSWorker"
+                    target=self._pts_worker_loop,
+                    args=(pts_epoch,),
+                    daemon=True,
+                    name="JPPTSWorker",
                 )
                 self.pts_thread.start()
 
@@ -898,12 +938,18 @@ class RealtimeMarketEngine:
         still alive after the bounded in-flight fetch drain (callers must
         treat False as "restart deferred", never as stopped).
         """
-        with self._lifecycle_lock:
-            with self.store_lock:
-                self._engine_epoch += 1
-            self.running = False
-            self._pts_epoch += 1
-            thread = self.pts_thread
+        op_lock = getattr(self, "_lifecycle_op_lock", None) or nullcontext()
+        state_lock = getattr(self, "_lifecycle_lock", None) or nullcontext()
+        with op_lock:
+            with state_lock:
+                with self.store_lock:
+                    self._engine_epoch += 1
+                self.running = False
+                self._pts_epoch += 1
+                thread = self.pts_thread
+                bg_executor = getattr(self, "_bg_executor", None)
+            # Release _lifecycle_lock before draining/joining so _pts_worker_loop
+            # can check _is_pts_worker_current() and exit without deadlocking.
             if (
                 thread is not None
                 and thread is not threading.current_thread()
@@ -923,8 +969,10 @@ class RealtimeMarketEngine:
                         # Still fetching after the bounded drain: final grace
                         # for a just-finished fetch, then report explicitly.
                         thread.join(timeout=2.0)
-            if self.pts_thread is not None and not self.pts_thread.is_alive():
-                self.pts_thread = None
+            with state_lock:
+                if self.pts_thread is not None and not self.pts_thread.is_alive():
+                    self.pts_thread = None
+                pts_stopped = self.pts_thread is None
             self.tv_client.stop()
             self.yahoojp_scraper.stop()
             self.yahoojp_scraper.close()
@@ -932,7 +980,8 @@ class RealtimeMarketEngine:
             self.nikkei225jp_scraper.close()
             self.minkabu_scraper.close()
             try:
-                self._bg_executor.shutdown(wait=False, cancel_futures=True)
+                if bg_executor is not None:
+                    bg_executor.shutdown(wait=False, cancel_futures=True)
             except Exception as exc:
                 logger.debug("Failed shutting down realtime bg executor: %s", exc)
-            return self.pts_thread is None
+            return pts_stopped

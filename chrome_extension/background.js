@@ -55,17 +55,30 @@ function normalizeBackendPort(value) {
  * could hang indefinitely even though `fetch()` had already resolved.
  */
 function fetchWithTimeout(url, options = {}, timeoutMs = ADD_STOCK_TIMEOUT_MS) {
+  const defaultTimeoutMs =
+    typeof ADD_STOCK_TIMEOUT_MS === "number" &&
+    Number.isFinite(ADD_STOCK_TIMEOUT_MS) &&
+    ADD_STOCK_TIMEOUT_MS > 0
+      ? ADD_STOCK_TIMEOUT_MS
+      : 10000;
+  const effectiveTimeoutMs =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : defaultTimeoutMs;
   const controller = new AbortController();
   let timedOut = false;
   let timeoutId = null;
   const callerSignal = options.signal;
-  const abortFromCaller = () => controller.abort();
   const cleanup = () => {
     if (timeoutId !== null) {
       clearTimeout(timeoutId);
       timeoutId = null;
     }
     callerSignal?.removeEventListener("abort", abortFromCaller);
+  };
+  const abortFromCaller = () => {
+    controller.abort();
+    cleanup();
   };
   const makeTimeoutError = () => {
     const timeoutError = new Error("リクエストがタイムアウトしました");
@@ -76,11 +89,14 @@ function fetchWithTimeout(url, options = {}, timeoutMs = ADD_STOCK_TIMEOUT_MS) {
     timedOut = true;
     controller.abort();
     cleanup();
-  }, timeoutMs);
+  }, effectiveTimeoutMs);
   if (callerSignal) {
-    if (callerSignal.aborted) controller.abort();
-    else
+    if (callerSignal.aborted) {
+      controller.abort();
+      cleanup();
+    } else {
       callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+    }
   }
   return fetch(url, { ...options, signal: controller.signal })
     .then((response) => {
@@ -110,6 +126,31 @@ function fetchWithTimeout(url, options = {}, timeoutMs = ADD_STOCK_TIMEOUT_MS) {
         } catch (error) {
           console.warn("Failed to wrap response body reader:", error);
         }
+      }
+      if (typeof response?.body?.cancel === "function") {
+        const originalCancel = response.body.cancel;
+        try {
+          response.body.cancel = async (...args) => {
+            try {
+              return await originalCancel.apply(response.body, args);
+            } catch (error) {
+              if (timedOut) throw makeTimeoutError();
+              throw error;
+            } finally {
+              cleanup();
+            }
+          };
+        } catch (error) {
+          console.warn("Failed to wrap response body cancel:", error);
+        }
+      }
+      try {
+        Object.defineProperty(response, "_mnsCleanupTimeout", {
+          value: cleanup,
+          configurable: true,
+        });
+      } catch {
+        // Non-extensible Response objects still release timers via wrapped readers/cancel.
       }
       return response;
     })
@@ -441,6 +482,8 @@ async function checkHealth(retries = 1, timeoutMs = HEALTH_TIMEOUT_MS) {
           timeoutMs,
         );
         if (!res.ok) {
+          res?.body?.cancel?.().catch(() => {});
+          res?._mnsCleanupTimeout?.();
           throw new Error(`HTTP status ${res.status}`);
         }
         const data = await res.json();
@@ -789,7 +832,11 @@ async function updateBadge() {
         { method: "GET", cache: "no-store" },
         BADGE_FETCH_TIMEOUT_MS,
       );
-      if (!res.ok) return;
+      if (!res.ok) {
+        res?.body?.cancel?.().catch(() => {});
+        res?._mnsCleanupTimeout?.();
+        return;
+      }
       const data = await res.json();
       if (badgeToken !== startBadgeToken) return;
       const n225 = data["N225"];
@@ -868,9 +915,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
       if (message.action === "health") {
         const retries =
-          typeof message.retries === "number" ? message.retries : 1;
+          typeof message.retries === "number" &&
+          Number.isFinite(message.retries) &&
+          message.retries >= 0
+            ? Math.min(Math.floor(message.retries), 10)
+            : 1;
         const timeoutMs =
-          typeof message.timeoutMs === "number"
+          typeof message.timeoutMs === "number" &&
+          Number.isFinite(message.timeoutMs) &&
+          message.timeoutMs > 0
             ? message.timeoutMs
             : HEALTH_TIMEOUT_MS;
         return safeSendResponse(await checkHealth(retries, timeoutMs));

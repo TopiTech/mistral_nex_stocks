@@ -178,6 +178,14 @@ class AIPortfolioSaveRequest(BaseModel):
             raise ValueError("Theme cannot be empty")
         return s
 
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
 
 class AIPortfolioDeleteRequest(BaseModel):
     """Canonical contract for ``DELETE /api/ai-portfolio/custom``."""

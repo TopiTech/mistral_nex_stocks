@@ -896,8 +896,20 @@ document.addEventListener("DOMContentLoaded", () => {
     positionTooltipAt(event.clientX, event.clientY);
   }
 
+  function clear3DHoverHighlight() {
+    if (state.three.hoveredMesh) {
+      if (state.three.hoveredMesh.material) {
+        state.three.hoveredMesh.material.emissive.setHex(
+          state.three.hoveredMesh.userData?.origEmissive ?? 0x000000,
+        );
+      }
+      state.three.hoveredMesh = null;
+    }
+  }
+
   function hideTooltip() {
     tooltipSizeCache = null;
+    clear3DHoverHighlight();
     if (!els.tooltip) return;
     els.tooltip.classList.remove("show");
     els.canvas
@@ -1005,15 +1017,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         moveTooltip(event);
       } else {
-        if (state.three.hoveredMesh) {
-          if (state.three.hoveredMesh.material) {
-            state.three.hoveredMesh.material.emissive.setHex(
-              state.three.hoveredMesh.userData.origEmissive || 0x000000,
-            );
-          }
-          state.three.hoveredMesh = null;
-          hideTooltip();
-        }
+        hideTooltip();
       }
     };
 
@@ -1033,8 +1037,23 @@ document.addEventListener("DOMContentLoaded", () => {
       const meshes = state.three.stockMeshes;
       if (!meshes.length) return;
       state.three.keyboardIndex = (index + meshes.length) % meshes.length;
-      state.three.hoveredMesh = meshes[state.three.keyboardIndex];
-      const stock = state.three.hoveredMesh.userData?.stock;
+      const nextMesh = meshes[state.three.keyboardIndex];
+      if (state.three.hoveredMesh && state.three.hoveredMesh !== nextMesh) {
+        if (state.three.hoveredMesh.material) {
+          state.three.hoveredMesh.material.emissive.setHex(
+            state.three.hoveredMesh.userData?.origEmissive ?? 0x000000,
+          );
+        }
+      }
+      if (state.three.hoveredMesh !== nextMesh) {
+        state.three.hoveredMesh = nextMesh;
+        if (nextMesh.material) {
+          nextMesh.userData = nextMesh.userData || {};
+          nextMesh.userData.origEmissive = nextMesh.material.emissive.getHex();
+          nextMesh.material.emissive.setHex(0x00f2fe);
+        }
+      }
+      const stock = nextMesh.userData?.stock;
       if (stock) {
         renderer.domElement.setAttribute(
           "aria-label",

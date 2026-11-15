@@ -392,6 +392,22 @@ def sanitize_history_payload(payload: object) -> dict[str, Any] | None:
     return sanitized
 
 
+def coerce_datetime_index(index: Any) -> pd.DatetimeIndex:
+    """Convert an index to ``pd.DatetimeIndex``, falling back to ``utc=True`` on mixed offsets."""
+    if isinstance(index, pd.DatetimeIndex):
+        return index
+    try:
+        converted = pd.to_datetime(index)
+        if isinstance(converted, pd.DatetimeIndex):
+            return converted
+    except ValueError:
+        pass
+    try:
+        return pd.to_datetime(index, utc=True)
+    except ValueError:
+        return pd.to_datetime(index, utc=True, format="ISO8601")
+
+
 def normalize_history_frame(hist, inplace=False):
     """
     データフレームを正規化：インデックスを DatetimeIndex に変換、Close 列をチェック
@@ -411,8 +427,8 @@ def normalize_history_frame(hist, inplace=False):
         frame = hist if inplace else hist.copy()
         if not isinstance(frame.index, pd.DatetimeIndex):
             try:
-                frame.index = pd.to_datetime(frame.index)
-            except (ValueError, TypeError) as exc:
+                frame.index = coerce_datetime_index(frame.index)
+            except (ValueError, TypeError, OverflowError) as exc:
                 logger.warning("Failed to convert history index to DatetimeIndex: %s", exc)
                 return pd.DataFrame()
 

@@ -348,59 +348,129 @@ class Logger {
     }
     // 機密情報を検出するパターン
     this.sensitivePatterns = [
-      /api[_-]?key['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
-      /token['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
-      /password['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
-      /authorization['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
-      /secret['"]?\s*[:=]\s*['"]?[^\s'"]+/gi,
+      /api[_-]?key['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s'"]+)/gi,
+      /token['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s'"]+)/gi,
+      /password['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s'"]+)/gi,
+      /authorization['"]?\s*[:=]\s*(?:(?:bearer|basic|token)\s+)?(?:"[^"]*"|'[^']*'|[^\s'"]+)/gi,
+      /secret['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s'"]+)/gi,
     ];
+  }
+
+  _sanitizeString(str) {
+    let sanitized = str.replace(
+      /\b((?:bearer|basic)\s+)[^\s'",;]+/gi,
+      "$1[REDACTED]",
+    );
+    this.sensitivePatterns.forEach((pattern) => {
+      sanitized = sanitized.replace(pattern, "[REDACTED]");
+    });
+    return sanitized;
+  }
+
+  _isSensitiveKey(key) {
+    if (typeof key !== "string") return false;
+    const normalized = key.trim().toLowerCase().replace(/-/g, "_");
+    if (!normalized) return false;
+    if (
+      normalized.startsWith("has_") ||
+      normalized.startsWith("is_") ||
+      normalized === "request_token" ||
+      normalized.endsWith("_len") ||
+      normalized.endsWith("_length") ||
+      normalized.endsWith("_count") ||
+      normalized.endsWith("_timeout") ||
+      normalized.endsWith("_ms")
+    ) {
+      return false;
+    }
+    if (
+      /^(?:api_?key|x_api_key|authorization|auth_header|password|passwd|pwd|secret(?:_key)?|access_token|refresh_token|id_token|client_secret|session_secret|private_key|csrf_token|shutdown_token|extension_token|x_mns_(?:shutdown|extension)_token|token|credential|credentials|mistral_api_key|tavily_api_key|langsearch_api_key)$/.test(
+        normalized,
+      )
+    ) {
+      return true;
+    }
+    return /(?:^|_)(?:api_?key|secret|password|passwd|pwd|token|credential|authorization)$/.test(
+      normalized,
+    );
+  }
+
+  _sanitizeValue(value, seen, depth = 0) {
+    if (value === null || value === undefined) return value;
+    if (typeof value === "string") return this._sanitizeString(value);
+    if (typeof value === "bigint") return String(value);
+    if (typeof value !== "object") return value;
+    if (seen.has(value)) return "[Circular]";
+    if (depth >= 12) return "[MaxDepth]";
+    seen.add(value);
+    try {
+      if (value instanceof Error) {
+        const sanitizedError = {
+          name: value.name,
+          message:
+            typeof value.message === "string"
+              ? this._sanitizeString(value.message)
+              : value.message,
+          stack:
+            typeof value.stack === "string"
+              ? this._sanitizeString(value.stack)
+              : value.stack,
+        };
+        if ("cause" in value && value.cause !== undefined) {
+          sanitizedError.cause = this._sanitizeValue(
+            value.cause,
+            seen,
+            depth + 1,
+          );
+        }
+        for (const key of Object.keys(value)) {
+          sanitizedError[key] = this._isSensitiveKey(key)
+            ? "[REDACTED]"
+            : this._sanitizeValue(value[key], seen, depth + 1);
+        }
+        return sanitizedError;
+      }
+      if (value instanceof Date) {
+        return Number.isNaN(value.getTime())
+          ? "[Invalid Date]"
+          : value.toISOString();
+      }
+      if (value instanceof RegExp) {
+        return String(value);
+      }
+      if (Array.isArray(value)) {
+        return value.map((item) => this._sanitizeValue(item, seen, depth + 1));
+      }
+      const out = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (
+          this._isSensitiveKey(k) &&
+          v !== null &&
+          v !== undefined &&
+          typeof v !== "boolean"
+        ) {
+          out[k] =
+            typeof v === "object"
+              ? this._sanitizeValue(v, seen, depth + 1)
+              : "[REDACTED]";
+        } else {
+          out[k] = this._sanitizeValue(v, seen, depth + 1);
+        }
+      }
+      return out;
+    } catch {
+      return "[unserializable object]";
+    } finally {
+      seen.delete(value);
+    }
   }
 
   /**
    * 機密情報をマスクしてログ出力
    */
   _sanitize(args) {
-    return args.map((arg) => {
-      if (typeof arg === "string") {
-        let sanitized = arg;
-        this.sensitivePatterns.forEach((pattern) => {
-          sanitized = sanitized.replace(pattern, "[REDACTED]");
-        });
-        return sanitized;
-      }
-      if (typeof arg === "object" && arg !== null) {
-        let targetObj = arg;
-        if (arg instanceof Error) {
-          targetObj = {
-            name: arg.name,
-            message: arg.message,
-            stack: arg.stack,
-          };
-        }
-        // 循環参照や BigInt を含むオブジェクトは JSON.stringify が例外を
-        // 投げる。ログ呼び出しが元のエラーを新たな TypeError で上書きしない
-        // よう、直列化失敗時は安全な文字列にフォールバックする。
-        let str;
-        try {
-          str = JSON.stringify(targetObj);
-        } catch {
-          return "[unserializable object]";
-        }
-        if (typeof str !== "string") {
-          return String(str);
-        }
-        let sanitized = str;
-        this.sensitivePatterns.forEach((pattern) => {
-          sanitized = sanitized.replace(pattern, "[REDACTED]");
-        });
-        try {
-          return JSON.parse(sanitized);
-        } catch {
-          return sanitized;
-        }
-      }
-      return arg;
-    });
+    const seen = new WeakSet();
+    return args.map((arg) => this._sanitizeValue(arg, seen, 0));
   }
 
   debug(...args) {

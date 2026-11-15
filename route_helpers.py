@@ -113,6 +113,41 @@ def _as_text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def safe_provider_error_details(details: Any) -> dict[str, Any]:
+    """Allowlist non-sensitive structured metadata from ProviderAPIError.details.
+
+    Provider error dicts may include the prompt, request body, or response
+    text; forwarding them verbatim can disclose user data to the browser.
+    """
+    if not isinstance(details, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    retry_after = details.get("retry_after")
+    if isinstance(retry_after, (int, float)) and not isinstance(retry_after, bool):
+        safe["retry_after"] = retry_after
+    provider_error = details.get("provider_error")
+    if isinstance(provider_error, dict):
+        safe_pe: dict[str, Any] = {}
+        status_code = provider_error.get("status_code")
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            safe_pe["status_code"] = status_code
+        for key in ("code", "type", "provider"):
+            val = provider_error.get(key)
+            if isinstance(val, int) and not isinstance(val, bool):
+                safe_pe[key] = val
+            elif isinstance(val, str):
+                cleaned_val = sanitize_client_upstream_text(val, "")
+                if cleaned_val:
+                    safe_pe[key] = cleaned_val
+        if "message" in provider_error and provider_error["message"] is not None:
+            safe_pe["message"] = sanitize_client_upstream_text(
+                provider_error["message"], "upstream provider error"
+            )
+        if safe_pe:
+            safe["provider_error"] = safe_pe
+    return safe
+
+
 # ============================================================
 # Rate Limiting
 # ============================================================

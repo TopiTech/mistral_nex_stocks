@@ -405,8 +405,14 @@
                 if (data.change != null) sItem.change = data.change;
                 if (data.change_percent != null)
                   sItem.change_percent = data.change_percent;
-                if (data.volume != null && Number(data.volume) > 0)
-                  sItem.volume = data.volume;
+                if (
+                  data.volume != null &&
+                  typeof data.volume !== "boolean" &&
+                  Number.isFinite(Number(data.volume)) &&
+                  Number(data.volume) > 0
+                ) {
+                  sItem.volume = Number(data.volume);
+                }
               }
             }
           });
@@ -445,21 +451,27 @@
             ? { ...wrapper.__stockData, ...data, is_realtime: true }
             : { ...data, is_realtime: true };
 
-          // Volume is strictly obtained from yfinance and must never be wiped out by scrapers
-          if (
-            wrapper.__stockData &&
-            wrapper.__stockData.volume != null &&
-            Number(wrapper.__stockData.volume) > 0
-          ) {
-            currentStock.volume = wrapper.__stockData.volume;
-          } else if (
-            foundStock &&
-            foundStock.volume != null &&
-            Number(foundStock.volume) > 0
-          ) {
-            currentStock.volume = foundStock.volume;
-          } else if (data.volume != null && Number(data.volume) > 0) {
-            currentStock.volume = data.volume;
+          // Preserve existing positive volume when scraper/partial deltas omit
+          // volume or report 0/null, while allowing newer positive volume updates.
+          const incomingVol =
+            data.volume != null && typeof data.volume !== "boolean"
+              ? Number(data.volume)
+              : NaN;
+          const stockVol =
+            foundStock?.volume != null && typeof foundStock.volume !== "boolean"
+              ? Number(foundStock.volume)
+              : NaN;
+          const wrapperVol =
+            wrapper.__stockData?.volume != null &&
+            typeof wrapper.__stockData.volume !== "boolean"
+              ? Number(wrapper.__stockData.volume)
+              : NaN;
+          if (Number.isFinite(incomingVol) && incomingVol > 0) {
+            currentStock.volume = incomingVol;
+          } else if (Number.isFinite(stockVol) && stockVol > 0) {
+            currentStock.volume = stockVol;
+          } else if (Number.isFinite(wrapperVol) && wrapperVol > 0) {
+            currentStock.volume = wrapperVol;
           }
 
           if (typeof window.updateExistingCard === "function") {

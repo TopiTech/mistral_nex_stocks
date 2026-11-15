@@ -10,6 +10,7 @@ from tenacity import (
 )
 
 import trend_sources as ts
+from utils.http_utils import extract_external_error_metadata as _external_error_metadata
 from utils.normalization import normalize_search_limit
 
 logger = logging.getLogger(__name__)
@@ -116,21 +117,6 @@ def _is_tavily_fatal_batch_error(exc: BaseException) -> bool:
         kw in msg
         for kw in ("unauthorized", "invalid api key", "too many requests", "rate limit", "usage limit")
     )
-
-
-def _external_error_metadata(exc: BaseException | None) -> tuple[str, str]:
-    """Return safe diagnostics for an external-provider exception.
-
-    Provider exception messages can reflect request data or credentials.  Keep
-    logs useful for operations without serializing their untrusted text.
-    """
-    if exc is None:
-        return "UnknownError", "unknown"
-    response = getattr(exc, "response", None)
-    status = getattr(response, "status_code", None)
-    if status is None:
-        status = getattr(exc, "status_code", None)
-    return type(exc).__name__, str(status) if status is not None else "unknown"
 
 
 def _log_tavily_retry(retry_state: Any) -> None:

@@ -69,20 +69,36 @@ _DEGRADED_RETRY_AFTER_SEC = 10.0
 # clock catches up; the cache must fail closed instead.
 _FUTURE_MTIME_SKEW_SEC = 300.0
 _last_lock_timeout_ts: float = 0.0
+_degraded_state_lock = threading.Lock()
 
 
 def _note_lock_timeout() -> None:
     global _last_lock_timeout_ts
     try:
-        _last_lock_timeout_ts = time.time()
+        now = time.time()
+        with _degraded_state_lock:
+            _last_lock_timeout_ts = now
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         logger.debug("Failed to record lock timeout timestamp: %s", exc)
 
 
 def is_disk_cache_degraded(within_sec: float = _DEGRADED_RETRY_AFTER_SEC) -> bool:
     try:
-        return (time.time() - _last_lock_timeout_ts) < within_sec
-    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        if isinstance(within_sec, bool) or not isinstance(within_sec, (int, float)):
+            return False
+        window = float(within_sec)
+        if not math.isfinite(window) or window <= 0.0:
+            return False
+        with _degraded_state_lock:
+            ts = _last_lock_timeout_ts
+        if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+            return False
+        ts_val = float(ts)
+        if not math.isfinite(ts_val) or ts_val <= 0.0:
+            return False
+        age = time.time() - ts_val
+        return math.isfinite(age) and -1.0 <= age < window
+    except (OSError, RuntimeError, ValueError, TypeError, OverflowError) as exc:
         logger.debug("is_disk_cache_degraded check failed: %s", exc)
         return False
 

@@ -332,7 +332,7 @@ def api_stocks_stream() -> Any:
 
                     heartbeat_interval = SSE_HEARTBEAT_INTERVAL
                     last_heartbeat_time = time.time()
-                    last_mode2_full_ts = 0.0
+                    last_mode2_full_ts = last_heartbeat_time if send_initial else 0.0
 
                     def _queued_frame(item: str | tuple[Any, Any]) -> str:
                         if isinstance(item, tuple):

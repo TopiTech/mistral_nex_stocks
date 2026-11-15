@@ -388,7 +388,7 @@
 }
 
 .heatmap-error-state strong {
-  color: var(--acc-red);
+  color: var(--accent-red);
   font-size: 1.1rem;
 }
 
@@ -400,7 +400,7 @@
   border-radius: 50%;
   background: rgba(255, 125, 125, 0.13);
   border: 1px solid rgba(255, 125, 125, 0.35);
-  color: var(--acc-red);
+  color: var(--accent-red);
   font-weight: 900;
 }
 

@@ -45,17 +45,30 @@ function fetchWithTimeout(
   options = {},
   timeoutMs = STOCK_POLL_TIMEOUT_MS,
 ) {
+  const defaultTimeoutMs =
+    typeof STOCK_POLL_TIMEOUT_MS === "number" &&
+    Number.isFinite(STOCK_POLL_TIMEOUT_MS) &&
+    STOCK_POLL_TIMEOUT_MS > 0
+      ? STOCK_POLL_TIMEOUT_MS
+      : 10000;
+  const effectiveTimeoutMs =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : defaultTimeoutMs;
   const controller = new AbortController();
   let timedOut = false;
   let timeoutId = null;
   const callerSignal = options.signal;
-  const abortFromCaller = () => controller.abort();
   const cleanup = () => {
     if (timeoutId !== null) {
       clearTimeout(timeoutId);
       timeoutId = null;
     }
     callerSignal?.removeEventListener("abort", abortFromCaller);
+  };
+  const abortFromCaller = () => {
+    controller.abort();
+    cleanup();
   };
   const makeTimeoutError = () => {
     const timeoutError = new Error("リクエストがタイムアウトしました");
@@ -66,11 +79,14 @@ function fetchWithTimeout(
     timedOut = true;
     controller.abort();
     cleanup();
-  }, timeoutMs);
+  }, effectiveTimeoutMs);
   if (callerSignal) {
-    if (callerSignal.aborted) controller.abort();
-    else
+    if (callerSignal.aborted) {
+      controller.abort();
+      cleanup();
+    } else {
       callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+    }
   }
   return fetch(url, { ...options, signal: controller.signal })
     .then((response) => {
@@ -97,6 +113,31 @@ function fetchWithTimeout(
         } catch (error) {
           console.warn("Failed to wrap response body reader:", error);
         }
+      }
+      if (typeof response?.body?.cancel === "function") {
+        const originalCancel = response.body.cancel;
+        try {
+          response.body.cancel = async (...args) => {
+            try {
+              return await originalCancel.apply(response.body, args);
+            } catch (error) {
+              if (timedOut) throw makeTimeoutError();
+              throw error;
+            } finally {
+              cleanup();
+            }
+          };
+        } catch (error) {
+          console.warn("Failed to wrap response body cancel:", error);
+        }
+      }
+      try {
+        Object.defineProperty(response, "_mnsCleanupTimeout", {
+          value: cleanup,
+          configurable: true,
+        });
+      } catch {
+        // Non-extensible Response objects still release timers via wrapped readers/cancel.
       }
       return response;
     })
@@ -453,8 +494,16 @@ async function fetchAndRenderStocks(base, signal = null, generation = null) {
       fetchOptions,
       STOCK_POLL_TIMEOUT_MS,
     );
-    if (isStalePoll()) return;
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (isStalePoll()) {
+      res?.body?.cancel?.().catch(() => {});
+      res?._mnsCleanupTimeout?.();
+      return;
+    }
+    if (!res.ok) {
+      res?.body?.cancel?.().catch(() => {});
+      res?._mnsCleanupTimeout?.();
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     if (isStalePoll()) return;
 
@@ -736,7 +785,10 @@ document.addEventListener("DOMContentLoaded", () => {
         stopStockPolling();
         const res = await send("stopBackend");
         if (!res?.ok) throw new Error(res?.error || "停止に失敗しました");
-        await waitForBackendStopped();
+        const stopped = await waitForBackendStopped();
+        if (!stopped) {
+          throw new Error("バックエンド停止の確認がタイムアウトしました");
+        }
       },
       "⏳ 停止中...",
     ),

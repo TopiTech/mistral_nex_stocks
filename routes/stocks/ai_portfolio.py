@@ -36,6 +36,9 @@ from route_helpers import (
     sanitize_client_upstream_text,
     sanitize_upstream_log_message,
 )
+from route_helpers import (
+    safe_provider_error_details as _safe_provider_error_details,
+)
 from routes.stocks import common as _common
 from routes.stocks.common import (
     _stored_symbol_aliases,
@@ -89,37 +92,6 @@ def _clean_copy_stock_name(raw_name: Any, *, max_len: int = 100) -> str:
     cleaned = _strip_html_tags(raw_name)
     cleaned = "".join(ch for ch in cleaned if ord(ch) >= 32 and ord(ch) != 127)
     return cleaned.strip()[: min(max_len, MAX_STOCK_NAME_LENGTH)]
-
-
-def _safe_provider_error_details(details: Any) -> dict[str, Any]:
-    """Allowlist non-sensitive structured metadata from ProviderAPIError.details."""
-    if not isinstance(details, dict):
-        return {}
-    safe: dict[str, Any] = {}
-    retry_after = details.get("retry_after")
-    if isinstance(retry_after, (int, float)) and not isinstance(retry_after, bool):
-        safe["retry_after"] = retry_after
-    provider_error = details.get("provider_error")
-    if isinstance(provider_error, dict):
-        safe_pe: dict[str, Any] = {}
-        status_code = provider_error.get("status_code")
-        if isinstance(status_code, int) and not isinstance(status_code, bool):
-            safe_pe["status_code"] = status_code
-        for key in ("code", "type", "provider"):
-            val = provider_error.get(key)
-            if isinstance(val, int) and not isinstance(val, bool):
-                safe_pe[key] = val
-            elif isinstance(val, str):
-                cleaned_val = sanitize_client_upstream_text(val, "")
-                if cleaned_val:
-                    safe_pe[key] = cleaned_val
-        if "message" in provider_error and provider_error["message"] is not None:
-            safe_pe["message"] = sanitize_client_upstream_text(
-                provider_error["message"], "upstream provider error"
-            )
-        if safe_pe:
-            safe["provider_error"] = safe_pe
-    return safe
 
 
 def _ai_portfolio_error_response(
@@ -684,7 +656,15 @@ def api_save_ai_portfolio() -> Any:
             details={"reason": "無効なポートフォリオデータです"},
             status_code=400,
         )
-    portfolio = save_req.portfolio
+    portfolio = dict(save_req.portfolio)
+    if save_req.theme and not (
+        isinstance(portfolio.get("theme"), str) and portfolio["theme"].strip()
+    ):
+        portfolio["theme"] = save_req.theme
+    if save_req.name and not (
+        isinstance(portfolio.get("title"), str) and portfolio["title"].strip()
+    ):
+        portfolio["title"] = save_req.name
 
     canonical_portfolio = sanitize_ai_portfolio(portfolio)
     if not canonical_portfolio.get("title"):
@@ -870,14 +850,30 @@ def api_copy_ai_portfolio_to_my() -> Any:
         if is_stale:
             try:
                 resolved_fx, is_est = get_current_usdjpy_rate(default_rate=DEFAULT_USDJPY_RATE)
-                if not is_est and math.isfinite(resolved_fx) and resolved_fx > 0:
+                valid_resolved = (
+                    not is_bool_like(resolved_fx)
+                    and math.isfinite(resolved_fx)
+                    and resolved_fx > 0
+                )
+                safe_fx = float(resolved_fx) if valid_resolved else DEFAULT_USDJPY_RATE
+                if not is_est and valid_resolved:
                     is_stale = False
                     resolved_usdjpy_rate, usdjpy_rate_ts = app_state.market.update_usdjpy_rate(
-                        resolved_fx, ts=now
+                        safe_fx, ts=now
                     )
                 else:
+                    # Keep the rate visibly stale whenever resolution fell back to
+                    # an estimate/default so subsequent requests do not treat it as
+                    # a verified live FX timestamp and suppress stale_warning.
+                    preserve_stale_ts = (
+                        rate_is_valid
+                        and math.isfinite(usdjpy_rate_ts)
+                        and 0.0 < usdjpy_rate_ts <= now + 300.0
+                        and (now - usdjpy_rate_ts) > 24 * 3600
+                    )
+                    fallback_ts = usdjpy_rate_ts if preserve_stale_ts else 0.0
                     resolved_usdjpy_rate, _ = app_state.market.update_usdjpy_rate(
-                        resolved_fx, ts=now - 24 * 3600 + 60.0
+                        safe_fx, ts=fallback_ts
                     )
             except Exception as fx_exc:
                 current_app.logger.debug("Failed to dynamically resolve USDJPY rate: %s", fx_exc)

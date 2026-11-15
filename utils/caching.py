@@ -138,12 +138,14 @@ def sanitize_cache_key(key):
         if ("A" <= ch <= "Z") or ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch in "_.-:":
             sanitized.append(ch)
         else:
-            sanitized.extend(f"%{byte:02X}" for byte in ch.encode("utf-8"))
+            # ``surrogatepass`` keeps the encoding total: a key carrying a lone
+            # surrogate (never valid UTF-8) must not raise from a sanitizer.
+            sanitized.extend(f"%{byte:02X}" for byte in ch.encode("utf-8", errors="surrogatepass"))
     encoded = "".join(sanitized)
     if len(encoded) <= _CACHE_KEY_MAX_LENGTH:
         return encoded
 
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(key.encode("utf-8", errors="surrogatepass")).hexdigest()
     prefix_length = _CACHE_KEY_MAX_LENGTH - len(_CACHE_KEY_HASH_MARKER) - _CACHE_KEY_DIGEST_LENGTH
     return encoded[:prefix_length] + _CACHE_KEY_HASH_MARKER + digest
 

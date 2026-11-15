@@ -485,8 +485,8 @@ class StockDiskCache:
             # R9: degraded window tracked via _note_lock_timeout; callers check
             # is_disk_cache_degraded() to suppress yfinance re-fetch amplification.
             # get() still returns None (original contract) so callers explicitly
-            # decide to serve stale via get_stale_or_degraded(); stale-while-revalidate
-            # is opt-in to keep test semantics stable.
+            # decide to serve stale via get_stale(); stale-while-revalidate is
+            # opt-in to keep test semantics stable.
             logger.warning(
                 "Disk cache read degraded (lock busy) for %s: %s (Retry-After %ds)",
                 key,

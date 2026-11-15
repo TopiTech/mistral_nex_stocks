@@ -102,6 +102,40 @@ def _read_bounded_request_body(*, max_size: int) -> bytes | None:
     return body if len(body) <= max_size else None
 
 
+# Lone UTF-16 surrogates (U+D800..U+DFFF) are not Unicode scalar values, so they
+# cannot be encoded as UTF-8. ``json.loads`` still accepts them from a
+# ``"\ud800"`` escape, which means a JSON request body can deliver a ``str``
+# that every later ``text.encode("utf-8")`` rejects (cache-key sanitising,
+# token digests, Fernet encryption, SQLite text binding). That turned a
+# malformed client body into an unhandled UnicodeEncodeError / HTTP 500.
+# No browser input can produce one, so the single JSON boundary rejects them.
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
+
+def _contains_lone_surrogate(payload: object) -> bool:
+    """Return ``True`` when *payload* holds a lone surrogate anywhere.
+
+    Walks dict keys, values and nested lists iteratively so that a deeply
+    nested body cannot exhaust the interpreter stack while it is being
+    validated.
+    """
+    stack: list[object] = [payload]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            # ``str.isascii()`` is O(1) for the compact strings ``json.loads``
+            # produces, so the common case (ASCII JSON, multi-MB base64 image
+            # bodies) never reaches the regex scan.
+            if not item.isascii() and _LONE_SURROGATE_RE.search(item):
+                return True
+        elif isinstance(item, dict):
+            stack.extend(item.keys())
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return False
+
+
 def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
     """Parse a bounded JSON-object request body safely.
 
@@ -127,6 +161,8 @@ def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
         return None
 
     if payload is None or not isinstance(payload, dict):
+        return None
+    if _contains_lone_surrogate(payload):
         return None
     return payload
 

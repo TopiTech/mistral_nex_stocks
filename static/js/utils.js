@@ -81,21 +81,31 @@ function sanitizeTextInput(text, maxLength = 1000) {
     return "";
   }
 
-  let sanitized = text.trim();
-
-  // 長さ制限
-  if (sanitized.length > maxLength) {
-    sanitized = sanitized.substring(0, maxLength);
-  }
-
   // 制御文字の削除（改行とタブは許可）
   // (M36) このサニタイザーは制御文字の「除去」自体が目的であるため、
   // no-control-regex は意図した検出として本行のみ無効化する。文字クラスは
   // 制御文字を含まなければ本 goal の契約を満たせない。
   // eslint-disable-next-line no-control-regex
-  sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  const controlChars = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+  const withoutControlChars = text.replace(controlChars, "");
 
-  return sanitized;
+  // 除去してからトリム・切り詰めを行う。先に長さで切ると、制御文字だけの
+  // 前方部分が長さ予算を消費し、後続の有効なテキストが失われる。
+  const trimmed = withoutControlChars.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  // UTF-16 コードユニットではなくコードポイント単位で切り詰める。
+  // ユニット単位の cut はサロゲートペアを分割し、単独サロゲート
+  // (Unicode スカラー値ではない) を生成する。JSON.stringify はそれを
+  // そのまま送信でき、下流の UTF-8 エンコーダはすべて拒否する。
+  const kept = [];
+  for (const char of trimmed) {
+    if (kept.length >= maxLength) break;
+    kept.push(char);
+  }
+  return kept.join("");
 }
 
 function isValidHexColor(value) {

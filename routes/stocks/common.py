@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
@@ -53,15 +54,47 @@ def is_market_open(market: str) -> bool:
     return _market_utils_mod.is_market_open(market)
 
 
+def _resolver_accepts_real_data_only(resolver: Any) -> bool:
+    """Return whether *resolver* can accept the ``real_data_only`` keyword.
+
+    Test doubles and older wrappers may expose only ``include_portfolio``.
+    Inspecting the callable (including a ``MagicMock``'s ``side_effect``)
+    preserves that compatibility without catching the resolver's own
+    ``TypeError`` and silently replaying it with a weaker data policy.
+    """
+    target = getattr(resolver, "side_effect", None)
+    if target is None or not callable(target):
+        target = resolver
+    try:
+        parameters = inspect.signature(target).parameters
+    except (TypeError, ValueError):
+        # Builtins/C callables cannot always be introspected; the production
+        # resolver accepts the keyword, so prefer the complete call.
+        return True
+    if "real_data_only" in parameters:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+
+
 def resolve_stocks_for_response(
     include_portfolio: bool = False, real_data_only: bool = False
 ) -> dict[str, list[Any]]:
-    try:
-        return _payload_mod._resolve_stocks_for_response(
+    """Resolve the stock response with the caller's real-data policy intact.
+
+    Do not retry after ``TypeError``: that used to catch malformed-row bugs
+    raised deep inside the resolver, silently drop ``real_data_only=True`` and
+    return interpolated rows for a Mode-2 (real data only) stream.  A second
+    call also repeated the resolver's PTS registration side effects.  Any
+    ``TypeError`` here is a real defect and must surface.
+    """
+    resolver = _payload_mod._resolve_stocks_for_response
+    if _resolver_accepts_real_data_only(resolver):
+        return resolver(
             include_portfolio=include_portfolio, real_data_only=real_data_only
         )
-    except TypeError:
-        return _payload_mod._resolve_stocks_for_response(include_portfolio=include_portfolio)
+    # Compatibility for a legacy double that predates real_data_only.  The
+    # resolver's own TypeError is never caught here.
+    return resolver(include_portfolio=include_portfolio)
 
 
 def resolve_indices_for_response() -> dict[str, Any]:

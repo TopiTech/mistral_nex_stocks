@@ -142,13 +142,50 @@ def _contains_lone_surrogate(payload: object) -> bool:
     return False
 
 
+def _contains_nested_non_finite_number(payload: object) -> bool:
+    """Return ``True`` for NaN/Infinity inside nested arbitrary structures.
+
+    ``json.loads`` accepts the non-standard ``NaN``/``Infinity`` literals even
+    though JSON and the browser's ``JSON.stringify`` do not.  A client can
+    therefore inject values into untyped containers (``chart_data``,
+    ``history_data``, ``portfolio``) that later fail
+    ``json.dumps(..., allow_nan=False)`` in the portfolio/SSE paths.
+
+    Direct scalar fields of the root object are deliberately left to the
+    endpoint's Pydantic schema: those fields own the historical error code and
+    message (for example ``price must be a finite non-negative number``), and
+    rejecting them earlier would turn ``INVALID_INPUT`` into
+    ``MALFORMED_INPUT``.  Every value inside a nested list/dict has no typed
+    schema owner, so the single JSON boundary rejects it here.
+
+    Booleans are not numbers here (``bool`` is an ``int`` subclass), and the
+    walk is iterative so a deeply nested body cannot exhaust the stack.
+    """
+    stack: list[tuple[object, int]] = [(payload, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, float):
+            # depth 1 = a direct field of the root object (schema-owned).
+            if depth > 1 and not math.isfinite(item):
+                return True
+        elif isinstance(item, dict):
+            stack.extend((value, depth + 1) for value in item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend((value, depth + 1) for value in item)
+    return False
+
+
 def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
     """Parse a bounded JSON-object request body safely.
 
     Rejects payloads larger than ``max_size`` (1 MiB by default), including
     chunked requests without a ``Content-Length`` header.  The raw body is
     cached before JSON decoding so a bounded read, rather than a client-supplied
-    header, is authoritative.
+    header, is authoritative.  Lone UTF-16 surrogates and non-standard
+    ``NaN``/``Infinity`` values inside untyped nested containers are rejected
+    because they cannot be represented by standards-compliant JSON/UTF-8
+    consumers; direct scalar fields remain schema-owned so endpoint-specific
+    validation error codes are preserved.
 
     Args:
         max_size: Maximum JSON body size in bytes. Only endpoints with an
@@ -168,7 +205,7 @@ def _parse_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | None:
 
     if payload is None or not isinstance(payload, dict):
         return None
-    if _contains_lone_surrogate(payload):
+    if _contains_lone_surrogate(payload) or _contains_nested_non_finite_number(payload):
         return None
     return payload
 

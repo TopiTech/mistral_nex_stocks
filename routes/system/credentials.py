@@ -80,6 +80,7 @@ def _build_safe_credentials_response() -> dict[str, Any]:
         "mistral_api_key_min_length",
         "langsearch_api_key_min_length",
         "tavily_api_key_min_length",
+        "sse_heartbeat_interval",
     }
     state: dict[str, Any] = {k: _state[k] for k in _allowed_keys if k in _state}
     state["custom_ai_prompt"] = routes.api_system.get_custom_ai_prompt()

@@ -833,16 +833,6 @@ def _write_user_stocks_with_lock(
                                     time.sleep(0.015 * (attempt + 1))
                                     continue
                                 raise
-                        o_dir = getattr(os, "O_DIRECTORY", None)
-                        if os.name != "nt" and o_dir is not None:
-                            try:
-                                dir_fd = os.open(str(target_file.parent), o_dir)
-                                try:
-                                    os.fsync(dir_fd)
-                                finally:
-                                    os.close(dir_fd)
-                            except OSError:
-                                pass
                     else:
                         raise UserStocksPersistError(
                             f"user_stocks tmp file missing after locked write: {tmp_file}"

@@ -132,3 +132,15 @@ def test_credentials_get_includes_tier_fields(client):
     first_model = data["available_models"][0]
     assert "tier" in first_model
     assert "tier_label" in first_model
+
+
+def test_credentials_get_includes_sse_heartbeat_interval(client):
+    """Test GET /api/credentials response includes sse_heartbeat_interval."""
+    from constants import SSE_HEARTBEAT_INTERVAL
+
+    res = client.get("/api/credentials", headers={"Origin": "http://localhost:5000"})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert "sse_heartbeat_interval" in data
+    assert data["sse_heartbeat_interval"] == SSE_HEARTBEAT_INTERVAL
+

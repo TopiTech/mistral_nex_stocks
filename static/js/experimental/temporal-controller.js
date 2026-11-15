@@ -262,6 +262,8 @@
         return;
       }
 
+      if (e.ctrlKey || e.metaKey) return;
+
       e.preventDefault();
 
       if (e.shiftKey) {
@@ -369,6 +371,16 @@
             : (res?.data ?? res);
 
         if (!this.isCurrentHistoryContext(cleanSymbol, period)) return;
+
+        const resObj = res?.response ?? res;
+        if (resObj && typeof resObj.ok === "boolean" && !resObj.ok) {
+          throw new Error(
+            data?.details?.reason ||
+              data?.message ||
+              data?.error ||
+              `HTTP ${resObj.status}`,
+          );
+        }
 
         if (data && data.fetching) {
           // 上限付きリトライ(他ループと同じ ~20 回)。サーバーが fetching を

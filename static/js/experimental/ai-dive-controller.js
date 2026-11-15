@@ -357,6 +357,15 @@
           ) {
             return;
           }
+          const resObj = res?.response ?? res;
+          if (resObj && typeof resObj.ok === "boolean" && !resObj.ok) {
+            throw new Error(
+              data?.details?.reason ||
+                data?.message ||
+                data?.error ||
+                `HTTP ${resObj.status}`,
+            );
+          }
           if (!data?.fetching) break;
           if (data?.message && loading) {
             const sec = data.elapsed_sec ? ` (${data.elapsed_sec}s)` : "";
@@ -596,8 +605,8 @@
             (res && typeof res.json === "function"
               ? await res.json().catch(() => null)
               : (res?.data ?? res)) || {};
-          const resObj = res?.response || res;
-          if (resObj && !resObj.ok) {
+          const resObj = res?.response ?? res;
+          if (resObj && typeof resObj.ok === "boolean" && !resObj.ok) {
             const detailMsg = data?.details?.reason
               ? `: ${data.details.reason}`
               : "";

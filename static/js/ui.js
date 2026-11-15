@@ -8,6 +8,7 @@ function isUiElementVisible(el) {
   if (typeof isEffectivelyVisible === "function")
     return isEffectivelyVisible(el);
   if (!el || typeof el.getBoundingClientRect !== "function") return false;
+  if (el.hasAttribute?.("hidden") || el.closest?.("[hidden]")) return false;
   if (
     typeof window !== "undefined" &&
     typeof window.getComputedStyle === "function"
@@ -19,6 +20,15 @@ function isUiElementVisible(el) {
   }
   const rect = el.getBoundingClientRect();
   return rect.width > 0 || rect.height > 0;
+}
+
+function resolveCardChartParams(wrapper) {
+  const stockKey = wrapper?.dataset?.stockKey || "";
+  const isPortfolio = wrapper?.dataset?.marketContext === "portfolio";
+  return {
+    period: isPortfolio ? "3mo" : getChartPref(stockKey, "period", "3mo"),
+    interval: isPortfolio ? "auto" : getChartPref(stockKey, "interval", "auto"),
+  };
 }
 
 let cardIntersectionObserver = null;
@@ -44,10 +54,8 @@ function _createCardIntersectionObserver() {
             const stockKey = wrapper.dataset.stockKey;
             const stock = wrapper.__stockData || getStockByKey(stockKey);
             if (stock) {
-              refreshStockChart(
-                wrapper,
-                getChartPref(stockKey, "period", "3mo"),
-              );
+              const { period, interval } = resolveCardChartParams(wrapper);
+              refreshStockChart(wrapper, period, interval);
             }
           }
         }
@@ -1621,13 +1629,7 @@ function toggleDetail(wrapper) {
     }, getTransitionFallbackMs(detail));
 
     if (stock) {
-      const isPortfolio = wrapper.dataset.marketContext === "portfolio";
-      const period = isPortfolio
-        ? "3mo"
-        : getChartPref(stockKey, "period", "3mo");
-      const interval = isPortfolio
-        ? "auto"
-        : getChartPref(stockKey, "interval", "auto");
+      const { period, interval } = resolveCardChartParams(wrapper);
       refreshStockChart(wrapper, period, interval);
       ensureStockDetails(wrapper);
     }
@@ -2637,10 +2639,8 @@ function showChartError(wrapper, msg, type = "error") {
     retry.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      refreshStockChart(
-        wrapper,
-        getChartPref(wrapper.dataset.stockKey, "period", "3mo"),
-      );
+      const { period, interval } = resolveCardChartParams(wrapper);
+      refreshStockChart(wrapper, period, interval);
     });
     errDiv.appendChild(retry);
   }
@@ -3179,7 +3179,12 @@ function trapDrawerFocus(event, drawerOverlay) {
     drawerOverlay.querySelectorAll(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ),
-  ).filter((el) => !el.hasAttribute("inert") && isUiElementVisible(el));
+  ).filter(
+    (el) =>
+      !el.hasAttribute?.("inert") &&
+      !el.closest?.("[inert]") &&
+      isUiElementVisible(el),
+  );
   if (!focusable.length) {
     event.preventDefault();
     drawerOverlay.focus();
@@ -3407,10 +3412,11 @@ function openStockDetailDrawer(stock, wrapper) {
   const overlay = document.getElementById("stock-detail-drawer-overlay");
   if (!overlay) return;
 
-  // 前のドロワーを先に閉じる。open 設定(drawerEl の open クラス/ dataset /
-  // トリガー記録)後に close すると、close 側が new 側の状態を消してしまっ
-  // た(ドロワーが開いたまま中身だけ壊れる)ため、順序は固定する。
-  if (currentDrawerActiveWrapper && currentDrawerActiveWrapper !== wrapper) {
+  // 前のドロワーを先に閉じる(同一ラッパー再オープン時も移動済み要素を一旦復元する)。
+  // open 設定後に close すると close 側が new 側の状態を壊すため順序を固定する。
+  const sameWrapperTrigger =
+    currentDrawerActiveWrapper === wrapper ? stockDetailDrawerTrigger : null;
+  if (currentDrawerActiveWrapper) {
     closeStockDetailDrawer();
   }
 
@@ -3425,9 +3431,11 @@ function openStockDetailDrawer(stock, wrapper) {
 
   currentDrawerActiveWrapper = wrapper;
   stockDetailDrawerTrigger =
-    document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    sameWrapperTrigger && sameWrapperTrigger.isConnected !== false
+      ? sameWrapperTrigger
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
 
   renderStockDetailDrawerHeader(stock);
 
@@ -4355,9 +4363,14 @@ function openFullscreenChart(wrapper) {
     if (e.key !== "Tab") return;
     const focusable = Array.from(
       modal.querySelectorAll(
-        'button:not([disabled]):not([style*="display: none"]):not(.hidden), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        'a[href], button:not([disabled]):not([style*="display: none"]):not(.hidden), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
-    ).filter((el) => isUiElementVisible(el));
+    ).filter(
+      (el) =>
+        !el.hasAttribute?.("inert") &&
+        !el.closest?.("[inert]") &&
+        isUiElementVisible(el),
+    );
     if (!focusable.length) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];

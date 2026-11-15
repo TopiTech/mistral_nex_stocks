@@ -385,15 +385,61 @@ class APIClient {
         eventSource.addEventListener.bind(eventSource);
       const origRemoveEventListener =
         eventSource.removeEventListener.bind(eventSource);
+      const getCaptureFlag = (options) =>
+        typeof options === "boolean" ? options : Boolean(options?.capture);
       const listenerMap = new WeakMap();
+      const removeTrackedEntry = (listenerObj, type, capture) => {
+        const typeMap = listenerMap.get(listenerObj);
+        const captureMap = typeMap?.get(type);
+        const existing = captureMap?.get(capture);
+        if (!captureMap || !existing) return undefined;
+        captureMap.delete(capture);
+        if (captureMap.size === 0 && typeMap) {
+          typeMap.delete(type);
+          if (typeMap.size === 0) {
+            listenerMap.delete(listenerObj);
+          }
+        }
+        return existing;
+      };
       const customEventSource = eventSource;
       customEventSource.addEventListener = (
         type,
         listener,
         eventListenerOptions,
       ) => {
-        if (type !== "error" && type !== "open" && listener) {
+        if (
+          type !== "error" &&
+          type !== "open" &&
+          listener &&
+          (typeof listener === "object" || typeof listener === "function")
+        ) {
+          const optsObj =
+            typeof eventListenerOptions === "object" &&
+            eventListenerOptions !== null
+              ? eventListenerOptions
+              : undefined;
+          if (optsObj?.signal?.aborted) {
+            return;
+          }
+          const capture = getCaptureFlag(eventListenerOptions);
+          let typeMap = listenerMap.get(listener);
+          if (!typeMap) {
+            typeMap = new Map();
+            listenerMap.set(listener, typeMap);
+          }
+          let captureMap = typeMap.get(type);
+          if (!captureMap) {
+            captureMap = new Map();
+            typeMap.set(type, captureMap);
+          }
+          if (captureMap.has(capture)) {
+            return;
+          }
           const wrappedListener = (event) => {
+            if (optsObj?.once) {
+              removeTrackedEntry(listener, type, capture);
+            }
             if (event && event.lastEventId) {
               this.lastEventId = Number(event.lastEventId) || 0;
             }
@@ -411,18 +457,15 @@ class APIClient {
               );
             }
           };
-          if (typeof listener === "object" || typeof listener === "function") {
-            let typeMap = listenerMap.get(listener);
-            if (!typeMap) {
-              typeMap = new Map();
-              listenerMap.set(listener, typeMap);
-            }
-            let wrappers = typeMap.get(type);
-            if (!wrappers) {
-              wrappers = [];
-              typeMap.set(type, wrappers);
-            }
-            wrappers.push(wrappedListener);
+          captureMap.set(capture, wrappedListener);
+          if (optsObj?.signal) {
+            optsObj.signal.addEventListener(
+              "abort",
+              () => {
+                removeTrackedEntry(listener, type, capture);
+              },
+              { once: true },
+            );
           }
           return origAddEventListener(
             type,
@@ -444,16 +487,10 @@ class APIClient {
           listener &&
           (typeof listener === "object" || typeof listener === "function")
         ) {
-          const typeMap = listenerMap.get(listener);
-          const wrappers = typeMap?.get(type);
-          if (wrappers && wrappers.length > 0) {
-            target = wrappers.pop();
-            if (wrappers.length === 0 && typeMap) {
-              typeMap.delete(type);
-              if (typeMap.size === 0) {
-                listenerMap.delete(listener);
-              }
-            }
+          const capture = getCaptureFlag(eventListenerOptions);
+          const removed = removeTrackedEntry(listener, type, capture);
+          if (removed) {
+            target = removed;
           }
         }
         if (target) {

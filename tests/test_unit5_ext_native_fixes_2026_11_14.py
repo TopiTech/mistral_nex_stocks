@@ -449,3 +449,76 @@ def test_u5_05_test_isolation_and_ci_coverage(tmp_path: Path) -> None:
     assert not src_re.search('src="/static/js/app.js"')
     assert integrity_re.search("INTEGRITY=sha256-deadbeef")
     assert integrity_re.search("integrity='sha512-deadbeef'")
+
+
+def test_review_stop_backend_refuses_unverified_backend() -> None:
+    """stopBackend must refuse token acquisition/transmission when backendVerified === false."""
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError("Node.js is required for extension runtime tests")
+
+    script = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+
+function extractBlock(src, anchor) {
+  const start = src.indexOf(anchor);
+  if (start < 0) throw new Error("Anchor not found: " + anchor);
+  let i = src.indexOf("{", start);
+  let depth = 0;
+  let inStr = null;
+  let escaped = false;
+  for (; i < src.length; i++) {
+    const ch = src[i];
+    if (escaped) { escaped = false; continue; }
+    if (inStr) {
+      if (ch === "\\") escaped = true;
+      else if (ch === inStr) inStr = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { inStr = ch; continue; }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  throw new Error("Unbalanced braces for: " + anchor);
+}
+
+(async () => {
+  const bgSrc = fs.readFileSync("chrome_extension/background.js", "utf8");
+  const stopSnippet = extractBlock(bgSrc, 'if (message.action === "stopBackend")');
+  let nativeCalled = false;
+  let fetchCalled = false;
+  let capturedResp = null;
+  const ctx = {
+    message: { action: "stopBackend" },
+    backendVerified: false,
+    checkHealth: async () => ({ ok: true }),
+    sendNativeMessage: async () => { nativeCalled = true; return { ok: true, token: "secret" }; },
+    fetchWithTimeout: async () => { fetchCalled = true; return { ok: true }; },
+    safeSendResponse: (r) => { capturedResp = r; return true; },
+    setMnsShutdownToken: () => {},
+    mnsShutdownToken: "cached-shutdown-token",
+    console, String, Promise, Error,
+  };
+  await vm.runInNewContext(`(async () => { ${stopSnippet} })()`, ctx);
+  console.log(JSON.stringify({ nativeCalled, fetchCalled, capturedResp }));
+})();
+"""
+    proc = subprocess.run(
+        [node, "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=15,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    data = json.loads(proc.stdout.strip())
+    assert data["nativeCalled"] is False
+    assert data["fetchCalled"] is False
+    assert data["capturedResp"]["ok"] is False
+    assert "正当性を確認できません" in data["capturedResp"]["error"]

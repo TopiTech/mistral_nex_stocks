@@ -971,7 +971,8 @@ document
 // -----------------------------------------------------
 function getAlertsConfig() {
   try {
-    return JSON.parse(localStorage.getItem("userAlerts") || "{}");
+    const raw = JSON.parse(localStorage.getItem("userAlerts") || "{}");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   } catch {
     return {};
   }

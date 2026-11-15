@@ -436,12 +436,13 @@
               ? await res.json().catch(() => null)
               : (res?.data ?? res);
 
-          if (res && typeof res.ok === "boolean" && !res.ok) {
+          const resObj = res?.response ?? res;
+          if (resObj && typeof resObj.ok === "boolean" && !resObj.ok) {
             const errorMsg =
               data?.details?.reason ||
               data?.message ||
               data?.error ||
-              `HTTP ${res.status}`;
+              `HTTP ${resObj.status}`;
             throw new Error(errorMsg);
           }
           if (data && (data.ok === false || (data.error && !data.fetching))) {

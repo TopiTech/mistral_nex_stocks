@@ -176,8 +176,19 @@ def _fsync_directory_strict(directory: Path) -> None:
         os.close(dir_fd)
 
 
+def _ensure_storage_parent_dir(*paths: Path) -> None:
+    """Ensure every unique parent directory for *paths* exists before file or lock I/O."""
+    seen: set[Path] = set()
+    for path in paths:
+        parent = path.parent
+        if parent and parent not in seen:
+            seen.add(parent)
+            parent.mkdir(parents=True, exist_ok=True)
+
+
 def _acquire_exclusive_lock_fd(lock_file: Path) -> int:
     """Acquire an advisory cross-process exclusive lock on *lock_file*."""
+    _ensure_storage_parent_dir(lock_file)
     if os.name == "nt":
         import msvcrt
 
@@ -778,6 +789,7 @@ def _write_user_stocks_with_lock(
             or when locking is unavailable on either platform (callers must
             surface this instead of treating a skipped write as success).
     """
+    _ensure_storage_parent_dir(target_file, lock_file, tmp_file)
     if os.name == "nt":  # Windows
         try:
             import msvcrt

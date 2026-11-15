@@ -194,7 +194,7 @@ function resetButton(btn) {
 // resolved via computed style + bounding rect instead.
 function isEffectivelyVisible(el) {
   if (!el || typeof el.getBoundingClientRect !== "function") return false;
-  if (el.hasAttribute("hidden")) return false;
+  if (el.hasAttribute?.("hidden") || el.closest?.("[hidden]")) return false;
   if (
     typeof window !== "undefined" &&
     typeof window.getComputedStyle === "function"
@@ -252,7 +252,12 @@ function openModal(modalId, onOpenCallback) {
       modal.querySelectorAll(
         'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
-    ).filter((el) => isEffectivelyVisible(el) && !el.hasAttribute("inert"));
+    ).filter(
+      (el) =>
+        isEffectivelyVisible(el) &&
+        !el.hasAttribute?.("inert") &&
+        !el.closest?.("[inert]"),
+    );
 
   if (!modal.hasAttribute("tabindex")) {
     modal.setAttribute("tabindex", "-1");

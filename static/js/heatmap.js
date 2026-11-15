@@ -978,6 +978,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const onMouseMove = (event) => {
       if (state.viewMode !== "3d") return;
       const rect = renderer.domElement.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 

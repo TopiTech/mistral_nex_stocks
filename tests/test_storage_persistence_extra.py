@@ -10,6 +10,8 @@ test_storage_extra.py:
 """
 
 import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -437,6 +439,63 @@ class SaveRoundTripTests(unittest.TestCase):
             with app_state.market.user_stocks_lock:
                 self.assertEqual(app_state.market.last_usdjpy_rate, 150.00)
                 self.assertEqual(app_state.market.last_usdjpy_rate_ts, 0.0)
+
+    def test_write_user_stocks_with_lock_creates_missing_parent_dirs(self):
+        nested_dir = self.tmp_path / "missing_a" / "missing_b"
+        tmp_dir = self.tmp_path / "missing_tmp"
+        target = nested_dir / "user_stocks.json"
+        lock_file = nested_dir / "user_stocks.lock"
+        tmp_file = tmp_dir / "user_stocks.tmp"
+
+        storage._write_user_stocks_with_lock('{"ok": true}', tmp_file, target, lock_file)
+
+        self.assertTrue(target.exists())
+        self.assertEqual(target.read_text(encoding="utf-8"), '{"ok": true}')
+        self.assertTrue(lock_file.exists())
+        self.assertFalse(tmp_file.exists())
+
+    def test_save_user_stocks_creates_missing_parent_dir(self):
+        nested_stocks = self.tmp_path / "uncreated" / "runtime" / "user_stocks.json"
+        with (
+            patch.object(storage, "USER_STOCKS_FILE", str(nested_stocks)),
+            patch.object(storage.config_store, "_ensure_runtime_dir", lambda: None),
+            patch.object(
+                storage.config_store,
+                "get_or_create_master_key",
+                return_value="Ij2VbZwpP-Du-IHWL5VUPKL8BHUXUbddJY7JNj4xJ6g=",
+            ),
+            patch("services.realtime_engine.realtime_market_engine.register_symbols"),
+        ):
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us = {"MSFT": {"shares": 2}}
+                app_state.market.user_jp = {}
+                app_state.market.user_idx = {}
+                app_state.market.user_stocks_load_error = False
+                app_state.market.last_usdjpy_rate = 151.25
+                app_state.market.last_usdjpy_rate_ts = 456.0
+
+            storage.save_user_stocks()
+
+        self.assertTrue(nested_stocks.exists())
+        self.assertTrue(nested_stocks.with_suffix(".lock").exists())
+
+    def test_acquire_exclusive_lock_fd_creates_missing_parent_dir(self):
+        lock_file = self.tmp_path / "new_lock_dir" / "nested" / "user_stocks.lock"
+        fd = storage._acquire_exclusive_lock_fd(lock_file)
+        try:
+            self.assertTrue(lock_file.parent.is_dir())
+            self.assertTrue(lock_file.exists())
+        finally:
+            if sys.platform == "win32":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
 
 if __name__ == "__main__":

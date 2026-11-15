@@ -95,34 +95,42 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     except curl_exceptions.RequestException as exc:
         raise requests.RequestException(str(exc)) from exc
 
-    parsed = {}
+    parsed: Any = {}
     try:
-        parsed = response.json()
-    except (ValueError, TypeError, json.JSONDecodeError):
-        pass
+        try:
+            parsed = response.json()
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
 
-    if not response.ok:
-        status_code = response.status_code
-        error_msg = "Unknown LangSearch error"
+        if not response.ok:
+            status_code = response.status_code
+            error_msg = "Unknown LangSearch error"
+            if isinstance(parsed, dict):
+                error_msg = str(parsed.get("msg") or parsed.get("message") or f"HTTP {status_code}")
+                code = parsed.get("code")
+                if code is not None:
+                    error_msg = f"LangSearch code={code} msg={error_msg}"
+
+            raise requests.HTTPError(error_msg, response=response)
+
         if isinstance(parsed, dict):
-            error_msg = str(parsed.get("msg") or parsed.get("message") or f"HTTP {status_code}")
             code = parsed.get("code")
             if code is not None:
-                error_msg = f"LangSearch code={code} msg={error_msg}"
-
-        raise requests.HTTPError(error_msg, response=response)
-
-    if isinstance(parsed, dict):
-        code = parsed.get("code")
-        if code is not None:
+                try:
+                    code_int = int(code)
+                except (ValueError, TypeError):
+                    code_int = None
+                if code_int is not None and code_int != 200:
+                    msg = str(parsed.get("msg") or "LangSearch application-level error")
+                    raise requests.HTTPError(f"LangSearch code={code_int} msg={msg}", response=response)
+        return parsed
+    finally:
+        close_fn = getattr(response, "close", None)
+        if callable(close_fn):
             try:
-                code_int = int(code)
-            except (ValueError, TypeError):
-                code_int = None
-            if code_int is not None and code_int != 200:
-                msg = str(parsed.get("msg") or "LangSearch application-level error")
-                raise requests.HTTPError(f"LangSearch code={code_int} msg={msg}", response=response)
-    return parsed
+                close_fn()
+            except Exception:
+                pass
 
 
 def _langsearch_request_retryable(exc: BaseException) -> bool:

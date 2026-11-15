@@ -580,6 +580,15 @@ document.addEventListener("DOMContentLoaded", () => {
           ? await res.json().catch(() => null)
           : (res?.data ?? res);
       if (!isCurrentRequest()) return;
+      const resObj = res?.response ?? res;
+      if (resObj && typeof resObj.ok === "boolean" && !resObj.ok) {
+        throw new Error(
+          data?.details?.reason ||
+            data?.message ||
+            data?.error ||
+            `HTTP ${resObj.status}`,
+        );
+      }
 
       let rawList = [];
 
@@ -637,6 +646,10 @@ document.addEventListener("DOMContentLoaded", () => {
               ? await hmRes.json().catch(() => null)
               : (hmRes?.data ?? hmRes);
           if (!isCurrentRequest()) return;
+          const hmResObj = hmRes?.response ?? hmRes;
+          if (hmResObj && typeof hmResObj.ok === "boolean" && !hmResObj.ok) {
+            throw new Error(`HTTP ${hmResObj.status}`);
+          }
           if (hmData && Array.isArray(hmData.stocks)) {
             const existingSymbols = new Set(rawList.map((s) => s.symbol));
             for (const s of hmData.stocks) {

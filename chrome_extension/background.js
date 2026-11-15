@@ -912,6 +912,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             error: "バックエンドは既に停止しています(未接続)",
           });
         }
+        if (
+          typeof backendVerified !== "undefined" &&
+          backendVerified === false
+        ) {
+          // The native host proved the listening port is not owned by this
+          // backend process. Never acquire or transmit shutdown tokens.
+          return safeSendResponse({
+            ok: false,
+            error:
+              "バックエンドの正当性を確認できません。別のプロセスがポートを使用している可能性があります。",
+          });
+        }
 
         const acquireShutdownToken = async (forceRefresh = false) => {
           if (forceRefresh) {

@@ -527,3 +527,225 @@ def test_u2_05_scraper_retains_dot_t_dispatch_prices_and_uses_interruptible_slee
     assert len(sleep_calls) >= 1
     assert "7203.T" in scraper._last_dispatch_price
     assert "9999.T" not in scraper._last_dispatch_price
+
+
+def test_review_safe_base_url_for_log_strips_userinfo_and_query() -> None:
+    safe = openai_service._safe_base_url_for_log
+    assert safe("https://user:secret@api.example.com:8443/v1?api_key=tok#frag") == (
+        "https://api.example.com:8443/v1"
+    )
+    assert safe("http://user:secret@[::1]:11434/v1?key=1") == "http://[::1]:11434/v1"
+    assert safe("https://user:secret@badhost:notaport/v1?q=1") == (
+        "https://badhost:notaport/v1"
+    )
+    assert safe("https://user:secret@example.com/v1") == "https://example.com/v1"
+
+
+def test_review_openai_verify_and_chat_never_leak_userinfo_or_query(caplog: pytest.LogCaptureFixture) -> None:
+    secret_base = "https://alice:topsecret@api.example.com/v1?token=leakme"
+    userinfo_base = "https://alice:topsecret@api.example.com/v1"
+    resp_404 = MagicMock()
+    resp_404.status_code = 404
+    with (
+        patch("services.openai_service.validate_outbound_base_url", return_value=(True, "")),
+        patch("httpx.Client.get", return_value=resp_404),
+    ):
+        res_404 = openai_service.verify_openai_connection(
+            base_url=secret_base, api_key="sk-test", timeout_sec=5.0
+        )
+        res_404_userinfo = openai_service.verify_openai_connection(
+            base_url=userinfo_base, api_key="sk-test", timeout_sec=5.0
+        )
+    assert res_404["ok"] is False
+    assert "alice" not in res_404["error"]
+    assert "topsecret" not in res_404["error"]
+    assert "leakme" not in res_404["error"]
+    assert "https://api.example.com/v1" in res_404["error"]
+    assert "alice" not in res_404_userinfo["error"]
+    assert "https://api.example.com/v1/models" in res_404_userinfo["error"]
+
+    resp_200 = MagicMock()
+    resp_200.status_code = 200
+    resp_200.json.return_value = {"data": [{"id": "gpt-4o-mini"}]}
+    with (
+        patch("services.openai_service.validate_outbound_base_url", return_value=(True, "")),
+        patch("httpx.Client.get", return_value=resp_200),
+    ):
+        res_200 = openai_service.verify_openai_connection(
+            base_url=secret_base, api_key="sk-test", timeout_sec=5.0
+        )
+    assert res_200["ok"] is True
+    assert res_200["base_url"] == "https://api.example.com/v1"
+
+    bad_json_resp = MagicMock()
+    bad_json_resp.status_code = 200
+    bad_json_resp.json.side_effect = ValueError("not json")
+    client_bad_json = MagicMock()
+    client_bad_json.post.return_value = bad_json_resp
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("services.openai_service.is_preview_api_key", return_value=False),
+        patch("services.openai_service.validate_outbound_base_url", return_value=(True, "")),
+        patch("services.openai_service.get_openai_base_url", return_value=userinfo_base),
+        patch("services.openai_service._get_openai_client", return_value=client_bad_json),
+        patch("services.openai_service._close_call_owned_openai_client"),
+    ):
+        out = openai_service.call_openai_chat(
+            "sk-test-real-key", [{"role": "user", "content": "hi"}], use_cache=False
+        )
+    assert "error" in out
+    assert "alice" not in caplog.text
+    assert "topsecret" not in caplog.text
+    assert "https://api.example.com/v1/chat/completions" in caplog.text
+
+
+def test_review_stream_mistral_releases_slot_on_circuit_and_probe_busy() -> None:
+    _reset_circuit("mistral")
+    try:
+        released: list[float | None] = []
+        with (
+            patch.object(app_state.ai, "mistral_stream_semaphore", _OpenCircuitOnAcquireSem("mistral")),
+            patch("services.ai_service._get_mistral_client", return_value=MagicMock()),
+            patch("services.ai_service._wait_for_rate_limit_slot", return_value="ready"),
+            patch(
+                "services.ai_service._acquire_mistral_call_slot_with_reservation",
+                return_value=(0.0, 1234.5),
+            ),
+            patch(
+                "services.ai_service._release_mistral_call_slot",
+                side_effect=lambda ts=None: released.append(ts),
+            ),
+            patch("services.ai_service.is_preview_api_key", return_value=False),
+            patch("services.ai_service.is_openai_provider", return_value=False),
+        ):
+            events = list(
+                ai_service.stream_mistral_chat("real-key-1234", [{"role": "user", "content": "hi"}])
+            )
+        assert events == [
+            {
+                "type": "error",
+                "message": "AIサービスは一時的に利用できません（サーキットブレーカー発動中）",
+                "status_code": 503,
+            }
+        ]
+        assert released == [1234.5]
+
+        _open_half_open_circuit("mistral")
+        released.clear()
+        with (
+            patch.object(app_state.ai, "mistral_stream_semaphore", nullcontext()),
+            patch.object(app_state.market, "try_claim_circuit_probe", return_value=False),
+            patch("services.ai_service._get_mistral_client", return_value=MagicMock()),
+            patch("services.ai_service._wait_for_rate_limit_slot", return_value="ready"),
+            patch(
+                "services.ai_service._acquire_mistral_call_slot_with_reservation",
+                return_value=(0.0, 2345.6),
+            ),
+            patch(
+                "services.ai_service._release_mistral_call_slot",
+                side_effect=lambda ts=None: released.append(ts),
+            ),
+            patch("services.ai_service.is_preview_api_key", return_value=False),
+            patch("services.ai_service.is_openai_provider", return_value=False),
+        ):
+            events_busy = list(
+                ai_service.stream_mistral_chat("real-key-1234", [{"role": "user", "content": "hi"}])
+            )
+        assert events_busy == [
+            {
+                "type": "error",
+                "message": "AIサービスは一時的に利用できません（復旧プローブ実行中）",
+                "status_code": 503,
+            }
+        ]
+        assert released == [2345.6]
+    finally:
+        _reset_circuit("mistral")
+
+
+def test_review_stream_mistral_agent_sdk_records_usage() -> None:
+    _reset_circuit("mistral")
+    mock_agent = MagicMock()
+
+    class _SlottedUsage:
+        __slots__ = ("completion_tokens", "prompt_tokens")
+
+        def __init__(self, prompt_tokens: int, completion_tokens: int) -> None:
+            self.prompt_tokens = prompt_tokens
+            self.completion_tokens = completion_tokens
+
+    async def _mock_run(*_args: object, **kwargs: object) -> object:
+        on_event = kwargs.get("on_event")
+        if callable(on_event):
+            on_event(SimpleNamespace(text="hello "))
+        return SimpleNamespace(text="hello world", usage=_SlottedUsage(42, 18))
+
+    mock_agent.run = MagicMock(side_effect=_mock_run)
+    recorded: list[tuple[object, str]] = []
+    with (
+        patch("services.ai_service.HAS_AGENTS_SDK", True),
+        patch("services.ai_service.mistral_agents", object()),
+        patch("services.ai_service._resolve_agents_target", return_value=(True, "ag_test_1")),
+        patch("services.ai_service.load_sdk_agent", return_value=mock_agent),
+        patch("services.ai_service.is_preview_api_key", return_value=False),
+        patch("services.ai_service.is_openai_provider", return_value=False),
+        patch.object(
+            app_state.ai,
+            "record_mistral_usage",
+            side_effect=lambda u, model="": recorded.append((u, model)),
+        ),
+    ):
+        events = list(
+            ai_service.stream_mistral_chat("real-key-1234", [{"role": "user", "content": "hi"}])
+        )
+    assert any(ev.get("type") == "done" for ev in events)
+    assert recorded == [({"prompt_tokens": 42, "completion_tokens": 18}, "agent:ag_test_1")]
+
+
+def test_review_alphavantage_and_langsearch_close_http_responses() -> None:
+    import requests
+
+    from services.fallback_provider import AlphaVantageProvider
+    from services.search import langsearch as langsearch_mod
+
+    ok_resp = MagicMock()
+    ok_resp.status_code = 200
+    ok_resp.json.return_value = {"Global Quote": {"05. price": "210.5", "06. volume": "1000"}}
+
+    err_resp = MagicMock()
+    err_resp.status_code = 429
+    err_resp.text = "rate limit"
+    err_resp.headers = {}
+    err_resp.raise_for_status.side_effect = RuntimeError("http 429")
+
+    provider = AlphaVantageProvider()
+    with (
+        patch("services.fallback_provider.get_alphavantage_api_key", return_value="av-test-key"),
+        patch("requests.get", side_effect=[ok_resp, err_resp]),
+    ):
+        quote = provider.get_latest_quote("AAPL")
+        assert quote is not None and quote["regularMarketPrice"] == 210.5
+        quote_err = provider.get_latest_quote("MSFT")
+        assert quote_err is None
+    ok_resp.close.assert_called_once()
+    err_resp.close.assert_called_once()
+
+    ls_ok = MagicMock()
+    ls_ok.ok = True
+    ls_ok.status_code = 200
+    ls_ok.json.return_value = {"code": 200, "data": {}}
+
+    ls_err = MagicMock()
+    ls_err.ok = False
+    ls_err.status_code = 500
+    ls_err.json.return_value = {"msg": "server error"}
+
+    with patch("services.search.langsearch.curl_requests.post", side_effect=[ls_ok, ls_err]):
+        assert langsearch_mod._request_json_post("https://example.com", {}, {}) == {
+            "code": 200,
+            "data": {},
+        }
+        with pytest.raises(requests.HTTPError):
+            langsearch_mod._request_json_post("https://example.com", {}, {})
+    ls_ok.close.assert_called_once()
+    ls_err.close.assert_called_once()

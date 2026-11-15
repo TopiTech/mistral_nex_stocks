@@ -230,6 +230,7 @@ class AlphaVantageProvider(BaseFallbackProvider):
         import requests
 
         params = {"function": "GLOBAL_QUOTE", "symbol": av_symbol, "apikey": api_key}
+        resp: requests.Response | None = None
         try:
             resp = requests.get(self._base_url, params=params, timeout=10.0)
             if resp.status_code != 200:
@@ -302,6 +303,13 @@ class AlphaVantageProvider(BaseFallbackProvider):
             )
             logger.debug("AlphaVantage fallback failed for %s: %s", symbol, safe_exc)
             return None
+        finally:
+            close_fn = getattr(resp, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    pass
 
 
 class YahooWebScraperProvider(_CurlCffiSessionProvider):

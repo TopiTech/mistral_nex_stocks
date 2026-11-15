@@ -974,7 +974,7 @@ function _loadStockColors() {
   try {
     const raw = JSON.parse(localStorage.getItem("stock_colors") || "{}");
     _stockColorsCache =
-      typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+      raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   } catch {
     _stockColorsCache = {};
   }

@@ -49,12 +49,25 @@ from utils.validators import extract_chat_content, extract_json_payload
 
 
 def _safe_base_url_for_log(base_url: str) -> str:
-    """Return scheme/host/path only; never log a query string that may hold a key."""
+    """Return scheme/host/path only; never log userinfo, query, or fragment."""
     try:
-        parsed = urlparse(base_url or "")
+        raw = str(base_url or "")
+        parsed = urlparse(raw)
         if parsed.scheme and parsed.netloc:
-            return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-        return str(base_url or "").split("?", 1)[0]
+            try:
+                hostname = parsed.hostname
+                port = parsed.port
+            except ValueError:
+                hostname = None
+                port = None
+            if hostname:
+                host = f"[{hostname}]" if ":" in hostname else hostname
+                host_port = f"{host}:{port}" if port is not None else host
+            else:
+                host_port = parsed.netloc.rsplit("@", 1)[-1]
+            return f"{parsed.scheme}://{host_port}{parsed.path}"
+        clean = raw.split("?", 1)[0].split("#", 1)[0]
+        return re.sub(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@", r"\1", clean)
     except (TypeError, ValueError):
         return "[invalid-url]"
 
@@ -252,7 +265,9 @@ def verify_openai_connection(
                 return {
                     "ok": False,
                     "valid": False,
-                    "error": f"エンドポイントが見つかりません (HTTP 404: {models_endpoint})",
+                    "error": (
+                        f"エンドポイントが見つかりません (HTTP 404: {_safe_base_url_for_log(models_endpoint)})"
+                    ),
                     "latency_ms": latency_ms,
                 }
             if resp.status_code >= 400:
@@ -323,7 +338,7 @@ def verify_openai_connection(
                 "valid": True,
                 "provider": "openai_compatible",
                 "tier_name": "OpenAI互換 (Beta)",
-                "base_url": target_url,
+                "base_url": _safe_base_url_for_log(target_url),
                 "model_count": len(model_ids),
                 "models": model_ids[:100],  # cap for display
                 "configured_model": configured_model,
@@ -335,9 +350,9 @@ def verify_openai_connection(
         latency_ms = int((time.time() - start_ts) * 1000)
         logger.warning(
             "OpenAI verification failed url=%s error_type=%s: %s",
-            models_endpoint,
+            _safe_base_url_for_log(models_endpoint),
             type(exc).__name__,
-            exc,
+            _sanitize_error_message(str(exc)),
         )
         return {
             "ok": False,
@@ -899,7 +914,7 @@ def call_openai_chat(
                     "OpenAI-compat 200 response has invalid JSON body id=%s model=%s url=%s",
                     req_id,
                     model,
-                    endpoint,
+                    _safe_base_url_for_log(endpoint),
                 )
                 if circuit_probe_claimed:
                     app_state.market.release_circuit_probe("openai_compatible")
@@ -1017,7 +1032,7 @@ def call_openai_chat(
         logger.error(
             "OpenAI-compat request failed model=%s url=%s error_type=%s status=%s: %s",
             model,
-            endpoint,
+            _safe_base_url_for_log(endpoint),
             type(exc).__name__,
             status_code,
             _sanitize_error_message(str(exc)),

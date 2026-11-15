@@ -965,6 +965,39 @@ def _acquire_mistral_call_slot_with_reservation(
     return wait_before, reserved_ts
 
 
+def _extract_mistral_usage_dict(raw_usage: Any) -> dict[str, Any] | None:
+    """Normalize an SDK/agent usage payload into a dict for accounting."""
+    if raw_usage is None:
+        return None
+    if isinstance(raw_usage, dict):
+        return raw_usage
+    model_dump = getattr(raw_usage, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+
+    def _is_scalar_count(val: Any) -> bool:
+        return isinstance(val, (int, float, str)) and not isinstance(val, bool)
+
+    if hasattr(raw_usage, "__dict__"):
+        fields = {
+            k: v
+            for k, v in raw_usage.__dict__.items()
+            if not k.startswith("_") and _is_scalar_count(v)
+        }
+        if "prompt_tokens" in fields or "completion_tokens" in fields:
+            return fields
+    prompt_tokens = getattr(raw_usage, "prompt_tokens", None)
+    completion_tokens = getattr(raw_usage, "completion_tokens", None)
+    if _is_scalar_count(prompt_tokens) or _is_scalar_count(completion_tokens):
+        return {
+            "prompt_tokens": prompt_tokens if _is_scalar_count(prompt_tokens) else 0,
+            "completion_tokens": completion_tokens if _is_scalar_count(completion_tokens) else 0,
+        }
+    return None
+
+
 def _release_mistral_call_slot(reserved_ts: float | None = None) -> None:
     """Roll back an unused pacing reservation (SVC-02).
 
@@ -2689,6 +2722,7 @@ def stream_mistral_chat(
     with sem_ctx:
         if not _is_fallback:
             if app_state.market.is_circuit_open("mistral"):
+                _release_mistral_call_slot(reserved_ts)
                 logger.warning("Mistral circuit opened while waiting for stream semaphore.")
                 yield {
                     "type": "error",
@@ -2701,6 +2735,7 @@ def stream_mistral_chat(
             circuit_state = app_state.market.get_circuit_state("mistral")
             if circuit_state.get("status") == "HALF_OPEN":
                 if not app_state.market.try_claim_circuit_probe("mistral"):
+                    _release_mistral_call_slot(reserved_ts)
                     logger.warning(
                         "Mistral circuit recovery probe already in progress. Skipping stream call."
                     )
@@ -2924,6 +2959,14 @@ def stream_mistral_chat(
                                 return
                             elif item_type == "done":
                                 res = item.get("result")
+                                raw_agent_usage = (
+                                    item.get("usage")
+                                    if isinstance(item, dict) and item.get("usage") is not None
+                                    else getattr(res, "usage", None)
+                                )
+                                extracted_usage = _extract_mistral_usage_dict(raw_agent_usage)
+                                if extracted_usage:
+                                    last_usage = extracted_usage
                                 if not full_parts and res:
                                     res_text = getattr(res, "text", "") or ""
                                     if res_text:
@@ -2953,6 +2996,8 @@ def stream_mistral_chat(
                     app_state.ai.mistral_last_call_ts = max(
                         app_state.ai.mistral_last_call_ts, time.time()
                     )
+                if last_usage:
+                    app_state.ai.record_mistral_usage(last_usage, model=model)
                 full_text = "".join(full_parts)
                 yield {"type": "done", "text": full_text}
                 return
@@ -2988,18 +3033,9 @@ def stream_mistral_chat(
                         yield {"type": "delta", "text": delta_text}
                 # Best-effort usage capture: some SDK versions attach usage to
                 # the final stream chunk (C-4).
-                chunk_usage = getattr(chunk, "usage", None)
-                if chunk_usage is not None:
-                    if isinstance(chunk_usage, dict):
-                        last_usage = chunk_usage
-                    elif hasattr(chunk_usage, "model_dump") and callable(chunk_usage.model_dump):
-                        dumped = chunk_usage.model_dump()
-                        if isinstance(dumped, dict):
-                            last_usage = dumped
-                    elif hasattr(chunk_usage, "__dict__"):
-                        last_usage = {
-                            k: v for k, v in chunk_usage.__dict__.items() if not k.startswith("_")
-                        }
+                extracted_chunk_usage = _extract_mistral_usage_dict(getattr(chunk, "usage", None))
+                if extracted_chunk_usage:
+                    last_usage = extracted_chunk_usage
 
             app_state.market.report_circuit_result("mistral", success=True)
             circuit_probe_claimed = False

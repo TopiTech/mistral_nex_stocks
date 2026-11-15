@@ -359,8 +359,9 @@
       theme.textContent = portfolio.theme || "カスタムテーマ";
       const meta = document.createElement("span");
       meta.className = "ai-saved-portfolio-meta";
-      meta.textContent = `${portfolio.items ? portfolio.items.length : 0}銘柄・${portfolio.expected_return || "---"
-        }`;
+      meta.textContent = `${portfolio.items ? portfolio.items.length : 0}銘柄・${
+        portfolio.expected_return || "---"
+      }`;
       selectButton.appendChild(title);
       selectButton.appendChild(theme);
       selectButton.appendChild(meta);
@@ -1013,7 +1014,7 @@
         let excess =
           Math.round(
             (scaledItems.reduce((sum, it) => sum + it.weight_pct, 0) - 100) *
-            10,
+              10,
           ) / 10;
         if (excess > 0) {
           scaledItems.sort((a, b) => b.weight_pct - a.weight_pct);
@@ -1652,8 +1653,8 @@
 
       const formatYen = (value) =>
         value == null ||
-          typeof value === "boolean" ||
-          !Number.isFinite(Number(value))
+        typeof value === "boolean" ||
+        !Number.isFinite(Number(value))
           ? "¥--"
           : `¥${Number(value).toLocaleString()}`;
 

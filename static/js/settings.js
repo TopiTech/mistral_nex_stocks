@@ -386,8 +386,8 @@ async function readSettingsApiResponse(res) {
   if (!res.ok) {
     throw new Error(
       data.details?.reason ||
-      data.error ||
-      `HTTP ${res.status}: ${res.statusText}`,
+        data.error ||
+        `HTTP ${res.status}: ${res.statusText}`,
     );
   }
   if (data.error) {
@@ -546,7 +546,7 @@ function logout() {
             }
           },
         );
-      } catch (_e) { }
+      } catch (_e) {}
       // Server-side clear succeeded, navigate to setup
       location.href = "/setup?logout=1";
     })
@@ -903,8 +903,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!res.ok || !data?.ok) {
           throw new Error(
             data?.details?.reason ||
-            data?.error ||
-            `保存に失敗しました (HTTP ${res.status})`,
+              data?.error ||
+              `保存に失敗しました (HTTP ${res.status})`,
           );
         }
         if (modelStatus) {
@@ -975,9 +975,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!res.ok || !data?.ok) {
           throw new Error(
             data?.details?.reason ||
-            data?.message ||
-            data?.error ||
-            `接続テストに失敗しました (HTTP ${res.status})`,
+              data?.message ||
+              data?.error ||
+              `接続テストに失敗しました (HTTP ${res.status})`,
           );
         }
 
@@ -1248,9 +1248,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!res.ok || !data?.ok) {
           throw new Error(
             data?.details?.reason ||
-            data?.message ||
-            data?.error ||
-            `接続テストに失敗しました (HTTP ${res.status})`,
+              data?.message ||
+              data?.error ||
+              `接続テストに失敗しました (HTTP ${res.status})`,
           );
         }
 
@@ -1407,8 +1407,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!res.ok || !data?.ok)
           throw new Error(
             data?.details?.reason ||
-            data?.error ||
-            `保存に失敗しました (HTTP ${res.status})`,
+              data?.error ||
+              `保存に失敗しました (HTTP ${res.status})`,
           );
 
         if (promptStatus) {
@@ -1520,8 +1520,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!res.ok || !data?.ok)
           throw new Error(
             data?.details?.reason ||
-            data?.error ||
-            `保存に失敗しました (HTTP ${res.status})`,
+              data?.error ||
+              `保存に失敗しました (HTTP ${res.status})`,
           );
 
         _currentCredentialsData = data;

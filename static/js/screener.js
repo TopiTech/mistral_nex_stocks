@@ -46,7 +46,7 @@
                 : event.key === "End"
                   ? validButtons.length - 1
                   : (index + direction + validButtons.length) %
-                  validButtons.length;
+                    validButtons.length;
             const nextBtn = validButtons[nextIndex];
             validButtons.forEach((b, i) => {
               b.setAttribute("tabindex", i === nextIndex ? "0" : "-1");
@@ -407,9 +407,9 @@
       if (!data || !data.ok) {
         throw new Error(
           data?.details?.reason ||
-          data?.message ||
-          data?.error ||
-          "データの取得に失敗しました",
+            data?.message ||
+            data?.error ||
+            "データの取得に失敗しました",
         );
       }
 
@@ -699,8 +699,8 @@
             if (typeof showToast === "function") {
               showToast(
                 "✓ " +
-                (stock.name || stock.symbol) +
-                " をウォッチリストに追加しました",
+                  (stock.name || stock.symbol) +
+                  " をウォッチリストに追加しました",
                 "#7dffb0",
               );
             }

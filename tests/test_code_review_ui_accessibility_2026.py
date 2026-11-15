@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 from pathlib import Path
+
+from tests.test_support.environment import run_node_script
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -172,10 +172,6 @@ def test_setup_page_has_a_single_top_level_heading():
 
 def test_dashboard_search_arrow_navigation_updates_aria_state_at_runtime():
     """The visual selection and the combobox active option must stay in sync."""
-    node = shutil.which("node")
-    if node is None:
-        raise AssertionError("Node.js is required for the frontend runtime regression test")
-
     source = _read_file("static/js/index_main.js")
     start = source.index("function initSearchEvents()")
     end = source.index("/** Initialize tab switching events */", start)
@@ -235,15 +231,11 @@ if (input.attributes["aria-activedescendant"] !== undefined) throw new Error("st
 if (items.some((item) => item.attributes["aria-selected"] !== "false" || item.classList.contains("highlighted"))) throw new Error("stale option state was not cleared");
 console.log("search keyboard accessibility checks passed");
 """
-    result = subprocess.run(
-        [node, "-"],
+    result = run_node_script(
+        script,
         cwd=ROOT_DIR,
-        input=script,
-        capture_output=True,
-        text=True,
-        check=False,
+        context="frontend runtime regression test",
     )
-    assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("search keyboard accessibility checks passed")
 
 
@@ -258,10 +250,6 @@ def test_settings_mistral_model_blackout_inert():
     assert 'content.removeAttribute("inert")' in js_content
 
     # Verify runtime behavior using Node.js
-    node = shutil.which("node")
-    if node is None:
-        return
-
     script = """
 const vm = require("vm");
 
@@ -339,14 +327,11 @@ const code = `
 `;
 vm.runInNewContext(code, context);
 """
-    result = subprocess.run(
-        [node, "-e", script],
+    run_node_script(
+        script,
         cwd=ROOT_DIR,
-        capture_output=True,
-        text=True,
-        check=False,
+        context="modal inert accessibility regression test",
     )
-    assert result.returncode == 0, result.stderr
 
 
 def test_ai_portfolio_chart_destruction_on_tab_switch():

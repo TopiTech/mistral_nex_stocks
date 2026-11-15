@@ -2649,9 +2649,6 @@ def stream_mistral_chat(
 
     client = _get_mistral_client(api_key)
     if client is None:
-        if circuit_probe_claimed:
-            app_state.market.release_circuit_probe("mistral")
-            circuit_probe_claimed = False
         yield {
             "type": "error",
             "message": "Mistral API key is missing or invalid",
@@ -2669,9 +2666,6 @@ def stream_mistral_chat(
         # Abort without issuing a stream request: roll the unused pacing
         # reservation back so recovery traffic is not delayed (SVC-02).
         _release_mistral_call_slot(reserved_ts)
-        if circuit_probe_claimed:
-            app_state.market.release_circuit_probe("mistral")
-            circuit_probe_claimed = False
         if wait_status == "shutdown":
             yield {"type": "error", "message": "AIサービスはシャットダウン中です", "status_code": 503}
         else:

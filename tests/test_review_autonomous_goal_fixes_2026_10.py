@@ -43,6 +43,9 @@ def client(test_app):
 def test_resolve_stocks_for_response_defaults_to_excluding_portfolio():
     """Unparameterized resolve_stocks_for_response() must default to include_portfolio=False."""
     with app_state.market.user_stocks_lock:
+        orig_us = app_state.market.user_us
+        orig_jp = app_state.market.user_jp
+        orig_idx = app_state.market.user_idx
         app_state.market.user_us = {
             "TESTSEC": {"name": "Test Secure", "shares": 100.0, "avg_price": 50.0}
         }
@@ -50,6 +53,7 @@ def test_resolve_stocks_for_response_defaults_to_excluding_portfolio():
         app_state.market.user_idx = {}
 
     with app_state.cache.sse_data_lock:
+        orig_current = app_state.market.current_stocks_cache
         app_state.market.current_stocks_cache = {
             "us": [
                 {
@@ -64,21 +68,29 @@ def test_resolve_stocks_for_response_defaults_to_excluding_portfolio():
             "idx": [],
         }
 
-    # Calling with no arguments must default to include_portfolio=False
-    resolved = resolve_stocks_for_response()
-    us_rows = resolved.get("us", [])
-    assert len(us_rows) == 1
-    # Portfolio fields must be stripped by default
-    assert "shares" not in us_rows[0]
-    assert "avg_price" not in us_rows[0]
-    assert "portfolio_value" not in us_rows[0]
+    try:
+        # Calling with no arguments must default to include_portfolio=False
+        resolved = resolve_stocks_for_response()
+        us_rows = resolved.get("us", [])
+        assert len(us_rows) == 1
+        # Portfolio fields must be stripped by default
+        assert "shares" not in us_rows[0]
+        assert "avg_price" not in us_rows[0]
+        assert "portfolio_value" not in us_rows[0]
 
-    # Explicit include_portfolio=True must include portfolio fields
-    resolved_with_pf = resolve_stocks_for_response(include_portfolio=True)
-    us_pf_rows = resolved_with_pf.get("us", [])
-    assert len(us_pf_rows) == 1
-    assert "shares" in us_pf_rows[0]
-    assert us_pf_rows[0]["shares"] == 100.0
+        # Explicit include_portfolio=True must include portfolio fields
+        resolved_with_pf = resolve_stocks_for_response(include_portfolio=True)
+        us_pf_rows = resolved_with_pf.get("us", [])
+        assert len(us_pf_rows) == 1
+        assert "shares" in us_pf_rows[0]
+        assert us_pf_rows[0]["shares"] == 100.0
+    finally:
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = orig_us
+            app_state.market.user_jp = orig_jp
+            app_state.market.user_idx = orig_idx
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_stocks_cache = orig_current
 
 
 def test_market_data_service_zero_preservation():

@@ -9,20 +9,14 @@ from typing import Any
 
 import pandas as pd
 
-from utils.normalization import is_bool_like
+from utils.normalization import finite_float, is_bool_like
 
 _DROP_FUNDAMENTAL_VALUE = object()
 
 
 def _finite_float(value: Any, default: float | None = None) -> float | None:
     """Convert provider values while rejecting non-finite numbers."""
-    if value is None or is_bool_like(value):
-        return default
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return numeric if math.isfinite(numeric) else default
+    return finite_float(value, default)
 
 
 def _sanitize_fundamental_value(value: Any) -> Any:

@@ -24,10 +24,22 @@ from routes.stocks.ai_portfolio import (
 
 @pytest.fixture
 def client():
+    prev_testing = app.config.get("TESTING")
+    prev_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
-    with app.test_client() as test_client:
-        yield test_client
+    try:
+        with app.test_client() as test_client:
+            yield test_client
+    finally:
+        if prev_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = prev_testing
+        if prev_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = prev_csrf
 
 
 @pytest.fixture(autouse=True)
@@ -159,3 +171,32 @@ def test_ai_portfolio_rebalance_cached_empty_tuple_returns_500_and_does_not_pois
 
         with ai_portfolio_fetch_lock:
             assert inflight_key not in ai_portfolio_result_cache
+
+
+def test_ai_portfolio_invalidation_matches_exact_target_segment():
+    """Invalidating '1' or 'ai' must not evict prefix lookalikes like '10' or 'ai_robotics'."""
+    from routes.stocks.ai_portfolio import _invalidate_ai_portfolio_result_cache
+
+    scope = "test_scope_exact_match_1234"
+    exact_id_key = f"rebalance:{scope}:1"
+    lookalike_id_key = f"rebalance:{scope}:10"
+    exact_theme_key = f"generate:{scope}:ai"
+    lookalike_theme_key = f"generate:{scope}:ai_robotics"
+
+    with ai_portfolio_fetch_lock:
+        ai_portfolio_result_cache[exact_id_key] = (time.time(), {"id": "1"}, None)
+        ai_portfolio_result_cache[lookalike_id_key] = (time.time(), {"id": "10"}, None)
+        ai_portfolio_result_cache[exact_theme_key] = (time.time(), {"theme": "ai"}, None)
+        ai_portfolio_result_cache[lookalike_theme_key] = (
+            time.time(),
+            {"theme": "ai_robotics"},
+            None,
+        )
+
+    _invalidate_ai_portfolio_result_cache("1", "ai")
+
+    with ai_portfolio_fetch_lock:
+        assert exact_id_key not in ai_portfolio_result_cache
+        assert exact_theme_key not in ai_portfolio_result_cache
+        assert lookalike_id_key in ai_portfolio_result_cache
+        assert lookalike_theme_key in ai_portfolio_result_cache

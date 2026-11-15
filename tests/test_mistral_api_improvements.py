@@ -760,11 +760,25 @@ class ChatStreamRouteTestCase(unittest.TestCase):
         from app import app
 
         self.app = app
+        self._orig_testing = self.app.config.get("TESTING")
+        self._orig_csrf = self.app.config.get("WTF_CSRF_ENABLED")
         self.app.config["TESTING"] = True
         self.app.config["WTF_CSRF_ENABLED"] = False
         self.client = self.app.test_client()
         with app_state.ai.mistral_response_lock:
             app_state.ai.mistral_response_cache.clear()
+
+    def tearDown(self):
+        with app_state.ai.mistral_response_lock:
+            app_state.ai.mistral_response_cache.clear()
+        if self._orig_testing is None:
+            self.app.config.pop("TESTING", None)
+        else:
+            self.app.config["TESTING"] = self._orig_testing
+        if self._orig_csrf is None:
+            self.app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            self.app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
 
     @patch("routes.api_analysis.stream_mistral_chat")
     @patch("routes.api_analysis.get_stock_info_cached", return_value={})

@@ -1721,8 +1721,9 @@
                   }
                   const pl = value - VIRTUAL_BASE_CAPITAL_JPY;
                   const plPct = (pl / VIRTUAL_BASE_CAPITAL_JPY) * 100;
-                  const sign = pl >= 0 ? "+" : "";
-                  return ` ${tooltipCtx.dataset.label}: ${formatYen(value)} (${sign}¥${Math.abs(pl).toLocaleString()} / ${sign}${plPct.toFixed(1)}%)`;
+                  const yenSign = pl > 0 ? "+" : pl < 0 ? "-" : "";
+                  const pctSign = pl > 0 ? "+" : "";
+                  return ` ${tooltipCtx.dataset.label}: ${formatYen(value)} (${yenSign}¥${Math.abs(pl).toLocaleString()} / ${pctSign}${plPct.toFixed(1)}%)`;
                 },
               },
             },

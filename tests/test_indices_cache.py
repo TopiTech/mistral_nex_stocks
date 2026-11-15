@@ -8,9 +8,17 @@ from app_bg import _update_indices_data, _warm_payload_cache_from_disk
 
 class TestIndicesCachePersistence(unittest.TestCase):
     def setUp(self):
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_wtf_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
+        self._orig_usdjpy_rate = app_state.market.last_usdjpy_rate
+        self._orig_usdjpy_rate_ts = app_state.market.last_usdjpy_rate_ts
+        with app_state.market.user_stocks_lock:
+            self._orig_us = app_state.market.user_us.copy()
+            self._orig_jp = app_state.market.user_jp.copy()
+            self._orig_idx = app_state.market.user_idx.copy()
         with app_state.cache.sse_data_lock:
             app_state.market.current_indices_cache.clear()
             app_state.market.target_indices_cache.clear()
@@ -20,7 +28,21 @@ class TestIndicesCachePersistence(unittest.TestCase):
         with app_state.cache.sse_data_lock:
             app_state.market.current_indices_cache.clear()
             app_state.market.target_indices_cache.clear()
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us = self._orig_us
+            app_state.market.user_jp = self._orig_jp
+            app_state.market.user_idx = self._orig_idx
+        app_state.market.last_usdjpy_rate = self._orig_usdjpy_rate
+        app_state.market.last_usdjpy_rate_ts = self._orig_usdjpy_rate_ts
         app_state.payload_disk_cache.clear()
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_wtf_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = self._orig_wtf_csrf
 
     def test_indices_cache_saving_and_loading(self):
         with app.app_context():
@@ -44,7 +66,11 @@ class TestIndicesCachePersistence(unittest.TestCase):
                     "market": "idx",
                 }
             ]
-            _update_indices_data(idx_res, [], [])
+            with (
+                patch("app_bg.fetch_index_data", return_value=None),
+                patch("app_bg.save_user_stocks"),
+            ):
+                _update_indices_data(idx_res, [], [])
 
             # Check memory cache is updated
             with app_state.cache.sse_data_lock:
@@ -116,7 +142,10 @@ class TestIndicesCachePersistence(unittest.TestCase):
             # Setup indices cache in disk
             app_state.payload_disk_cache.set("indices_cache", {"SP500": {"price": "5000.00"}})
 
-            with patch("app_bg.schedule_sync_all_stocks_now", return_value=True):
+            with (
+                patch("routes.stocks.views.save_user_stocks"),
+                patch("routes.stocks.views.schedule_sync_all_stocks_now", return_value=True),
+            ):
                 response = self.client.post(
                     "/api/stocks/reset",
                     headers={"Origin": "http://localhost:5000"},
@@ -142,6 +171,8 @@ class TestIndicesCachePersistence(unittest.TestCase):
                 patch("app_bg._is_sync_leader", True),
                 patch("app_bg._prepare_sync_items", return_value=[("AAPL", "Apple", "us")]),
                 patch("app_bg.fetch_stocks_batch", return_value=[None]),
+                patch("app_bg.fetch_index_data", return_value=None),
+                patch("app_bg.save_user_stocks"),
             ):
                 # Run sync
                 sync_all_stocks_now()

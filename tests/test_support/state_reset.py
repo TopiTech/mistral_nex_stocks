@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 import os
+import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from tests.test_support.temp_config import cleanup_temp_files
@@ -43,13 +45,43 @@ def _reset_ai_state(app_state: object) -> None:
             ai.openai_clients.clear()
         except Exception:
             pass
-    if hasattr(ai, "openai_call_count"):
-        ai.openai_call_count = 0
-    if hasattr(ai, "openai_model_usage"):
-        try:
-            ai.openai_model_usage.clear()
-        except Exception:
-            pass
+    with getattr(ai, "mistral_usage_lock", nullcontext()):
+        if hasattr(ai, "mistral_call_count"):
+            ai.mistral_call_count = 0
+        if hasattr(ai, "mistral_total_prompt_tokens"):
+            ai.mistral_total_prompt_tokens = 0
+        if hasattr(ai, "mistral_total_completion_tokens"):
+            ai.mistral_total_completion_tokens = 0
+        if hasattr(ai, "mistral_model_usage"):
+            try:
+                ai.mistral_model_usage.clear()
+            except Exception:
+                pass
+    with getattr(ai, "openai_usage_lock", nullcontext()):
+        if hasattr(ai, "openai_call_count"):
+            ai.openai_call_count = 0
+        if hasattr(ai, "openai_total_prompt_tokens"):
+            ai.openai_total_prompt_tokens = 0
+        if hasattr(ai, "openai_total_completion_tokens"):
+            ai.openai_total_completion_tokens = 0
+        if hasattr(ai, "openai_model_usage"):
+            try:
+                ai.openai_model_usage.clear()
+            except Exception:
+                pass
+    with getattr(ai, "langsearch_rate_lock", nullcontext()):
+        if hasattr(ai, "langsearch_next_allowed_ts"):
+            ai.langsearch_next_allowed_ts = 0.0
+        if hasattr(ai, "langsearch_min_interval_sec"):
+            ai.langsearch_min_interval_sec = 2.0
+        if hasattr(ai, "langsearch_429_cooldown_sec"):
+            ai.langsearch_429_cooldown_sec = 90.0
+    with getattr(ai, "trends_refresh_lock", nullcontext()):
+        if hasattr(ai, "trends_refresh_inflight"):
+            try:
+                ai.trends_refresh_inflight.clear()
+            except Exception:
+                pass
 
 
 def _reset_market_state(app_state: object) -> None:
@@ -95,6 +127,8 @@ def _reset_market_state(app_state: object) -> None:
         default_usdjpy_rate = 150.00
     market.last_usdjpy_rate = default_usdjpy_rate
     market.last_usdjpy_rate_ts = 0.0
+    if hasattr(market, "last_usdjpy_persisted_ts"):
+        market.last_usdjpy_persisted_ts = 0.0
 
     # Reset snapshot caches
     cache = getattr(app_state, "cache", None)
@@ -270,6 +304,43 @@ def _reset_caches_and_sessions(app_state: object) -> None:
             app_state.stock_provider.clear_ticker_cache()
     except (ImportError, AttributeError):
         pass
+
+    # History fetch inflight tracking
+    if hasattr(app_state, "history_fetch_inflight"):
+        with getattr(app_state, "history_fetch_lock", nullcontext()):
+            app_state.history_fetch_inflight.clear()
+
+    # SSE announcers & event replay log
+    for announcer_attr in ("sse_announcer_mode1", "sse_announcer_mode2"):
+        announcer = getattr(app_state, announcer_attr, None)
+        if announcer is not None:
+            if hasattr(announcer, "close"):
+                announcer.close()
+            with getattr(announcer, "lock", nullcontext()):
+                if hasattr(announcer, "listeners"):
+                    announcer.listeners.clear()
+                if hasattr(announcer, "announced_count"):
+                    announcer.announced_count = 0
+                if hasattr(announcer, "dropped_count"):
+                    announcer.dropped_count = 0
+    messaging_mod = sys.modules.get("messaging")
+    if messaging_mod is not None and hasattr(messaging_mod, "sse_event_log"):
+        messaging_mod.sse_event_log.clear()
+
+    # Cached runtime config on app_state & config_store
+    if hasattr(app_state, "_config"):
+        app_state._config = None
+    cs_mod = sys.modules.get("config_store")
+    if cs_mod is not None and hasattr(cs_mod, "_CONFIG_CACHE"):
+        with getattr(cs_mod, "_CONFIG_LOCK", nullcontext()):
+            cs_mod._CONFIG_CACHE["data"] = None
+            cs_mod._CONFIG_CACHE["key"] = None
+
+    # Cached Google Trends clients
+    ts_mod = sys.modules.get("trend_sources")
+    if ts_mod is not None and hasattr(ts_mod, "_GOOGLE_TRENDS_CLIENTS"):
+        with getattr(ts_mod, "_GOOGLE_TRENDS_CLIENT_LOCK", nullcontext()):
+            ts_mod._GOOGLE_TRENDS_CLIENTS.clear()
 
 
 def _reset_realtime_engine() -> None:

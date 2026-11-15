@@ -19,12 +19,28 @@ from app_state import app_state
 from error_codes import ErrorCode
 
 
+def _configure_test_app(test_case: unittest.TestCase) -> None:
+    """Enable TESTING/disabled CSRF on global app and restore exact keys via addCleanup."""
+    sentinel = object()
+    saved = {key: app.config.get(key, sentinel) for key in ("TESTING", "WTF_CSRF_ENABLED")}
+
+    def _restore() -> None:
+        for key, original in saved.items():
+            if original is sentinel:
+                app.config.pop(key, None)
+            else:
+                app.config[key] = original
+
+    test_case.addCleanup(_restore)
+    app.config["TESTING"] = True
+    app.config["WTF_CSRF_ENABLED"] = False
+
+
 class ApiCredentialsTestCase(unittest.TestCase):
     """API credentials endpoint tests for uncovered error paths."""
 
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
         # Local personal-use defaults: no admin token / no remote API.
         # Clear so developer machines with these env vars set do not flake.
@@ -43,7 +59,8 @@ class ApiCredentialsTestCase(unittest.TestCase):
         response = self.client.options("/api/credentials")
         self.assertEqual(response.status_code, 200)
 
-    def test_credentials_delete(self):
+    @patch("routes.api_system.clear_api_credentials", return_value=[])
+    def test_credentials_delete(self, mock_clear):
         response = self.client.delete(
             "/api/credentials",
             headers={"Origin": "http://localhost:5000"},
@@ -51,6 +68,7 @@ class ApiCredentialsTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.data)
         self.assertTrue(data["ok"])
+        mock_clear.assert_called_once()
 
     def test_credentials_get_remote_forbidden(self):
         response = self.client.get(
@@ -292,8 +310,7 @@ class CredentialPersistenceTestCase(unittest.TestCase):
 
 class CacheStatsEndpointTestCase(unittest.TestCase):
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
 
     def test_cache_stats_options(self):
@@ -321,8 +338,7 @@ class CacheStatsEndpointTestCase(unittest.TestCase):
 
 class MetricsEndpointTestCase(unittest.TestCase):
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
 
     def test_metrics_options(self):
@@ -488,8 +504,7 @@ class MetricsEndpointTestCase(unittest.TestCase):
 
 class CspReportEndpointTestCase(unittest.TestCase):
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
 
     def test_csp_report_valid(self):
@@ -653,8 +668,7 @@ class CspReportEndpointTestCase(unittest.TestCase):
 
 class ShutdownEndpointTestCase(unittest.TestCase):
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
 
     def test_shutdown_options(self):
@@ -758,10 +772,24 @@ class ShutdownEndpointTestCase(unittest.TestCase):
             self.assertIn("remote API mode", data.get("details", {}).get("reason", ""))
 
 
+def _reset_ai_usage_counters() -> None:
+    with app_state.ai.mistral_usage_lock:
+        app_state.ai.mistral_call_count = 0
+        app_state.ai.mistral_total_prompt_tokens = 0
+        app_state.ai.mistral_total_completion_tokens = 0
+        app_state.ai.mistral_model_usage.clear()
+    with app_state.ai.openai_usage_lock:
+        app_state.ai.openai_call_count = 0
+        app_state.ai.openai_total_prompt_tokens = 0
+        app_state.ai.openai_total_completion_tokens = 0
+        app_state.ai.openai_model_usage.clear()
+
+
 class AiUsageEndpointTestCase(unittest.TestCase):
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
+        _reset_ai_usage_counters()
+        self.addCleanup(_reset_ai_usage_counters)
         self.client = app.test_client()
 
     def test_ai_usage_options(self):

@@ -1,8 +1,8 @@
 """Regression guards for frontend fixes that have no JavaScript test runner."""
 
-import shutil
-import subprocess
 from pathlib import Path
+
+from tests.test_support.environment import run_node_script
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -133,10 +133,6 @@ def test_sse_ticket_request_is_cancelled_and_stale_results_are_never_opened():
 
 def test_concurrent_csrf_rejections_share_one_token_refresh():
     """Expired tokens must not leave concurrent mutating actions unretried."""
-    node = shutil.which("node")
-    if node is None:
-        raise AssertionError("Node.js is required for the frontend runtime regression test")
-
     script = r"""
 const fs = require("fs");
 const vm = require("vm");
@@ -211,15 +207,11 @@ vm.runInNewContext(`${csrfSource}\nglobalThis.__csrfFetch = csrfFetch;`, context
   process.exitCode = 1;
 });
 """
-    result = subprocess.run(
-        [node, "-"],
+    result = run_node_script(
+        script,
         cwd=ROOT,
-        input=script,
-        capture_output=True,
-        text=True,
-        check=False,
+        context="CSRF coalescing frontend regression test",
     )
-    assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("CSRF coalescing checks passed")
 
 
@@ -542,55 +534,110 @@ def test_eventsource_wrapped_listener_exception_handling():
         is not None
     )
 
-    node = shutil.which("node")
-    if node is None:
-        return
-
     script = r"""
+    const fs = require("fs");
     const vm = require("vm");
-    let loggedError = null;
-    let heartbeatReset = false;
-    let listenerCalled = false;
+    const apiClientCode = fs.readFileSync("static/js/api_client.js", "utf8");
 
-    // Simulate APIClient context
+    const loggedErrors = [];
+    let timerCounter = 0;
+    const emittedInstances = [];
+
+    class MockEventSource {
+      constructor(url) {
+        this.url = url;
+        this._listeners = new Map();
+        emittedInstances.push(this);
+      }
+      addEventListener(type, fn) {
+        if (!this._listeners.has(type)) this._listeners.set(type, []);
+        this._listeners.get(type).push(fn);
+      }
+      removeEventListener() {}
+      close() {}
+      dispatch(type, event) {
+        const fns = this._listeners.get(type) || [];
+        for (const fn of fns) fn(event);
+      }
+    }
+
     const ctx = {
-      thisObj: {
-        lastEventId: 0,
-        _resetHeartbeatTimer: () => { heartbeatReset = true; },
+      window: {
+        addEventListener() {},
+        removeEventListener() {},
       },
-      _log: {
-        error: (msg, err) => { loggedError = { msg, err }; },
+      document: {
+        hidden: false,
+        addEventListener() {},
+        removeEventListener() {},
       },
-      listener: () => {
-        listenerCalled = true;
-        throw new Error("UI listener crashed!");
+      EventSource: MockEventSource,
+      console: {
+        debug() {},
+        info() {},
+        warn() {},
+        error: (...args) => loggedErrors.push(args),
       },
-      event: { lastEventId: "42" },
+      setTimeout: () => {
+        timerCounter += 1;
+        return timerCounter;
+      },
+      clearTimeout: () => {},
+      setInterval: () => {
+        timerCounter += 1;
+        return timerCounter;
+      },
+      clearInterval: () => {},
+      Date,
+      Math,
+      Number,
+      Map,
+      WeakMap,
+      Set,
+      Error,
+      JSON,
+    };
+    vm.createContext(ctx);
+    vm.runInContext(apiClientCode, ctx);
+
+    const client = new ctx.window.APIClient("");
+    let heartbeatResetCalls = 0;
+    const origReset = client._resetHeartbeatTimer.bind(client);
+    client._resetHeartbeatTimer = (onErr) => {
+      heartbeatResetCalls += 1;
+      return origReset(onErr);
     };
 
-    const code = `
-      const wrappedListener = (event) => {
-        if (event && event.lastEventId) {
-          thisObj.lastEventId = Number(event.lastEventId) || 0;
-        }
-        thisObj._resetHeartbeatTimer();
-        try {
-          if (typeof listener === "function") {
-            listener(event);
-          }
-        } catch (err) {
-          _log.error("Unhandled error in EventSource custom listener:", err);
-        }
-      };
-      wrappedListener(event);
-    `;
+    client.openSSE("/api/stocks/stream", () => {}, () => {});
+    const es = emittedInstances[0];
+    if (!es) throw new Error("MockEventSource was not constructed");
 
-    vm.runInNewContext(code, ctx);
-    if (!heartbeatReset) throw new Error("heartbeat was not reset");
+    let listenerCalled = false;
+    es.addEventListener("realtime_update", () => {
+      listenerCalled = true;
+      throw new Error("UI listener crashed!");
+    });
+    es.dispatch("realtime_update", { lastEventId: "42", data: "{}" });
+
+    client.destroy();
+    if (client.lastEventId !== 42) {
+      throw new Error(`expected lastEventId=42, got ${client.lastEventId}`);
+    }
+    if (heartbeatResetCalls !== 1) {
+      throw new Error(`expected heartbeat reset once, got ${heartbeatResetCalls}`);
+    }
     if (!listenerCalled) throw new Error("listener was not called");
-    if (!loggedError || loggedError.err.message !== "UI listener crashed!") {
-      throw new Error("listener error was not safely caught and logged");
+    if (
+      loggedErrors.length !== 1 ||
+      loggedErrors[0][0] !== "[APIClient]" ||
+      loggedErrors[0][1] !== "Unhandled error in EventSource custom listener:" ||
+      loggedErrors[0][2]?.message !== "UI listener crashed!"
+    ) {
+      throw new Error(`unexpected loggedErrors: ${JSON.stringify(loggedErrors)}`);
     }
     """
-    proc = subprocess.run([node, "-e", script], capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, f"Node script failed: {proc.stderr}"
+    run_node_script(
+        script,
+        cwd=ROOT,
+        context="SSE wrapped listener safety regression test",
+    )

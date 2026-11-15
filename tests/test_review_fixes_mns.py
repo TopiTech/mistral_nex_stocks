@@ -11,6 +11,7 @@ code review:
 """
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -108,6 +109,8 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
     """MNS-003: reject unknown symbols while supporting default-stock holdings."""
 
     def setUp(self):
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
@@ -121,6 +124,14 @@ class MNS003PortfolioUnregisteredSymbolTests(unittest.TestCase):
             app_state.market.user_us = self._orig_us
             app_state.market.user_jp = self._orig_jp
             app_state.market.user_idx = self._orig_idx
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
 
     def test_rejects_unregistered_symbol(self):
         with app_state.market.user_stocks_lock:
@@ -288,8 +299,9 @@ class MNS004LockFilePersistenceTests(unittest.TestCase):
 
     def setUp(self):
         self.storage = __import__("utils.storage", fromlist=["USER_STOCKS_FILE"])
-        self._file = Path(self.storage.USER_STOCKS_FILE)
-        self._file_backup = self._file.read_bytes() if self._file.exists() else None
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._orig_file = self.storage.USER_STOCKS_FILE
+        self.storage.USER_STOCKS_FILE = str(Path(self._tmpdir.name) / "user_stocks.json")
         with app_state.market.user_stocks_lock:
             self._orig_us = app_state.market.user_us.copy()
             self._orig_jp = app_state.market.user_jp.copy()
@@ -301,15 +313,12 @@ class MNS004LockFilePersistenceTests(unittest.TestCase):
             app_state.market.user_us = self._orig_us
             app_state.market.user_jp = self._orig_jp
             app_state.market.user_idx = self._orig_idx
-            app_state.market.user_stocks_load_error = False
-        if self._file_backup is not None:
-            self._file.write_bytes(self._file_backup)
-        elif self._file.exists():
-            self._file.unlink()
+            app_state.market.user_stocks_load_error = self._orig_err
+        self.storage.USER_STOCKS_FILE = self._orig_file
+        self._tmpdir.cleanup()
 
     def test_lock_file_remains_after_save(self):
-        storage = __import__("utils.storage", fromlist=["USER_STOCKS_FILE"])
-        lock_file = Path(storage.USER_STOCKS_FILE).with_suffix(".lock")
+        lock_file = Path(self.storage.USER_STOCKS_FILE).with_suffix(".lock")
 
         with app_state.market.user_stocks_lock:
             app_state.market.user_us = {"AAPL": "Apple"}

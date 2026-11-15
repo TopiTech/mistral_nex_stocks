@@ -157,10 +157,36 @@ class RetryablePredicateTestCase(unittest.TestCase):
         self.assertFalse(ls._langsearch_request_retryable(ValueError("boom")))
 
 
+def _configure_langsearch_rate(
+    test_case: unittest.TestCase,
+    *,
+    min_interval_sec: float = 0.0,
+    next_allowed_ts: float = 0.0,
+) -> None:
+    """Configure app_state.ai LangSearch rate fields and restore them via addCleanup."""
+    with app_state.ai.langsearch_rate_lock:
+        saved = (
+            app_state.ai.langsearch_min_interval_sec,
+            app_state.ai.langsearch_next_allowed_ts,
+            app_state.ai.langsearch_429_cooldown_sec,
+        )
+        app_state.ai.langsearch_min_interval_sec = min_interval_sec
+        app_state.ai.langsearch_next_allowed_ts = next_allowed_ts
+
+    def _restore() -> None:
+        with app_state.ai.langsearch_rate_lock:
+            (
+                app_state.ai.langsearch_min_interval_sec,
+                app_state.ai.langsearch_next_allowed_ts,
+                app_state.ai.langsearch_429_cooldown_sec,
+            ) = saved
+
+    test_case.addCleanup(_restore)
+
+
 class LangsearchPostJsonTestCase(unittest.TestCase):
     def setUp(self):
-        app_state.ai.langsearch_min_interval_sec = 0.0
-        app_state.ai.langsearch_next_allowed_ts = 0.0
+        _configure_langsearch_rate(self, min_interval_sec=0.0, next_allowed_ts=0.0)
 
     def test_circuit_open_skips_call(self):
         with (
@@ -593,7 +619,7 @@ class LangsearchRerankTestCase(unittest.TestCase):
 
 class CollectLangsearchItemsTestCase(unittest.TestCase):
     def setUp(self):
-        app_state.ai.langsearch_min_interval_sec = 0.0
+        _configure_langsearch_rate(self, min_interval_sec=0.0, next_allowed_ts=0.0)
 
     def test_no_api_key_returns_empty(self):
         self.assertEqual(ls._collect_langsearch_items(["q"], "", "d"), [])
@@ -678,8 +704,7 @@ class CollectLangsearchItemsTestCase(unittest.TestCase):
 
 class LangsearchAcquireSlotTestCase(unittest.TestCase):
     def setUp(self):
-        app_state.ai.langsearch_min_interval_sec = 2.0
-        app_state.ai.langsearch_next_allowed_ts = 0.0
+        _configure_langsearch_rate(self, min_interval_sec=2.0, next_allowed_ts=0.0)
 
     def test_cooldown_beyond_max_wait_raises(self):
         app_state.ai.langsearch_next_allowed_ts = (
@@ -705,8 +730,7 @@ class LangsearchLimitNormalizationTestCase(unittest.TestCase):
     """Edge-case regression tests for langsearch_search max_results normalization."""
 
     def setUp(self):
-        app_state.ai.langsearch_min_interval_sec = 0.0
-        app_state.ai.langsearch_next_allowed_ts = 0.0
+        _configure_langsearch_rate(self, min_interval_sec=0.0, next_allowed_ts=0.0)
 
     def test_invalid_or_non_positive_max_results_skips_http(self):
         with patch.object(ls, "_langsearch_post_json") as mock_post:

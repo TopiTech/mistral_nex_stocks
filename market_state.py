@@ -28,7 +28,7 @@ from constants import (
     YFINANCE_SHORT_CACHE_TTL,
 )
 from session_manager import yf_session_manager
-from utils.normalization import is_bool_like
+from utils.normalization import finite_float, is_bool_like
 
 logger = logging.getLogger("backend")
 
@@ -431,13 +431,8 @@ class MarketDataState:
 
     @staticmethod
     def _coerce_finite_float(raw: Any, default: float = 0.0) -> float:
-        if raw is None or is_bool_like(raw):
-            return default
-        try:
-            val = float(raw)
-        except (TypeError, ValueError, OverflowError):
-            return default
-        return val if math.isfinite(val) else default
+        result = finite_float(raw, default)
+        return default if result is None else result
 
     def get_usdjpy_rate_snapshot(self) -> tuple[float, float]:
         """Return ``(last_usdjpy_rate, last_usdjpy_rate_ts)`` atomically under lock."""

@@ -113,9 +113,9 @@ class TestAuditReviewFixes(unittest.TestCase):
             # Two symbols requested, flat dataframe returned from batch
             result = provider.download_batch(["INVALID_SYM", "VALID_SYM"], period="1mo")
             # Result should only contain VALID_SYM
-            if isinstance(result.columns, pd.MultiIndex):
-                self.assertIn("VALID_SYM", result.columns.levels[1])
-                self.assertNotIn("INVALID_SYM", result.columns.levels[1])
+            self.assertIsInstance(result.columns, pd.MultiIndex)
+            self.assertIn("VALID_SYM", result.columns.levels[1])
+            self.assertNotIn("INVALID_SYM", result.columns.levels[1])
 
     def test_screener_market_cap_fallback_shares_price(self):
         """R5: Screener enrichment computes sharesOutstanding * price when market_cap is missing."""

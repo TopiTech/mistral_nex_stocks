@@ -11,6 +11,7 @@ Provides financial tools for Mistral AI agents to autonomously retrieve:
 import json
 import logging
 import math
+from collections.abc import Mapping
 from typing import Any
 
 from utils.normalization import (
@@ -325,7 +326,7 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                         if open_val is None:
                             open_val = _first_finite_number(rt.get("open"))
                         if updated_at is None:
-                            updated_at = rt.get("timestamp") or rt.get("updated_at")
+                            updated_at = _first_not_none(rt.get("timestamp"), rt.get("updated_at"))
             except Exception:
                 pass
 
@@ -372,15 +373,16 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                 if ticker is not None:
                     fast = getattr(ticker, "fast_info", None)
                     if fast is not None:
-                        p_val = getattr(fast, "last_price", None) or getattr(
-                            fast, "regular_market_price", None
-                        )
-                        if isinstance(fast, dict):
-                            p_val = (
-                                p_val or fast.get("last_price") or fast.get("regular_market_price")
+                        if isinstance(fast, Mapping):
+                            price = _first_finite_number(
+                                fast.get("last_price"),
+                                fast.get("regular_market_price"),
                             )
-                        if p_val is not None and not is_bool_like(p_val):
-                            price = _finite_number(p_val)
+                        else:
+                            price = _first_finite_number(
+                                getattr(fast, "last_price", None),
+                                getattr(fast, "regular_market_price", None),
+                            )
                     if price is None:
                         # SVC-12: mirror _tool_calculate_technical_levels —
                         # every network-bound ticker.history call must hold
@@ -426,23 +428,31 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                                     vols = hist["Volume"].dropna()
                                     if not vols.empty:
                                         volume = _finite_number(vols.iloc[-1])
-                    prev_close = (
-                        info.get("regularMarketPreviousClose")
-                        or info.get("previousClose")
-                        or (
-                            getattr(fast, "previous_close", None)
-                            or getattr(fast, "regular_market_previous_close", None)
-                            if fast is not None
-                            else None
-                        )
-                    )
-                    if prev_close is not None and not is_bool_like(prev_close):
-                        prev_f = _finite_number(prev_close)
-                        if price is not None and prev_f is not None and prev_f > 0:
-                            if change is None:
-                                change = round(price - prev_f, 4)
-                            if change_pct is None:
-                                change_pct = round((change / prev_f) * 100, 2)
+                    prev_candidates: list[Any] = [
+                        info.get("regularMarketPreviousClose"),
+                        info.get("previousClose"),
+                    ]
+                    if fast is not None:
+                        if isinstance(fast, Mapping):
+                            prev_candidates.extend(
+                                (
+                                    fast.get("previous_close"),
+                                    fast.get("regular_market_previous_close"),
+                                )
+                            )
+                        else:
+                            prev_candidates.extend(
+                                (
+                                    getattr(fast, "previous_close", None),
+                                    getattr(fast, "regular_market_previous_close", None),
+                                )
+                            )
+                    prev_f = _first_finite_number(*prev_candidates)
+                    if price is not None and prev_f is not None and prev_f > 0:
+                        if change is None:
+                            change = round(price - prev_f, 4)
+                        if change_pct is None:
+                            change_pct = round((change / prev_f) * 100, 2)
             except Exception:
                 pass
 

@@ -9,8 +9,8 @@ from app import create_app
 
 
 @pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("MNS_DATA_DIR", "tests_runtime_data")
+def client(monkeypatch, tmp_path):
+    monkeypatch.setenv("MNS_DATA_DIR", str(tmp_path / "runtime_data"))
     monkeypatch.setenv("MNS_DISABLE_LOCAL_RATE_LIMIT", "1")
     app = create_app(
         config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True

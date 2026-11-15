@@ -29,6 +29,13 @@ from services.embeddings_service import (
     _compute_text_hash,
 )
 from services.openai_service import _build_openai_cache_key
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 @pytest.fixture(autouse=True)

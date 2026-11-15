@@ -157,35 +157,49 @@ def test_gunicorn_threads_default_cap_still_applies_for_small_listeners(monkeypa
 # ---------------------------------------------------------------------------
 
 
-def test_wsgi_empty_proxy_fix_x_for_is_treated_as_default(monkeypatch):
+def test_wsgi_empty_proxy_fix_x_for_is_treated_as_default():
     """A stray ``MNS_PROXY_FIX_X_FOR=`` line must not FATAL-exit wsgi.
 
     ``os.environ.get`` returns "" (not the default) for a set-but-empty
     variable, so int("") -> ValueError -> hops=0 -> hard exit, while every
     other layer treats the value as unset (default 1).
     """
-    monkeypatch.setenv("MNS_ALLOW_REMOTE_API", "1")
-    monkeypatch.setenv("MNS_ADMIN_TOKEN", "x" * 32)
-    monkeypatch.setenv("MNS_PROXY_FIX", "1")
-    monkeypatch.setenv("MNS_PROXY_FIX_X_FOR", "")
     import wsgi as wsgi_mod
 
-    # Must not raise (SystemExit propagated as an import failure).
-    importlib.reload(wsgi_mod)
-
-
-def test_wsgi_invalid_proxy_fix_x_for_still_refuses_to_start(monkeypatch):
-    monkeypatch.setenv("MNS_ALLOW_REMOTE_API", "1")
-    monkeypatch.setenv("MNS_ADMIN_TOKEN", "x" * 32)
-    monkeypatch.setenv("MNS_PROXY_FIX", "1")
-    monkeypatch.setenv("MNS_PROXY_FIX_X_FOR", "not-a-number")
-    import wsgi as wsgi_mod
-
-    with pytest.raises(SystemExit):
+    try:
+        with patch.dict(
+            os.environ,
+            {
+                "MNS_ALLOW_REMOTE_API": "1",
+                "MNS_ADMIN_TOKEN": "x" * 32,
+                "MNS_PROXY_FIX": "1",
+                "MNS_PROXY_FIX_X_FOR": "",
+            },
+        ):
+            # Must not raise (SystemExit propagated as an import failure).
+            importlib.reload(wsgi_mod)
+    finally:
         importlib.reload(wsgi_mod)
-    # Restore a clean wsgi module for later tests.
-    monkeypatch.setenv("MNS_PROXY_FIX_X_FOR", "1")
-    importlib.reload(wsgi_mod)
+
+
+def test_wsgi_invalid_proxy_fix_x_for_still_refuses_to_start():
+    import wsgi as wsgi_mod
+
+    try:
+        with patch.dict(
+            os.environ,
+            {
+                "MNS_ALLOW_REMOTE_API": "1",
+                "MNS_ADMIN_TOKEN": "x" * 32,
+                "MNS_PROXY_FIX": "1",
+                "MNS_PROXY_FIX_X_FOR": "not-a-number",
+            },
+        ):
+            with pytest.raises(SystemExit):
+                importlib.reload(wsgi_mod)
+    finally:
+        # Restore a clean wsgi module for later tests under original env.
+        importlib.reload(wsgi_mod)
 
 
 # ---------------------------------------------------------------------------
@@ -227,17 +241,25 @@ def test_browser_trends_env_accepts_canonical_spellings(monkeypatch):
     """
     import trend_sources
 
-    for spelling in CANONICAL_TRUTHY:
-        monkeypatch.setenv("MNS_USE_BROWSER_TRENDS", spelling)
-        # Clients are cached per market (M12); each spelling must construct
-        # a fresh BrowserConfig, so clear the cache between iterations.
-        trend_sources._GOOGLE_TRENDS_CLIENTS.clear()
-        with (
-            patch.object(trend_sources, "BrowserConfig") as browser_cfg,
-            patch.object(trend_sources, "TrendReq"),
-        ):
-            trend_sources._google_trends_client("us")
-        browser_cfg.assert_called_once_with(headless=True)
+    with trend_sources._GOOGLE_TRENDS_CLIENT_LOCK:
+        saved_clients = dict(trend_sources._GOOGLE_TRENDS_CLIENTS)
+    try:
+        for spelling in CANONICAL_TRUTHY:
+            monkeypatch.setenv("MNS_USE_BROWSER_TRENDS", spelling)
+            # Clients are cached per market (M12); each spelling must construct
+            # a fresh BrowserConfig, so clear the cache between iterations.
+            with trend_sources._GOOGLE_TRENDS_CLIENT_LOCK:
+                trend_sources._GOOGLE_TRENDS_CLIENTS.clear()
+            with (
+                patch.object(trend_sources, "BrowserConfig") as browser_cfg,
+                patch.object(trend_sources, "TrendReq"),
+            ):
+                trend_sources._google_trends_client("us")
+            browser_cfg.assert_called_once_with(headless=True)
+    finally:
+        with trend_sources._GOOGLE_TRENDS_CLIENT_LOCK:
+            trend_sources._GOOGLE_TRENDS_CLIENTS.clear()
+            trend_sources._GOOGLE_TRENDS_CLIENTS.update(saved_clients)
 
 
 def test_canonical_truthy_spellings_are_parsed_at_every_ad_hoc_site():
@@ -285,14 +307,14 @@ def test_leader_reacquire_with_open_mirror_returns_true_and_keeps_handle(tmp_pat
         assert app_bg._try_acquire_leader_lock() is True
         handle = app_bg._LEADER_LOCK_FILE
         assert handle is not None
-
-        # Re-election tick while still holding the lock.
-        assert app_bg._try_acquire_leader_lock() is True
-        assert app_bg._LEADER_LOCK_FILE is handle
-        assert not handle.closed
-
-        handle.close()
-        app_bg._LEADER_LOCK_FILE = None
+        try:
+            # Re-election tick while still holding the lock.
+            assert app_bg._try_acquire_leader_lock() is True
+            assert app_bg._LEADER_LOCK_FILE is handle
+            assert not handle.closed
+        finally:
+            handle.close()
+            app_bg._LEADER_LOCK_FILE = None
 
 
 def test_leader_pid_is_refreshed_on_reacquire(tmp_path):
@@ -302,10 +324,49 @@ def test_leader_pid_is_refreshed_on_reacquire(tmp_path):
     with patch("app_bg.APP_DATA_DIR", tmp_path):
         assert app_bg._try_acquire_leader_lock() is True
         handle = app_bg._LEADER_LOCK_FILE
-        with patch("os.getpid", return_value=654321):
-            assert app_bg._try_acquire_leader_lock() is True
-        handle.close()
-        app_bg._LEADER_LOCK_FILE = None
+        try:
+            with patch("os.getpid", return_value=654321):
+                assert app_bg._try_acquire_leader_lock() is True
+        finally:
+            handle.close()
+            app_bg._LEADER_LOCK_FILE = None
 
         lock_content = (tmp_path / ".mns_sync_leader.lock").read_text(encoding="utf-8")
         assert lock_content.strip() == "654321"
+
+
+def test_leader_advisory_lock_recovers_after_stale_handle_oserror(tmp_path):
+    """If refresh raises OSError on a stale lock fd, release handle and re-acquire."""
+    import bg.leader_election as le
+
+    class _StaleHandle:
+        def __init__(self):
+            self.closed = False
+
+        def seek(self, _offset):
+            raise OSError("bad file descriptor")
+
+        def close(self):
+            self.closed = True
+
+    stale = _StaleHandle()
+    lock_path = tmp_path / ".mns_sync_leader.lock"
+    acquired = False
+    le._set_leader_lock_file(stale)
+    try:
+        acquired = le._try_acquire_advisory_file_lock(
+            lock_path,
+            12345,
+            lambda _f: None,
+        )
+        assert acquired is True
+        assert stale.closed is True
+        new_handle = le._get_leader_lock_file()
+        assert new_handle is not None
+        assert new_handle is not stale
+        assert lock_path.read_text(encoding="utf-8").strip() == "12345"
+    finally:
+        cur = le._get_leader_lock_file()
+        if cur is not None:
+            cur.close()
+        le._set_leader_lock_file(None)

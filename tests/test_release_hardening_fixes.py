@@ -13,12 +13,28 @@ from error_codes import ErrorCode
 from utils import storage
 
 
+def _configure_test_app(test_case: unittest.TestCase) -> None:
+    """Enable TESTING/disabled CSRF on global app and restore exact prior keys via addCleanup."""
+    sentinel = object()
+    saved = {key: app.config.get(key, sentinel) for key in ("TESTING", "WTF_CSRF_ENABLED")}
+
+    def _restore() -> None:
+        for key, original in saved.items():
+            if original is sentinel:
+                app.config.pop(key, None)
+            else:
+                app.config[key] = original
+
+    test_case.addCleanup(_restore)
+    app.config["TESTING"] = True
+    app.config["WTF_CSRF_ENABLED"] = False
+
+
 class StockPersistRollbackTestCase(unittest.TestCase):
     """Persisted stock mutations must roll back memory on any save failure."""
 
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
         with app_state.market.user_stocks_lock:
             self._orig_us = dict(app_state.market.user_us)
@@ -60,8 +76,7 @@ class AIInputValidationTestCase(unittest.TestCase):
     """AI endpoints must reject non-string/non-list payloads with 400."""
 
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
 
     def test_chat_rejects_non_string_message(self):
@@ -120,8 +135,7 @@ class AnalyzeV2DataSourceTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        app.config["TESTING"] = True
-        app.config["WTF_CSRF_ENABLED"] = False
+        _configure_test_app(self)
         self.client = app.test_client()
         self.payload = {
             "market": "us",

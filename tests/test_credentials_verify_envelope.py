@@ -13,6 +13,13 @@ import pytest
 
 from app import app
 from credential_manager import save_api_credentials
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 @pytest.fixture

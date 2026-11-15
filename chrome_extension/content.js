@@ -218,7 +218,6 @@
     "BRK.B",
     "AVGO",
     "JPM",
-    "ELI",
     "LLY",
     "V",
     "UNH",

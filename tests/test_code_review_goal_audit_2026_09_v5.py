@@ -29,11 +29,15 @@ class TestCodeReviewAuditV5(unittest.TestCase):
     """Test suite verifying fixes for R27, R28, and R29."""
 
     def setUp(self) -> None:
+        self._has_csrf = "WTF_CSRF_ENABLED" in app.config
         self._orig_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["WTF_CSRF_ENABLED"] = False
 
     def tearDown(self) -> None:
-        app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
+        if self._has_csrf:
+            app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
+        else:
+            app.config.pop("WTF_CSRF_ENABLED", None)
 
     def test_r27_screener_query_request_bounds(self) -> None:
         """Verify ScreenerQueryRequest validates min <= max across all metric ranges."""

@@ -121,11 +121,17 @@ class TestReleaseFixVerification(unittest.TestCase):
         self.assertEqual(state["tavily_api_key_min_length"], 3)
 
     def test_m1_m2_active_sessions_tracking_and_lock(self):
-        """M-1 & M-2: Verify active_sessions is tracked during request execution."""
-        sm = YFinanceSessionManager()
+        """M-1 & M-2: Verify real _create_session custom_request tracks active_sessions."""
+        import session_manager as sm_mod
 
-        # Mock session and original request
+        YFinanceSessionManager._reset_for_testing()
+        sm = YFinanceSessionManager()
+        sm._request_min_interval_sec = 0.0
+        sm._adaptive_interval_sec = 0.0
+
         mock_session = MagicMock()
+        mock_session.headers = {}
+        mock_session.proxies = {}
         mock_response = MagicMock()
         mock_response.status_code = 200
 
@@ -138,37 +144,25 @@ class TestReleaseFixVerification(unittest.TestCase):
                 active_during_request = sid in sm._active_sessions
             return mock_response
 
-        # Mirror the tracking contract of the real ``custom_request`` wrapper
-        # (session-manager wires this inside _create_session): the session id
-        # must be in _active_sessions while the request runs and removed after.
-        def tracked_request(*args, **kwargs):
-            sid = id(mock_session)
+        mock_session.request = check_active
+
+        try:
+            with (
+                patch.object(sm_mod, "CURL_CFFI_AVAILABLE", False),
+                patch("requests.Session", return_value=mock_session),
+            ):
+                sess = sm.get_session()
+                self.assertIs(sess, mock_session)
+                resp = sess.request("GET", "https://example.invalid/")
+            self.assertIs(resp, mock_response)
+            self.assertTrue(
+                active_during_request,
+                "active_sessions must contain the session id while the request runs",
+            )
             with sm._active_sessions_lock:
-                sm._active_sessions.add(sid)
-            try:
-                return check_active(*args, **kwargs)
-            finally:
-                with sm._active_sessions_lock:
-                    sm._active_sessions.discard(sid)
-
-        mock_session.request = tracked_request
-
-        with patch.object(sm, "_create_session", return_value=mock_session):
-            sess = sm.get_session()
-            self.assertEqual(sess, mock_session)
-
-        # Actually invoke the wrapped request so the tracking is exercised and
-        # asserted (the previous version only defined the mock but never called
-        # it, so it could pass even if tracking were removed).
-        with patch.object(sm, "_create_session", return_value=mock_session):
-            resp = sess.request("GET", "https://example.invalid/")
-        self.assertEqual(resp, mock_response)
-        self.assertTrue(
-            active_during_request,
-            "active_sessions must contain the session id while the request runs",
-        )
-        with sm._active_sessions_lock:
-            self.assertNotIn(id(mock_session), sm._active_sessions)
+                self.assertNotIn(id(mock_session), sm._active_sessions)
+        finally:
+            YFinanceSessionManager._reset_for_testing()
 
     def test_m3_local_rate_limit_multiplier_and_optout(self):
         """M-3: Verify local rate limiting with multiplier and opt-out flag."""

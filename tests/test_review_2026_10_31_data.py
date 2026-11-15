@@ -553,7 +553,9 @@ def test_data9_announce_race_overflow_terminates_listener_with_sentinel():
     assert items == [None], f"expected exactly the None sentinel, got {items!r}"
     stats = ann.stats()
     assert stats["listeners"] == 0
-    assert stats["announced"] == 1
+    # The message was rejected by queue.Full and the listener was dropped with None;
+    # failed mid-broadcast deliveries must count in dropped, not announced.
+    assert stats["announced"] == 0
     assert stats["dropped"] == 1
 
 

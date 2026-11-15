@@ -14,7 +14,14 @@ import pytest
 
 from app_state import app_state
 from services.openai_service import call_openai_chat, stream_openai_chat
+from tests.test_support.patches import stub_public_outbound_dns
 from tests.test_support.state_reset import reset_app_state_internals
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 @pytest.fixture(autouse=True)

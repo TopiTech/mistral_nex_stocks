@@ -361,9 +361,14 @@ class YFinanceProvider(BaseStockProvider):
             prev_close_value = _finite_float(prev_close)
             volume_value = _finite_float(volume, default=0.0)
             if (volume_value is None or volume_value <= 0.0) and "Volume" in df.columns:
-                pos_vols = df["Volume"][df["Volume"] > 0]
+                numeric_vols = pd.to_numeric(
+                    df["Volume"].where(~df["Volume"].map(is_bool_like)),
+                    errors="coerce",
+                )
+                pos_vols = numeric_vols[numeric_vols > 0]
                 if not pos_vols.empty:
-                    volume_value = _finite_float(pos_vols.iloc[-1], default=0.0)
+                    cand_vol = _finite_float(pos_vols.iloc[-1], default=0.0)
+                    volume_value = cand_vol if cand_vol is not None and cand_vol > 0.0 else 0.0
             open_value = _finite_float(open_p)
             high_value = _finite_float(high)
             low_value = _finite_float(low)

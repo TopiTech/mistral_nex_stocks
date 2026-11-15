@@ -21,26 +21,29 @@ from utils.storage import _migrate_legacy_user_stocks, _write_user_stocks_with_l
 def test_realtime_engine_wait_for_updates_captures_late_signal():
     """Verify wait_for_updates returns True if an event was set during/after wait timeout."""
     engine = RealtimeMarketEngine()
-    cid = engine.register_client()
-    evt = engine._client_events[cid]
+    try:
+        cid = engine.register_client()
+        evt = engine._client_events[cid]
 
-    # Pre-set the event
-    evt.set()
-    # Should consume and return True
-    assert engine.wait_for_updates(cid, timeout=0.01) is True
-    # Now it should be cleared
-    assert not evt.is_set()
-
-    # Simulate race: mock wait returning False, but event is set right before lock acquisition
-    with patch.object(evt, "wait", return_value=False):
+        # Pre-set the event
         evt.set()
+        # Should consume and return True
         assert engine.wait_for_updates(cid, timeout=0.01) is True
+        # Now it should be cleared
         assert not evt.is_set()
 
-    # When genuinely not set, should return False
-    assert engine.wait_for_updates(cid, timeout=0.01) is False
+        # Simulate race: mock wait returning False, but event is set right before lock acquisition
+        with patch.object(evt, "wait", return_value=False):
+            evt.set()
+            assert engine.wait_for_updates(cid, timeout=0.01) is True
+            assert not evt.is_set()
 
-    engine.unregister_client(cid)
+        # When genuinely not set, should return False
+        assert engine.wait_for_updates(cid, timeout=0.01) is False
+
+        engine.unregister_client(cid)
+    finally:
+        engine.stop()
 
 
 def test_screener_enrichment_fault_isolation():

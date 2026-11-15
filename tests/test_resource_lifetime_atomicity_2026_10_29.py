@@ -25,12 +25,19 @@ from services.openai_service import (
     get_openai_embeddings_batch,
     stream_openai_chat,
 )
+from tests.test_support.patches import stub_public_outbound_dns
 from utils.caching import (
     _get_cached_value,
     _get_cached_value_if_present,
     _has_cached_key,
     global_cache,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 class _Clock:

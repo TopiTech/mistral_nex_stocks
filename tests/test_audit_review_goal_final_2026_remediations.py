@@ -162,8 +162,8 @@ def test_calculate_heikin_ashi_null_and_non_object_safety():
 
 
 @pytest.fixture
-def app_client(monkeypatch):
-    monkeypatch.setenv("MNS_DATA_DIR", "tests_runtime_data")
+def app_client(monkeypatch, tmp_path):
+    monkeypatch.setenv("MNS_DATA_DIR", str(tmp_path / "runtime_data"))
     monkeypatch.setenv("MNS_DISABLE_LOCAL_RATE_LIMIT", "1")
     test_app = create_app(
         config_override={"TESTING": True, "WTF_CSRF_ENABLED": False}, skip_bootstrap=True

@@ -11,9 +11,21 @@ from app import app
 
 class LLMRepairFlowTest(unittest.TestCase):
     def setUp(self):
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
+
+    def tearDown(self):
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
 
     @patch("routes.api_analysis.extract_api_key", return_value="dummy-key")
     @patch("routes.api_analysis.get_stock_info_cached")

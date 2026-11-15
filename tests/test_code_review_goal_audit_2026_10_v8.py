@@ -71,33 +71,54 @@ def test_api_analyze_v2_rejects_negative_price(client):
         assert resp_small.get_json()["error_code"] == ErrorCode.INVALID_INPUT.value
 
         # Non-negative price 0.0 (valid in schema, should pass price validation)
-        with (
-            patch("schemas.analysis.is_valid_symbol", return_value=True),
-            patch("routes.api_analysis.fetch_stock", return_value={"price": 0.0, "chart_data": []}),
-            patch("routes.api_analysis.collect_symbol_research_context", return_value=""),
-            patch("routes.api_analysis.get_stock_info_cached", return_value={}),
-            patch(
-                "routes.api_analysis.call_mistral_chat",
-                return_value={
-                    "recommendation": "HOLD",
-                    "reasoning": "Test reasoning",
-                    "time_horizon": "短期",
-                    "risk_level": "中",
-                    "catalysts": [],
-                    "risks": [],
-                    "sentiment": "NEUTRAL",
-                },
-            ),
-        ):
-            resp_zero = client.post(
-                "/api/analyze-v2",
-                json={"symbol": "AAPL", "market": "us", "price": 0.0, "request_token": "a" * 32},
-                headers=headers,
-            )
-            # Should not be rejected for price (status can be 200 or polling)
-            assert resp_zero.status_code != 400 or (
-                "price" not in resp_zero.get_json().get("details", {}).get("reason", "")
-            )
+        from routes.api_analysis import (
+            analyze_fetch_inflight,
+            analyze_fetch_lock,
+            analyze_result_cache,
+            analyze_result_fingerprints,
+        )
+
+        with analyze_fetch_lock:
+            analyze_fetch_inflight.clear()
+            analyze_result_cache.clear()
+            analyze_result_fingerprints.clear()
+
+        try:
+            with (
+                patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, None)),
+                patch("schemas.analysis.is_valid_symbol", return_value=True),
+                patch(
+                    "routes.api_analysis.fetch_stock",
+                    return_value={"price": 0.0, "chart_data": []},
+                ),
+                patch("routes.api_analysis.collect_symbol_research_context", return_value=""),
+                patch("routes.api_analysis.get_stock_info_cached", return_value={}),
+                patch(
+                    "routes.api_analysis.call_mistral_chat",
+                    return_value={
+                        "recommendation": "HOLD",
+                        "reasoning": "Test reasoning",
+                        "time_horizon": "短期",
+                        "risk_level": "中",
+                        "catalysts": [],
+                        "risks": [],
+                        "sentiment": "NEUTRAL",
+                    },
+                ),
+            ):
+                resp_zero = client.post(
+                    "/api/analyze-v2",
+                    json={"symbol": "AAPL", "market": "us", "price": 0.0, "request_token": "a" * 32},
+                    headers=headers,
+                )
+            assert resp_zero.status_code == 200
+            body_zero = resp_zero.get_json()
+            assert body_zero["ok"] is True
+        finally:
+            with analyze_fetch_lock:
+                analyze_fetch_inflight.clear()
+                analyze_result_cache.clear()
+                analyze_result_fingerprints.clear()
 
 
 def test_api_add_stock_ext_releases_user_stocks_lock_before_save(test_app):

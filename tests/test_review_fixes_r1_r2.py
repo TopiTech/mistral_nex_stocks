@@ -45,19 +45,22 @@ def test_r3_caching_negative_key_sanitization_roundtrip():
 
     with global_cache.cache_lock:
         global_cache.caches.clear()
+    try:
+        raw_key = "market_news_context_us_ddgs/evil?key"
+        neg_key = f"{raw_key}__negative"
+        sanitized_neg = sanitize_cache_key(neg_key)
 
-    raw_key = "market_news_context_us_ddgs/evil?key"
-    neg_key = f"{raw_key}__negative"
-    sanitized_neg = sanitize_cache_key(neg_key)
-
-    _set_cached_value(neg_key, True, 60)
-    assert _has_cached_key(neg_key, 60) is True
-    assert _get_cached_value(neg_key, 60) is True
-    # Underlying storage uses the sanitized form
-    with global_cache.cache_lock:
-        cache = global_cache.caches.get(60)
-        assert cache is not None
-        assert sanitized_neg in cache
+        _set_cached_value(neg_key, True, 60)
+        assert _has_cached_key(neg_key, 60) is True
+        assert _get_cached_value(neg_key, 60) is True
+        # Underlying storage uses the sanitized form
+        with global_cache.cache_lock:
+            cache = global_cache.caches.get(60)
+            assert cache is not None
+            assert sanitized_neg in cache
+    finally:
+        with global_cache.cache_lock:
+            global_cache.caches.clear()
 
 
 def test_r4_chat_history_move_to_end_single_count_query(tmp_path, monkeypatch):
@@ -83,14 +86,17 @@ def test_r4_chat_history_move_to_end_single_count_query(tmp_path, monkeypatch):
     monkeypatch.setattr(ch_mod, "DB_PATH", db_path)
     ch_mod._reset_db_state()
     store = SQLiteChatHistoryStore(max_sessions=2, max_msgs_per_session=5)
-    ch_mod.init_db()
-    store["sess_a"] = [{"role": "user", "content": "hello a"}]
-    store["sess_b"] = [{"role": "user", "content": "hello b"}]
-    store.move_to_end("sess_a")
-    assert "sess_a" in store
-    store.move_to_end("sess_c")
-    # sess_c is new, so total would be 3 but max is 2 -> oldest evicted
-    assert len(store) == 2
+    try:
+        ch_mod.init_db()
+        store["sess_a"] = [{"role": "user", "content": "hello a"}]
+        store["sess_b"] = [{"role": "user", "content": "hello b"}]
+        store.move_to_end("sess_a")
+        assert "sess_a" in store
+        store.move_to_end("sess_c")
+        # sess_c is new, so total would be 3 but max is 2 -> oldest evicted
+        assert len(store) == 2
+    finally:
+        store.close_all()
 
 
 def test_r2_atomic_lock_o_excl_semantics(tmp_path):

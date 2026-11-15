@@ -255,148 +255,200 @@ class TestR1BootstrapFailClosed:
 
 
 class TestR3PortfolioMarketValidation:
-    def test_r3_normal_jp_with_T_clears_fx(self, client):
+    @staticmethod
+    def _snapshot_state():
         from app_state import app_state
 
         with app_state.market.user_stocks_lock:
-            app_state.market.user_jp = {
-                "7203.T": {"name": "トヨタ自動車", "shares": 50, "avg_price": 2400}
-            }
-            app_state.market.user_us = {}
-            app_state.market.user_idx = {}
-        with app_state.cache.sse_data_lock:
-            app_state.market.target_stocks_cache["jp"] = [
-                {
-                    "symbol": "7203.T",
-                    "name": "トヨタ自動車",
-                    "shares": 50,
-                    "avg_price": 2400,
-                    "avg_fx_rate": 150.0,
-                }
-            ]
-            app_state.market.current_stocks_cache["jp"] = [
-                {
-                    "symbol": "7203.T",
-                    "name": "トヨタ自動車",
-                    "shares": 50,
-                    "avg_price": 2400,
-                    "avg_fx_rate": 150.0,
-                }
-            ]
-        with patch("utils.storage.save_user_stocks", return_value=None):
-            resp = client.post(
-                "/api/stocks/portfolio",
-                headers={"Origin": "http://localhost:5000"},
-                json={
-                    "market": "jp",
-                    "symbol": "7203.T",
-                    "shares": 100,
-                    "avg_price": 2500,
-                    "avg_fx_rate": 155.5,
-                },
+            user_state = (
+                dict(app_state.market.user_jp),
+                dict(app_state.market.user_us),
+                dict(app_state.market.user_idx),
             )
-        assert resp.status_code == 200, resp.get_data(as_text=True)
-        data = resp.get_json()
-        assert data["success"] is True
-        with app_state.market.user_stocks_lock:
-            val = app_state.market.user_jp.get("7203.T")
-            assert val is not None
-            assert val["shares"] == 100
-            assert "avg_fx_rate" not in val
         with app_state.cache.sse_data_lock:
-            for cache in (
-                app_state.market.target_stocks_cache,
-                app_state.market.current_stocks_cache,
-            ):
-                lst = cache.get("jp", [])
-                for e in lst:
-                    if e.get("symbol") == "7203.T":
-                        assert "avg_fx_rate" not in e
+            cache_state = (
+                {k: list(v) for k, v in app_state.market.target_stocks_cache.items()},
+                {k: list(v) for k, v in app_state.market.current_stocks_cache.items()},
+            )
+        return user_state, cache_state
+
+    @staticmethod
+    def _restore_state(snapshot):
+        from app_state import app_state
+
+        user_state, cache_state = snapshot
+        orig_jp, orig_us, orig_idx = user_state
+        orig_target, orig_current = cache_state
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_jp = orig_jp
+            app_state.market.user_us = orig_us
+            app_state.market.user_idx = orig_idx
+        with app_state.cache.sse_data_lock:
+            app_state.market.target_stocks_cache = orig_target
+            app_state.market.current_stocks_cache = orig_current
+
+    def test_r3_normal_jp_with_T_clears_fx(self, client):
+        from app_state import app_state
+
+        snapshot = self._snapshot_state()
+        try:
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_jp = {
+                    "7203.T": {"name": "トヨタ自動車", "shares": 50, "avg_price": 2400}
+                }
+                app_state.market.user_us = {}
+                app_state.market.user_idx = {}
+            with app_state.cache.sse_data_lock:
+                app_state.market.target_stocks_cache["jp"] = [
+                    {
+                        "symbol": "7203.T",
+                        "name": "トヨタ自動車",
+                        "shares": 50,
+                        "avg_price": 2400,
+                        "avg_fx_rate": 150.0,
+                    }
+                ]
+                app_state.market.current_stocks_cache["jp"] = [
+                    {
+                        "symbol": "7203.T",
+                        "name": "トヨタ自動車",
+                        "shares": 50,
+                        "avg_price": 2400,
+                        "avg_fx_rate": 150.0,
+                    }
+                ]
+            with patch("utils.storage.save_user_stocks", return_value=None):
+                resp = client.post(
+                    "/api/stocks/portfolio",
+                    headers={"Origin": "http://localhost:5000"},
+                    json={
+                        "market": "jp",
+                        "symbol": "7203.T",
+                        "shares": 100,
+                        "avg_price": 2500,
+                        "avg_fx_rate": 155.5,
+                    },
+                )
+            assert resp.status_code == 200, resp.get_data(as_text=True)
+            data = resp.get_json()
+            assert data["success"] is True
+            with app_state.market.user_stocks_lock:
+                val = app_state.market.user_jp.get("7203.T")
+                assert val is not None
+                assert val["shares"] == 100
+                assert "avg_fx_rate" not in val
+            with app_state.cache.sse_data_lock:
+                for cache in (
+                    app_state.market.target_stocks_cache,
+                    app_state.market.current_stocks_cache,
+                ):
+                    lst = cache.get("jp", [])
+                    for e in lst:
+                        if e.get("symbol") == "7203.T":
+                            assert "avg_fx_rate" not in e
+        finally:
+            self._restore_state(snapshot)
 
     def test_r3_error_us_symbol_with_market_jp_returns_400_preserves_fx(self, client):
         from app_state import app_state
 
-        with app_state.market.user_stocks_lock:
-            app_state.market.user_jp = {
-                "AAPL": {"name": "Apple", "shares": 10, "avg_price": 150, "avg_fx_rate": 148.5}
-            }
-            app_state.market.user_us = {}
-            app_state.market.user_idx = {}
-        with patch("utils.storage.save_user_stocks", return_value=None):
-            resp = client.post(
-                "/api/stocks/portfolio",
-                headers={"Origin": "http://localhost:5000"},
-                json={
-                    "market": "jp",
-                    "symbol": "AAPL",
-                    "shares": 20,
-                    "avg_price": 160,
-                    "avg_fx_rate": 150,
-                },
-            )
-        assert resp.status_code == 400, resp.get_data(as_text=True)
-        j = resp.get_json()
-        assert "mismatch" in json.dumps(j).lower() or "JP" in json.dumps(j)
-        # FX must be preserved on mismatch — implementation mutates shares/price before check but preserves FX
-        with app_state.market.user_stocks_lock:
-            val = app_state.market.user_jp.get("AAPL")
-            assert val is not None
-            assert val.get("avg_fx_rate") == 148.5
+        snapshot = self._snapshot_state()
+        try:
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_jp = {
+                    "AAPL": {"name": "Apple", "shares": 10, "avg_price": 150, "avg_fx_rate": 148.5}
+                }
+                app_state.market.user_us = {}
+                app_state.market.user_idx = {}
+            with patch("utils.storage.save_user_stocks", return_value=None):
+                resp = client.post(
+                    "/api/stocks/portfolio",
+                    headers={"Origin": "http://localhost:5000"},
+                    json={
+                        "market": "jp",
+                        "symbol": "AAPL",
+                        "shares": 20,
+                        "avg_price": 160,
+                        "avg_fx_rate": 150,
+                    },
+                )
+            assert resp.status_code == 400, resp.get_data(as_text=True)
+            j = resp.get_json()
+            assert "mismatch" in json.dumps(j).lower() or "JP" in json.dumps(j)
+            # FX must be preserved on mismatch — implementation mutates shares/price before check but preserves FX
+            with app_state.market.user_stocks_lock:
+                val = app_state.market.user_jp.get("AAPL")
+                assert val is not None
+                assert val.get("avg_fx_rate") == 148.5
+        finally:
+            self._restore_state(snapshot)
 
     def test_r3_boundary_empty_market_returns_error(self, client):
         from app_state import app_state
 
-        with app_state.market.user_stocks_lock:
-            app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 5, "avg_price": 100}}
-            app_state.market.user_jp = {}
-            app_state.market.user_idx = {}
-        with patch("utils.storage.save_user_stocks", return_value=None):
-            resp = client.post(
-                "/api/stocks/portfolio",
-                headers={"Origin": "http://localhost:5000"},
-                json={"market": "", "symbol": "AAPL", "shares": 10, "avg_price": 120},
-            )
-        assert resp.status_code in (400, 422), resp.get_data(as_text=True)
+        snapshot = self._snapshot_state()
+        try:
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 5, "avg_price": 100}}
+                app_state.market.user_jp = {}
+                app_state.market.user_idx = {}
+            with patch("utils.storage.save_user_stocks", return_value=None):
+                resp = client.post(
+                    "/api/stocks/portfolio",
+                    headers={"Origin": "http://localhost:5000"},
+                    json={"market": "", "symbol": "AAPL", "shares": 10, "avg_price": 120},
+                )
+            assert resp.status_code in (400, 422), resp.get_data(as_text=True)
+        finally:
+            self._restore_state(snapshot)
 
     def test_r3_normal_us_keeps_fx_when_provided(self, client):
         from app_state import app_state
 
-        with app_state.market.user_stocks_lock:
-            app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 5, "avg_price": 100}}
-            app_state.market.user_jp = {}
-            app_state.market.user_idx = {}
-        with patch("utils.storage.save_user_stocks", return_value=None):
-            resp = client.post(
-                "/api/stocks/portfolio",
-                headers={"Origin": "http://localhost:5000"},
-                json={
-                    "market": "us",
-                    "symbol": "AAPL",
-                    "shares": 12,
-                    "avg_price": 180,
-                    "avg_fx_rate": 150.0,
-                },
-            )
-        assert resp.status_code == 200
-        with app_state.market.user_stocks_lock:
-            val = app_state.market.user_us.get("AAPL")
-            assert val["avg_fx_rate"] == 150.0
-            assert val["shares"] == 12
+        snapshot = self._snapshot_state()
+        try:
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 5, "avg_price": 100}}
+                app_state.market.user_jp = {}
+                app_state.market.user_idx = {}
+            with patch("utils.storage.save_user_stocks", return_value=None):
+                resp = client.post(
+                    "/api/stocks/portfolio",
+                    headers={"Origin": "http://localhost:5000"},
+                    json={
+                        "market": "us",
+                        "symbol": "AAPL",
+                        "shares": 12,
+                        "avg_price": 180,
+                        "avg_fx_rate": 150.0,
+                    },
+                )
+            assert resp.status_code == 200
+            with app_state.market.user_stocks_lock:
+                val = app_state.market.user_us.get("AAPL")
+                assert val["avg_fx_rate"] == 150.0
+                assert val["shares"] == 12
+        finally:
+            self._restore_state(snapshot)
 
     def test_r3_empty_market_via_missing_defaults_to_error(self, client):
         from app_state import app_state
 
-        with app_state.market.user_stocks_lock:
-            app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 1, "avg_price": 10}}
-            app_state.market.user_jp = {}
-            app_state.market.user_idx = {}
-        with patch("utils.storage.save_user_stocks", return_value=None):
-            resp = client.post(
-                "/api/stocks/portfolio",
-                headers={"Origin": "http://localhost:5000"},
-                json={"symbol": "AAPL", "shares": 10, "avg_price": 120},
-            )
-        assert resp.status_code in (400, 422)
+        snapshot = self._snapshot_state()
+        try:
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us = {"AAPL": {"name": "Apple", "shares": 1, "avg_price": 10}}
+                app_state.market.user_jp = {}
+                app_state.market.user_idx = {}
+            with patch("utils.storage.save_user_stocks", return_value=None):
+                resp = client.post(
+                    "/api/stocks/portfolio",
+                    headers={"Origin": "http://localhost:5000"},
+                    json={"symbol": "AAPL", "shares": 10, "avg_price": 120},
+                )
+            assert resp.status_code in (400, 422)
+        finally:
+            self._restore_state(snapshot)
 
 
 class TestR5HealthSkipBootstrap:
@@ -538,9 +590,11 @@ class TestR6ShutdownTokenAtomicPerms:
 
 
 class TestR7CorruptConfigFailClosed:
-    def test_r7_save_config_raises_when_corrupted(self):
+    def test_r7_save_config_raises_when_corrupted(self, tmp_path, monkeypatch):
         import config_store as cs
 
+        monkeypatch.setattr(cs, "CONFIG_FILE", tmp_path / "config.json")
+        monkeypatch.setattr(cs, "LEGACY_CONFIG_FILE", tmp_path / "legacy_config.json")
         cs._reset_legacy_merge_flag()
         cs.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         cs.CONFIG_FILE.write_text("{ invalid json", encoding="utf-8")
@@ -562,9 +616,11 @@ class TestR7CorruptConfigFailClosed:
             cs._CONFIG_CACHE["data"] = None
             cs._CONFIG_CACHE["key"] = None
 
-    def test_r7_save_after_recovery_succeeds(self):
+    def test_r7_save_after_recovery_succeeds(self, tmp_path, monkeypatch):
         import config_store as cs
 
+        monkeypatch.setattr(cs, "CONFIG_FILE", tmp_path / "config.json")
+        monkeypatch.setattr(cs, "LEGACY_CONFIG_FILE", tmp_path / "legacy_config.json")
         cs._reset_legacy_merge_flag()
         cs.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         cs.CONFIG_FILE.write_text("{ invalid", encoding="utf-8")
@@ -587,9 +643,11 @@ class TestR7CorruptConfigFailClosed:
             cs._CONFIG_CACHE["data"] = None
             cs._CONFIG_CACHE["key"] = None
 
-    def test_r7_save_after_fixing_file_content(self):
+    def test_r7_save_after_fixing_file_content(self, tmp_path, monkeypatch):
         import config_store as cs
 
+        monkeypatch.setattr(cs, "CONFIG_FILE", tmp_path / "config.json")
+        monkeypatch.setattr(cs, "LEGACY_CONFIG_FILE", tmp_path / "legacy_config.json")
         cs._reset_legacy_merge_flag()
         cs.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         cs.CONFIG_FILE.write_text("{ broken", encoding="utf-8")

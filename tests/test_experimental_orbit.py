@@ -5,32 +5,23 @@ Validates the experimental orbit route, template rendering, security headers,
 HTML structure, query parameter safety, and static asset accessibility.
 """
 
-import shutil
-import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from app import create_app
+from tests.test_support.environment import run_node_script
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def _run_node(script: str) -> str:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for the Observatory JavaScript regression test")
-    result = subprocess.run(
-        [node, "-"],
+    return run_node_script(
+        script,
         cwd=ROOT,
-        input=script,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    return result.stdout
+        context="the Observatory JavaScript regression test",
+    ).stdout
 
 
 @pytest.fixture
@@ -313,7 +304,12 @@ def test_stock_history_api_response_schema(client):
         "history": [{"c": 10.5, "o": 10.0, "h": 11.0, "l": 9.8, "v": 1000, "x": 1700000000000}],
     }
     app_state.stock_disk_cache.set("hist_MRAM_us_3mo", mock_payload)
-    res = client.get("/api/stock-history?symbol=MRAM&market=us&period=3mo")
+    try:
+        with patch.object(app_state.execution.data_executor, "submit"):
+            res = client.get("/api/stock-history?symbol=MRAM&market=us&period=3mo")
+    finally:
+        app_state.history_fetch_inflight.discard("hist_MRAM_us_3mo")
+        app_state.stock_disk_cache.delete("hist_MRAM_us_3mo")
     assert res.status_code == 200
     data = res.get_json()
     assert isinstance(data, dict)

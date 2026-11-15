@@ -6,12 +6,21 @@ thinking stream separation, circuit breaker separation, and connection pooling).
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app_state import app_state
 from services.openai_service import (
     call_openai_chat,
     call_openai_chat_with_tools,
     stream_openai_chat,
 )
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 def test_openai_reasoning_model_uses_max_completion_tokens():

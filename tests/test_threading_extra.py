@@ -151,57 +151,76 @@ def test_cancel_request_on_running_task_is_denied():
 
 def test_task_exception_in_callback_logged():
     """An exception in the done callback itself must be caught and logged."""
-    captured = []
+    from unittest.mock import patch
 
-    class CustomHandler(logging.Handler):
-        def emit(self, record):
-            captured.append(record.getMessage())
+    error_logged = threading.Event()
+    logged_calls = []
 
-    logger = logging.getLogger("utils.threading")
-    handler = CustomHandler()
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
+    def _capture_error(*args, **kwargs):
+        logged_calls.append(args)
+        error_logged.set()
 
     ex = DaemonThreadPoolExecutor(max_workers=1)
     try:
-        fut = ex.submit(lambda: 42)
-        # Wait for completion
-        assert fut.result(timeout=3) == 42
-
-        # The done callback already fired; we can't easily inject
-        # a failure afterward. Instead verify the success path logged.
-        assert any("completed successfully" in msg for msg in captured)
+        with patch("utils.threading.logger") as mock_logger:
+            mock_logger.debug.side_effect = RuntimeError("callback logging failure")
+            mock_logger.error.side_effect = _capture_error
+            fut = ex.submit(lambda: 42)
+            assert fut.result(timeout=3) == 42
+            assert error_logged.wait(timeout=3), "done callback did not log callback failure"
+        assert any(
+            "Error in background task done callback" in str(call[0]) for call in logged_calls
+        )
     finally:
-        logger.removeHandler(handler)
         ex.shutdown(wait=True)
 
 
 def test_executor_shutdown_does_not_block():
-    """Daemon threads ensure shutdown(wait=False) does not hang."""
-    ex = DaemonThreadPoolExecutor(max_workers=2)
+    """Daemon threads ensure shutdown(wait=False, cancel_futures=True) returns immediately."""
+    started = threading.Event()
+    release = threading.Event()
+    ex = DaemonThreadPoolExecutor(max_workers=1)
     try:
-        fut = ex.submit(time.sleep, 0.1)
-        # Shutdown without waiting — daemon threads prevent hang
-        ex.shutdown(wait=False)
-        # Future should be cancelled or still running
-        assert fut.cancel() or not fut.done()
+        def _blocking():
+            started.set()
+            release.wait(timeout=5)
+
+        ex.submit(_blocking)
+        assert started.wait(timeout=3)
+        queued_fut = ex.submit(lambda: "queued")
+        t0 = time.monotonic()
+        ex.shutdown(wait=False, cancel_futures=True)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.0
+        assert queued_fut.cancelled()
     finally:
-        # Final cleanup (already shut down)
-        try:
-            ex.shutdown(wait=True)
-        except RuntimeError:
-            pass
+        release.set()
+        ex.shutdown(wait=True)
 
 
 def test_get_executor_threads_fallback_via_prefix():
     """When _threads attribute is missing, _get_executor_threads falls back
     to prefix-based enumeration."""
-    ex = DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix="test-fallback-")
+    started = threading.Event()
+    release = threading.Event()
+    prefix = "test-fallback-prefix-"
+    ex = DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix=prefix)
+    orig_threads = ex._threads
     try:
-        fut = ex.submit(lambda: 42)
-        assert fut.result(timeout=3) == 42
+        def _worker():
+            started.set()
+            release.wait(timeout=5)
+
+        fut = ex.submit(_worker)
+        assert started.wait(timeout=3)
+        del ex._threads
+        threads = ex._get_executor_threads()
+        assert any(t.name.startswith(prefix) for t in threads)
     finally:
+        ex._threads = orig_threads
+        release.set()
         ex.shutdown(wait=True)
+    assert fut.result(timeout=3) is None
 
 
 def test_get_executor_threads_empty_prefix():

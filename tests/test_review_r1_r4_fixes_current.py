@@ -240,10 +240,8 @@ def test_r3_realtime_ws_sock_close_logs_on_failure(caplog):
     client.thread = None
     with caplog.at_level(logging.DEBUG):
         client.stop()
-    assert (
-        any("sock" in r.message.lower() or "closing" in r.message.lower() for r in caplog.records)
-        or mock_sock.close.called
-    )
+    mock_sock.close.assert_called_once()
+    assert any("Failed closing TradingView WS socket" in r.message for r in caplog.records)
 
 
 def test_r3_disk_cache_stale_payload_narrow_except(caplog):
@@ -255,20 +253,28 @@ def test_r3_disk_cache_stale_payload_narrow_except(caplog):
     assert result is None
 
 
-def test_r3_stock_payload_fx_narrow_except(caplog):
+def test_r3_stock_payload_fx_narrow_except(caplog, monkeypatch):
     from app_state import app_state
     from utils.stock_payload import get_current_usdjpy_rate
 
     # Force disk cache get to raise OSError, should be caught and logged
-    orig = app_state.stock_disk_cache.get
-    app_state.stock_disk_cache.get = MagicMock(side_effect=OSError("disk fail"))
-    try:
-        with caplog.at_level(logging.DEBUG):
-            rate, est = get_current_usdjpy_rate(default_rate=150.0, max_age_sec=0)
-        assert est is True  # fallback
-        assert rate == 150.0 or rate > 0
-    finally:
-        app_state.stock_disk_cache.get = orig
+    monkeypatch.setattr(app_state.market, "current_indices_cache", {})
+    monkeypatch.setattr(app_state.market, "last_usdjpy_rate", 0.0)
+    monkeypatch.setattr(app_state.market, "last_usdjpy_rate_ts", 0.0)
+    monkeypatch.setattr(
+        "services.realtime_engine.realtime_market_engine.get_market_snapshot",
+        dict,
+    )
+    monkeypatch.setattr(
+        app_state.stock_disk_cache,
+        "get",
+        MagicMock(side_effect=OSError("disk fail")),
+    )
+    with caplog.at_level(logging.DEBUG):
+        rate, est = get_current_usdjpy_rate(default_rate=150.0, max_age_sec=0)
+    assert est is True  # fallback
+    assert rate == 150.0
+    assert any("Disk cache FX lookup failed" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

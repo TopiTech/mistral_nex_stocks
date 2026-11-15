@@ -240,9 +240,56 @@ def test_r11_history_circuit_state_none_value(review_app):
         ):
             with app_state.market.history_circuit_lock:
                 app_state.market.history_circuit_state["AAPL"] = None
+            try:
+                client = review_app.test_client()
+                res = client.get("/api/stock-history?symbol=AAPL&period=1mo")
+                assert res.status_code == 200
+                data = res.get_json()
+                assert data.get("fetching") is True
+            finally:
+                with app_state.market.history_circuit_lock:
+                    app_state.market.history_circuit_state.pop("AAPL", None)
 
-            client = review_app.test_client()
-            res = client.get("/api/stock-history?symbol=AAPL&period=1mo")
-            assert res.status_code == 200
-            data = res.get_json()
-            assert data.get("fetching") is True
+
+def test_swr_news_submit_failure_sets_done_and_error(review_app):
+    """If SWR background submit raises, the result_holder done Event and error must be set."""
+    import queue
+
+    dummy_news = {
+        "retrieve_status": True,
+        "us_news": [],
+        "jp_news": [],
+        "crypto_news": [],
+        "timestamp": time.time(),
+    }
+    captured_holders: list[dict] = []
+
+    class _TrackingDict(dict):
+        def __setitem__(self, k, v):
+            captured_holders.append(v)
+            super().__setitem__(k, v)
+
+    tracking_inflight = _TrackingDict()
+    with (
+        patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, None)),
+        patch("routes.api_analysis.extract_api_key", return_value="dummy-mistral-api-key"),
+        patch(
+            "utils.caching._get_cached_value",
+            side_effect=lambda k, **kw: (
+                dummy_news if not str(k).endswith("_ts") else time.time() - 90000
+            ),
+        ),
+        patch("routes.api_analysis.news_fetch_inflight", tracking_inflight),
+        patch(
+            "routes.api_analysis._submit_in_app_context",
+            side_effect=queue.Full("news queue full"),
+        ),
+    ):
+        client = review_app.test_client()
+        res = client.post("/api/news", json={})
+        assert res.status_code == 200
+        assert len(captured_holders) == 1
+        holder = captured_holders[0]
+        assert holder["done"].is_set()
+        assert isinstance(holder["error"], queue.Full)
+        assert not tracking_inflight

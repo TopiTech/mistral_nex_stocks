@@ -121,3 +121,40 @@ def test_normalize_optional_number_non_positive():
 
 def test_normalize_history_frame_non_dataframe():
     assert norm.normalize_history_frame("not a df").empty
+
+
+def test_finite_float_rejects_mocks_and_non_scalars():
+    from decimal import Decimal
+    from unittest.mock import MagicMock, Mock
+
+    import numpy as np
+
+    from services.stock.sanitize import _finite_float as sanitize_finite_float
+    from services.stock_service import _finite_float as service_finite_float
+    from utils.validators import _finite_float_or_none
+
+    mock_plain = MagicMock()
+    mock_typed = MagicMock(spec=float)
+    mock_basic = Mock()
+
+    for fn in (
+        norm.finite_float,
+        norm._finite_number,
+        sanitize_finite_float,
+        service_finite_float,
+        _finite_float_or_none,
+    ):
+        assert fn(mock_plain) is None
+        assert fn(mock_typed) is None
+        assert fn(mock_basic) is None
+        assert fn(object()) is None
+        assert fn(True) is None
+        assert fn(np.bool_(False)) is None
+        assert fn(float("nan")) is None
+        assert fn(float("inf")) is None
+        assert fn(0) == 0.0
+        assert fn(0.0) == 0.0
+        assert fn(Decimal("12.5")) == 12.5
+        assert fn(np.float64(3.25)) == 3.25
+        assert fn(" 42.5 ") == 42.5
+        assert fn(b"7.5") == 7.5

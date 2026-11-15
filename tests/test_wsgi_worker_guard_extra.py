@@ -7,7 +7,8 @@ validation explicitly disabled with invalid counts, and the __main__ runner.
 
 import importlib
 import os
-import sys
+import runpy
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -83,21 +84,18 @@ def test_health_does_not_report_ready_for_explicit_false_skip_value():
 
 
 def test_main_block_runs_app():
-    """The if __name__ == '__main__' block should invoke app.run without error."""
-    with patch("wsgi.app") as mock_app, patch.dict("os.environ", {"MNS_SKIP_BOOTSTRAP": "1"}):
-        importlib.reload(wsgi_mod)
-        wsgi_mod.app.run = mock_app.run
-        # Execute the __main__ guard directly
-        saved = sys.modules["__main__"]
-        sys.modules["__main__"] = wsgi_mod
-        try:
-            code = compile(
-                "from constants import BACKEND_PORT\n"
-                "app.run(debug=False, threaded=True, host='127.0.0.1', port=BACKEND_PORT)",
-                "<wsgi_main>",
-                "exec",
-            )
-            exec(code, {"app": wsgi_mod.app, "constants": __import__("constants")})  # noqa: S102 # nosec B102
-        finally:
-            sys.modules["__main__"] = saved
-        mock_app.run.assert_called_once()
+    """Executing wsgi.py as __main__ should invoke app.run with bound host and port."""
+    import app as app_mod
+    from constants import BACKEND_PORT
+
+    with (
+        patch.dict("os.environ", {"MNS_SKIP_BOOTSTRAP": "1"}, clear=False),
+        patch.object(app_mod.app, "run") as mock_run,
+    ):
+        runpy.run_path(str(Path(wsgi_mod.__file__).resolve()), run_name="__main__")
+        mock_run.assert_called_once_with(
+            debug=False,
+            threaded=True,
+            host="127.0.0.1",
+            port=BACKEND_PORT,
+        )

@@ -58,12 +58,28 @@ def _reset_pacing_state():
         saved_next = app_state.ai.mistral_next_allowed_ts
         saved_last = app_state.ai.mistral_last_call_ts
         saved_streak = app_state.ai.mistral_429_streak
+    with app_state.ai.mistral_usage_lock:
+        saved_usage = (
+            app_state.ai.mistral_call_count,
+            app_state.ai.mistral_total_prompt_tokens,
+            app_state.ai.mistral_total_completion_tokens,
+            dict(app_state.ai.mistral_model_usage),
+        )
+    saved_usdjpy = app_state.market.last_usdjpy_rate
     _pacing_state()
     yield
     with app_state.ai.mistral_cooldown_lock:
         app_state.ai.mistral_next_allowed_ts = saved_next
         app_state.ai.mistral_last_call_ts = saved_last
         app_state.ai.mistral_429_streak = saved_streak
+    with app_state.ai.mistral_usage_lock:
+        (
+            app_state.ai.mistral_call_count,
+            app_state.ai.mistral_total_prompt_tokens,
+            app_state.ai.mistral_total_completion_tokens,
+            app_state.ai.mistral_model_usage,
+        ) = saved_usage
+    app_state.market.last_usdjpy_rate = saved_usdjpy
 
 
 # ---------------------------------------------------------------------------

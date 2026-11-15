@@ -211,7 +211,8 @@ def test_u12_tail_slice_matches_post_conversion_slice():
     assert chart[0]["price"] == 301.0
     assert chart[-1]["price"] == 400.0
     assert chart[0]["ma5"] == 301.5
-    assert chart[0]["date"] == "01/01" or isinstance(chart[0]["date"], str)
+    assert chart[0]["date"] == "10/27"
+    assert chart[-1]["date"] == "02/03"
 
 
 def test_u12_short_and_empty_frames():

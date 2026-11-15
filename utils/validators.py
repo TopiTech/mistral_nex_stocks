@@ -13,7 +13,7 @@ from typing import Any, Literal, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 from schemas.stocks import HeatmapQueryRequest, ScreenerQueryRequest
-from utils.normalization import is_bool_like
+from utils.normalization import finite_float, is_bool_like
 
 logger = logging.getLogger(__name__)
 
@@ -1016,13 +1016,7 @@ def _finite_float_or_none(val: Any) -> float | None:
     module must treat that as "not a usable number" instead of letting the
     exception escape and turn a malformed analysis into a 500.
     """
-    if val is None or is_bool_like(val):
-        return None
-    try:
-        parsed = float(val)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return parsed if math.isfinite(parsed) else None
+    return finite_float(val, None)
 
 
 def _clean_numeric_price(val: Any) -> float | None:

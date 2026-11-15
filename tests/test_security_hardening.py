@@ -297,20 +297,25 @@ class PortfolioStripTestCase(unittest.TestCase):
             response = client.get(
                 "/api/stocks/stream?mode=1", headers={"Origin": "http://localhost:5000"}
             )
-            self.assertEqual(response.status_code, 200)
+            try:
+                self.assertEqual(response.status_code, 200)
 
-            iterator = iter(response.response)
+                iterator = iter(response.response)
 
-            # First chunk is initial snapshot
-            first_chunk = next(iterator).decode("utf-8")
-            self.assertIn("initial_snapshot", first_chunk)
+                # First chunk is initial snapshot
+                first_chunk = next(iterator).decode("utf-8")
+                self.assertIn("initial_snapshot", first_chunk)
 
-            # Send keepalive frame to connected announcer
-            app_state.sse_announcer_mode1.announce(": keepalive\n\n")
+                # Send keepalive frame to connected announcer
+                app_state.sse_announcer_mode1.announce(": keepalive\n\n")
 
-            # Read keepalive chunk
-            chunk = next(iterator).decode("utf-8")
-            self.assertEqual(chunk, ": keepalive\n\n")
+                # Read keepalive chunk
+                chunk = next(iterator).decode("utf-8")
+                self.assertEqual(chunk, ": keepalive\n\n")
+            finally:
+                response.close()
+                with app_state.sse_announcer_mode1.lock:
+                    app_state.sse_announcer_mode1.listeners.clear()
 
 
 class UserStocksRouteRollbackTestCase(unittest.TestCase):
@@ -673,11 +678,14 @@ class AdminTokenQueryParamRestrictionTestCase(unittest.TestCase):
                 "/api/stocks/stream",
                 headers={"X-MNS-Admin-Token": "test-admin-token-0123456789abcdef"},
             )
-            self.assertNotEqual(
-                resp.status_code,
-                403,
-                "SSE stream must accept the admin token via header in local mode",
-            )
+            try:
+                self.assertNotEqual(
+                    resp.status_code,
+                    403,
+                    "SSE stream must accept the admin token via header in local mode",
+                )
+            finally:
+                resp.close()
 
     def test_non_sse_endpoint_rejects_query_token(self):
         with patch.dict(os.environ, self.env, clear=False):

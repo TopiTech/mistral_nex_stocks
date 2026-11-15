@@ -7,11 +7,11 @@
 from __future__ import annotations
 
 import math
-import subprocess
 from unittest.mock import patch
 
 from services.search.langsearch import langsearch_rerank
 from services.search_service import collect_market_trending_titles
+from tests.test_support.environment import run_node_script
 
 
 def test_langsearch_rerank_handles_none_and_string_scores():
@@ -134,5 +134,5 @@ def test_ui_portfolio_metrics_fx_resilience():
     console.log('ALL TESTS PASSED');
     """
 
-    res = subprocess.run(["node", "-e", node_script], capture_output=True, text=True, check=True)
+    res = run_node_script(node_script, context="portfolio metrics UI regression test")
     assert "ALL TESTS PASSED" in res.stdout

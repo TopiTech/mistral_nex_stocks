@@ -74,43 +74,66 @@ class TestR2PollingInflightBound:
         assert _is_polling_token_inflight("tok-abc-1234567890abcdef") is True
 
     def test_token_with_cached_result_not_inflight(self, client):
-        # After R5/R2 revision, _is_polling_token_inflight defaults to True
-        # when inflight state cannot be determined (safe default preserving
-        # existing polling behavior). No assertion on cached-state branch
-        # needed — the helper returns True in that context.
-        from route_helpers import _is_polling_token_inflight
+        import time
 
-        assert _is_polling_token_inflight("tok-cached-result-test-xyz") is True
+        from flask import session as flask_session
+
+        from route_helpers import _is_polling_token_inflight
+        from routes.api_analysis import chat_fetch_lock, chat_result_cache
+
+        conv_id = "conv-r2-cached-result"
+        token = "tok-cached-result-test-xyz"
+        cache_key = f"chat:{conv_id}:{token}"
+        with client.application.test_request_context():
+            flask_session["mns_analysis_conversation"] = conv_id
+            with chat_fetch_lock:
+                chat_result_cache[cache_key] = (time.time(), {"ok": True}, None)
+            try:
+                assert _is_polling_token_inflight(token) is False
+            finally:
+                with chat_fetch_lock:
+                    chat_result_cache.pop(cache_key, None)
 
 
 class TestR3FallbackBlockPropagation:
     def test_yahoo_block_propagates_to_scraper_and_yf(self, monkeypatch):
         import app_state as app_state_mod
-
-        # Ensure clean state
-        app_state_mod.app_state.market.scraper_block_until = 0.0
-        app_state_mod.app_state.market.scraper_block_streak = 0
         from services.fallback_provider import _mark_yahoo_block
 
-        _mark_yahoo_block(429, "Too Many Requests", is_yahoo_host=True)
-        assert app_state_mod.app_state.market.is_scraper_blocked() is True
-        # yfinance block via yf_session_manager may also be set; check scraper at least
-        # Cleanup
+        orig_until = app_state_mod.app_state.market.scraper_block_until
+        orig_streak = app_state_mod.app_state.market.scraper_block_streak
+        orig_yf_until = app_state_mod.yf_session_manager.get_rate_limit_until("yfinance")
         app_state_mod.app_state.market.scraper_block_until = 0.0
+        app_state_mod.app_state.market.scraper_block_streak = 0
+        app_state_mod.yf_session_manager.clear_rate_limit("yfinance")
+        try:
+            _mark_yahoo_block(429, "Too Many Requests", is_yahoo_host=True)
+            assert app_state_mod.app_state.market.is_scraper_blocked() is True
+            assert app_state_mod.yf_session_manager.get_rate_limit_until("yfinance") > 0.0
+        finally:
+            app_state_mod.app_state.market.scraper_block_until = orig_until
+            app_state_mod.app_state.market.scraper_block_streak = orig_streak
+            app_state_mod.yf_session_manager.clear_rate_limit("yfinance")
+            if orig_yf_until > 0.0:
+                app_state_mod.yf_session_manager._excluded_until["yfinance"] = orig_yf_until
 
     def test_minkabu_block_does_not_propagate_to_yf(self, monkeypatch):
         import app_state as app_state_mod
-
-        app_state_mod.app_state.market.scraper_block_until = 0.0
-        app_state_mod.app_state.market.scraper_block_streak = 0
         from services.fallback_provider import _mark_yahoo_block
 
-        # Minkabu is third-party: is_yahoo_host=False -> scraper_block only
-        app_state_mod.yf_session_manager.get_rate_limit_until("yfinance")
-        _mark_yahoo_block(429, "", is_yahoo_host=False)
-        assert app_state_mod.app_state.market.is_scraper_blocked() is True
-        # yfinance should be unchanged (None or same)
+        orig_until = app_state_mod.app_state.market.scraper_block_until
+        orig_streak = app_state_mod.app_state.market.scraper_block_streak
+        orig_yf_until = app_state_mod.yf_session_manager.get_rate_limit_until("yfinance")
         app_state_mod.app_state.market.scraper_block_until = 0.0
+        app_state_mod.app_state.market.scraper_block_streak = 0
+        try:
+            # Minkabu is third-party: is_yahoo_host=False -> scraper_block only
+            _mark_yahoo_block(429, "", is_yahoo_host=False)
+            assert app_state_mod.app_state.market.is_scraper_blocked() is True
+            assert app_state_mod.yf_session_manager.get_rate_limit_until("yfinance") == orig_yf_until
+        finally:
+            app_state_mod.app_state.market.scraper_block_until = orig_until
+            app_state_mod.app_state.market.scraper_block_streak = orig_streak
 
 
 class TestR3RetryAfterPropagation:

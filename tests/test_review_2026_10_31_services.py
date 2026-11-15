@@ -37,8 +37,15 @@ from services.realtime.scrapers import MinkabuScraper, SBISecuritiesScraper
 from services.realtime.utils import _get_yfinance_previous_close, is_jp_market_open
 from services.search_service import _get_market_trending_titles
 from services.stock.provider import YFinanceProvider
+from tests.test_support.patches import stub_public_outbound_dns
 
 JST = ZoneInfo("Asia/Tokyo")
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 REPAIRED_TECHNICAL_PAYLOAD = {
     "summary": "修復済みサマリ",
@@ -800,31 +807,37 @@ def test_svc15_ticker_error_still_returns_empty_dict():
 
 def test_svc20_market_snapshot_mutations_isolated_from_store():
     engine = RealtimeMarketEngine()
-    engine.market_store["SVC20.T"] = {"symbol": "SVC20.T", "price": 100.0, "change": 1.0}
+    try:
+        engine.market_store["SVC20.T"] = {"symbol": "SVC20.T", "price": 100.0, "change": 1.0}
 
-    snapshot = engine.get_market_snapshot()
-    snapshot["SVC20.T"]["price"] = 999.0  # consumer mutation
-    snapshot["SVC20.T"]["injected"] = True
+        snapshot = engine.get_market_snapshot()
+        snapshot["SVC20.T"]["price"] = 999.0  # consumer mutation
+        snapshot["SVC20.T"]["injected"] = True
 
-    with engine.store_lock:
-        live = engine.market_store["SVC20.T"]
-    assert live["price"] == 100.0
-    assert "injected" not in live
-    # Fresh snapshot reflects the untouched store values.
-    assert engine.get_market_snapshot()["SVC20.T"]["price"] == 100.0
+        with engine.store_lock:
+            live = engine.market_store["SVC20.T"]
+        assert live["price"] == 100.0
+        assert "injected" not in live
+        # Fresh snapshot reflects the untouched store values.
+        assert engine.get_market_snapshot()["SVC20.T"]["price"] == 100.0
+    finally:
+        engine.stop()
 
 
 def test_svc20_pts_snapshot_mutations_isolated_from_store():
     engine = RealtimeMarketEngine()
-    engine.pts_store["SVC20PTS.T"] = {"symbol": "SVC20PTS.T", "price": 500.0, "pts": True}
+    try:
+        engine.pts_store["SVC20PTS.T"] = {"symbol": "SVC20PTS.T", "price": 500.0, "pts": True}
 
-    snapshot = engine.get_pts_snapshot()
-    snapshot["SVC20PTS.T"]["price"] = -1.0
+        snapshot = engine.get_pts_snapshot()
+        snapshot["SVC20PTS.T"]["price"] = -1.0
 
-    with engine.store_lock:
-        live = engine.pts_store["SVC20PTS.T"]
-    assert live["price"] == 500.0
-    assert engine.get_pts_snapshot()["SVC20PTS.T"]["price"] == 500.0
+        with engine.store_lock:
+            live = engine.pts_store["SVC20PTS.T"]
+        assert live["price"] == 500.0
+        assert engine.get_pts_snapshot()["SVC20PTS.T"]["price"] == 500.0
+    finally:
+        engine.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -845,8 +858,8 @@ def test_svc21_producer_update_returns_quickly_while_sse_lock_held():
 
     holder = threading.Thread(target=_holder, daemon=True)
     holder.start()
-    assert holder_holds.wait(timeout=2.0)
     try:
+        assert holder_holds.wait(timeout=2.0)
         started = time.monotonic()
         engine._handle_producer_update(
             {"symbol": "SVC21.T", "price": 1000.0, "source": "tradingview"}
@@ -862,6 +875,7 @@ def test_svc21_producer_update_returns_quickly_while_sse_lock_held():
     finally:
         holder_release.set()
         holder.join(timeout=5.0)
+        engine.stop()
 
 
 def test_svc21_previous_close_lookup_drops_while_lock_busy():

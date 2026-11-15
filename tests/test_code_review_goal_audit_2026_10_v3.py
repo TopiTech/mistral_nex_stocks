@@ -54,34 +54,36 @@ class TestCodeReviewDefectRegression(unittest.TestCase):
     def test_realtime_engine_alphanumeric_jpy_decimals(self) -> None:
         """RealtimeMarketEngine should format change with 2 decimals for alphanumeric JP symbols."""
         engine = RealtimeMarketEngine()
+        try:
+            with patch("services.realtime.engine._get_yfinance_previous_close", return_value=123.456):
+                # Test bare alphanumeric JP symbol "130A"
+                payload_alpha_bare = {"symbol": "130A", "price": 130.1234}
+                engine._handle_producer_update(payload_alpha_bare)
+                self.assertIn("130A", engine.market_store)
+                # Decimals should be 2 for JPY (130.1234 - 123.456 = 6.6674 -> 6.67)
+                self.assertEqual(engine.market_store["130A"]["change"], 6.67)
 
-        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=123.456):
-            # Test bare alphanumeric JP symbol "130A"
-            payload_alpha_bare = {"symbol": "130A", "price": 130.1234}
-            engine._handle_producer_update(payload_alpha_bare)
-            self.assertIn("130A", engine.market_store)
-            # Decimals should be 2 for JPY (130.1234 - 123.456 = 6.6674 -> 6.67)
-            self.assertEqual(engine.market_store["130A"]["change"], 6.67)
+                # Test bare numeric JP symbol "7203"
+                payload_num_bare = {"symbol": "7203", "price": 130.1234}
+                engine._handle_producer_update(payload_num_bare)
+                self.assertEqual(engine.market_store["7203"]["change"], 6.67)
 
-            # Test bare numeric JP symbol "7203"
-            payload_num_bare = {"symbol": "7203", "price": 130.1234}
-            engine._handle_producer_update(payload_num_bare)
-            self.assertEqual(engine.market_store["7203"]["change"], 6.67)
+                # Test US symbol "AAPL" (decimals should be 4)
+                payload_us = {"symbol": "AAPL", "price": 130.1234}
+                engine._handle_producer_update(payload_us)
+                self.assertEqual(engine.market_store["AAPL"]["change"], 6.6674)
 
-            # Test US symbol "AAPL" (decimals should be 4)
-            payload_us = {"symbol": "AAPL", "price": 130.1234}
-            engine._handle_producer_update(payload_us)
-            self.assertEqual(engine.market_store["AAPL"]["change"], 6.6674)
+                # Test direct raw_ch for JP symbol (when price is omitted or change already calculated)
+                payload_raw_jp = {"symbol": "6758.T", "change": 12.3456}
+                engine._handle_producer_update(payload_raw_jp)
+                self.assertEqual(engine.market_store["6758.T"]["change"], 12.35)
 
-            # Test direct raw_ch for JP symbol (when price is omitted or change already calculated)
-            payload_raw_jp = {"symbol": "6758.T", "change": 12.3456}
-            engine._handle_producer_update(payload_raw_jp)
-            self.assertEqual(engine.market_store["6758.T"]["change"], 12.35)
-
-            # Test direct raw_ch for US symbol
-            payload_raw_us = {"symbol": "MSFT", "change": 12.345678}
-            engine._handle_producer_update(payload_raw_us)
-            self.assertEqual(engine.market_store["MSFT"]["change"], 12.3457)
+                # Test direct raw_ch for US symbol
+                payload_raw_us = {"symbol": "MSFT", "change": 12.345678}
+                engine._handle_producer_update(payload_raw_us)
+                self.assertEqual(engine.market_store["MSFT"]["change"], 12.3457)
+        finally:
+            engine.stop()
 
     def test_tv_purge_key_variants_alphanumeric_jp(self) -> None:
         """_tv_purge_key_variants should map alphanumeric JP symbols to their .T counterparts."""
@@ -132,43 +134,48 @@ class TestCodeReviewDefectRegression(unittest.TestCase):
         with app_state.yfinance_short_cache_lock:
             app_state.yfinance_short_cache["info_short_TEST"] = mock_info
 
-        with patch("routes.stocks.quotes.require_trusted_or_admin", return_value=(True, "")):
-            resp = client.get("/api/stock-details?symbol=TEST&market=us")
-            self.assertEqual(resp.status_code, 200)
-            data = resp.get_json()
-            self.assertEqual(data["pe_ratio"], 18.75)
-            self.assertEqual(data["market_cap"], 50000000)
+        try:
+            with patch("routes.stocks.quotes.require_trusted_or_admin", return_value=(True, "")):
+                resp = client.get("/api/stock-details?symbol=TEST&market=us")
+                self.assertEqual(resp.status_code, 200)
+                data = resp.get_json()
+                self.assertEqual(data["pe_ratio"], 18.75)
+                self.assertEqual(data["market_cap"], 50000000)
 
-            # Now test fallback to pe_ratio
-            mock_info_pe_ratio = {
-                "symbol": "TEST2",
-                "trailingPE": None,
-                "forwardPE": None,
-                "pe_ratio": 22.3,
-            }
+                # Now test fallback to pe_ratio
+                mock_info_pe_ratio = {
+                    "symbol": "TEST2",
+                    "trailingPE": None,
+                    "forwardPE": None,
+                    "pe_ratio": 22.3,
+                }
+                with app_state.yfinance_short_cache_lock:
+                    app_state.yfinance_short_cache["info_short_TEST2"] = mock_info_pe_ratio
+
+                resp = client.get("/api/stock-details?symbol=TEST2&market=us")
+                self.assertEqual(resp.status_code, 200)
+                data = resp.get_json()
+                self.assertEqual(data["pe_ratio"], 22.3)
+
+                # When all PE fields are None
+                mock_info_none = {
+                    "symbol": "TEST3",
+                    "trailingPE": None,
+                    "forwardPE": None,
+                    "pe_ratio": None,
+                    "pe": None,
+                }
+                with app_state.yfinance_short_cache_lock:
+                    app_state.yfinance_short_cache["info_short_TEST3"] = mock_info_none
+
+                resp = client.get("/api/stock-details?symbol=TEST3&market=us")
+                self.assertEqual(resp.status_code, 200)
+                data = resp.get_json()
+                self.assertIsNone(data["pe_ratio"])
+        finally:
             with app_state.yfinance_short_cache_lock:
-                app_state.yfinance_short_cache["info_short_TEST2"] = mock_info_pe_ratio
-
-            resp = client.get("/api/stock-details?symbol=TEST2&market=us")
-            self.assertEqual(resp.status_code, 200)
-            data = resp.get_json()
-            self.assertEqual(data["pe_ratio"], 22.3)
-
-            # When all PE fields are None
-            mock_info_none = {
-                "symbol": "TEST3",
-                "trailingPE": None,
-                "forwardPE": None,
-                "pe_ratio": None,
-                "pe": None,
-            }
-            with app_state.yfinance_short_cache_lock:
-                app_state.yfinance_short_cache["info_short_TEST3"] = mock_info_none
-
-            resp = client.get("/api/stock-details?symbol=TEST3&market=us")
-            self.assertEqual(resp.status_code, 200)
-            data = resp.get_json()
-            self.assertIsNone(data["pe_ratio"])
+                for k in ("info_short_TEST", "info_short_TEST2", "info_short_TEST3"):
+                    app_state.yfinance_short_cache.pop(k, None)
 
     def test_tv_client_raw_float_parsing(self) -> None:
         """TradingViewWSClient should parse raw finite floats without premature 2-decimal truncation."""

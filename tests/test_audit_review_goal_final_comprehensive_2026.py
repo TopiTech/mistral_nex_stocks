@@ -94,6 +94,34 @@ def test_render_stock_detail_drawer_header_via_node():
       process.exit(6);
     }
 
+    // 5. Numeric-string change_percent must render parity with stock cards, while bool/whitespace/array remain --%
+    renderStockDetailDrawerHeader({ symbol: 'NVDA', price: 140, change_percent: '2.5' });
+    badge = mockElements['drawer-stock-price-badge'];
+    if (!badge.className.includes('pos') || !badge.textContent.includes('(+2.50%)')) {
+      console.error('Numeric string positive change failed:', badge);
+      process.exit(7);
+    }
+    renderStockDetailDrawerHeader({ symbol: 'NVDA', price: 140, change_percent: ' -1.2 ' });
+    badge = mockElements['drawer-stock-price-badge'];
+    if (!badge.className.includes('neg') || !badge.textContent.includes('(-1.20%)')) {
+      console.error('Numeric string negative change failed:', badge);
+      process.exit(8);
+    }
+    for (const invalidPct of ['   ', true, false, [1.5], 'NaN', Infinity]) {
+      renderStockDetailDrawerHeader({ symbol: 'GOOG', price: 180, change_percent: invalidPct });
+      badge = mockElements['drawer-stock-price-badge'];
+      if (badge.className.includes('pos') || badge.className.includes('neg') || !badge.textContent.includes('(--%)')) {
+        console.error('Invalid change_percent was coerced:', invalidPct, badge);
+        process.exit(9);
+      }
+    }
+
+    const extContent = fs.readFileSync(path.join(process.cwd(), 'chrome_extension', 'content.js'), 'utf8');
+    if (extContent.includes('"ELI"') || !extContent.includes('"LLY"')) {
+      console.error('chrome_extension/content.js KNOWN_US_TICKERS still contains ELI typo or lost LLY');
+      process.exit(10);
+    }
+
     console.log('DRAWER_HEADER_OK');
     """
 

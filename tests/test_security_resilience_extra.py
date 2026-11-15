@@ -11,15 +11,31 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import app
-from app_state import app_state
+from app_state import app_state, yf_session_manager
 from crypto_utils import unprotect_data
+from tests.test_support.state_reset import reset_app_state_internals
 
 
 class SecurityResilienceExtraTestCase(unittest.TestCase):
     def setUp(self):
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_app_root = app.config.get("APPLICATION_ROOT")
         app.config["TESTING"] = True
         app.config["APPLICATION_ROOT"] = "/"
+        yf_session_manager.clear_rate_limit("yfinance")
         self.client = app.test_client()
+
+    def tearDown(self):
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_app_root is None:
+            app.config.pop("APPLICATION_ROOT", None)
+        else:
+            app.config["APPLICATION_ROOT"] = self._orig_app_root
+        yf_session_manager.clear_rate_limit("yfinance")
+        reset_app_state_internals()
 
     def test_shutdown_token_file_is_encrypted_json(self):
         """Verify the shutdown token file is stored as an encrypted JSON structure on disk."""
@@ -96,6 +112,10 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
             return DummyTicker(fail=ticker_fail)
 
         stock_service_module.safe_get_ticker = mock_safe_get_ticker
+        fallback_patch = patch.object(
+            app_state.fallback_provider, "get_latest_quote", return_value=None
+        )
+        fallback_patch.start()
 
         try:
             # 1. Closed state: Successful requests keep it CLOSED
@@ -216,6 +236,7 @@ class SecurityResilienceExtraTestCase(unittest.TestCase):
                 self.assertTrue(state.get("open_until", 0.0) > time.time())
 
         finally:
+            fallback_patch.stop()
             stock_service_module.safe_get_ticker = original_safe_get_ticker
 
     def test_yfinance_session_manager_rotation_on_401_and_429(self):

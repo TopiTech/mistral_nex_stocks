@@ -257,17 +257,35 @@ def reset_app_state():
                 pass
 
     _clear_persisted_state()
-    yield
-    _clear_persisted_state()
+    _app_mod_before = sys.modules.get("app")
+    _saved_app_config = (
+        dict(_app_mod_before.app.config)
+        if _app_mod_before is not None and hasattr(_app_mod_before, "app")
+        else None
+    )
     try:
-        import app_bg as _bg
+        yield
+    finally:
+        if _saved_app_config is not None:
+            _app_mod_after = sys.modules.get("app")
+            if _app_mod_after is not None and hasattr(_app_mod_after, "app"):
+                _cfg = _app_mod_after.app.config
+                for _k in list(_cfg.keys()):
+                    if _k not in _saved_app_config:
+                        _cfg.pop(_k, None)
+                for _k, _v in _saved_app_config.items():
+                    if _k not in _cfg or _cfg.get(_k) != _v:
+                        _cfg[_k] = _v
+        _clear_persisted_state()
+        try:
+            import app_bg as _bg
 
-        _bg.schedule_sync_all_stocks_now = lambda *a, **kw: False  # type: ignore[assignment]
-        _bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
-        _bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
-        _bg.fetch_index_data = lambda *a, **kw: None  # type: ignore[assignment]
-    except Exception:
-        pass
+            _bg.schedule_sync_all_stocks_now = lambda *a, **kw: False  # type: ignore[assignment]
+            _bg.announce_current_market_state = lambda: None  # type: ignore[assignment]
+            _bg.fetch_stocks_batch = lambda items, snapshot_ts_ms=None, **kwargs: []  # type: ignore[assignment]
+            _bg.fetch_index_data = lambda *a, **kw: None  # type: ignore[assignment]
+        except Exception:
+            pass
 
 
 @pytest.fixture

@@ -310,24 +310,31 @@ def test_handle_yfinance_error_uses_canonical_markers(monkeypatch):
         return 30.0
 
     monkeypatch.setattr(app_state.market, "mark_yf_429", _fake_mark)
+    prev_streak = app_state.market.yfinance_429_streak
     app_state.market.yfinance_429_streak = 2
-
-    # Canonical marker not present in the old local list.
-    fetch_mod._handle_yfinance_error(
-        RuntimeError("403 Forbidden: your request was denied.")
-    )
-    assert marked, "canonical classifier must mark 403-denied as rate limited"
+    try:
+        # Canonical marker not present in the old local list.
+        fetch_mod._handle_yfinance_error(
+            RuntimeError("403 Forbidden: your request was denied.")
+        )
+        assert marked, "canonical classifier must mark 403-denied as rate limited"
+    finally:
+        app_state.market.yfinance_429_streak = prev_streak
 
 
 def test_handle_yfinance_error_nonrate_errors_reset_streak(monkeypatch):
     """Unrelated non-rate errors must preserve global 429 backoff streak (BG-002)."""
     from bg.sync import fetch as fetch_mod
 
+    prev_streak = app_state.market.yfinance_429_streak
     app_state.market.yfinance_429_streak = 2
-    with patch.object(app_state.market, "mark_yf_429") as mark:
-        fetch_mod._handle_yfinance_error(ValueError("unexpected shape"))
-    mark.assert_not_called()
-    assert app_state.market.yfinance_429_streak == 2
+    try:
+        with patch.object(app_state.market, "mark_yf_429") as mark:
+            fetch_mod._handle_yfinance_error(ValueError("unexpected shape"))
+        mark.assert_not_called()
+        assert app_state.market.yfinance_429_streak == 2
+    finally:
+        app_state.market.yfinance_429_streak = prev_streak
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,29 @@ def _patch_watchlist_mutations():
     ]
 
 
+def _snapshot_market_state():
+    """Capture user watchlists and FX rate for restoration after a test."""
+    with app_state.market.user_stocks_lock:
+        return (
+            dict(app_state.market.user_us),
+            dict(app_state.market.user_jp),
+            dict(app_state.market.user_idx),
+            app_state.market.last_usdjpy_rate,
+            app_state.market.last_usdjpy_rate_ts,
+        )
+
+
+def _restore_market_state(snapshot):
+    """Restore user watchlists and FX rate captured by _snapshot_market_state."""
+    orig_us, orig_jp, orig_idx, orig_rate, orig_rate_ts = snapshot
+    with app_state.market.user_stocks_lock:
+        app_state.market.user_us = orig_us
+        app_state.market.user_jp = orig_jp
+        app_state.market.user_idx = orig_idx
+    app_state.market.last_usdjpy_rate = orig_rate
+    app_state.market.last_usdjpy_rate_ts = orig_rate_ts
+
+
 def _fill_market(market, count):
     """Reset all user containers and fill ``market`` with ``count`` entries."""
     with app_state.market.user_stocks_lock:
@@ -66,166 +89,168 @@ def _fill_market(market, count):
 
 def test_r2_main_add_rejects_at_cap_and_accepts_just_below():
     app = _make_app()
-    with (
-        app.test_client() as client,
-        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
-    ):
-        with ExitStack() as stack:
-            for p in _patch_watchlist_mutations():
-                stack.enter_context(p)
-            _fill_market("us", MAX_USER_WATCHLIST_ITEMS)
+    snapshot = _snapshot_market_state()
+    try:
+        with (
+            app.test_client() as client,
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+        ):
+            with ExitStack() as stack:
+                for p in _patch_watchlist_mutations():
+                    stack.enter_context(p)
+                _fill_market("us", MAX_USER_WATCHLIST_ITEMS)
 
-            # Exactly at the cap: 400, state untouched.
-            res = client.post(
-                "/api/stocks/add",
-                json={"symbol": "ZZZZ", "market": "us", "name": "Z Corp"},
-            )
-            assert res.status_code == 400
-            data = res.get_json()
-            assert data["ok"] is False
-            assert f"最大 {MAX_USER_WATCHLIST_ITEMS} 件" in data["details"]["reason"]
-            with app_state.market.user_stocks_lock:
-                assert "ZZZZ" not in app_state.market.user_us
-                assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
+                # Exactly at the cap: 400, state untouched.
+                res = client.post(
+                    "/api/stocks/add",
+                    json={"symbol": "ZZZZ", "market": "us", "name": "Z Corp"},
+                )
+                assert res.status_code == 400
+                data = res.get_json()
+                assert data["ok"] is False
+                assert f"最大 {MAX_USER_WATCHLIST_ITEMS} 件" in data["details"]["reason"]
+                with app_state.market.user_stocks_lock:
+                    assert "ZZZZ" not in app_state.market.user_us
+                    assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
 
-            # One slot free: the same add succeeds.
-            with app_state.market.user_stocks_lock:
-                app_state.market.user_us.pop("SYM000")
-            res2 = client.post(
-                "/api/stocks/add",
-                json={"symbol": "ZZZZ", "market": "us", "name": "Z Corp"},
-            )
-            assert res2.status_code == 200
-            with app_state.market.user_stocks_lock:
-                assert "ZZZZ" in app_state.market.user_us
-                assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
-
-    with app_state.market.user_stocks_lock:
-        app_state.market.user_us = {}
+                # One slot free: the same add succeeds.
+                with app_state.market.user_stocks_lock:
+                    app_state.market.user_us.pop("SYM000")
+                res2 = client.post(
+                    "/api/stocks/add",
+                    json={"symbol": "ZZZZ", "market": "us", "name": "Z Corp"},
+                )
+                assert res2.status_code == 200
+                with app_state.market.user_stocks_lock:
+                    assert "ZZZZ" in app_state.market.user_us
+                    assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
+    finally:
+        _restore_market_state(snapshot)
 
 
 def test_r2_cap_is_per_market_and_defaults_do_not_count():
     app = _make_app()
-    with (
-        app.test_client() as client,
-        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
-    ):
-        with ExitStack() as stack:
-            for p in _patch_watchlist_mutations():
-                stack.enter_context(p)
-            # us is full; adding a jp symbol must still succeed, and a default
-            # display stock (NVDA lives in DEFAULT_US, not the user container)
-            # must not consume capacity.
-            _fill_market("us", MAX_USER_WATCHLIST_ITEMS)
+    snapshot = _snapshot_market_state()
+    try:
+        with (
+            app.test_client() as client,
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+        ):
+            with ExitStack() as stack:
+                for p in _patch_watchlist_mutations():
+                    stack.enter_context(p)
+                # us is full; adding a jp symbol must still succeed, and a default
+                # display stock (NVDA lives in DEFAULT_US, not the user container)
+                # must not consume capacity.
+                _fill_market("us", MAX_USER_WATCHLIST_ITEMS)
 
-            res = client.post(
-                "/api/stocks/add",
-                json={"symbol": "6501.T", "market": "jp", "name": "日立製作所"},
-            )
-            assert res.status_code == 200
-            with app_state.market.user_stocks_lock:
-                assert "6501.T" in app_state.market.user_jp
-                assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
-
-    with app_state.market.user_stocks_lock:
-        app_state.market.user_us = {}
-        app_state.market.user_jp = {}
+                res = client.post(
+                    "/api/stocks/add",
+                    json={"symbol": "6501.T", "market": "jp", "name": "日立製作所"},
+                )
+                assert res.status_code == 200
+                with app_state.market.user_stocks_lock:
+                    assert "6501.T" in app_state.market.user_jp
+                    assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
+    finally:
+        _restore_market_state(snapshot)
 
 
 def test_r2_extension_add_rejects_at_cap():
     app = _make_app()
-    with (
-        app.test_client() as client,
-        patch(
-            "credential_manager.get_or_create_extension_api_token",
-            return_value="extension-test-token",
-        ),
-        patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
-    ):
-        with ExitStack() as stack:
-            for p in _patch_watchlist_mutations():
-                stack.enter_context(p)
-            _fill_market("us", MAX_USER_WATCHLIST_ITEMS)
+    snapshot = _snapshot_market_state()
+    try:
+        with (
+            app.test_client() as client,
+            patch(
+                "credential_manager.get_or_create_extension_api_token",
+                return_value="extension-test-token",
+            ),
+            patch("utils.networking._is_allowed_shutdown_origin", return_value=True),
+        ):
+            with ExitStack() as stack:
+                for p in _patch_watchlist_mutations():
+                    stack.enter_context(p)
+                _fill_market("us", MAX_USER_WATCHLIST_ITEMS)
 
-            res = client.post(
-                "/api/stocks/add_ext",
-                json={"symbol": "ZZZZ", "market": "us", "name": "Z Corp"},
-                headers={
-                    "Authorization": "Bearer extension-test-token",
-                    "X-MNS-Extension-Request": "true",
-                },
-                environ_base={"REMOTE_ADDR": "127.0.0.1"},
-            )
-            assert res.status_code == 400
-            data = res.get_json()
-            assert data["ok"] is False
-            assert f"最大 {MAX_USER_WATCHLIST_ITEMS} 件" in data["details"]["reason"]
-            with app_state.market.user_stocks_lock:
-                assert "ZZZZ" not in app_state.market.user_us
-                assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
-
-    with app_state.market.user_stocks_lock:
-        app_state.market.user_us = {}
+                res = client.post(
+                    "/api/stocks/add_ext",
+                    json={"symbol": "ZZZZ", "market": "us", "name": "Z Corp"},
+                    headers={
+                        "Authorization": "Bearer extension-test-token",
+                        "X-MNS-Extension-Request": "true",
+                    },
+                    environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                )
+                assert res.status_code == 400
+                data = res.get_json()
+                assert data["ok"] is False
+                assert f"最大 {MAX_USER_WATCHLIST_ITEMS} 件" in data["details"]["reason"]
+                with app_state.market.user_stocks_lock:
+                    assert "ZZZZ" not in app_state.market.user_us
+                    assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
+    finally:
+        _restore_market_state(snapshot)
 
 
 def test_r2_copy_to_my_rejects_bulk_add_over_cap_without_partial_apply():
     app = _make_app()
+    snapshot = _snapshot_market_state()
     base_us = {f"SYM{i:03d}": f"Stock {i}" for i in range(MAX_USER_WATCHLIST_ITEMS - 5)}
-    with (
-        app.test_client() as client,
-        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
-    ):
-        with ExitStack() as stack:
-            for p in _patch_watchlist_mutations():
-                stack.enter_context(p)
-            with app_state.market.user_stocks_lock:
-                app_state.market.user_us = dict(base_us)
-                app_state.market.user_jp = {}
-                app_state.market.user_idx = {}
-            app_state.market.last_usdjpy_rate = 150.0
-            app_state.market.last_usdjpy_rate_ts = time.time()
+    try:
+        with (
+            app.test_client() as client,
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+        ):
+            with ExitStack() as stack:
+                for p in _patch_watchlist_mutations():
+                    stack.enter_context(p)
+                with app_state.market.user_stocks_lock:
+                    app_state.market.user_us = dict(base_us)
+                    app_state.market.user_jp = {}
+                    app_state.market.user_idx = {}
+                app_state.market.last_usdjpy_rate = 150.0
+                app_state.market.last_usdjpy_rate_ts = time.time()
 
-            # 10 new US symbols on a 95/100 market: the whole request must be
-            # rejected (400) with nothing applied.
-            items = [
-                {
-                    "symbol": f"NEW{i:02d}",
-                    "market": "us",
-                    "weight_pct": 10.0,
-                    "target_price": 100.0,
-                }
-                for i in range(10)
-            ]
-            res = client.post("/api/ai-portfolio/copy-to-my", json={"items": items})
-            assert res.status_code == 400
-            data = res.get_json()
-            assert data["ok"] is False
-            assert f"最大 {MAX_USER_WATCHLIST_ITEMS} 件" in data["details"]["reason"]
-            with app_state.market.user_stocks_lock:
-                assert app_state.market.user_us == base_us
-                assert app_state.market.user_jp == {}
+                # 10 new US symbols on a 95/100 market: the whole request must be
+                # rejected (400) with nothing applied.
+                items = [
+                    {
+                        "symbol": f"NEW{i:02d}",
+                        "market": "us",
+                        "weight_pct": 10.0,
+                        "target_price": 100.0,
+                    }
+                    for i in range(10)
+                ]
+                res = client.post("/api/ai-portfolio/copy-to-my", json={"items": items})
+                assert res.status_code == 400
+                data = res.get_json()
+                assert data["ok"] is False
+                assert f"最大 {MAX_USER_WATCHLIST_ITEMS} 件" in data["details"]["reason"]
+                with app_state.market.user_stocks_lock:
+                    assert app_state.market.user_us == base_us
+                    assert app_state.market.user_jp == {}
 
-            # Same payload split 5 us + 5 jp stays within each market cap.
-            # JP entries use the *.T spelling the JP market requires at the
-            # write boundary (see market_symbol_mismatch).
-            items2 = [
-                {
-                    "symbol": f"NEW{i:02d}" if i < 5 else f"{7000 + i}.T",
-                    "market": "us" if i < 5 else "jp",
-                    "weight_pct": 10.0,
-                    "target_price": 100.0,
-                }
-                for i in range(10)
-            ]
-            res2 = client.post("/api/ai-portfolio/copy-to-my", json={"items": items2})
-            assert res2.status_code == 200
-            with app_state.market.user_stocks_lock:
-                assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
-                assert len(app_state.market.user_jp) == 5
-
-    with app_state.market.user_stocks_lock:
-        app_state.market.user_us = {}
-        app_state.market.user_jp = {}
+                # Same payload split 5 us + 5 jp stays within each market cap.
+                # JP entries use the *.T spelling the JP market requires at the
+                # write boundary (see market_symbol_mismatch).
+                items2 = [
+                    {
+                        "symbol": f"NEW{i:02d}" if i < 5 else f"{7000 + i}.T",
+                        "market": "us" if i < 5 else "jp",
+                        "weight_pct": 10.0,
+                        "target_price": 100.0,
+                    }
+                    for i in range(10)
+                ]
+                res2 = client.post("/api/ai-portfolio/copy-to-my", json={"items": items2})
+                assert res2.status_code == 200
+                with app_state.market.user_stocks_lock:
+                    assert len(app_state.market.user_us) == MAX_USER_WATCHLIST_ITEMS
+                    assert len(app_state.market.user_jp) == 5
+    finally:
+        _restore_market_state(snapshot)
 
 
 # ---------------------------------------------------------------------------

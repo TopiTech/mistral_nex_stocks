@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import pathlib
+import sys
 import time
 import unittest
 from unittest.mock import MagicMock, patch
@@ -73,10 +74,14 @@ class TestNativeHostLogDirectory(unittest.TestCase):
 
     def test_native_host_default_log_dir_matches_app_data_dir(self) -> None:
         """When MNS_NATIVE_HOST_LOG_DIR is unset, native host must default to config_store.APP_DATA_DIR."""
-        import native_host.native_host as nh
+        orig_stdout = sys.stdout
+        try:
+            import native_host.native_host as nh
 
-        self.assertEqual(nh._default_log_dir, config_store.APP_DATA_DIR)
-        self.assertNotEqual(nh._default_log_dir, pathlib.Path(nh.__file__).parent)
+            self.assertEqual(nh._default_log_dir, config_store.APP_DATA_DIR)
+            self.assertNotEqual(nh._default_log_dir, pathlib.Path(nh.__file__).parent)
+        finally:
+            sys.stdout = orig_stdout
 
     def test_native_host_source_initializes_root_before_logging(self) -> None:
         """Verify native_host.py initializes ROOT and sys.path before logging setup."""

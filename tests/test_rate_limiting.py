@@ -253,23 +253,55 @@ class CacheStampedePreventionTestCase(unittest.TestCase):
 
     def setUp(self):
         """Reset fetch events"""
-        app_state.cache.fetch_events = {}
+        with app_state.cache.fetch_events_lock:
+            app_state.cache.fetch_events.clear()
+        self._release_lock_if_held(app_state.cache.fetch_events_lock)
+
+    def tearDown(self):
+        """Clean up fetch events after test"""
+        with app_state.cache.fetch_events_lock:
+            app_state.cache.fetch_events.clear()
         self._release_lock_if_held(app_state.cache.fetch_events_lock)
 
     def test_fetch_event_created_per_key(self):
-        """Each cache key should have its own event"""
-        key1 = ("stock:AAPL", 60)
-        key2 = ("stock:MSFT", 60)
+        """Each cache key should have its own distinct Event instance during fetch."""
+        import threading
 
-        # Simulate event creation
-        if key1 not in app_state.cache.fetch_events:
-            app_state.cache.fetch_events[key1] = MagicMock()  # threading.Event()
-        if key2 not in app_state.cache.fetch_events:
-            app_state.cache.fetch_events[key2] = MagicMock()
+        from utils.caching import clear_cache_key, get_cached
 
-        self.assertIn(key1, app_state.cache.fetch_events)
-        self.assertIn(key2, app_state.cache.fetch_events)
-        self.assertNotEqual(app_state.cache.fetch_events[key1], app_state.cache.fetch_events[key2])
+        key1 = "stock:TESTEVENT1"
+        key2 = "stock:TESTEVENT2"
+        started = {key1: threading.Event(), key2: threading.Event()}
+        release = threading.Event()
+        seen_events = {}
+
+        def make_fetcher(k):
+            def _fetch():
+                started[k].set()
+                release.wait(timeout=5.0)
+                return {"key": k}
+
+            return _fetch
+
+        t1 = threading.Thread(target=lambda: get_cached(key1, make_fetcher(key1), duration=60))
+        t2 = threading.Thread(target=lambda: get_cached(key2, make_fetcher(key2), duration=60))
+        t1.start()
+        t2.start()
+        try:
+            self.assertTrue(started[key1].wait(timeout=3.0))
+            self.assertTrue(started[key2].wait(timeout=3.0))
+            with app_state.cache.fetch_events_lock:
+                seen_events[key1] = app_state.cache.fetch_events.get((key1, 60))
+                seen_events[key2] = app_state.cache.fetch_events.get((key2, 60))
+            self.assertIsInstance(seen_events[key1], threading.Event)
+            self.assertIsInstance(seen_events[key2], threading.Event)
+            self.assertIsNot(seen_events[key1], seen_events[key2])
+        finally:
+            release.set()
+            t1.join(timeout=5.0)
+            t2.join(timeout=5.0)
+            clear_cache_key(key1)
+            clear_cache_key(key2)
 
     def test_concurrent_requests_block_on_same_key(self):
         """Concurrent requests for same key should serialize via Event wait"""

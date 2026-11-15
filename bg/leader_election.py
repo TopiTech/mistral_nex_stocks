@@ -251,7 +251,11 @@ def _try_acquire_advisory_file_lock(
                 lock_f.write(str(pid))
                 lock_f.flush()
                 return True
-            except ValueError:
+            except (ValueError, OSError):
+                try:
+                    lock_f.close()
+                except (OSError, ValueError):
+                    pass
                 _set_leader_lock_file(None)
 
         lock_path.touch(exist_ok=True)

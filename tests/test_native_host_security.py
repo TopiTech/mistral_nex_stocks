@@ -892,10 +892,6 @@ $result = Test-DirectoryUserWritable -Dir 'in-memory-acl'
         self.assertTrue(payload["detector_reports_user_writable"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ShutdownTokenGateTestCase(unittest.TestCase):
     """R10: get_shutdown_token is gated on a healthy backend."""
 
@@ -1043,3 +1039,7 @@ class ShutdownTokenGateTestCase(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertFalse(sent[0]["ok"])
         self.assertIn("Failed to read token file", sent[0]["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()

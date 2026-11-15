@@ -1023,31 +1023,37 @@ def test_bg002_error_handling_and_full_length_batch_results() -> None:
 def test_bg003_tv_client_unexpected_exit_retains_dead_thread_and_watchdog_restarts() -> None:
     """Unexpected _run_ws exit retains dead thread so worker_threads() and watchdog recover it."""
     engine = RealtimeMarketEngine()
-    engine.tv_client.running = True
-    engine.tv_client._worker_epoch = 1
+    try:
+        engine.tv_client.running = True
+        engine.tv_client._worker_epoch = 1
 
-    t = threading.Thread(target=lambda: engine.tv_client._run_ws(1), daemon=True, name="TradingViewWSWorker")
-    engine.tv_client.thread = t
-    # Force immediate loop exit while keeping running=True and matching epoch -> unexpected exit!
-    with patch.object(engine.tv_client, "_is_worker_current", return_value=False):
-        t.start()
-        t.join(timeout=2.0)
+        t = threading.Thread(
+            target=lambda: engine.tv_client._run_ws(1),
+            daemon=True,
+            name="TradingViewWSWorker",
+        )
+        engine.tv_client.thread = t
+        # Force immediate loop exit while keeping running=True and matching epoch -> unexpected exit!
+        with patch.object(engine.tv_client, "_is_worker_current", return_value=False):
+            t.start()
+            t.join(timeout=2.0)
 
-    assert not t.is_alive()
-    assert engine.tv_client.thread is t
-    assert t in engine.worker_threads()
+        assert not t.is_alive()
+        assert engine.tv_client.thread is t
+        assert t in engine.worker_threads()
 
-    with patch.object(engine, "restart") as mock_restart:
-        restarted = sync_control._watchdog_restart_dead_realtime_engine(engine)
-    assert "TradingViewWSWorker" in restarted
-    mock_restart.assert_called_once()
+        with patch.object(engine, "restart") as mock_restart:
+            restarted = sync_control._watchdog_restart_dead_realtime_engine(engine)
+        assert "TradingViewWSWorker" in restarted
+        mock_restart.assert_called_once()
 
-    # Also verify missing_worker_names catches None threads while engine.running=True.
-    engine.running = True
-    engine.tv_client.thread = None
-    assert "TradingViewWSWorker" in engine.missing_worker_names()
-    engine.running = False
-    engine._bg_executor.shutdown(wait=False, cancel_futures=True)
+        # Also verify missing_worker_names catches None threads while engine.running=True.
+        engine.running = True
+        engine.tv_client.thread = None
+        assert "TradingViewWSWorker" in engine.missing_worker_names()
+        engine.running = False
+    finally:
+        engine.stop()
 
 
 # ---------------------------------------------------------------------------

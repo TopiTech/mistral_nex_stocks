@@ -71,8 +71,11 @@ class TestConfigLoadRetryResilience:
 
         monkeypatch.setattr(cs, "CONFIG_FILE", cfg_file)
         monkeypatch.setattr(cs, "APP_DATA_DIR", tmp_path)
-        cs._CONFIG_CACHE["data"] = None
-        cs._CONFIG_CACHE["key"] = None
+        with cs._CONFIG_LOCK:
+            orig_cache_data = cs._CONFIG_CACHE.get("data")
+            orig_cache_key = cs._CONFIG_CACHE.get("key")
+            cs._CONFIG_CACHE["data"] = None
+            cs._CONFIG_CACHE["key"] = None
 
         attempts = 0
 
@@ -87,12 +90,17 @@ class TestConfigLoadRetryResilience:
                     raise OSError("Sharing violation (simulated)")
             return orig_open(file, *args, **kwargs)
 
-        with patch("builtins.open", side_effect=flaky_open):
-            loaded = load_config()
+        try:
+            with patch("builtins.open", side_effect=flaky_open):
+                loaded = load_config()
 
-        assert attempts >= 2
-        assert loaded.get("test_key") == "valid_value"
-        assert not cs._CONFIG_CORRUPTED
+            assert attempts >= 2
+            assert loaded.get("test_key") == "valid_value"
+            assert not cs._CONFIG_CORRUPTED
+        finally:
+            with cs._CONFIG_LOCK:
+                cs._CONFIG_CACHE["data"] = orig_cache_data
+                cs._CONFIG_CACHE["key"] = orig_cache_key
 
 
 class TestUsdJpyPersistenceThrottling:
@@ -108,8 +116,8 @@ class TestUsdJpyPersistenceThrottling:
         import app_bg as bg_mod
 
         monkeypatch.setattr(bg_mod, "save_user_stocks", count_save)
-        app_state.market.last_usdjpy_rate = 155.0
-        app_state.market.last_usdjpy_persisted_ts = time.time()
+        monkeypatch.setattr(app_state.market, "last_usdjpy_rate", 155.0)
+        monkeypatch.setattr(app_state.market, "last_usdjpy_persisted_ts", time.time())
 
         # Update with identical rate (155.0) right away
         idx_res = [{"symbol": "USDJPY=X", "price": "155.00", "change": 0.0}]
@@ -128,8 +136,8 @@ class TestUsdJpyPersistenceThrottling:
         import app_bg as bg_mod
 
         monkeypatch.setattr(bg_mod, "save_user_stocks", count_save)
-        app_state.market.last_usdjpy_rate = 150.0
-        app_state.market.last_usdjpy_persisted_ts = time.time()
+        monkeypatch.setattr(app_state.market, "last_usdjpy_rate", 150.0)
+        monkeypatch.setattr(app_state.market, "last_usdjpy_persisted_ts", time.time())
 
         # Update with rate that changed significantly (155.50 vs 150.0)
         idx_res = [{"symbol": "USDJPY=X", "price": "155.50", "change": 5.5}]

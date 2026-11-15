@@ -426,13 +426,9 @@ def test_ai_portfolio_rebalance_and_cache_invalidation():
 
 
 def test_js_formatters_defend_against_null_and_boolean():
-    import shutil
-    import subprocess
     from pathlib import Path
 
-    node = shutil.which("node")
-    if node is None:
-        return
+    from tests.test_support import run_node_script
 
     root = Path(__file__).resolve().parent.parent
     script = r"""
@@ -526,6 +522,21 @@ if (!screenerCode.includes('typeof val === "boolean"')) {
 if (!screenerCode.includes("e.isComposing || e.keyCode === 229")) {
   throw new Error("screener.js lacks IME guard");
 }
+{
+  const parseFn = screenerCode.match(/  function parseFiniteScreenerNumber\([\s\S]*?\n  \}/)?.[0];
+  const mcapFn = screenerCode.match(/  function formatMarketCap\([\s\S]*?\n  \}/)?.[0];
+  if (!parseFn || !mcapFn) throw new Error("screener helpers missing");
+  const scrCtx = {};
+  vm.runInNewContext(parseFn + "\n" + mcapFn + "; this.formatMarketCap = formatMarketCap;", scrCtx);
+  for (const bad of [null, true, false, "", "   ", [100], Infinity, -1, 0]) {
+    if (scrCtx.formatMarketCap(bad, "us") !== "--") {
+      throw new Error("screener formatMarketCap accepted invalid input: " + JSON.stringify(bad));
+    }
+  }
+  if (scrCtx.formatMarketCap(2.5e12, "us") !== "$2.50T") {
+    throw new Error("screener formatMarketCap valid US trillion mismatch");
+  }
+}
 
 // Test heatmap formatNumber & formatCompact logic
 const heatmapCode = fs.readFileSync("static/js/heatmap.js", "utf8");
@@ -546,14 +557,11 @@ if (!uiCode.includes("e.isComposing || e.keyCode === 229")) {
 
 process.stdout.write("ok");
 """
-    res = subprocess.run(
-        [node, "-"],
+    res = run_node_script(
+        script,
         cwd=root,
-        input=script,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
         check=False,
+        context="JS formatter regression check",
     )
     assert res.returncode == 0, res.stderr
     assert "ok" in res.stdout

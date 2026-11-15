@@ -87,7 +87,7 @@ class MessageAnnouncer:
         self.lock = threading.Lock()
         # Observability counters, incremented inside ``self.lock`` (read-
         # modify-write is not atomic under the GIL) and exposed via ``stats()``:
-        #   * announced_count: listener-deliveries (len(targets) per announce).
+        #   * announced_count: listener-deliveries (actual enqueued broadcasts).
         #   * dropped_count:   slow listeners removed due to queue overflow.
         self.announced_count = 0
         self.dropped_count = 0
@@ -152,12 +152,13 @@ class MessageAnnouncer:
             )
 
         with self.lock:
-            self.announced_count += len(targets)
             self.dropped_count += len(overloaded)
 
+        delivered = 0
         for q_target in targets:
             try:
                 q_target.put_nowait(msg)
+                delivered += 1
             except queue.Full:
                 # DATA-9 race window: the queue filled between the snapshot
                 # above and this put_nowait (another broadcaster or a
@@ -188,6 +189,10 @@ class MessageAnnouncer:
                 logger.info(
                     "SSE backpressure: dropped 1 listener mid-broadcast due to queue overflow"
                 )
+
+        if delivered:
+            with self.lock:
+                self.announced_count += delivered
 
     @contextmanager
     def listener_context(self, *, enforce_limit: bool = True):
@@ -282,18 +287,32 @@ class SSEEventLog:
             self._entries[mode] = buf
         return buf
 
+    def _next_seq_locked(self) -> int:
+        """Advance and return the 32-bit unsigned sequence ID in ``1.._SEQ_MASK``.
+
+        Skipping ``0`` prevents wrap-around IDs from colliding with the
+        protocol sentinel ``last_id == 0`` (no prior event). Caller MUST hold ``self._lock``.
+        """
+        nxt = (self._seq + 1) & self._SEQ_MASK
+        if nxt == 0:
+            nxt = 1
+        self._seq = nxt
+        return nxt
+
+    @classmethod
+    def _seq_age(cls, seq: int, head: int) -> int:
+        """Return circular distance behind *head* in ``1.._SEQ_MASK``."""
+        return (head - seq) % cls._SEQ_MASK
+
     def next_id(self) -> int:
         """Allocate the next globally monotonic SSE event id.
 
-        R2: the returned id is wrapped at 32-bit unsigned so a long-running
-        process does not leak ever-growing integers to clients. A reconnect
-        whose buffered id has wrapped will hit the same ``oldest > last_id``
-        guard as the normal "buffer too small" path and fall back to a full
-        snapshot, which is the correct behaviour.
+        R2: the returned id wraps in ``1.._SEQ_MASK`` (32-bit unsigned non-zero)
+        so a long-running process stays protocol-bounded without colliding
+        with sentinel ``last_id == 0``.
         """
         with self._lock:
-            self._seq = (self._seq + 1) & self._SEQ_MASK
-            return self._seq
+            return self._next_seq_locked()
 
     def record(self, seq: int, mode: int, kind: str, payload: Any) -> None:
         """Record an emitted event (bounded by the sliding window).
@@ -319,8 +338,7 @@ class SSEEventLog:
         without recording (e.g. simulated gaps in tests).
         """
         with self._lock:
-            self._seq = (self._seq + 1) & self._SEQ_MASK
-            seq = self._seq
+            seq = self._next_seq_locked()
             self._buffer_for(mode).append((seq, kind, payload))
             import time as _time
 
@@ -374,15 +392,23 @@ class SSEEventLog:
             # leaking forever in a server that only ever uses mode 2, while
             # never evicting the mode currently being replayed.
             self._gc_idle_modes(_time.time(), ttl_sec=300.0, exclude_mode=mode)
-            if last_id > self._seq:
-                return None
+            head = self._seq
             same_mode = list(self._entries.get(mode, ()))
-        if not same_mode:
-            return None if last_id > 0 else []
-        oldest = same_mode[0][0]
-        if last_id < oldest:
+        if last_id < 0 or last_id > self._SEQ_MASK:
             return None
-        return [(seq, kind, payload) for (seq, kind, payload) in same_mode if seq > last_id]
+        if head == 0 or not same_mode:
+            return None if last_id > 0 else []
+        if last_id == 0:
+            return None
+        oldest_age = self._seq_age(same_mode[0][0], head)
+        last_age = self._seq_age(last_id, head)
+        if last_age > oldest_age:
+            return None
+        return [
+            (seq, kind, payload)
+            for (seq, kind, payload) in same_mode
+            if self._seq_age(seq, head) < last_age
+        ]
 
     def clear(self) -> None:
         """Drop all buffered events (used by tests / diagnostics)."""

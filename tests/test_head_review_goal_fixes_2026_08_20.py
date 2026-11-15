@@ -48,23 +48,28 @@ class TestHeadReviewGoalFixes20260820:
     def test_r2_realtime_engine_pts_store_alias_purge_on_unregister(self):
         """R2: Verify RealtimeMarketEngine.unregister_symbol purges all PTS aliases from stores and queues."""
         engine = RealtimeMarketEngine()
-        with engine.store_lock:
-            engine.pts_store["7203.T"] = {"symbol": "7203.T", "price": 2500.0}
-            engine.previous_pts_store["7203.T"] = {"symbol": "7203.T", "price": 2490.0}
-            engine._dirty_pts_symbols.add("7203.T")
-            engine._client_pts_states["client1"] = {"7203.T": {"symbol": "7203.T", "price": 2500.0}}
-            engine._client_pts_pending["client1"] = {"7203.T"}
+        try:
+            with engine.store_lock:
+                engine.pts_store["7203.T"] = {"symbol": "7203.T", "price": 2500.0}
+                engine.previous_pts_store["7203.T"] = {"symbol": "7203.T", "price": 2490.0}
+                engine._dirty_pts_symbols.add("7203.T")
+                engine._client_pts_states["client1"] = {
+                    "7203.T": {"symbol": "7203.T", "price": 2500.0}
+                }
+                engine._client_pts_pending["client1"] = {"7203.T"}
 
-        # Unregister via bare code "7203"
-        engine.unregister_symbol("7203", "jp")
+            # Unregister via bare code "7203"
+            engine.unregister_symbol("7203", "jp")
 
-        with engine.store_lock:
-            assert "7203.T" not in engine.pts_store
-            assert "7203" not in engine.pts_store
-            assert "7203.T" not in engine.previous_pts_store
-            assert "7203.T" not in engine._dirty_pts_symbols
-            assert "7203.T" not in engine._client_pts_states.get("client1", {})
-            assert "7203.T" not in engine._client_pts_pending.get("client1", set())
+            with engine.store_lock:
+                assert "7203.T" not in engine.pts_store
+                assert "7203" not in engine.pts_store
+                assert "7203.T" not in engine.previous_pts_store
+                assert "7203.T" not in engine._dirty_pts_symbols
+                assert "7203.T" not in engine._client_pts_states.get("client1", {})
+                assert "7203.T" not in engine._client_pts_pending.get("client1", set())
+        finally:
+            engine.stop()
 
     def test_r3_ai_service_extract_mistral_wait_seconds_relative_and_epoch(self):
         """R3: Verify relative seconds in X-RateLimit-Reset headers are parsed correctly."""
@@ -166,15 +171,21 @@ class TestHeadReviewGoalFixes20260820:
                 return object()
 
         engine = RealtimeMarketEngine()
-        executor = RecordingExecutor()
-        engine._bg_executor = executor
+        orig_executor = engine._bg_executor
+        try:
+            executor = RecordingExecutor()
+            engine._bg_executor = executor
 
-        engine.register_symbols([], ["7203.T"])
-        registration_token = engine._registration_tokens[("jp", "7203.T")]
-        scraper_token = engine.yahoojp_scraper._symbol_tokens["7203.T"]
+            engine.register_symbols([], ["7203.T"])
+            registration_token = engine._registration_tokens[("jp", "7203.T")]
+            scraper_token = engine.yahoojp_scraper._symbol_tokens["7203.T"]
 
-        engine.register_symbol("7203.T", "jp")
+            engine.register_symbol("7203.T", "jp")
 
-        assert len(executor.submitted) == 1
-        assert engine._registration_tokens[("jp", "7203.T")] is registration_token
-        assert engine.yahoojp_scraper._symbol_tokens["7203.T"] is scraper_token
+            assert len(executor.submitted) == 1
+            assert engine._registration_tokens[("jp", "7203.T")] is registration_token
+            assert engine.yahoojp_scraper._symbol_tokens["7203.T"] is scraper_token
+        finally:
+            engine._bg_executor = orig_executor
+            engine.stop()
+            orig_executor.shutdown(wait=False, cancel_futures=True)

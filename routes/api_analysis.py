@@ -1399,18 +1399,19 @@ def api_news():
     if isinstance(latest_bundle, dict) and latest_bundle and not force_refresh:
         response_bundle = {**latest_bundle, "disclaimer": ANALYSIS_DISCLAIMER}
         if needs_revalidate:
+            new_swr_holder: FetchJob | None = None
             with news_fetch_lock:
-                already_fetching = inflight_key in news_fetch_inflight
-                if not already_fetching:
-                    new_swr_holder: FetchJob = {
+                if inflight_key not in news_fetch_inflight:
+                    created_holder: FetchJob = {
                         "result": None,
                         "error": None,
                         "done": threading.Event(),
                     }
-                    news_fetch_inflight[inflight_key] = new_swr_holder
-                    result_holder = new_swr_holder
+                    news_fetch_inflight[inflight_key] = created_holder
+                    new_swr_holder = created_holder
 
-            if not already_fetching:
+            if new_swr_holder is not None:
+                swr_holder: FetchJob = new_swr_holder
 
                 def _run_news_job_swr() -> None:
                     try:
@@ -1420,12 +1421,12 @@ def api_news():
                             tavily_api_key=tavily_api_key,
                             force_refresh=force_refresh,
                         )
-                        result_holder["result"] = res
+                        swr_holder["result"] = res
                         if _is_cacheable_news_bundle(res):
                             _set_cached_value(latest_cache_key, res, duration=86400)
                             _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
                     except Exception as exc:
-                        result_holder["error"] = exc
+                        swr_holder["error"] = exc
                         current_app.logger.warning(
                             "Background SWR news refresh failed error_type=%s",
                             type(exc).__name__,
@@ -1433,7 +1434,7 @@ def api_news():
                     finally:
                         with news_fetch_lock:
                             news_fetch_inflight.pop(inflight_key, None)
-                        result_holder["done"].set()
+                        swr_holder["done"].set()
 
                 try:
                     _submit_in_app_context(app_state.execution.news_executor, _run_news_job_swr)
@@ -1441,6 +1442,8 @@ def api_news():
                     current_app.logger.warning("Failed to schedule SWR news job: %s", exc)
                     with news_fetch_lock:
                         news_fetch_inflight.pop(inflight_key, None)
+                    swr_holder["error"] = exc
+                    swr_holder["done"].set()
         return ok_response(response_bundle)
 
     # Fallback to standard synchronous wait and poll for the first fetch or force refresh

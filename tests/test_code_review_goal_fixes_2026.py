@@ -77,18 +77,28 @@ def test_embeddings_service_bounds_check():
 
 
 def test_session_manager_retry_on_closed_session():
+    from session_manager import CURL_CFFI_AVAILABLE
+
+    patch_path = (
+        "curl_cffi.requests.Session.request"
+        if CURL_CFFI_AVAILABLE
+        else "requests.Session.request"
+    )
     mgr = YFinanceSessionManager()
-    sess = mgr.get_session()
-    sess.close()
+    try:
+        fresh_sess = MagicMock()
+        fresh_resp = MagicMock()
+        fresh_resp.status_code = 200
+        fresh_sess.request.return_value = fresh_resp
 
-    fresh_sess = MagicMock()
-    fresh_resp = MagicMock()
-    fresh_resp.status_code = 200
-    fresh_sess.request.return_value = fresh_resp
-
-    with patch.object(mgr, "get_session", return_value=fresh_sess):
-        resp = sess.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
-        assert resp.status_code == 200
+        with patch(patch_path, side_effect=RuntimeError("Session is closed")):
+            sess = mgr.get_session()
+            sess.close()
+            with patch.object(mgr, "get_session", return_value=fresh_sess):
+                resp = sess.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
+                assert resp.status_code == 200
+    finally:
+        mgr.close_all()
 
 
 def test_shutdown_manager_rotation_survives_used_marker_unlink_oserror():
@@ -110,13 +120,16 @@ def test_sqlite_chat_history_transactional_reads(tmp_path):
     db_file = tmp_path / "chat.db"
     with patch("utils.chat_history.DB_PATH", db_file):
         store = SQLiteChatHistoryStore()
-        store["session_1"] = [{"role": "user", "content": "hello"}]
+        try:
+            store["session_1"] = [{"role": "user", "content": "hello"}]
 
-        assert "session_1" in store
-        assert "non_existent" not in store
-        assert len(store["session_1"]) == 1
-        assert store["session_1"][0]["content"] == "hello"
-        assert len(store) >= 1
+            assert "session_1" in store
+            assert "non_existent" not in store
+            assert len(store["session_1"]) == 1
+            assert store["session_1"][0]["content"] == "hello"
+            assert len(store) >= 1
+        finally:
+            store.close_all()
 
 
 def test_routes_pages_safe_template_context_error_boundary():

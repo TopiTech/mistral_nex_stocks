@@ -25,10 +25,22 @@ from utils.chat_history import SQLiteChatHistoryStore
 
 @pytest.fixture
 def client():
+    orig_testing = app.config.get("TESTING")
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
-    with app.test_client() as test_client:
-        yield test_client
+    try:
+        with app.test_client() as test_client:
+            yield test_client
+    finally:
+        if orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = orig_testing
+        if orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = orig_csrf
 
 
 # ===========================================================================
@@ -373,9 +385,12 @@ def test_be09_chat_history_thread_affinity(tmp_path):
     """BE-09: SQLite connection uses default check_same_thread (True)."""
     with patch("utils.chat_history.DB_PATH", tmp_path / "chat_test.db"):
         store = SQLiteChatHistoryStore()
-        # Verify both _get_connection and _get_conn alias
-        conn = store._get_connection()
-        assert conn is store._get_conn()
+        try:
+            # Verify both _get_connection and _get_conn alias
+            conn = store._get_connection()
+            assert conn is store._get_conn()
+        finally:
+            store.close_all()
 
 
 # ===========================================================================

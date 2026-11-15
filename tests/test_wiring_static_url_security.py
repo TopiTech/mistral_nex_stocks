@@ -36,8 +36,8 @@ def test_static_url_normal_file() -> None:
 def test_static_url_directory_traversal_fallbacks_safely() -> None:
     """Verify that traversal paths immediately fallback to url_for without cache busting."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Create a file outside static folder
-        outside_file = Path(tmp_dir).parent / "outside_secret.txt"
+        # Create a file outside static folder, strictly inside tmp_dir
+        outside_file = Path(tmp_dir) / "outside_secret.txt"
         outside_file.write_text("secret_data", encoding="utf-8")
 
         static_dir = Path(tmp_dir) / "static"
@@ -46,36 +46,37 @@ def test_static_url_directory_traversal_fallbacks_safely() -> None:
         app = Flask(__name__, static_folder=str(static_dir), static_url_path="/static")
         _configure_static_cache_buster(app)
 
-        with app.test_request_context():
-            static_url_func = app.jinja_env.globals.get("static_url")
-            assert callable(static_url_func)
-
-            traversal_cases = [
-                "../outside_secret.txt",
-                "../../etc/passwd",
-                "../../../boot.ini",
-                "..\\outside_secret.txt",
-                "..\\..\\windows\\win.ini",
-                "/etc/passwd",
-                "/windows/system32/cmd.exe",
-                "sub/../../outside_secret.txt",
-            ]
-
-            for bad_path in traversal_cases:
-                result = static_url_func(bad_path)
-                # Must not contain cache-busting query parameter
-                assert "?v=" not in result
-                assert (
-                    "outside_secret.txt" in result
-                    or "passwd" in result
-                    or "ini" in result
-                    or "cmd.exe" in result
-                )
-
         try:
-            outside_file.unlink(missing_ok=True)
-        except OSError:
-            pass
+            with app.test_request_context():
+                static_url_func = app.jinja_env.globals.get("static_url")
+                assert callable(static_url_func)
+
+                traversal_cases = [
+                    "../outside_secret.txt",
+                    "../../etc/passwd",
+                    "../../../boot.ini",
+                    "..\\outside_secret.txt",
+                    "..\\..\\windows\\win.ini",
+                    "/etc/passwd",
+                    "/windows/system32/cmd.exe",
+                    "sub/../../outside_secret.txt",
+                ]
+
+                for bad_path in traversal_cases:
+                    result = static_url_func(bad_path)
+                    # Must not contain cache-busting query parameter
+                    assert "?v=" not in result
+                    assert (
+                        "outside_secret.txt" in result
+                        or "passwd" in result
+                        or "ini" in result
+                        or "cmd.exe" in result
+                    )
+        finally:
+            try:
+                outside_file.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def test_static_url_nonexistent_file() -> None:

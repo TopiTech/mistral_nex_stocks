@@ -12,12 +12,20 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 from flask import Flask
 
 from execution_state import ExecutionState
 from routes.stocks.ai_portfolio import _ai_portfolio_error_response
 from services.embeddings_service import get_mistral_embeddings_batch
 from services.openai_service import _close_stream_context, stream_openai_chat
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 def test_execution_state_background_threads_safety():

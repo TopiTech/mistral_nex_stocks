@@ -10,28 +10,32 @@ class MistralCompatCoverageTestCase(unittest.TestCase):
     def test_mistral_compat_fallback(self):
         """Verify that fallback classes behave correctly when mistralai is missing."""
         # Hide real mistralai modules from sys.modules
-        with patch.dict(
-            sys.modules,
-            {
-                "mistralai": None,
-                "mistralai.client": None,
-                "mistralai.client.errors": None,
-                "mistralai.errors": None,
-            },
-        ):
-            # Reload to trigger the fallbacks
+        try:
+            with patch.dict(
+                sys.modules,
+                {
+                    "mistralai": None,
+                    "mistralai.client": None,
+                    "mistralai.client.errors": None,
+                    "mistralai.errors": None,
+                },
+            ):
+                # Reload to trigger the fallbacks
+                importlib.reload(mistral_compat)
+
+                # Test Mistral fallback
+                fallback_client = mistral_compat.Mistral(api_key="test_key", test_param="val")
+                self.assertEqual(fallback_client.api_key, "test_key")
+                self.assertEqual(fallback_client.kwargs.get("test_param"), "val")
+
+                # Test SDKError fallback
+                fallback_error = mistral_compat.SDKError("simulated error", status_code=403)
+                self.assertEqual(fallback_error.status_code, 403)
+                self.assertEqual(str(fallback_error), "simulated error")
+                self.assertIsNotNone(fallback_error.response)
+        finally:
+            # Restore real mistral_compat classes after patch.dict restores sys.modules
             importlib.reload(mistral_compat)
-
-            # Test Mistral fallback
-            fallback_client = mistral_compat.Mistral(api_key="test_key", test_param="val")
-            self.assertEqual(fallback_client.api_key, "test_key")
-            self.assertEqual(fallback_client.kwargs.get("test_param"), "val")
-
-            # Test SDKError fallback
-            fallback_error = mistral_compat.SDKError("simulated error", status_code=403)
-            self.assertEqual(fallback_error.status_code, 403)
-            self.assertEqual(str(fallback_error), "simulated error")
-            self.assertIsNotNone(fallback_error.response)
 
     def test_rejects_backdoored_mistralai_version(self):
         """Importing mistral_compat must fail loudly when mistralai==2.4.6 is installed.

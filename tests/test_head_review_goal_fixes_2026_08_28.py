@@ -30,6 +30,8 @@ class TestR1CacheInvalidation(unittest.TestCase):
         self.app_context.push()
 
     def tearDown(self):
+        for symbol in ("AAPL", "A", "MSFT"):
+            invalidate_single_stock_cache(symbol)
         self.app_context.pop()
 
     def test_r1_invalidate_does_not_evict_prefix_lookalikes(self):
@@ -122,38 +124,93 @@ class TestR4NativeHostTokenMarkerCoupling(unittest.TestCase):
 
     def test_r4_primary_token_with_stale_legacy_marker(self):
         """When primary token exists and is fresh, presence of legacy used marker must not lock out."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            from pathlib import Path
+        from pathlib import Path
 
+        from native_host import native_host
+
+        valid_id = "abcdefghijklmnopqrstuvwxyz123456"
+        req = {"extensionId": valid_id, "action": "get_shutdown_token"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
             app_data_dir = base_dir / "appdata"
             repo_root_dir = base_dir / "repo"
-
             app_data_dir.mkdir(parents=True, exist_ok=True)
             repo_root_dir.mkdir(parents=True, exist_ok=True)
 
             primary_token_file = app_data_dir / ".mns_shutdown_token"
             primary_used_marker = app_data_dir / ".mns_shutdown_token.used"
-            legacy_token_file = repo_root_dir / ".mns_shutdown_token"
             legacy_used_marker = repo_root_dir / ".mns_shutdown_token.used"
 
-            # Primary token exists and is unused
-            primary_token_file.write_text("valid-new-token", encoding="utf-8")
+            primary_token_file.write_text(
+                json.dumps({"scheme": "fernet", "value": "enc"}),
+                encoding="utf-8",
+            )
             # Legacy used marker exists from previous session
             legacy_used_marker.write_text("used", encoding="utf-8")
 
-            # Logic under test:
-            if primary_token_file.exists():
-                token_file = primary_token_file
-                used_marker = primary_used_marker
-            else:
-                token_file = legacy_token_file
-                used_marker = legacy_used_marker
+            sent: list[dict] = []
+            with (
+                patch.object(native_host, "read_message", side_effect=[req, None]),
+                patch.object(native_host, "send_message", side_effect=sent.append),
+                patch.object(native_host, "_check_rate_limit", return_value=True),
+                patch.object(native_host, "_token_action_allowed", return_value=True),
+                patch.object(native_host, "is_backend_healthy_once", return_value=True),
+                patch.object(native_host, "unprotect_data", return_value="valid-new-token"),
+                patch.object(
+                    native_host,
+                    "_load_allowed_manifest_origins",
+                    return_value={valid_id},
+                ),
+                patch(
+                    "sys.argv",
+                    ["native_host.py", f"chrome-extension://{valid_id}/"],
+                ),
+                patch.object(
+                    native_host,
+                    "_get_ancestor_process_names",
+                    return_value=["cmd.exe", "chrome.exe"],
+                ),
+                patch("config_store.APP_DATA_DIR", app_data_dir),
+                patch.object(native_host, "ROOT", repo_root_dir),
+            ):
+                native_host.main()
 
-            self.assertEqual(token_file, primary_token_file)
-            self.assertEqual(used_marker, primary_used_marker)
-            # Fresh token is NOT marked as used!
-            self.assertFalse(used_marker.exists())
+            self.assertEqual(sent, [{"ok": True, "token": "valid-new-token"}])
+            self.assertFalse(primary_used_marker.exists())
+
+            # Conversely, when primary's own used marker is present, fail closed.
+            primary_used_marker.write_text("used", encoding="utf-8")
+            sent_consumed: list[dict] = []
+            with (
+                patch.object(native_host, "read_message", side_effect=[req, None]),
+                patch.object(native_host, "send_message", side_effect=sent_consumed.append),
+                patch.object(native_host, "_check_rate_limit", return_value=True),
+                patch.object(native_host, "_token_action_allowed", return_value=True),
+                patch.object(native_host, "is_backend_healthy_once", return_value=True),
+                patch.object(native_host, "unprotect_data", return_value="valid-new-token"),
+                patch.object(
+                    native_host,
+                    "_load_allowed_manifest_origins",
+                    return_value={valid_id},
+                ),
+                patch(
+                    "sys.argv",
+                    ["native_host.py", f"chrome-extension://{valid_id}/"],
+                ),
+                patch.object(
+                    native_host,
+                    "_get_ancestor_process_names",
+                    return_value=["cmd.exe", "chrome.exe"],
+                ),
+                patch("config_store.APP_DATA_DIR", app_data_dir),
+                patch.object(native_host, "ROOT", repo_root_dir),
+            ):
+                native_host.main()
+
+            self.assertEqual(len(sent_consumed), 1)
+            self.assertFalse(sent_consumed[0]["ok"])
+            self.assertIn("already been consumed", sent_consumed[0]["error"])
 
 
 class TestR5AiPortfolioRebalanceCache(unittest.TestCase):
@@ -218,15 +275,41 @@ class TestR6SseStreamDisconnectHandling(unittest.TestCase):
     """R6: Test that client disconnect on SSE stream exits cleanly."""
 
     def setUp(self):
-        self.app = create_app()
+        self.app = create_app(
+            config_override={"TESTING": True, "WTF_CSRF_ENABLED": False},
+            skip_bootstrap=True,
+        )
         self.client = self.app.test_client()
 
     def test_r6_client_disconnect_handled(self):
-        # Client test requesting mode=0 returns 200
-        res = self.client.get("/api/stocks/stream?mode=0")
-        self.assertEqual(res.status_code, 200)
-        data = res.get_json()
-        self.assertEqual(data["sse_mode"], 0)
+        from services.realtime_engine import realtime_market_engine
+
+        with patch("routes.stocks.stream.require_sse_auth", return_value=(True, None)):
+            res_mode0 = self.client.get("/api/stocks/stream?mode=0")
+            self.assertEqual(res_mode0.status_code, 200)
+            self.assertEqual(res_mode0.get_json()["sse_mode"], 0)
+
+        before_reserved = app_state.sse_listener_limiter._reserved
+        before_clients = set(realtime_market_engine._client_states.keys())
+
+        with (
+            patch("routes.stocks.stream.require_sse_auth", return_value=(True, None)),
+            patch("routes.stocks.stream._initial_snapshot_for_mode", return_value="{}"),
+        ):
+            res = self.client.get("/api/stocks/stream?mode=2")
+            self.assertEqual(res.status_code, 200)
+            stream_iter = iter(res.response)
+            first_chunk = next(stream_iter)
+            self.assertIn(b"data: {}", first_chunk)
+            self.assertEqual(app_state.sse_listener_limiter._reserved, before_reserved + 1)
+            self.assertEqual(
+                len(set(realtime_market_engine._client_states.keys()) - before_clients),
+                1,
+            )
+            res.close()
+
+        self.assertEqual(app_state.sse_listener_limiter._reserved, before_reserved)
+        self.assertEqual(set(realtime_market_engine._client_states.keys()), before_clients)
 
 
 class TestR7AiPortfolioDuplicateSymbolRejection(unittest.TestCase):
@@ -234,6 +317,13 @@ class TestR7AiPortfolioDuplicateSymbolRejection(unittest.TestCase):
 
     def setUp(self):
         self.app = create_app()
+        sentinel = object()
+        orig_csrf = self.app.config.get("WTF_CSRF_ENABLED", sentinel)
+        self.addCleanup(
+            lambda: self.app.config.pop("WTF_CSRF_ENABLED", None)
+            if orig_csrf is sentinel
+            else self.app.config.__setitem__("WTF_CSRF_ENABLED", orig_csrf)
+        )
         self.app.config["WTF_CSRF_ENABLED"] = False
         self.client = self.app.test_client()
 

@@ -5,6 +5,7 @@ Unit tests for services/openai_service.py (OpenAI-compatible REST API engine).
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from pydantic import BaseModel, Field
 
 from credential_manager import PREVIEW_API_KEY
@@ -17,7 +18,14 @@ from services.openai_service import (
     stream_openai_chat,
     verify_openai_connection,
 )
+from tests.test_support.patches import stub_public_outbound_dns
 from utils.validators import extract_chat_content
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 class SampleSchema(BaseModel):

@@ -2,16 +2,22 @@
 Tests for Mistral AI hardening and model selection in Settings.
 """
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
 
+import config_store
+import utils.storage as storage_mod
 from app import create_app
 from app_state import app_state
 from config_utils import get_model_catalog, resolve_model_target
 from credential_manager import get_model_name
 from services import ai_service
+from tests.test_support.patches import apply_storage_and_config_patches
+from tests.test_support.state_reset import reset_app_state_internals
 
 
 class MistralHardeningTestCase(unittest.TestCase):
@@ -122,10 +128,45 @@ class ApiCredentialsModelSelectionTestCase(unittest.TestCase):
     """Verify GET and POST /api/credentials model selection endpoints."""
 
     def setUp(self):
-        self.app = create_app()
-        self.app.config["TESTING"] = True
-        self.app.config["WTF_CSRF_ENABLED"] = False
+        self._tmp_dir = tempfile.TemporaryDirectory()
+        self._orig_paths = {
+            "app_data_dir": config_store.APP_DATA_DIR,
+            "config_file": config_store.CONFIG_FILE,
+            "cs_user_stocks": config_store.USER_STOCKS_FILE,
+            "cs_legacy_config": config_store.LEGACY_CONFIG_FILE,
+            "st_user_stocks": storage_mod.USER_STOCKS_FILE,
+            "st_legacy_user_stocks": storage_mod.LEGACY_USER_STOCKS_FILE,
+            "stock_disk_cache": app_state.stock_disk_cache,
+            "payload_disk_cache": app_state.payload_disk_cache,
+            "token_file": app_state.shutdown_manager.token_file,
+            "used_marker": app_state.shutdown_manager.used_marker,
+            "runtime_state_dir": app_state.shutdown_manager.runtime_state_dir,
+            "legacy_token_file": app_state.shutdown_manager._legacy_token_file,
+            "legacy_used_marker": app_state.shutdown_manager._legacy_used_marker,
+        }
+        apply_storage_and_config_patches(Path(self._tmp_dir.name))
+        self.app = create_app(
+            config_override={"TESTING": True, "WTF_CSRF_ENABLED": False},
+            skip_bootstrap=True,
+        )
         self.client = self.app.test_client()
+
+    def tearDown(self):
+        config_store.APP_DATA_DIR = self._orig_paths["app_data_dir"]
+        config_store.CONFIG_FILE = self._orig_paths["config_file"]
+        config_store.USER_STOCKS_FILE = self._orig_paths["cs_user_stocks"]
+        config_store.LEGACY_CONFIG_FILE = self._orig_paths["cs_legacy_config"]
+        storage_mod.USER_STOCKS_FILE = self._orig_paths["st_user_stocks"]
+        storage_mod.LEGACY_USER_STOCKS_FILE = self._orig_paths["st_legacy_user_stocks"]
+        app_state.stock_disk_cache = self._orig_paths["stock_disk_cache"]
+        app_state.payload_disk_cache = self._orig_paths["payload_disk_cache"]
+        app_state.shutdown_manager.token_file = self._orig_paths["token_file"]
+        app_state.shutdown_manager.used_marker = self._orig_paths["used_marker"]
+        app_state.shutdown_manager.runtime_state_dir = self._orig_paths["runtime_state_dir"]
+        app_state.shutdown_manager._legacy_token_file = self._orig_paths["legacy_token_file"]
+        app_state.shutdown_manager._legacy_used_marker = self._orig_paths["legacy_used_marker"]
+        reset_app_state_internals()
+        self._tmp_dir.cleanup()
 
     def test_get_credentials_includes_available_models(self):
         resp = self.client.get("/api/credentials")

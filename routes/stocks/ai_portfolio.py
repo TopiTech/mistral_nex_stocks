@@ -288,6 +288,22 @@ def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
     return scope
 
 
+def _invalidate_ai_portfolio_result_cache(*targets: Any) -> None:
+    """Evict cached AI portfolio results whose target segment matches any token in *targets*."""
+    tokens = {str(t) for t in targets if isinstance(t, str) and t}
+    if not tokens:
+        return
+    with ai_portfolio_fetch_lock:
+        keys_to_pop = []
+        for k in list(ai_portfolio_result_cache):
+            parts = k.split(":", 2)
+            key_target = parts[2] if len(parts) == 3 else (parts[1] if len(parts) == 2 else "")
+            if key_target in tokens:
+                keys_to_pop.append(k)
+        for k in keys_to_pop:
+            ai_portfolio_result_cache.pop(k, None)
+
+
 @ai_portfolio_bp.route("/api/ai-portfolio", methods=["GET"])
 @rate_limit(max_requests=60, window_seconds=60)
 def api_get_ai_portfolios() -> Any:
@@ -701,14 +717,7 @@ def api_save_ai_portfolio() -> Any:
 
     target_id = canonical_portfolio.get("id")
     target_theme = canonical_portfolio.get("theme")
-    with ai_portfolio_fetch_lock:
-        keys_to_pop = [
-            k
-            for k in list(ai_portfolio_result_cache)
-            if (target_id and f":{target_id}" in k) or (target_theme and f":{target_theme}" in k)
-        ]
-        for k in keys_to_pop:
-            ai_portfolio_result_cache.pop(k, None)
+    _invalidate_ai_portfolio_result_cache(target_id, target_theme)
 
     return ok_response({"portfolio": canonical_portfolio})
 
@@ -776,14 +785,7 @@ def api_delete_ai_portfolio() -> Any:
             status_code=404,
         )
 
-    with ai_portfolio_fetch_lock:
-        keys_to_pop = [
-            k
-            for k in list(ai_portfolio_result_cache)
-            if f":{portfolio_id}" in k or (deleted_theme and f":{deleted_theme}" in k)
-        ]
-        for k in keys_to_pop:
-            ai_portfolio_result_cache.pop(k, None)
+    _invalidate_ai_portfolio_result_cache(portfolio_id, deleted_theme)
 
     return ok_response({"id": portfolio_id})
 

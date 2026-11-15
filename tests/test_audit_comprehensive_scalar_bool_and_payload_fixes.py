@@ -223,14 +223,17 @@ def test_update_indices_data_ignores_bool_usdjpy():
 def test_realtime_engine_rejects_bool_price_in_producer_update():
     """Verify realtime engine does not calculate change = 1 - prev_close when price is bool."""
     engine = RealtimeMarketEngine()
-    payload = {
-        "symbol": "7203.T",
-        "price": np.bool_(True),
-    }
-    engine._handle_producer_update(payload)
-    # The boolean price must not have triggered change / change_percent calculation
-    assert "change" not in payload
-    assert "change_percent" not in payload
+    try:
+        payload = {
+            "symbol": "7203.T",
+            "price": np.bool_(True),
+        }
+        engine._handle_producer_update(payload)
+        # The boolean price must not have triggered change / change_percent calculation
+        assert "change" not in payload
+        assert "change_percent" not in payload
+    finally:
+        engine.stop()
 
 
 def test_fundamental_sanitize_bool_rejection():

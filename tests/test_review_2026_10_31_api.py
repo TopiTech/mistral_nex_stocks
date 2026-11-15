@@ -21,8 +21,15 @@ from error_handlers import register_error_handlers
 from schemas.ai_portfolio import AIPortfolioCopyToMyRequest
 from schemas.stocks import ScreenerQueryRequest
 from services.ai_service import ProviderAPIError
+from tests.test_support.patches import stub_public_outbound_dns
 from utils.stock_payload import error_response
 from utils.storage import UserStocksPersistError
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 ORIGIN = {"Origin": "http://localhost:5000"}
 

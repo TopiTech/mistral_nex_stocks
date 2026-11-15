@@ -1,5 +1,6 @@
 """Unit tests for the latest code review fixes (R1-R5)."""
 
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -31,17 +32,21 @@ class TestLatestReviewFixes(unittest.TestCase):
 
     def test_r3_native_host_security_audit_logging_on_rejection(self):
         """Test R3: Native Host fails closed when caller ancestry is unavailable."""
-        from native_host.native_host import _is_caller_authorized_browser
+        orig_stdout = sys.stdout
+        try:
+            from native_host.native_host import _is_caller_authorized_browser
 
-        with (
-            patch("native_host.native_host._get_ancestor_process_names", return_value=[]),
-            patch("native_host.native_host.logger.warning") as mock_warning,
-        ):
-            allowed = _is_caller_authorized_browser()
-            self.assertFalse(allowed)
-            mock_warning.assert_called_once()
-            call_args = mock_warning.call_args[0]
-            self.assertIn("failing closed", call_args[0])
+            with (
+                patch("native_host.native_host._get_ancestor_process_names", return_value=[]),
+                patch("native_host.native_host.logger.warning") as mock_warning,
+            ):
+                allowed = _is_caller_authorized_browser()
+                self.assertFalse(allowed)
+                mock_warning.assert_called_once()
+                call_args = mock_warning.call_args[0]
+                self.assertIn("failing closed", call_args[0])
+        finally:
+            sys.stdout = orig_stdout
 
     def test_r2_auto_remove_persist_error_schedules_sync(self):
         """Test R2: When auto-remove persistence fails, a follow-up sync is scheduled for self-healing."""
@@ -51,19 +56,28 @@ class TestLatestReviewFixes(unittest.TestCase):
         items = [("INVALID_SYM", "Invalid Test Stock", "us")]
         fetched = [("__INVALID_SYMBOL__", "INVALID_SYM")]
 
+        sentinel = object()
         with app_state.market.invalid_symbol_lock:
+            prev_streak = app_state.market.invalid_symbol_streak.get("INVALID_SYM", sentinel)
             app_state.market.invalid_symbol_streak["INVALID_SYM"] = 5
 
-        with (
-            patch(
-                "app_bg._get_stock_container",
-                return_value={"INVALID_SYM": {"symbol": "INVALID_SYM"}},
-            ),
-            patch("app_bg.save_user_stocks", side_effect=OSError("Disk write error")),
-            patch("app_bg.schedule_sync_all_stocks_now") as mock_schedule,
-        ):
-            _auto_remove_invalid_symbols(items, fetched)
-            mock_schedule.assert_called_once()
+        try:
+            with (
+                patch(
+                    "app_bg._get_stock_container",
+                    return_value={"INVALID_SYM": {"symbol": "INVALID_SYM"}},
+                ),
+                patch("app_bg.save_user_stocks", side_effect=OSError("Disk write error")),
+                patch("app_bg.schedule_sync_all_stocks_now") as mock_schedule,
+            ):
+                _auto_remove_invalid_symbols(items, fetched)
+                mock_schedule.assert_called_once()
+        finally:
+            with app_state.market.invalid_symbol_lock:
+                if prev_streak is sentinel:
+                    app_state.market.invalid_symbol_streak.pop("INVALID_SYM", None)
+                else:
+                    app_state.market.invalid_symbol_streak["INVALID_SYM"] = prev_streak
 
 
 if __name__ == "__main__":

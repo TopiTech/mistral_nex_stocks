@@ -59,56 +59,58 @@ def test_ci_workflow_pylint_covers_config_package():
 def test_engine_precision_respects_market_hint_and_payload():
     """ISSUE-02: RealtimeMarketEngine._handle_producer_update must round JPY to 2 decimals and US to 4."""
     engine = RealtimeMarketEngine()
+    try:
+        # 1. Non-standard symbol with market="jp" in payload -> decimals=2
+        jp_payload = {
+            "symbol": "CUSTOMJP",
+            "market": "jp",
+            "price": 1250.5555,
+            "change": 12.3456,
+            "change_percent": 1.2345,
+        }
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=1238.21):
+            engine._handle_producer_update(jp_payload)
+        # price - prev_close = 1250.5555 - 1238.21 = 12.3455 -> round(12.3455, 2) = 12.35
+        # change_pct = (12.3455 / 1238.21) * 100 = 0.997... -> round(0.997..., 2) = 1.0
+        assert jp_payload["change"] == round(1250.5555 - 1238.21, 2)
+        assert jp_payload["change_percent"] == 1.0
 
-    # 1. Non-standard symbol with market="jp" in payload -> decimals=2
-    jp_payload = {
-        "symbol": "CUSTOMJP",
-        "market": "jp",
-        "price": 1250.5555,
-        "change": 12.3456,
-        "change_percent": 1.2345,
-    }
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=1238.21):
-        engine._handle_producer_update(jp_payload)
-    # price - prev_close = 1250.5555 - 1238.21 = 12.3455 -> round(12.3455, 2) = 12.35
-    # change_pct = (12.3455 / 1238.21) * 100 = 0.997... -> round(0.997..., 2) = 1.0
-    assert jp_payload["change"] == round(1250.5555 - 1238.21, 2)
-    assert jp_payload["change_percent"] == 1.0
+        # 2. Standard .T symbol without explicit market key -> decimals=2
+        t_payload = {
+            "symbol": "7203.T",
+            "price": 2500.8888,
+            "change": 15.6789,
+            "change_percent": 0.63,
+        }
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=2485.2):
+            engine._handle_producer_update(t_payload)
+        assert t_payload["change"] == round(2500.8888 - 2485.2, 2)
 
-    # 2. Standard .T symbol without explicit market key -> decimals=2
-    t_payload = {
-        "symbol": "7203.T",
-        "price": 2500.8888,
-        "change": 15.6789,
-        "change_percent": 0.63,
-    }
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=2485.2):
-        engine._handle_producer_update(t_payload)
-    assert t_payload["change"] == round(2500.8888 - 2485.2, 2)
+        # 3. US symbol (e.g. AAPL) -> decimals=4
+        us_payload = {
+            "symbol": "AAPL",
+            "market": "us",
+            "price": 220.1234,
+            "change": 1.23456,
+            "change_percent": 0.56,
+        }
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=218.89):
+            engine._handle_producer_update(us_payload)
+        assert us_payload["change"] == round(220.1234 - 218.89, 4)
 
-    # 3. US symbol (e.g. AAPL) -> decimals=4
-    us_payload = {
-        "symbol": "AAPL",
-        "market": "us",
-        "price": 220.1234,
-        "change": 1.23456,
-        "change_percent": 0.56,
-    }
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=218.89):
-        engine._handle_producer_update(us_payload)
-    assert us_payload["change"] == round(220.1234 - 218.89, 4)
-
-    # 4. Registration with market="jp" hints non-standard symbol -> decimals=2
-    reg_token = engine._activate_registration("SPECIAL_TICKER", "jp")
-    reg_payload = {
-        "symbol": "SPECIAL_TICKER",
-        "price": 500.1234,
-        "change": 5.6789,
-        "change_percent": 1.15,
-    }
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=494.44):
-        engine._handle_producer_update(reg_payload, registration=reg_token)
-    assert reg_payload["change"] == round(500.1234 - 494.44, 2)
+        # 4. Registration with market="jp" hints non-standard symbol -> decimals=2
+        reg_token = engine._activate_registration("SPECIAL_TICKER", "jp")
+        reg_payload = {
+            "symbol": "SPECIAL_TICKER",
+            "price": 500.1234,
+            "change": 5.6789,
+            "change_percent": 1.15,
+        }
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=494.44):
+            engine._handle_producer_update(reg_payload, registration=reg_token)
+        assert reg_payload["change"] == round(500.1234 - 494.44, 2)
+    finally:
+        engine.stop()
 
 
 def test_update_indices_data_safety_net_triggers_on_none_empty_or_dash():

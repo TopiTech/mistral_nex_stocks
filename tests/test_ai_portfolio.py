@@ -1301,7 +1301,10 @@ def test_copy_ai_portfolio_preserves_stale_fx_warning_across_jp_items(case):
     from app import app
     from app_state import app_state
 
+    has_csrf = "WTF_CSRF_ENABLED" in app.config
     orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    orig_fx_rate = app_state.market.last_usdjpy_rate
+    orig_fx_ts = app_state.market.last_usdjpy_rate_ts
     app.config["WTF_CSRF_ENABLED"] = False
     try:
         with (
@@ -1338,11 +1341,16 @@ def test_copy_ai_portfolio_preserves_stale_fx_warning_across_jp_items(case):
 
             assert response.status_code == 200
             assert "stale_warning" in response.get_json()
-            with app_state.market.user_stocks_lock:
-                app_state.market.user_us.pop("STALEFX", None)
-                app_state.market.user_jp.pop("STALEJP.T", None)
     finally:
-        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us.pop("STALEFX", None)
+            app_state.market.user_jp.pop("STALEJP.T", None)
+        app_state.market.last_usdjpy_rate = orig_fx_rate
+        app_state.market.last_usdjpy_rate_ts = orig_fx_ts
+        if has_csrf:
+            app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        else:
+            app.config.pop("WTF_CSRF_ENABLED", None)
 
 
 def test_copy_ai_portfolio_updates_sse_cache_immediately():
@@ -1350,8 +1358,12 @@ def test_copy_ai_portfolio_updates_sse_cache_immediately():
     from app import app
     from app_state import app_state
 
+    has_csrf = "WTF_CSRF_ENABLED" in app.config
     orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["WTF_CSRF_ENABLED"] = False
+    with app_state.cache.sse_data_lock:
+        orig_cur_us = list(app_state.market.current_stocks_cache.get("us", []))
+        orig_tgt_us = list(app_state.market.target_stocks_cache.get("us", []))
     try:
         with (
             patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
@@ -1404,7 +1416,15 @@ def test_copy_ai_portfolio_updates_sse_cache_immediately():
             with app_state.market.user_stocks_lock:
                 app_state.market.user_us.pop("TESTSSE", None)
     finally:
-        app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        with app_state.market.user_stocks_lock:
+            app_state.market.user_us.pop("TESTSSE", None)
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_stocks_cache["us"] = orig_cur_us
+            app_state.market.target_stocks_cache["us"] = orig_tgt_us
+        if has_csrf:
+            app.config["WTF_CSRF_ENABLED"] = orig_csrf
+        else:
+            app.config.pop("WTF_CSRF_ENABLED", None)
 
 
 def test_copy_ai_portfolio_validates_max_price_and_shares_limits():

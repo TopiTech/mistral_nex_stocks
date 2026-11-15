@@ -34,8 +34,13 @@ def _payload(symbol, price, change=0.0):
 class DirtyDeltaScanTests(unittest.TestCase):
     """P1-1: delta scanning must only revisit dirty symbols after the first pass."""
 
-    def test_first_scan_returns_full_snapshot_then_only_changes(self):
+    def _new_engine(self):
         engine = RealtimeMarketEngine()
+        self.addCleanup(engine.stop)
+        return engine
+
+    def test_first_scan_returns_full_snapshot_then_only_changes(self):
+        engine = self._new_engine()
         engine._handle_producer_update(_payload("AAPL", 220.0, 1.0))
         engine._handle_producer_update(_payload("MSFT", 410.0, 2.0))
 
@@ -53,7 +58,7 @@ class DirtyDeltaScanTests(unittest.TestCase):
         self.assertEqual(engine.get_market_deltas(), {})
 
     def test_dirty_set_stays_until_all_clients_consume(self):
-        engine = RealtimeMarketEngine()
+        engine = self._new_engine()
         engine._handle_producer_update(_payload("AAPL", 220.0, 1.0))
         c1 = engine.register_client()
         c2 = engine.register_client()
@@ -81,7 +86,7 @@ class DirtyDeltaScanTests(unittest.TestCase):
         # client's pending set (previously a shared dirty set required a
         # cross-cursor prune pass that could never fire in production because
         # the default cursor is never polled by the SSE path).
-        engine = RealtimeMarketEngine()
+        engine = self._new_engine()
         c1 = engine.register_client()
         engine._handle_producer_update(_payload("AAPL", 220.0, 1.0))
         self.assertIn("AAPL", engine._dirty_symbols)
@@ -91,7 +96,7 @@ class DirtyDeltaScanTests(unittest.TestCase):
         self.assertNotIn("AAPL", engine._client_pending[c1])
 
     def test_unregister_drops_dirty_entry(self):
-        engine = RealtimeMarketEngine()
+        engine = self._new_engine()
         engine._handle_producer_update(_payload("7203.T", 3500.0, 50.0))
         engine._handle_producer_update(_payload("AAPL", 220.0, 1.0))
         self.assertIn("7203.T", engine._dirty_symbols)
@@ -101,7 +106,7 @@ class DirtyDeltaScanTests(unittest.TestCase):
         self.assertNotIn("7203.T", engine.get_market_deltas())
 
     def test_pts_dirty_scan(self):
-        engine = RealtimeMarketEngine()
+        engine = self._new_engine()
         pts = {
             "symbol": "7203.T",
             "price": 2973.9,

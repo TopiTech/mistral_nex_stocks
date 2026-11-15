@@ -1,6 +1,5 @@
 import copy
 import logging
-import math
 import time
 from datetime import UTC, datetime
 
@@ -26,6 +25,7 @@ from utils.caching import (
 )
 from utils.market_utils import safe_get_ticker
 from utils.normalization import (
+    finite_float,
     history_circuit_key,
     normalize_history_candle,
     normalize_history_frame,
@@ -42,13 +42,7 @@ def _finite_float(value, default: float | None = None) -> float | None:
     silently become ``0.0``.  Callers that have a documented fallback (for
     example the synthetic close price) pass it explicitly.
     """
-    if value is None or isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
-        return default
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return numeric if math.isfinite(numeric) else default
+    return finite_float(value, default)
 
 
 def _history_payload_short_cache_key(symbol: str, period: str, interval: str = "auto") -> str:

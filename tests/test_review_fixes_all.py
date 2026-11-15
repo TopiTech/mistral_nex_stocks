@@ -135,26 +135,31 @@ def test_cleanup_history_circuit_state_brackets():
     from app_state import app_state
     from market_state import CircuitState
 
-    with app_state.market.history_circuit_lock:
-        app_state.market.history_circuit_state["SYM_OPEN_STALE"] = CircuitState(
-            status="OPEN", open_until=10.0, timeout_streak=5
-        )
-        app_state.market.history_circuit_state["SYM_CLOSED_CLEAN"] = CircuitState(
-            status="CLOSED", open_until=0.0, timeout_streak=0
-        )
-        app_state.market.history_circuit_state["SYM_CLOSED_STREAK"] = CircuitState(
-            status="CLOSED", open_until=0.0, timeout_streak=2
-        )
+    try:
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state["SYM_OPEN_STALE"] = CircuitState(
+                status="OPEN", open_until=10.0, timeout_streak=5
+            )
+            app_state.market.history_circuit_state["SYM_CLOSED_CLEAN"] = CircuitState(
+                status="CLOSED", open_until=0.0, timeout_streak=0
+            )
+            app_state.market.history_circuit_state["SYM_CLOSED_STREAK"] = CircuitState(
+                status="CLOSED", open_until=0.0, timeout_streak=2
+            )
 
-    # Run cleanup with now_ts = 1000.0 (stale_after_sec = 600)
-    cleanup_history_circuit_state(now_ts=1000.0, stale_after_sec=600)
+        # Run cleanup with now_ts = 1000.0 (stale_after_sec = 600)
+        cleanup_history_circuit_state(now_ts=1000.0, stale_after_sec=600)
 
-    with app_state.market.history_circuit_lock:
-        # Open stale and closed clean should be removed
-        assert "SYM_OPEN_STALE" not in app_state.market.history_circuit_state
-        assert "SYM_CLOSED_CLEAN" not in app_state.market.history_circuit_state
-        # Closed with active streak should remain
-        assert "SYM_CLOSED_STREAK" in app_state.market.history_circuit_state
+        with app_state.market.history_circuit_lock:
+            # Open stale and closed clean should be removed
+            assert "SYM_OPEN_STALE" not in app_state.market.history_circuit_state
+            assert "SYM_CLOSED_CLEAN" not in app_state.market.history_circuit_state
+            # Closed with active streak should remain
+            assert "SYM_CLOSED_STREAK" in app_state.market.history_circuit_state
+    finally:
+        with app_state.market.history_circuit_lock:
+            for key in ("SYM_OPEN_STALE", "SYM_CLOSED_CLEAN", "SYM_CLOSED_STREAK"):
+                app_state.market.history_circuit_state.pop(key, None)
 
 
 def test_native_host_safe_int_env_min_value_floor():

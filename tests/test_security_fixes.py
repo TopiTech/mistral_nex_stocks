@@ -10,6 +10,7 @@ Tests for:
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -60,12 +61,51 @@ class ShutdownTokenTestCase(unittest.TestCase):
     """Test single-use shutdown token functionality."""
 
     def setUp(self):
+        self._tmp_dir = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp_dir.name)
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_app_root = app.config.get("APPLICATION_ROOT")
+        mgr = app_state.shutdown_manager
+        self._orig_shutdown = {
+            "shutdown_token": mgr.shutdown_token,
+            "shutdown_token_used": mgr.shutdown_token_used,
+            "runtime_state_dir": mgr.runtime_state_dir,
+            "token_file": mgr.token_file,
+            "used_marker": mgr.used_marker,
+            "legacy_token_file": mgr._legacy_token_file,
+            "legacy_used_marker": mgr._legacy_used_marker,
+        }
+        mgr.runtime_state_dir = tmp
+        mgr.token_file = tmp / ".mns_shutdown_token"
+        mgr.used_marker = tmp / ".mns_shutdown_token.used"
+        mgr._legacy_token_file = tmp / "_legacy" / ".mns_shutdown_token"
+        mgr._legacy_used_marker = tmp / "_legacy" / ".mns_shutdown_token.used"
+
         app.config["TESTING"] = True
         app.config["APPLICATION_ROOT"] = "/"
         self.client = app.test_client()
         # Reset token state
-        app_state.shutdown_manager.shutdown_token = "test-token-12345"
-        app_state.shutdown_manager.shutdown_token_used = False
+        mgr.shutdown_token = "test-token-12345"
+        mgr.shutdown_token_used = False
+
+    def tearDown(self):
+        mgr = app_state.shutdown_manager
+        mgr.shutdown_token = self._orig_shutdown["shutdown_token"]
+        mgr.shutdown_token_used = self._orig_shutdown["shutdown_token_used"]
+        mgr.runtime_state_dir = self._orig_shutdown["runtime_state_dir"]
+        mgr.token_file = self._orig_shutdown["token_file"]
+        mgr.used_marker = self._orig_shutdown["used_marker"]
+        mgr._legacy_token_file = self._orig_shutdown["legacy_token_file"]
+        mgr._legacy_used_marker = self._orig_shutdown["legacy_used_marker"]
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_app_root is None:
+            app.config.pop("APPLICATION_ROOT", None)
+        else:
+            app.config["APPLICATION_ROOT"] = self._orig_app_root
+        self._tmp_dir.cleanup()
 
     def test_token_consumption_works_once(self):
         """Token should be valid for first use."""

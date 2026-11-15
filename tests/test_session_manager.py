@@ -22,6 +22,9 @@ class TestYFinanceSessionManager(unittest.TestCase):
         self.mgr._request_min_interval_sec = 0.0
         self.mgr._adaptive_interval_sec = 0.0
 
+    def tearDown(self):
+        YFinanceSessionManager._reset_for_testing()
+
     def _make_session(self):
         """Create a session via the manager's public entry point and return it."""
         return self.mgr.get_session()
@@ -35,20 +38,39 @@ class TestYFinanceSessionManager(unittest.TestCase):
 
     def test_pool_cap_enforced(self):
         """Sessions beyond the cap are reclaimed (oldest idle first)."""
-        # Force a tiny cap for the test.
-        import constants
+        import session_manager as sm
 
-        original = constants.YFINANCE_SESSION_POOL_MAX
-        constants.YFINANCE_SESSION_POOL_MAX = 4
+        original = sm.YFINANCE_SESSION_POOL_MAX
+        sm.YFINANCE_SESSION_POOL_MAX = 20
         try:
-            # Rotate UA many times; each rotation creates a new session.
-            for _ in range(20):
-                self.mgr.mark_rate_limited("yfinance", duration=1)
-            # Allow the reaper-style enforcement to run.
+            created = []
+            created_lock = threading.Lock()
+
+            def _open_thread_session():
+                sess = self.mgr.get_session()
+                with created_lock:
+                    created.append(sess)
+
+            threads = [threading.Thread(target=_open_thread_session) for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5.0)
+            self.assertEqual(len({id(s) for s in created}), 8)
+            self.assertEqual(self.mgr.session_count(), 8)
+
+            # Lower the cap and invoke _enforce_pool_cap(): oldest idle sessions trimmed.
+            sm.YFINANCE_SESSION_POOL_MAX = 4
             self.mgr._enforce_pool_cap()
-            self.assertLessEqual(self.mgr.session_count(), 4)
+            self.assertEqual(self.mgr.session_count(), 4)
+
+            # Creating one more session on a fresh thread keeps count capped at 4.
+            extra_thread = threading.Thread(target=_open_thread_session)
+            extra_thread.start()
+            extra_thread.join(timeout=5.0)
+            self.assertEqual(self.mgr.session_count(), 4)
         finally:
-            constants.YFINANCE_SESSION_POOL_MAX = original
+            sm.YFINANCE_SESSION_POOL_MAX = original
 
     def test_epoch_sweep_removes_prior_epoch_sessions(self):
         """A UA rotation sweeps all prior-epoch sessions (burnt crumb identity).

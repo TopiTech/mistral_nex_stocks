@@ -28,6 +28,8 @@ from services.fallback_provider import (
 )
 from utils.caching import global_cache
 
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
 
 class TestFallbackProviderHardening(unittest.TestCase):
     """Test fallback provider session memory management and input validation."""
@@ -115,7 +117,7 @@ class TestSyncWorkerImports(unittest.TestCase):
         """bg.sync_worker must import _fetch_heatmap_cached from routes.stocks.common."""
         # E-01: sync_all_stocks_now lives in bg/sync/control.py; the facade
         # bg/sync_worker.py only re-exports it.
-        sync_worker_path = pathlib.Path("bg/sync/control.py")
+        sync_worker_path = _ROOT / "bg" / "sync" / "control.py"
         content = sync_worker_path.read_text(encoding="utf-8")
         self.assertIn("from routes.stocks.common import _fetch_heatmap_cached", content)
         self.assertNotIn("from routes.api_stocks import _fetch_heatmap_cached", content)
@@ -128,35 +130,43 @@ class TestSearchApiCacheNormalization(unittest.TestCase):
         from app import create_app
         from app_state import app_state
 
-        app = create_app()
-        app.config["TESTING"] = True
+        app = create_app(
+            config_override={"TESTING": True, "WTF_CSRF_ENABLED": False},
+            skip_bootstrap=True,
+        )
 
         with global_cache.cache_lock:
+            saved_caches = dict(global_cache.caches)
             global_cache.caches.clear()
 
-        client = app.test_client()
+        try:
+            client = app.test_client()
 
-        with patch.object(
-            app_state.stock_provider,
-            "search",
-            return_value=[{"symbol": "AAPL", "name": "Apple Inc."}],
-        ) as mock_search:
-            # Query uppercase
-            res1 = client.get(
-                "/api/search?q=AAPL",
-                headers={"Origin": "http://localhost:5000"},
-            )
-            self.assertEqual(res1.status_code, 200)
+            with patch.object(
+                app_state.stock_provider,
+                "search",
+                return_value=[{"symbol": "AAPL", "name": "Apple Inc."}],
+            ) as mock_search:
+                # Query uppercase
+                res1 = client.get(
+                    "/api/search?q=AAPL",
+                    headers={"Origin": "http://localhost:5000"},
+                )
+                self.assertEqual(res1.status_code, 200)
 
-            # Query lowercase
-            res2 = client.get(
-                "/api/search?q=aapl",
-                headers={"Origin": "http://localhost:5000"},
-            )
-            self.assertEqual(res2.status_code, 200)
+                # Query lowercase
+                res2 = client.get(
+                    "/api/search?q=aapl",
+                    headers={"Origin": "http://localhost:5000"},
+                )
+                self.assertEqual(res2.status_code, 200)
 
-            # Both should share the same cache entry
-            self.assertEqual(mock_search.call_count, 1)
+                # Both should share the same cache entry
+                self.assertEqual(mock_search.call_count, 1)
+        finally:
+            with global_cache.cache_lock:
+                global_cache.caches.clear()
+                global_cache.caches.update(saved_caches)
 
 
 class TestScreenerFloatParsing(unittest.TestCase):
@@ -165,16 +175,48 @@ class TestScreenerFloatParsing(unittest.TestCase):
     def test_screener_parse_float_handles_formatted_strings(self):
         from app import create_app
 
-        app = create_app()
-        app.config["TESTING"] = True
+        app = create_app(
+            config_override={"TESTING": True, "WTF_CSRF_ENABLED": False},
+            skip_bootstrap=True,
+        )
         client = app.test_client()
 
-        with app.test_request_context("/api/screener?min_price=10&max_price=100"):
+        base_rows = [
+            {
+                "symbol": "IN_RANGE",
+                "name": "In Range Co",
+                "market": "us",
+                "price": "$45.50",
+                "change_percent": "+2.5%",
+                "market_cap": "1000000000",
+                "pe_ratio": "15.2",
+            },
+            {
+                "symbol": "TOO_HIGH",
+                "name": "Expensive Co",
+                "market": "us",
+                "price": "$1,250.00",
+                "change_percent": "-1.0%",
+                "market_cap": "5000000000",
+                "pe_ratio": "30.0",
+            },
+        ]
+
+        with (
+            patch("routes.stocks.views.resolve_stocks_for_response", return_value={"us": []}),
+            patch("routes.stocks.views.build_screener_base_rows_dispatch", return_value=base_rows),
+            patch("routes.stocks.views.POPULAR_US", []),
+            patch("routes.stocks.views.POPULAR_JP", []),
+        ):
             res = client.get(
-                "/api/screener?min_price=10&max_price=100",
+                "/api/screener?market=us&min_price=10&max_price=100",
                 headers={"Origin": "http://localhost:5000"},
             )
-            self.assertIn(res.status_code, (200, 503))
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        symbols = [item["symbol"] for item in payload.get("stocks", [])]
+        self.assertIn("IN_RANGE", symbols)
+        self.assertNotIn("TOO_HIGH", symbols)
 
 
 class TestFrontendAccessibilityAndStyles(unittest.TestCase):
@@ -182,7 +224,7 @@ class TestFrontendAccessibilityAndStyles(unittest.TestCase):
 
     def test_colors_css_defines_skip_link(self):
         """colors.css must define .skip-link so all templates render it offscreen."""
-        css_path = pathlib.Path("static/css/colors.css")
+        css_path = _ROOT / "static" / "css" / "colors.css"
         content = css_path.read_text(encoding="utf-8")
         self.assertIn(".skip-link", content)
         self.assertIn("top: -100px", content)
@@ -191,7 +233,7 @@ class TestFrontendAccessibilityAndStyles(unittest.TestCase):
 
     def test_chrome_extension_popup_has_one_main_landmark(self):
         """The popup has one main landmark that contains every tab panel."""
-        popup_path = pathlib.Path("chrome_extension/popup.html")
+        popup_path = _ROOT / "chrome_extension" / "popup.html"
         content = popup_path.read_text(encoding="utf-8")
         self.assertEqual(content.count("<main"), 1)
         self.assertIn('<main id="main-content">', content)
@@ -204,20 +246,20 @@ class TestFrontendAccessibilityAndStyles(unittest.TestCase):
 
     def test_screener_js_tr_lacks_conflicting_aria_label(self):
         """screener.js <tr> must not set aria-label, preserving cell accessibility."""
-        screener_path = pathlib.Path("static/js/screener.js")
+        screener_path = _ROOT / "static" / "js" / "screener.js"
         content = screener_path.read_text(encoding="utf-8")
         self.assertNotIn('tr.setAttribute(\n        "aria-label"', content)
         self.assertNotIn('tr.setAttribute("aria-label"', content)
 
     def test_ui_js_set_detail_item_visibility_includes_drawer(self):
         """ui.js setDetailItemVisibility must query drawer when DOM is borrowed."""
-        ui_path = pathlib.Path("static/js/ui.js")
+        ui_path = _ROOT / "static" / "js" / "ui.js"
         content = ui_path.read_text(encoding="utf-8")
         self.assertIn("#stock-detail-drawer .detail-item-", content)
 
     def test_setup_js_app_config_ordering(self):
         """setup.js must ensure window.APP_CONFIG is initialized before bootstrap call."""
-        setup_path = pathlib.Path("static/js/setup.js")
+        setup_path = _ROOT / "static" / "js" / "setup.js"
         content = setup_path.read_text(encoding="utf-8")
         self.assertIn("window.APP_CONFIG?.has_mistral_api_key", content)
         fallback_pos = content.find('if (typeof APP_CONFIG === "undefined")')

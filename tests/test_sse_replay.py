@@ -124,38 +124,47 @@ def test_register_client_seeds_cursor_with_current_snapshot():
     """A registered cursor is seeded with the current store, so the first poll
     does not re-dump the full store (the SSE initial snapshot carried it)."""
     engine = RealtimeMarketEngine()
-    engine._handle_producer_update(_payload("AAPL", 220.0, 1.0))
-    cid = engine.register_client()
+    try:
+        engine._handle_producer_update(_payload("AAPL", 220.0, 1.0))
+        cid = engine.register_client()
 
-    # Seeded: no duplicate full-store delivery on the first poll.
-    assert engine.get_market_deltas(cid) == {}
-    # Updates after registration are still delivered per-client.
-    engine._handle_producer_update(_payload("AAPL", 221.0, 2.0))
-    deltas = engine.get_market_deltas(cid)
-    assert deltas["AAPL"]["price"] == 221.0
-    assert engine.get_market_deltas(cid) == {}
+        # Seeded: no duplicate full-store delivery on the first poll.
+        assert engine.get_market_deltas(cid) == {}
+        # Updates after registration are still delivered per-client.
+        engine._handle_producer_update(_payload("AAPL", 221.0, 2.0))
+        deltas = engine.get_market_deltas(cid)
+        assert deltas["AAPL"]["price"] == 221.0
+        assert engine.get_market_deltas(cid) == {}
 
-    engine.unregister_client(cid)
+        engine.unregister_client(cid)
+    finally:
+        engine.stop()
 
 
 def test_register_client_seeds_pts_cursor():
     engine = RealtimeMarketEngine()
-    engine._handle_pts_update(_pts_payload("7203.T", 2973.9))
-    cid = engine.register_client()
+    try:
+        engine._handle_pts_update(_pts_payload("7203.T", 2973.9))
+        cid = engine.register_client()
 
-    assert engine.get_pts_deltas(cid) == {}
-    engine._handle_pts_update(_pts_payload("7203.T", 2970.0))
-    assert engine.get_pts_deltas(cid)["7203.T"]["price"] == 2970.0
+        assert engine.get_pts_deltas(cid) == {}
+        engine._handle_pts_update(_pts_payload("7203.T", 2970.0))
+        assert engine.get_pts_deltas(cid)["7203.T"]["price"] == 2970.0
 
-    engine.unregister_client(cid)
+        engine.unregister_client(cid)
+    finally:
+        engine.stop()
 
 
 def test_register_client_on_empty_engine_first_scan_empty():
     """An empty engine still yields an empty first scan (no behavior change)."""
     engine = RealtimeMarketEngine()
-    cid = engine.register_client()
-    assert engine.get_market_deltas(cid) == {}
-    engine.unregister_client(cid)
+    try:
+        cid = engine.register_client()
+        assert engine.get_market_deltas(cid) == {}
+        engine.unregister_client(cid)
+    finally:
+        engine.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -572,3 +581,69 @@ def test_stream_falls_back_to_initial_snapshot_on_replay_exception(client):
                 gen.close()
     finally:
         sse_event_log.clear()
+
+
+def test_sse_event_log_wraparound_skips_zero_and_replays_cleanly():
+    log = SSEEventLog(maxlen=10)
+    log._seq = SSEEventLog._SEQ_MASK - 1
+
+    s_pre1 = log.emit(1, "frame", "data: a\n\n")
+    s_pre2 = log.emit(1, "frame", "data: b\n\n")
+    s_post1 = log.emit(1, "frame", "data: c\n\n")
+    s_post2 = log.emit(1, "frame", "data: d\n\n")
+
+    assert s_pre1 == SSEEventLog._SEQ_MASK
+    assert s_pre2 == 1
+    assert s_post1 == 2
+    assert s_post2 == 3
+
+    # Replaying across the 32-bit wrap boundary must preserve order and events.
+    assert log.replay_after(s_pre1, 1) == [
+        (s_pre2, "frame", "data: b\n\n"),
+        (s_post1, "frame", "data: c\n\n"),
+        (s_post2, "frame", "data: d\n\n"),
+    ]
+    assert log.replay_after(s_pre2, 1) == [
+        (s_post1, "frame", "data: c\n\n"),
+        (s_post2, "frame", "data: d\n\n"),
+    ]
+    assert log.replay_after(s_post2, 1) == []
+    # Older than oldest pre-wrap entry or zero sentinel must still force gap snapshot.
+    assert log.replay_after(SSEEventLog._SEQ_MASK - 2, 1) is None
+    assert log.replay_after(0, 1) is None
+    # Unissued future seq ahead of head must still be treated as gap.
+    assert log.replay_after(s_post2 + 5, 1) is None
+
+
+def test_message_announcer_announced_count_excludes_mid_broadcast_overflow():
+    from messaging import MessageAnnouncer
+
+    announcer = MessageAnnouncer()
+    q_ok = announcer.listen(maxsize=2, enforce_limit=False)
+    q_full = announcer.listen(maxsize=1, enforce_limit=False)
+    # Bypass pre-flight qsize check by filling q_full between snapshot? Instead
+    # trigger mid-broadcast Full with maxsize=1 where qsize==0 fails only if filled;
+    # here pre-fill via a worker race is simulated using a queue whose maxsize=2
+    # is temporarily stuffed after snapshot by subclassing Queue.
+    import queue
+
+    class _RaceQueue(queue.Queue):
+        def __init__(self):
+            super().__init__(maxsize=2)
+            self._fail_next = True
+
+        def put_nowait(self, item):
+            if item is not None and self._fail_next:
+                self._fail_next = False
+                raise queue.Full()
+            return super().put_nowait(item)
+
+    announcer.unlisten(q_full)
+    q_race = _RaceQueue()
+    with announcer.lock:
+        announcer.listeners.append(q_race)
+
+    announcer.announce("msg-1")
+    assert announcer.announced_count == 1
+    assert announcer.dropped_count == 1
+    assert q_ok.get_nowait() == "msg-1"

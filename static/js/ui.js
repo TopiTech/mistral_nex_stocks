@@ -363,12 +363,14 @@ function formatStockChangeMetrics(stock) {
   const changeDecimals = _isJpForChange ? 2 : 4;
   const changeFactor = 10 ** changeDecimals;
 
-  const changeNum =
-    typeof stock?.change === "number"
-      ? stock.change
-      : stock?.change != null && stock?.change !== ""
-        ? Number(stock.change)
-        : NaN;
+  const parseFiniteMetric = (v) => {
+    if (v == null || typeof v === "boolean" || Array.isArray(v)) return NaN;
+    const raw = typeof v === "string" ? v.trim() : v;
+    if (raw === "") return NaN;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const changeNum = parseFiniteMetric(stock?.change);
 
   if (Number.isFinite(changeNum)) {
     let rawChange =
@@ -390,12 +392,7 @@ function formatStockChangeMetrics(stock) {
     }
   }
 
-  const pctNum =
-    typeof stock?.change_percent === "number"
-      ? stock.change_percent
-      : stock?.change_percent != null && stock?.change_percent !== ""
-        ? Number(stock.change_percent)
-        : NaN;
+  const pctNum = parseFiniteMetric(stock?.change_percent);
 
   if (Number.isFinite(pctNum)) {
     let rawPct = Math.round((pctNum + Number.EPSILON) * 100) / 100;
@@ -3361,9 +3358,18 @@ function renderStockDetailDrawerHeader(stock) {
   const sym = stock.symbol || "";
   const name = stock.name || stock.companyName || "";
   const priceStr = formatDrawerPrice(stock);
-  const changeVal = Number.isFinite(stock?.change_percent)
-    ? Number(stock.change_percent)
-    : null;
+  const rawPct =
+    typeof stock?.change_percent === "string"
+      ? stock.change_percent.trim()
+      : stock?.change_percent;
+  const parsedPct =
+    rawPct == null ||
+    rawPct === "" ||
+    typeof rawPct === "boolean" ||
+    Array.isArray(rawPct)
+      ? NaN
+      : Number(rawPct);
+  const changeVal = Number.isFinite(parsedPct) ? parsedPct : null;
   let badgeClass = "drawer-price-badge";
   let pctStr = "--%";
 

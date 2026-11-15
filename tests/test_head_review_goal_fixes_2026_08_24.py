@@ -12,6 +12,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -94,8 +95,8 @@ class TestHeadReviewGoalFixes20260824(unittest.TestCase):
         self.assertIn("structurally valid", proc.stdout)
 
         # 2. Manifest with omitted allowed_origins (should throw expected error, not StrictMode crash)
-        test_manifest = root / "temp_test_manifest_r2.json"
-        try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_manifest = Path(tmp_dir) / "temp_test_manifest_r2.json"
             test_manifest.write_text(
                 json.dumps(
                     {
@@ -128,9 +129,6 @@ class TestHeadReviewGoalFixes20260824(unittest.TestCase):
             combined_err = f"{proc_missing.stdout}\n{proc_missing.stderr}"
             self.assertIn("Manifest must contain at least one allowed origin", combined_err)
             self.assertNotIn("The property 'allowed_origins' cannot be found", combined_err)
-        finally:
-            if test_manifest.exists():
-                test_manifest.unlink(missing_ok=True)
 
     def test_r3_is_backend_healthy_once_handles_os_error_and_value_error(self):
         """R3: is_backend_healthy_once must catch OSError and ValueError gracefully without raising."""

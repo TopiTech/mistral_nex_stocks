@@ -70,18 +70,55 @@ def test_session_manager_no_warning_or_refresh_on_shutdown(caplog):
 def test_session_manager_aborts_when_shutdown_event_set():
     """Verify session request raises RuntimeError immediately when shutdown_event is set."""
     mgr = YFinanceSessionManager()
-    sess = mgr.get_session()
+    try:
+        sess = mgr.get_session()
 
-    with patch.object(app_state.execution.shutdown_event, "is_set", return_value=True):
-        with pytest.raises(RuntimeError, match="Application is shutting down"):
-            sess.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
+        with patch.object(app_state.execution.shutdown_event, "is_set", return_value=True):
+            with pytest.raises(RuntimeError, match="Application is shutting down"):
+                sess.request("GET", "https://query1.finance.yahoo.com/v8/finance/chart/AAPL")
+    finally:
+        mgr.close_all()
 
 
-def test_logging_config_urllib3_suppressed():
+def test_logging_config_urllib3_suppressed(tmp_path, monkeypatch):
     """Verify logging_config sets urllib3.connectionpool to ERROR level."""
-    mock_app = MagicMock()
-    mock_app.logger = logging.getLogger("test_mock_app")
-    init_logging(mock_app)
-
+    monkeypatch.setenv("MNS_LOG_DIR", str(tmp_path))
+    root = logging.getLogger()
     pool_logger = logging.getLogger("urllib3.connectionpool")
-    assert pool_logger.level == logging.ERROR
+    wz_logger = logging.getLogger("werkzeug")
+    yf_names = ["yfinance"] + [
+        name for name in logging.Logger.manager.loggerDict if name.startswith("yfinance")
+    ]
+    saved_root = (root.level, root.handlers[:])
+    saved_pool_level = pool_logger.level
+    saved_wz_filters = wz_logger.filters[:]
+    saved_yf = {
+        name: (logging.getLogger(name).level, logging.getLogger(name).filters[:])
+        for name in yf_names
+    }
+    mock_logger = logging.getLogger("test_mock_app")
+    saved_mock_handlers = mock_logger.handlers[:]
+    try:
+        mock_app = MagicMock()
+        mock_app.logger = mock_logger
+        init_logging(mock_app)
+
+        assert pool_logger.level == logging.ERROR
+    finally:
+        pool_logger.setLevel(saved_pool_level)
+        wz_logger.filters[:] = saved_wz_filters
+        for name, (lvl, flts) in saved_yf.items():
+            lg = logging.getLogger(name)
+            lg.setLevel(lvl)
+            lg.filters[:] = flts
+        added_handlers = [h for h in root.handlers if h not in saved_root[1]]
+        root.handlers[:] = saved_root[1]
+        root.setLevel(saved_root[0])
+        for h in [h for h in mock_logger.handlers if h not in saved_mock_handlers]:
+            mock_logger.removeHandler(h)
+        mock_logger.filters.clear()
+        for h in added_handlers:
+            try:
+                h.close()
+            except Exception:
+                pass

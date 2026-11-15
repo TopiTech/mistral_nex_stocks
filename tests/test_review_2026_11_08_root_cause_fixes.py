@@ -17,7 +17,14 @@ import httpx
 import pytest
 
 import config_store
+from tests.test_support.patches import stub_public_outbound_dns
 from utils.disk_cache import StockDiskCache
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 # ---------------------------------------------------------------------------
 # ISS-03 — delete_prefix must mirror _entry_path's 120-char truncation

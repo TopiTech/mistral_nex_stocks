@@ -208,63 +208,71 @@ def test_tv_ws_ignores_bool_quote_fields() -> None:
 def test_realtime_engine_volume_bool_and_inf_become_fallback() -> None:
     from services.realtime.engine import RealtimeMarketEngine
 
-    engine = RealtimeMarketEngine()
-    engine.market_store["AAPL"] = {
-        "symbol": "AAPL",
-        "price": 200.0,
-        "volume": 7777,
-        "source": "yfinance",
-        "updated_at": time.time(),
-    }
-    with patch("services.realtime.engine._get_yfinance_volume", return_value=None):
-        engine._handle_producer_update(
-            {
-                "symbol": "AAPL",
-                "price": 201.0,
-                "volume": True,
-                "source": "yfinance",
-                "updated_at": time.time(),
-            }
-        )
-    stored = engine.market_store["AAPL"]
-    assert stored["volume"] == 7777
-    assert isinstance(stored["volume"], int) and not isinstance(stored["volume"], bool)
+    engines: list[RealtimeMarketEngine] = []
+    try:
+        engine = RealtimeMarketEngine()
+        engines.append(engine)
+        engine.market_store["AAPL"] = {
+            "symbol": "AAPL",
+            "price": 200.0,
+            "volume": 7777,
+            "source": "yfinance",
+            "updated_at": time.time(),
+        }
+        with patch("services.realtime.engine._get_yfinance_volume", return_value=None):
+            engine._handle_producer_update(
+                {
+                    "symbol": "AAPL",
+                    "price": 201.0,
+                    "volume": True,
+                    "source": "yfinance",
+                    "updated_at": time.time(),
+                }
+            )
+        stored = engine.market_store["AAPL"]
+        assert stored["volume"] == 7777
+        assert isinstance(stored["volume"], int) and not isinstance(stored["volume"], bool)
 
-    engine2 = RealtimeMarketEngine()
-    engine2.market_store["AAPL"] = {
-        "symbol": "AAPL",
-        "price": 200.0,
-        "volume": 7777,
-        "source": "yfinance",
-        "updated_at": time.time(),
-    }
-    with patch("services.realtime.engine._get_yfinance_volume", return_value=None):
-        engine2._handle_producer_update(
-            {
-                "symbol": "AAPL",
-                "price": 201.0,
-                "volume": float("inf"),
-                "source": "yfinance",
-                "updated_at": time.time(),
-            }
-        )
-    assert engine2.market_store["AAPL"]["volume"] == 7777
+        engine2 = RealtimeMarketEngine()
+        engines.append(engine2)
+        engine2.market_store["AAPL"] = {
+            "symbol": "AAPL",
+            "price": 200.0,
+            "volume": 7777,
+            "source": "yfinance",
+            "updated_at": time.time(),
+        }
+        with patch("services.realtime.engine._get_yfinance_volume", return_value=None):
+            engine2._handle_producer_update(
+                {
+                    "symbol": "AAPL",
+                    "price": 201.0,
+                    "volume": float("inf"),
+                    "source": "yfinance",
+                    "updated_at": time.time(),
+                }
+            )
+        assert engine2.market_store["AAPL"]["volume"] == 7777
 
-    engine3 = RealtimeMarketEngine()
-    with (
-        patch("services.realtime.engine._get_yfinance_volume", return_value=4242),
-        patch("services.realtime.engine._get_yfinance_previous_close", return_value=None),
-    ):
-        engine3._handle_producer_update(
-            {
-                "symbol": "AAPL",
-                "price": 201.0,
-                "volume": "12345",
-                "source": "yfinance",
-                "updated_at": time.time(),
-            }
-        )
-    assert engine3.market_store["AAPL"]["volume"] == 12345
+        engine3 = RealtimeMarketEngine()
+        engines.append(engine3)
+        with (
+            patch("services.realtime.engine._get_yfinance_volume", return_value=4242),
+            patch("services.realtime.engine._get_yfinance_previous_close", return_value=None),
+        ):
+            engine3._handle_producer_update(
+                {
+                    "symbol": "AAPL",
+                    "price": 201.0,
+                    "volume": "12345",
+                    "source": "yfinance",
+                    "updated_at": time.time(),
+                }
+            )
+        assert engine3.market_store["AAPL"]["volume"] == 12345
+    finally:
+        for eng in engines:
+            eng.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +315,7 @@ def test_ai_tools_bool_prev_close_is_not_coerced() -> None:
     fake_ticker.history.return_value = pd.DataFrame({"Close": [200.0]})
 
     with (
+        patch("utils.stock_payload.get_stock_info_cached", return_value={"regularMarketPreviousClose": True}),
         patch("utils.market_utils.safe_get_ticker", return_value=fake_ticker),
         patch.object(
             __import__("app_state").app_state.market.yfinance_history_semaphore,
@@ -320,9 +329,21 @@ def test_ai_tools_bool_prev_close_is_not_coerced() -> None:
         ),
     ):
         result = tool({"symbol": "AAPL", "market": "us"})
-    # bool prev_close must never yield change computed against 1.0
-    if result.get("change") is not None:
-        assert result["change"] != pytest.approx(201.0 - 1.0, abs=1e-6)
+    # bool prev_close and unset MagicMock fast_info must never coerce to 1.0
+    assert result.get("price") == 201.0
+    assert result.get("change") is None
+    assert result.get("change_pct") is None
+
+    # Valid falsy 0.0 fast_info.last_price must also be preserved rather than falling through.
+    zero_fast = {"last_price": 0.0, "regular_market_price": 999.0}
+    zero_ticker = MagicMock()
+    zero_ticker.fast_info = zero_fast
+    with (
+        patch("utils.stock_payload.get_stock_info_cached", return_value={}),
+        patch("utils.market_utils.safe_get_ticker", return_value=zero_ticker),
+    ):
+        zero_result = tool({"symbol": "AAPL", "market": "us"})
+    assert zero_result.get("price") == 0.0
 
 
 # ---------------------------------------------------------------------------

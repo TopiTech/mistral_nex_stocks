@@ -31,8 +31,17 @@ class TestSystemOriginDefense(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = create_app()
+        cls._has_testing = "TESTING" in cls.app.config
+        cls._orig_testing = cls.app.config.get("TESTING")
         cls.app.config["TESTING"] = True
         cls.client = cls.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._has_testing:
+            cls.app.config["TESTING"] = cls._orig_testing
+        else:
+            cls.app.config.pop("TESTING", None)
 
     def test_csrf_token_loopback_no_origin(self):
         """Loopback request without Origin header succeeds."""

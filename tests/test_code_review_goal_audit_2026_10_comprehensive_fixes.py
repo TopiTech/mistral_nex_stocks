@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from pydantic import BaseModel
 
 from app import create_app
@@ -22,6 +23,13 @@ from services.openai_service import (
     call_openai_chat,
     stream_openai_chat,
 )
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 class DummySchemaA(BaseModel):

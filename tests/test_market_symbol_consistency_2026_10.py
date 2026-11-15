@@ -15,7 +15,6 @@ JP tab (which is what produced the mismatched add in the first place), while
 
 from __future__ import annotations
 
-import subprocess
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
@@ -25,6 +24,7 @@ import pytest
 from app import create_app
 from app_state import app_state
 from error_codes import ErrorCode
+from tests.test_support.environment import run_node_script
 from utils.normalization import (
     is_jp_market_symbol,
     market_symbol_mismatch,
@@ -342,11 +342,9 @@ def test_infer_market_from_symbol_logic_via_node():
 
     console.log("INFER_MARKET_CONSISTENCY_SUCCESS");
     """
-    proc = subprocess.run(
-        ["node", "-e", node_script],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        check=True,
+    proc = run_node_script(
+        node_script,
+        cwd=ROOT,
+        context="market symbol consistency JS regression test",
     )
     assert "INFER_MARKET_CONSISTENCY_SUCCESS" in proc.stdout

@@ -44,7 +44,10 @@ class TestCodeReviewFixes(unittest.TestCase):
             return_value={"symbol": "7203.T", "price": 2500.0}
         )
 
+        sentinel = object()
         with app_state.market.user_stocks_lock:
+            prev_7203 = app_state.market.user_jp.get("7203.T", sentinel)
+            prev_9984 = app_state.market.user_jp.get("9984.T", sentinel)
             app_state.market.user_jp["7203.T"] = {"shares": 100}
             app_state.market.user_jp["9984.T"] = {"shares": 100}
 
@@ -57,6 +60,15 @@ class TestCodeReviewFixes(unittest.TestCase):
             self.assertIsNone(scraper._executor)
         finally:
             scraper.stop()
+            with app_state.market.user_stocks_lock:
+                if prev_7203 is sentinel:
+                    app_state.market.user_jp.pop("7203.T", None)
+                else:
+                    app_state.market.user_jp["7203.T"] = prev_7203
+                if prev_9984 is sentinel:
+                    app_state.market.user_jp.pop("9984.T", None)
+                else:
+                    app_state.market.user_jp["9984.T"] = prev_9984
 
     def test_r3_screener_sorting_with_none_and_non_numeric_fields(self):
         """[R3] Ensure /api/screener sorts safely when items have None or invalid numbers."""

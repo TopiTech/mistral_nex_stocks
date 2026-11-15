@@ -111,12 +111,15 @@ def test_realtime_engine_client_context_cleanup():
     from services.realtime_engine import RealtimeMarketEngine
 
     engine = RealtimeMarketEngine()
-    with engine.client_context() as cid:
-        assert cid in engine._client_states
-        assert cid in engine._client_events
-    # Verified: unregistered after context exit
-    assert cid not in engine._client_states
-    assert cid not in engine._client_events
+    try:
+        with engine.client_context() as cid:
+            assert cid in engine._client_states
+            assert cid in engine._client_events
+        # Verified: unregistered after context exit
+        assert cid not in engine._client_states
+        assert cid not in engine._client_events
+    finally:
+        engine.stop()
 
 
 def test_scrapers_close_cleans_thread_local_sessions():
@@ -145,6 +148,8 @@ def test_resolve_stocks_for_response_overlays_realtime_market_snapshot(monkeypat
         "idx": [],
     }
     with app_state.cache.sse_data_lock:
+        orig_target = app_state.market.target_stocks_cache
+        orig_current = app_state.market.current_stocks_cache
         app_state.market.target_stocks_cache = mock_target
         app_state.market.current_stocks_cache = mock_target
 
@@ -184,6 +189,9 @@ def test_resolve_stocks_for_response_overlays_realtime_market_snapshot(monkeypat
         with realtime_market_engine.store_lock:
             realtime_market_engine.market_store.pop("AAPL", None)
             realtime_market_engine.market_store.pop("7203.T", None)
+        with app_state.cache.sse_data_lock:
+            app_state.market.target_stocks_cache = orig_target
+            app_state.market.current_stocks_cache = orig_current
 
 
 def test_sse_ticket_cookie_path_is_api_stocks(client):
@@ -197,27 +205,37 @@ def test_sse_ticket_cookie_path_is_api_stocks(client):
 def test_ai_portfolio_copy_dynamically_resolves_usdjpy_rate(client, monkeypatch):
     from app_state import app_state
 
-    # Set last_usdjpy_rate to stale timestamp
-    app_state.market.last_usdjpy_rate = 150.0
-    app_state.market.last_usdjpy_rate_ts = 1.0  # ancient
-
-    # Set live price in current_indices_cache
+    orig_rate = app_state.market.last_usdjpy_rate
+    orig_rate_ts = app_state.market.last_usdjpy_rate_ts
     with app_state.cache.sse_data_lock:
-        app_state.market.current_indices_cache = {"USDJPY": {"symbol": "USDJPY=X", "price": 158.5}}
+        orig_indices = app_state.market.current_indices_cache
+    try:
+        # Set last_usdjpy_rate to stale timestamp
+        app_state.market.last_usdjpy_rate = 150.0
+        app_state.market.last_usdjpy_rate_ts = 1.0  # ancient
 
-    payload = {
-        "items": [{"symbol": "AAPL", "market": "us", "target_price": 200.0, "weight_pct": 100.0}]
-    }
-    with (
-        patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
-        patch("utils.storage.save_user_stocks"),
-        patch("routes.stocks.common._sync_realtime_symbol"),
-        patch("app_bg.announce_current_market_state"),
-        patch("app_bg.schedule_sync_all_stocks_now"),
-    ):
-        res = client.post("/api/ai-portfolio/copy-to-my", json=payload)
-    assert res.status_code == 200
-    data = res.get_json()
-    assert data["ok"] is True
-    assert app_state.market.last_usdjpy_rate == 158.5
-    assert data.get("stale_warning") is None
+        # Set live price in current_indices_cache
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_indices_cache = {"USDJPY": {"symbol": "USDJPY=X", "price": 158.5}}
+
+        payload = {
+            "items": [{"symbol": "AAPL", "market": "us", "target_price": 200.0, "weight_pct": 100.0}]
+        }
+        with (
+            patch("utils.networking.require_trusted_or_admin", return_value=(True, None)),
+            patch("utils.storage.save_user_stocks"),
+            patch("routes.stocks.common._sync_realtime_symbol"),
+            patch("app_bg.announce_current_market_state"),
+            patch("app_bg.schedule_sync_all_stocks_now"),
+        ):
+            res = client.post("/api/ai-portfolio/copy-to-my", json=payload)
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data["ok"] is True
+        assert app_state.market.last_usdjpy_rate == 158.5
+        assert data.get("stale_warning") is None
+    finally:
+        app_state.market.last_usdjpy_rate = orig_rate
+        app_state.market.last_usdjpy_rate_ts = orig_rate_ts
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_indices_cache = orig_indices

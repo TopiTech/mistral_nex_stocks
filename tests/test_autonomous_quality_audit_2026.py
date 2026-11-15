@@ -14,8 +14,9 @@ Verifies:
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
+
+from tests.test_support.environment import run_node_script
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -92,12 +93,10 @@ def test_infer_market_from_symbol_logic_via_node() -> None:
 
     console.log("INFER_MARKET_SUCCESS");
     """
-    proc = subprocess.run(
-        ["node", "-e", node_script],
-        cwd=str(ROOT_DIR),
-        capture_output=True,
-        text=True,
-        check=True,
+    proc = run_node_script(
+        node_script,
+        cwd=ROOT_DIR,
+        context="inferMarketFromSymbol frontend check",
     )
     assert "INFER_MARKET_SUCCESS" in proc.stdout
 
@@ -182,12 +181,10 @@ def test_chart_safe_destroy_wrapper_via_node() -> None:
 
     console.log("SAFE_DESTROY_CHART_SUCCESS");
     """
-    proc = subprocess.run(
-        ["node", "-e", node_script],
-        cwd=str(ROOT_DIR),
-        capture_output=True,
-        text=True,
-        check=True,
+    proc = run_node_script(
+        node_script,
+        cwd=ROOT_DIR,
+        context="_safeDestroyChart frontend check",
     )
     assert "SAFE_DESTROY_CHART_SUCCESS" in proc.stdout
 

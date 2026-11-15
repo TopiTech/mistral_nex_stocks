@@ -94,17 +94,20 @@ def test_realtime_engine_pts_update_stale_registration_early_return():
     without calling _get_yfinance_previous_close or mutating pts_store.
     """
     engine = RealtimeMarketEngine()
-    token = object()
-    stale_epoch = engine._engine_epoch - 1
-    registration = ("jp", "7203.T", token, stale_epoch)
+    try:
+        token = object()
+        stale_epoch = engine._engine_epoch - 1
+        registration = ("jp", "7203.T", token, stale_epoch)
 
-    payload = {"symbol": "7203.T", "price": 2500.0}
+        payload = {"symbol": "7203.T", "price": 2500.0}
 
-    with patch("services.realtime.engine._get_yfinance_previous_close") as mock_prev_close:
-        engine._handle_pts_update(payload, registration=registration)
-        mock_prev_close.assert_not_called()
+        with patch("services.realtime.engine._get_yfinance_previous_close") as mock_prev_close:
+            engine._handle_pts_update(payload, registration=registration)
+            mock_prev_close.assert_not_called()
 
-    assert "7203.T" not in engine.pts_store
+        assert "7203.T" not in engine.pts_store
+    finally:
+        engine.stop()
 
 
 def test_realtime_engine_pts_update_jp_alphanumeric_precision():
@@ -113,51 +116,57 @@ def test_realtime_engine_pts_update_jp_alphanumeric_precision():
     are correctly recognized as JP and rounded to 2 decimal places.
     """
     engine = RealtimeMarketEngine()
-    token = object()
-    current_epoch = engine._engine_epoch
-    engine._registration_tokens[("jp", "130A")] = token
-    registration = ("jp", "130A", token, current_epoch)
+    try:
+        token = object()
+        current_epoch = engine._engine_epoch
+        engine._registration_tokens[("jp", "130A")] = token
+        registration = ("jp", "130A", token, current_epoch)
 
-    payload = {
-        "symbol": "130A",
-        "price": 1234.5678,
-        "change": 12.3456,
-        "change_percent": 1.2345,
-    }
+        payload = {
+            "symbol": "130A",
+            "price": 1234.5678,
+            "change": 12.3456,
+            "change_percent": 1.2345,
+        }
 
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=1200.0):
-        engine._handle_pts_update(payload, registration=registration)
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=1200.0):
+            engine._handle_pts_update(payload, registration=registration)
 
-    stored = engine.pts_store.get("130A")
-    assert stored is not None
-    assert stored["price"] == 1234.57
-    assert stored["change"] == 12.35
-    assert stored["change_percent"] == 1.23
+        stored = engine.pts_store.get("130A")
+        assert stored is not None
+        assert stored["price"] == 1234.57
+        assert stored["change"] == 12.35
+        assert stored["change_percent"] == 1.23
+    finally:
+        engine.stop()
 
 
 def test_realtime_engine_pts_update_us_precision():
     """Verify that non-Japanese tickers (US stocks) retain 4 decimal places."""
     engine = RealtimeMarketEngine()
-    token = object()
-    current_epoch = engine._engine_epoch
-    engine._registration_tokens[("us", "AAPL")] = token
-    registration = ("us", "AAPL", token, current_epoch)
+    try:
+        token = object()
+        current_epoch = engine._engine_epoch
+        engine._registration_tokens[("us", "AAPL")] = token
+        registration = ("us", "AAPL", token, current_epoch)
 
-    payload = {
-        "symbol": "AAPL",
-        "price": 234.5678,
-        "change": 2.3456,
-        "change_percent": 1.0123,
-    }
+        payload = {
+            "symbol": "AAPL",
+            "price": 234.5678,
+            "change": 2.3456,
+            "change_percent": 1.0123,
+        }
 
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=230.0):
-        engine._handle_pts_update(payload, registration=registration)
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=230.0):
+            engine._handle_pts_update(payload, registration=registration)
 
-    stored = engine.pts_store.get("AAPL")
-    assert stored is not None
-    assert stored["price"] == 234.5678
-    assert stored["change"] == 2.3456
-    assert stored["change_percent"] == 1.01
+        stored = engine.pts_store.get("AAPL")
+        assert stored is not None
+        assert stored["price"] == 234.5678
+        assert stored["change"] == 2.3456
+        assert stored["change_percent"] == 1.01
+    finally:
+        engine.stop()
 
 
 # =============================================================================

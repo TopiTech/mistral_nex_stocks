@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+from pathlib import Path
 
 
 def get_baseline_test_env(temp_dir_name: str) -> dict[str, str]:
@@ -44,3 +47,45 @@ def apply_baseline_test_env(temp_dir_name: str) -> None:
         "AGENT",
     ):
         os.environ.pop(key, None)
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def require_node(context: str = "frontend regression test") -> str:
+    """Return the Node.js executable path or fail loudly if unavailable."""
+    node = shutil.which("node")
+    if node is None:
+        raise AssertionError(f"Node.js is required for {context}")
+    return node
+
+
+def run_node_script(
+    script: str,
+    *,
+    cwd: Path | str | None = None,
+    args: tuple[str, ...] = (),
+    input_stdin: bool = True,
+    check: bool = True,
+    timeout: float = 30.0,
+    context: str = "frontend regression test",
+) -> subprocess.CompletedProcess[str]:
+    """Execute a Node.js script via stdin or file path and return CompletedProcess."""
+    node = require_node(context)
+    cmd = [node, *args, "-"] if input_stdin else [node, script, *args]
+    result = subprocess.run(
+        cmd,
+        cwd=cwd if cwd is not None else _REPO_ROOT,
+        input=script if input_stdin else None,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=timeout,
+    )
+    if check and result.returncode != 0:
+        raise AssertionError(
+            f"Node.js test failed ({context}, exit={result.returncode}): "
+            f"{result.stderr or result.stdout}"
+        )
+    return result

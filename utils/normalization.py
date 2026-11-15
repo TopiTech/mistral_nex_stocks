@@ -1,8 +1,10 @@
 import copy
 import logging
 import math
+import numbers
 import re
 import unicodedata
+from decimal import Decimal
 from typing import Any
 
 import pandas as pd
@@ -265,15 +267,28 @@ def _fmt_vol(v):
         return None
 
 
-def _finite_number(value: Any) -> float | None:
-    """Return a finite float, or None for missing/bool/NaN/Inf/unparseable."""
+def finite_float(value: Any, default: float | None = None) -> float | None:
+    """Coerce a scalar numeric or string *value* to a finite float, or return *default*.
+
+    Rejects booleans (Python/NumPy), mock objects defining ``__float__``, NaN/Inf,
+    and non-scalar values.
+    """
     if value is None or is_bool_like(value):
-        return None
+        return default
+    if getattr(type(value), "__module__", "").startswith("unittest.mock"):
+        return default
+    if not isinstance(value, (numbers.Real, Decimal, str, bytes, bytearray)):
+        return default
     try:
         numeric = float(value)
     except (TypeError, ValueError, OverflowError):
-        return None
-    return numeric if math.isfinite(numeric) else None
+        return default
+    return numeric if math.isfinite(numeric) else default
+
+
+def _finite_number(value: Any) -> float | None:
+    """Return a finite float, or None for missing/bool/NaN/Inf/unparseable."""
+    return finite_float(value, None)
 
 
 def normalize_history_candle(

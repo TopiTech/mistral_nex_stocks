@@ -25,6 +25,7 @@ class CSRFProtectionTestCase(unittest.TestCase):
 
     def setUp(self):
         """Set up test Flask app"""
+        self._original_testing = app.config.get("TESTING")
         self._original_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = True
@@ -39,8 +40,14 @@ class CSRFProtectionTestCase(unittest.TestCase):
         self.client = app.test_client()
 
     def tearDown(self):
-        """Restore WTF_CSRF_ENABLED and MNS_MASTER_KEY to original values for other tests"""
-        if self._original_csrf is not None:
+        """Restore TESTING, WTF_CSRF_ENABLED and MNS_MASTER_KEY for other tests"""
+        if self._original_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._original_testing
+        if self._original_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
             app.config["WTF_CSRF_ENABLED"] = self._original_csrf
         if self._original_master_key is None:
             os.environ.pop("MNS_MASTER_KEY", None)
@@ -165,8 +172,15 @@ class RateLimitingTestCase(unittest.TestCase):
 
     def setUp(self):
         """Set up test Flask app"""
+        self._original_testing = app.config.get("TESTING")
         app.config["TESTING"] = True
         self.client = app.test_client()
+
+    def tearDown(self):
+        if self._original_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._original_testing
 
     def test_rate_limit_returns_429(self):
         """Exceeding rate limit should return 429"""
@@ -184,11 +198,11 @@ class RateLimitingTestCase(unittest.TestCase):
         for _ in range(65):
             response = self.client.get("/api/health", environ_base={"REMOTE_ADDR": "192.168.1.101"})
 
-        if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After")
-            self.assertIsNotNone(retry_after)
-            assert retry_after is not None
-            self.assertTrue(int(retry_after) >= 0)
+        self.assertEqual(response.status_code, 429)
+        retry_after = response.headers.get("Retry-After")
+        self.assertIsNotNone(retry_after)
+        assert retry_after is not None
+        self.assertTrue(int(retry_after) >= 0)
 
     def test_localhost_exempt_from_rate_limit(self):
         """localhost should be exempt from rate limiting"""
@@ -208,8 +222,15 @@ class CsrfBrowserFlowTestCase(unittest.TestCase):
     """
 
     def setUp(self):
+        self._original_testing = app.config.get("TESTING")
         app.config["TESTING"] = True
         self.client = app.test_client()
+
+    def tearDown(self):
+        if self._original_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._original_testing
 
     def _get_token(self):
         html = self.client.get("/setup").get_data(as_text=True)
@@ -260,8 +281,15 @@ class CsrfTokenRefreshTestCase(unittest.TestCase):
     """
 
     def setUp(self):
+        self._original_testing = app.config.get("TESTING")
         app.config["TESTING"] = True
         self.client = app.test_client()
+
+    def tearDown(self):
+        if self._original_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._original_testing
 
     def test_refresh_endpoint_issues_usable_token(self):
         """A token issued by /api/csrf-token must be accepted by a mutating endpoint."""

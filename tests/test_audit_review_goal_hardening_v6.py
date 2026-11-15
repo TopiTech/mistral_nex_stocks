@@ -32,46 +32,48 @@ def test_realtime_pts_handle_update_precision_and_delta():
     calculates change from prev_close when missing/zero, and rejects bool scalars.
     """
     engine = RealtimeMarketEngine()
+    try:
+        # 1. PTS quote with zero change: computes change against previous close
+        payload1 = {
+            "symbol": "7203.T",
+            "price": 2550.5555,
+            "change": 0.0,
+            "change_percent": 0.0,
+        }
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=2500.0):
+            engine._handle_pts_update(payload1)
 
-    # 1. PTS quote with zero change: computes change against previous close
-    payload1 = {
-        "symbol": "7203.T",
-        "price": 2550.5555,
-        "change": 0.0,
-        "change_percent": 0.0,
-    }
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=2500.0):
-        engine._handle_pts_update(payload1)
+        assert payload1["price"] == 2550.56
+        assert payload1["change"] == round(2550.5555 - 2500.0, 2)
+        assert payload1["change_percent"] == round(((2550.5555 - 2500.0) / 2500.0) * 100, 2)
+        assert payload1["previous_close"] == 2500.0
 
-    assert payload1["price"] == 2550.56
-    assert payload1["change"] == round(2550.5555 - 2500.0, 2)
-    assert payload1["change_percent"] == round(((2550.5555 - 2500.0) / 2500.0) * 100, 2)
-    assert payload1["previous_close"] == 2500.0
+        # 2. PTS quote with existing non-zero change: rounds to 2 decimals
+        payload2 = {
+            "symbol": "6758.T",
+            "price": 2800.1234,
+            "change": 45.6789,
+            "change_percent": 1.657,
+        }
+        with patch("services.realtime.engine._get_yfinance_previous_close", return_value=2754.44):
+            engine._handle_pts_update(payload2)
 
-    # 2. PTS quote with existing non-zero change: rounds to 2 decimals
-    payload2 = {
-        "symbol": "6758.T",
-        "price": 2800.1234,
-        "change": 45.6789,
-        "change_percent": 1.657,
-    }
-    with patch("services.realtime.engine._get_yfinance_previous_close", return_value=2754.44):
-        engine._handle_pts_update(payload2)
+        assert payload2["price"] == 2800.12
+        assert payload2["change"] == 45.68
+        assert payload2["change_percent"] == 1.66
+        assert payload2["previous_close"] == 2754.44
 
-    assert payload2["price"] == 2800.12
-    assert payload2["change"] == 45.68
-    assert payload2["change_percent"] == 1.66
-    assert payload2["previous_close"] == 2754.44
-
-    # 3. Reject boolean scalars (True / False) in numeric price or change
-    payload_bool = {
-        "symbol": "9984.T",
-        "price": True,
-        "change": False,
-        "change_percent": False,
-    }
-    engine._handle_pts_update(payload_bool)
-    assert payload_bool["price"] is True  # Unchanged / not converted to float 1.0
+        # 3. Reject boolean scalars (True / False) in numeric price or change
+        payload_bool = {
+            "symbol": "9984.T",
+            "price": True,
+            "change": False,
+            "change_percent": False,
+        }
+        engine._handle_pts_update(payload_bool)
+        assert payload_bool["price"] is True  # Unchanged / not converted to float 1.0
+    finally:
+        engine.stop()
 
 
 def test_realtime_deltas_store_encapsulation_and_pts_diff():
@@ -80,63 +82,66 @@ def test_realtime_deltas_store_encapsulation_and_pts_diff():
     and detect PTS changes in pts_time and change_percent.
     """
     engine = RealtimeMarketEngine()
-    sym = "7203.T"
+    try:
+        sym = "7203.T"
 
-    # Seed market store
-    engine.market_store[sym] = {
-        "symbol": sym,
-        "price": 2500.0,
-        "change": 10.0,
-        "change_percent": 0.4,
-        "volume": 1000,
-    }
-    engine._dirty_symbols.add(sym)
+        # Seed market store
+        engine.market_store[sym] = {
+            "symbol": sym,
+            "price": 2500.0,
+            "change": 10.0,
+            "change_percent": 0.4,
+            "volume": 1000,
+        }
+        engine._dirty_symbols.add(sym)
 
-    # Initial get_market_deltas
-    deltas = engine.get_market_deltas()
-    assert sym in deltas
-    assert deltas[sym]["price"] == 2500.0
+        # Initial get_market_deltas
+        deltas = engine.get_market_deltas()
+        assert sym in deltas
+        assert deltas[sym]["price"] == 2500.0
 
-    # Mutation test: mutating returned dict must not mutate live store (SVC-20)
-    deltas[sym]["price"] = 99999.0
-    assert engine.market_store[sym]["price"] == 2500.0
+        # Mutation test: mutating returned dict must not mutate live store (SVC-20)
+        deltas[sym]["price"] = 99999.0
+        assert engine.market_store[sym]["price"] == 2500.0
 
-    # Seed PTS store
-    engine.pts_store[sym] = {
-        "symbol": sym,
-        "price": 2510.0,
-        "volume": 500,
-        "change": 20.0,
-        "change_percent": 0.8,
-        "pts_time": "18:00:00",
-        "pts_trading": True,
-    }
-    engine._dirty_pts_symbols.add(sym)
+        # Seed PTS store
+        engine.pts_store[sym] = {
+            "symbol": sym,
+            "price": 2510.0,
+            "volume": 500,
+            "change": 20.0,
+            "change_percent": 0.8,
+            "pts_time": "18:00:00",
+            "pts_trading": True,
+        }
+        engine._dirty_pts_symbols.add(sym)
 
-    # Initial get_pts_deltas
-    pts_deltas = engine.get_pts_deltas()
-    assert sym in pts_deltas
-    assert pts_deltas[sym]["pts_time"] == "18:00:00"
+        # Initial get_pts_deltas
+        pts_deltas = engine.get_pts_deltas()
+        assert sym in pts_deltas
+        assert pts_deltas[sym]["pts_time"] == "18:00:00"
 
-    # Mutation test for PTS store
-    pts_deltas[sym]["price"] = 88888.0
-    assert engine.pts_store[sym]["price"] == 2510.0
+        # Mutation test for PTS store
+        pts_deltas[sym]["price"] = 88888.0
+        assert engine.pts_store[sym]["price"] == 2510.0
 
-    # PTS delta test: update pts_time without price change (e.g. after-hours match)
-    engine.pts_store[sym]["pts_time"] = "18:05:00"
-    engine._dirty_pts_symbols.add(sym)
+        # PTS delta test: update pts_time without price change (e.g. after-hours match)
+        engine.pts_store[sym]["pts_time"] = "18:05:00"
+        engine._dirty_pts_symbols.add(sym)
 
-    subsequent_pts_deltas = engine.get_pts_deltas()
-    assert sym in subsequent_pts_deltas
-    assert subsequent_pts_deltas[sym]["pts_time"] == "18:05:00"
+        subsequent_pts_deltas = engine.get_pts_deltas()
+        assert sym in subsequent_pts_deltas
+        assert subsequent_pts_deltas[sym]["pts_time"] == "18:05:00"
 
-    # PTS delta test: update change_percent
-    engine.pts_store[sym]["change_percent"] = 0.82
-    engine._dirty_pts_symbols.add(sym)
+        # PTS delta test: update change_percent
+        engine.pts_store[sym]["change_percent"] = 0.82
+        engine._dirty_pts_symbols.add(sym)
 
-    pct_pts_deltas = engine.get_pts_deltas()
-    assert sym in pct_pts_deltas
-    assert pct_pts_deltas[sym]["change_percent"] == 0.82
+        pct_pts_deltas = engine.get_pts_deltas()
+        assert sym in pct_pts_deltas
+        assert pct_pts_deltas[sym]["change_percent"] == 0.82
+    finally:
+        engine.stop()
 
 
 def test_submit_in_app_context_propagates_request_id():

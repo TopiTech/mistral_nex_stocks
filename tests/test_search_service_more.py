@@ -285,7 +285,14 @@ class ScheduleMarketTrendsRefreshAsyncTestCase(unittest.TestCase):
     def setUp(self):
         from app_state import app_state
 
-        app_state.ai.trends_refresh_inflight.clear()
+        with app_state.ai.trends_refresh_lock:
+            app_state.ai.trends_refresh_inflight.clear()
+
+    def tearDown(self):
+        from app_state import app_state
+
+        with app_state.ai.trends_refresh_lock:
+            app_state.ai.trends_refresh_inflight.clear()
 
     @patch("services.search_service.app_state.execution.executor.submit")
     @patch("services.search_service._build_market_trending_titles", return_value=["Title"])

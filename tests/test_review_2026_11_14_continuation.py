@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import json
 import math
-import shutil
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+from tests.test_support.environment import run_node_script
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,12 +45,10 @@ def test_fluctuate_indices_prev_close_zero_keeps_percent_finite() -> None:
     # price == change  =>  prev_close == 0: percent change is undefined.
     indices = {"N225": {"price": 100.0, "change": 100.0}}
     out = _run_fluctuate(indices)
-    assert "percent" not in out or math.isfinite(out.get("percent", 0.0))
+    assert "percent" not in out
     assert math.isfinite(out["price"])
-    # price must still move (fluctuation applied), percent must not be NaN
+    # price must still move (fluctuation applied), percent must stay omitted
     assert out["price"] != 100.0
-    if "percent" in out:
-        assert not math.isnan(out["percent"]) and not math.isinf(out["percent"])
 
 
 def test_fluctuate_indices_normal_path_sets_finite_percent() -> None:
@@ -64,9 +62,8 @@ def test_fluctuate_indices_normal_path_sets_finite_percent() -> None:
 def test_fluctuate_indices_fx_pair_zero_prev_close() -> None:
     indices = {"USDJPY": {"price": 150.0, "change": 150.0}}
     out = _run_fluctuate(indices, key="USDJPY")
+    assert "percent" not in out
     assert math.isfinite(out["price"])
-    if "percent" in out:
-        assert math.isfinite(out["percent"])
 
 
 # ---------------------------------------------------------------------------
@@ -75,20 +72,11 @@ def test_fluctuate_indices_fx_pair_zero_prev_close() -> None:
 
 
 def _run_node(script: str) -> str:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required for frontend coverage")
-    result = subprocess.run(
-        [node, "-"],
+    return run_node_script(
+        script,
         cwd=ROOT,
-        input=script,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
-    return result.stdout
+        context="frontend coverage",
+    ).stdout
 
 
 _STATE_HARNESS = r"""

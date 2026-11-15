@@ -19,7 +19,7 @@ try:
         """Sanitize URL safely without raising IndexError for direct Yahoo URLs."""
         if "/RU=" in u:
             try:
-                url = u.split("/RU=", 1)[1].split("/RK=", 1)[0].split("?", 1)[0]
+                url = u.split("/RU=", 1)[1].split("/RK=", 1)[0].split("/RS=", 1)[0]
                 return unquote_plus(url)
             except Exception:  # nosec B110
                 pass

@@ -9,27 +9,14 @@ a tiny holding could round down to 0% which the backend rejects as well.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
+from tests.test_support.environment import run_node_script
 
 
 def _run_node(script: str) -> str:
-    node = shutil.which("node")
-    assert node is not None, "Node.js is required for the AI portfolio JS regression test"
-    result = subprocess.run(
-        [node, "-"],
-        cwd=ROOT,
-        input=script,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    assert result.returncode == 0, f"Node test failed: {result.stderr}\nStdout: {result.stdout}"
-    return result.stdout
+    return run_node_script(
+        script,
+        context="the AI portfolio JS regression test",
+    ).stdout
 
 
 def test_copy_ai_portfolio_reconciles_rounding_and_keeps_weights_positive():

@@ -81,6 +81,7 @@ class TestReviewFixesR1ToR5(unittest.TestCase):
     def test_r2_event_not_cleared_prematurely_in_wait_for_updates(self):
         """Test R2: wait_for_updates does not call clear() on the event handle."""
         engine = RealtimeMarketEngine()
+        self.addCleanup(engine.stop)
         cid = engine.register_client()
 
         # Engine produces update -> sets client event

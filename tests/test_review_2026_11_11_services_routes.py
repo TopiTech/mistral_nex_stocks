@@ -86,6 +86,7 @@ def test_realtime_purge_ttl_exceeds_max_snapshot_interval(monkeypatch) -> None:
         assert cid in engine._client_states
     finally:
         engine.unregister_client(cid)
+        engine.stop()
 
 
 def test_heatmap_stale_fetch_does_not_clear_new_owner_marker() -> None:

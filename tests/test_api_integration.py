@@ -32,7 +32,10 @@ class APIIntegrationTestCase(unittest.TestCase):
     """Base test class with flask client setup"""
 
     snapshot_patcher: Any
-    _original_csrf: bool | None
+    _has_testing: bool
+    _original_testing: Any
+    _has_csrf: bool
+    _original_csrf: Any
     client: Any
     app: Any
 
@@ -47,6 +50,9 @@ class APIIntegrationTestCase(unittest.TestCase):
             "routes.api_stocks._wait_for_initial_market_snapshot", return_value=True
         )
         cls.snapshot_patcher_api.start()
+        cls._has_testing = "TESTING" in app.config
+        cls._original_testing = app.config.get("TESTING")
+        cls._has_csrf = "WTF_CSRF_ENABLED" in app.config
         cls._original_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
@@ -57,8 +63,14 @@ class APIIntegrationTestCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.snapshot_patcher.stop()
         cls.snapshot_patcher_api.stop()
-        if cls._original_csrf is not None:
+        if cls._has_testing:
+            app.config["TESTING"] = cls._original_testing
+        else:
+            app.config.pop("TESTING", None)
+        if cls._has_csrf:
             app.config["WTF_CSRF_ENABLED"] = cls._original_csrf
+        else:
+            app.config.pop("WTF_CSRF_ENABLED", None)
 
     def setUp(self):
         """Clear any fixtures before each test"""
@@ -264,16 +276,22 @@ class StocksAPITestCase(APIIntegrationTestCase):
         import uuid
 
         unique_symbol = f"T{uuid.uuid4().hex[:6].upper()}"
-        response = self.client.post(
-            "/api/stocks/add",
-            json={"symbol": unique_symbol, "name": "Test Stock", "market": "us"},
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
-            headers={"Origin": "http://localhost:5000"},
-        )
-        self.assertEqual(response.status_code, 200)
-        data = json.loads(response.data)
-        self.assertTrue(data["success"])
-        _mock_save.assert_called_once()
+        try:
+            response = self.client.post(
+                "/api/stocks/add",
+                json={"symbol": unique_symbol, "name": "Test Stock", "market": "us"},
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+                headers={"Origin": "http://localhost:5000"},
+            )
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.data)
+            self.assertTrue(data["success"])
+            _mock_save.assert_called_once()
+        finally:
+            from app_state import app_state
+
+            with app_state.market.user_stocks_lock:
+                app_state.market.user_us.pop(unique_symbol, None)
 
     @patch("utils.storage.save_user_stocks")
     def test_update_portfolio_rejects_boolean_numeric_input(self, _mock_save):

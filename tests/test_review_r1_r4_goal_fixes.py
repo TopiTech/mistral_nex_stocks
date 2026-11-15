@@ -1,10 +1,11 @@
 """Regression test suite verifying review fixes for R1, R3, R4."""
 
 import ctypes
+import json
 import os
 import threading
 from contextlib import contextmanager
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -87,22 +88,105 @@ def test_r3_master_key_update_lock_no_windll(monkeypatch):
 
 
 def test_r4_api_analyze_v2_result_partial_success_structure():
-    """R4: Verify structure of partial_success and warnings in analysis result logic."""
-    raw_research_context = ""
-    langsearch_api_key = "test_key_123"
-    tavily_api_key = ""
-    search_errors = ["timeout"]
-    data_source = "client"
+    """R4: Real /api/analyze-v2 surfaces search_failed, partial_success, and warnings."""
+    from app import create_app
+    from app_state import app_state
+    from routes.api_analysis import (
+        analyze_fetch_inflight,
+        analyze_fetch_lock,
+        analyze_result_cache,
+        analyze_result_fingerprints,
+    )
 
-    search_attempted = bool(langsearch_api_key or tavily_api_key)
-    search_failed = bool(search_attempted and (search_errors or not raw_research_context.strip()))
-    partial_success = search_failed or (data_source == "client")
-    warnings = []
-    if search_failed:
-        warnings.append("Web search context was unavailable or returned empty")
-    if data_source == "client":
-        warnings.append("Server stock price fetch failed; fallback client data used")
+    flask_app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False},
+        skip_bootstrap=True,
+    )
+    req_token = "tok-r4-partial-success-123456"
+    scope = "conv-r4-partial-success"
+    inflight_key = f"analyze:{scope}:{req_token}"
 
-    assert search_failed is True
-    assert partial_success is True
-    assert len(warnings) == 2
+    def _failing_research(*args, **kwargs):
+        errors_out = kwargs.get("errors_out")
+        if isinstance(errors_out, list):
+            errors_out.append("timeout")
+        return ""
+
+    llm_payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "recommendation": "HOLD",
+                            "confidence": 0.5,
+                            "analysis_summary": "Fallback analysis summary",
+                            "reasoning": "Fallback analysis reasoning",
+                            "time_horizon": "短期",
+                            "risk_level": "中",
+                            "catalysts": [],
+                            "risks": [],
+                            "sentiment": "NEUTRAL",
+                        }
+                    )
+                }
+            }
+        ]
+    }
+
+    with analyze_fetch_lock:
+        analyze_fetch_inflight.pop(inflight_key, None)
+        analyze_result_cache.pop(inflight_key, None)
+        analyze_result_fingerprints.pop(inflight_key, None)
+
+    try:
+        with (
+            patch("routes.api_analysis.require_trusted_or_admin", return_value=(True, None)),
+            patch(
+                "routes.api_analysis.extract_api_key",
+                return_value="fake-mistral-key-1234567890123456",
+            ),
+            patch("routes.api_analysis.extract_langsearch_api_key", return_value="test_key_123"),
+            patch("routes.api_analysis.extract_tavily_api_key", return_value=""),
+            patch("routes.api_analysis.fetch_stock", return_value=None),
+            patch("routes.api_analysis.get_stock_info_cached", return_value={}),
+            patch(
+                "routes.api_analysis.get_cached_context_with_negative_cache",
+                side_effect=lambda _key, fn, *_a, **_kw: fn(),
+            ),
+            patch(
+                "routes.api_analysis.collect_symbol_research_context",
+                side_effect=_failing_research,
+            ),
+            patch("routes.api_analysis.call_mistral_chat", return_value=llm_payload),
+        ):
+            client = flask_app.test_client()
+            with client.session_transaction() as sess:
+                sess["mns_analysis_conversation"] = scope
+            resp = client.post(
+                "/api/analyze-v2",
+                json={
+                    "symbol": "AAPL",
+                    "market": "us",
+                    "price": 150.0,
+                    "chart_data": [{"date": "2026-01-02", "close": 150.0}],
+                    "request_token": req_token,
+                    "conversation_scope": scope,
+                },
+                headers={"Origin": "http://localhost:5000"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["search_failed"] is True
+        assert body["partial_success"] is True
+        assert body["data_source"] == "client"
+        assert "Web search context was unavailable or returned empty" in body["warnings"]
+        assert "Server stock price fetch failed; fallback client data used" in body["warnings"]
+    finally:
+        with analyze_fetch_lock:
+            analyze_fetch_inflight.pop(inflight_key, None)
+            analyze_result_cache.pop(inflight_key, None)
+            analyze_result_fingerprints.pop(inflight_key, None)
+        with app_state.ai.chat_history_lock:
+            app_state.ai.chat_history.close()

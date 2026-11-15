@@ -440,19 +440,20 @@
     }
   }
 
-  function formatCurrency(val, market) {
+  function parseFiniteScreenerNumber(val) {
     // Number() は " "(空白文字列)や [] を 0 に変換してしまうため、
     // 生値の形を先に検証してから数値化する。
+    if (val == null || typeof val === "boolean" || Array.isArray(val))
+      return null;
     const raw = typeof val === "string" ? val.trim() : val;
-    if (
-      raw == null ||
-      raw === "" ||
-      typeof raw === "boolean" ||
-      Array.isArray(raw)
-    )
-      return "--";
+    if (raw === "") return null;
     const num = Number(raw);
-    if (!Number.isFinite(num)) return "--";
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function formatCurrency(val, market) {
+    const num = parseFiniteScreenerNumber(val);
+    if (num === null) return "--";
     if (market === "jp") {
       return `¥${Math.round(num).toLocaleString("ja-JP")}`;
     }
@@ -460,15 +461,8 @@
   }
 
   function formatMarketCap(val, market) {
-    if (
-      val == null ||
-      typeof val === "boolean" ||
-      val === "" ||
-      Number.isNaN(Number(val)) ||
-      Number(val) <= 0
-    )
-      return "--";
-    const num = Number(val);
+    const num = parseFiniteScreenerNumber(val);
+    if (num === null || num <= 0) return "--";
     if (market === "jp") {
       if (num >= 1e12) return `¥${(num / 1e12).toFixed(1)}兆`;
       if (num >= 1e8) return `¥${(num / 1e8).toFixed(0)}億`;

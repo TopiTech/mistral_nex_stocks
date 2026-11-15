@@ -75,10 +75,11 @@ class ParseDatetimeToUtcTestCase(unittest.TestCase):
     def test_numeric_date_string_not_misparsed_as_epoch(self):
         # "20260701" (8-digit YYYYMMDD) must NOT be treated as epoch seconds,
         # which would silently yield a 1970-08-23 date (review R4). On
-        # Python >= 3.11 the ISO basic format parses it correctly to
-        # 2026-07-01; on older versions it safely falls through to None.
+        # Python >= 3.11 the ISO basic format parses it cleanly to 2026-07-01.
         dt = _parse_datetime_to_utc("20260701")
-        self.assertTrue(dt is None or (dt.year, dt.month, dt.day) == (2026, 7, 1))
+        self.assertIsNotNone(dt)
+        assert dt is not None
+        self.assertEqual((dt.year, dt.month, dt.day), (2026, 7, 1))
 
     def test_nine_digit_epoch_still_parsed(self):
         # Epoch seconds with 9 digits (e.g. 2001-09-09 01:46:40 UTC) remain

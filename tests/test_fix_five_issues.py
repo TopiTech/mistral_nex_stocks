@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 
 from app_state import app_state
 from constants import (
@@ -25,9 +26,16 @@ from services.openai_service import (
 )
 from services.realtime.engine import RealtimeMarketEngine
 from services.stock.provider import YFinanceProvider
+from tests.test_support.patches import stub_public_outbound_dns
 from tests.test_support.state_reset import reset_app_state_internals
 from utils.stock_payload import build_stock_payload
 from utils.validators import StockAnalysis
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 class TestIssue1ChartFullscreenLayer:
@@ -90,27 +98,30 @@ class TestIssue2VolumeFallbackAndPreservation:
 
     def test_realtime_engine_preserves_positive_volume(self):
         engine = RealtimeMarketEngine()
-        # Seed positive volume
-        initial_payload = {
-            "symbol": "7203.T",
-            "price": 2500.0,
-            "volume": 500000,
-            "source": "initial",
-        }
-        engine._handle_producer_update(initial_payload)
-        assert engine.market_store["7203.T"]["volume"] == 500000
+        try:
+            # Seed positive volume
+            initial_payload = {
+                "symbol": "7203.T",
+                "price": 2500.0,
+                "volume": 500000,
+                "source": "initial",
+            }
+            engine._handle_producer_update(initial_payload)
+            assert engine.market_store["7203.T"]["volume"] == 500000
 
-        # Update with volume = 0 (e.g. from a scraper that doesn't report volume)
-        zero_vol_payload = {
-            "symbol": "7203.T",
-            "price": 2510.0,
-            "volume": 0,
-            "source": "scraper_zero",
-        }
-        engine._handle_producer_update(zero_vol_payload)
-        # Volume should stay 500000 instead of being wiped to 0
-        assert engine.market_store["7203.T"]["volume"] == 500000
-        assert engine.market_store["7203.T"]["price"] == 2510.0
+            # Update with volume = 0 (e.g. from a scraper that doesn't report volume)
+            zero_vol_payload = {
+                "symbol": "7203.T",
+                "price": 2510.0,
+                "volume": 0,
+                "source": "scraper_zero",
+            }
+            engine._handle_producer_update(zero_vol_payload)
+            # Volume should stay 500000 instead of being wiped to 0
+            assert engine.market_store["7203.T"]["volume"] == 500000
+            assert engine.market_store["7203.T"]["price"] == 2510.0
+        finally:
+            engine.stop()
 
 
 class TestIssue3DataFetchingStability:

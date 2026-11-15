@@ -21,9 +21,21 @@ from utils.market_utils import _fetch_live_market_state, is_market_open
 
 class CoreLogicTestCase(unittest.TestCase):
     def setUp(self):
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
+
+    def tearDown(self):
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
 
     @patch("app_bg.is_market_open", return_value=True)
     @patch("app_bg.fetch_index_data")

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pathlib
 import re
-import shutil
-import subprocess
 import unittest
+
+from tests.test_support.environment import run_node_script
 
 
 class TestScreenerResetTableIndicatorSync(unittest.TestCase):
@@ -131,9 +131,6 @@ class TestLocalStorageHardening(unittest.TestCase):
 
     def test_critical_frontend_bootstrap_survives_blocked_local_storage(self):
         """Blocked storage must fall back instead of aborting a page's scripts."""
-        node = shutil.which("node")
-        self.assertIsNotNone(node, "Node.js is required for frontend regression tests")
-
         script = r"""
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -237,14 +234,12 @@ controller._motionListener({ matches: true });
 assert.equal(updates.length, 1);
 assert.equal(updates[0].reducedMotion, true);
 """
-        result = subprocess.run(
-            [node, "-"],
+        result = run_node_script(
+            script,
             cwd=pathlib.Path(__file__).resolve().parent.parent,
-            input=script,
-            text=True,
-            capture_output=True,
             check=False,
-            timeout=15,
+            timeout=15.0,
+            context="frontend regression tests",
         )
 
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)

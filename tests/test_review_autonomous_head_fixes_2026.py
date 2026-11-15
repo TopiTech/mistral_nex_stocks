@@ -76,14 +76,17 @@ class TestReviewAutonomousHeadFixes:
 
         # Verify engine unregister purges stranded dash keys
         engine = RealtimeMarketEngine()
-        engine.market_store["NYSE:BRK.B"] = {"price": 450.0}
-        engine.market_store["BRK.B"] = {"price": 450.0}
-        engine.market_store["BRK-B"] = {"price": 450.0}
+        try:
+            engine.market_store["NYSE:BRK.B"] = {"price": 450.0}
+            engine.market_store["BRK.B"] = {"price": 450.0}
+            engine.market_store["BRK-B"] = {"price": 450.0}
 
-        engine.unregister_symbol("BRK.B", "us")
-        assert "BRK.B" not in engine.market_store
-        assert "BRK-B" not in engine.market_store
-        assert "NYSE:BRK.B" not in engine.market_store
+            engine.unregister_symbol("BRK.B", "us")
+            assert "BRK.B" not in engine.market_store
+            assert "BRK-B" not in engine.market_store
+            assert "NYSE:BRK.B" not in engine.market_store
+        finally:
+            engine.stop()
 
     def test_r3_trending_titles_cache_empty_list_prevents_synchronous_rebuild(self):
         """R3: Cached empty list [] is treated as cache hit, preventing synchronous search block."""

@@ -439,16 +439,54 @@ def test_null_2d_canvas_contexts_fail_safely():
   chartCtx.drawPnLChart(nullCanvas, [{ x: 1, y: 10 }, { x: 2, y: 20 }], 5, {});
   assert.strictEqual(destroyedCount, 2, "drawChart and drawPnLChart should safely destroy old chart and return on null 2D ctx");
 
+  // 2b. drawChart & drawPnLChart reject non-finite closes/prices when < 2 valid points remain
+  let shownErrors = 0;
+  let pnlChartConstructed = false;
+  const liveChartCanvas = makeElement("canvas");
+  liveChartCanvas.getContext = () => ({});
+  chartWrapper.querySelector = (sel) => (sel === ".chart-canvas" ? liveChartCanvas : null);
+  const finiteChartCtx = {
+    Number,
+    Math,
+    Date,
+    Array,
+    Map,
+    chartInstances: new Map(),
+    getChartPref: (_k, _p, d) => d,
+    getDatasetHiddenStateByLabel: () => null,
+    getChartAnimationEnabled: () => false,
+    _safeDestroyChart: () => { destroyedCount++; },
+    showChartError: () => { shownErrors++; },
+    NO_HISTORY_MSG: "no history",
+    CHART_TOOLTIP_DEFAULTS: {},
+    Chart: function () { pnlChartConstructed = true; },
+  };
+  vm.runInNewContext(drawChartBlock + "\n" + drawPnLBlock + "; this.drawChart = drawChart; this.drawPnLChart = drawPnLChart;", finiteChartCtx);
+  finiteChartCtx.drawChart(chartWrapper, [{ x: 1000, c: NaN }, { x: 2000, c: null }, { x: 3000, price: 150 }], [], {});
+  assert.strictEqual(shownErrors, 1, "drawChart must show info message when fewer than 2 finite closes remain");
+  finiteChartCtx.drawPnLChart(liveChartCanvas, [{ x: 1000, price: NaN }, { x: 2000, price: 120 }], 100, {});
+  assert.strictEqual(pnlChartConstructed, false, "drawPnLChart must not render when fewer than 2 finite prices remain");
+
   // 3. ai_portfolio.js: drawAiPortfolioCharts
   const aiPfSrc = readRel("static/js/ai_portfolio.js");
   const destroyAiChartsBlock = extractNamedBlock(aiPfSrc, "function destroyAiPortfolioCharts()");
   const drawAiChartsBlock = extractNamedBlock(aiPfSrc, "function drawAiPortfolioCharts(portfolio)");
   let aiDestroyed = false;
+  let capturedSummaryCfg = null;
+  const summaryCanvas = makeElement("canvas");
+  summaryCanvas.getContext = () => ({
+    createLinearGradient: () => ({ addColorStop: () => {} }),
+  });
   const aiCtx = {
     Number,
     Array,
     Math,
-    Chart: ChartCtor,
+    Chart: function (_ctx, cfg) {
+      if (cfg?.options?.plugins?.tooltip?.callbacks?.label) {
+        capturedSummaryCfg = cfg;
+      }
+      return { destroy() {} };
+    },
     document: {
       getElementById: (id) =>
         id === "ai-pf-summary-canvas" || id === "ai-pf-sector-canvas"
@@ -468,6 +506,16 @@ def test_null_2d_canvas_contexts_fail_safely():
   aiCtx.drawAiPortfolioCharts({ items: [{ symbol: "AAPL", weight_pct: 100 }] });
   assert.strictEqual(aiDestroyed, true, "existing AI summary chart must still be destroyed cleanly");
   assert.strictEqual(newChartCalled, false);
+  // Also verify negative/zero/positive yen P/L tooltip sign rendering.
+  aiCtx.document.getElementById = (id) => (id === "ai-pf-summary-canvas" ? summaryCanvas : nullCanvas);
+  aiCtx.drawAiPortfolioCharts({ items: [{ symbol: "AAPL", weight_pct: 100 }] });
+  const tipLabel = capturedSummaryCfg.options.plugins.tooltip.callbacks.label;
+  const negTip = tipLabel({ datasetIndex: 0, dataset: { label: "AI" }, raw: 950000 });
+  const posTip = tipLabel({ datasetIndex: 0, dataset: { label: "AI" }, raw: 1050000 });
+  const zeroTip = tipLabel({ datasetIndex: 0, dataset: { label: "AI" }, raw: 1000000 });
+  assert(negTip.includes("(-¥50,000 / -5.0%)"), "Negative P/L tooltip must show -¥ without --%: " + negTip);
+  assert(posTip.includes("(+¥50,000 / +5.0%)"), "Positive P/L tooltip mismatch: " + posTip);
+  assert(zeroTip.includes("(¥0 / 0.0%)"), "Zero P/L tooltip mismatch: " + zeroTip);
 
   // 4. experimental/orbit-renderer.js: null 2D ctx + scrubbed timeline viewStock changePercent
   const orbitSrc = readRel("static/js/experimental/orbit-renderer.js");

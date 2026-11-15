@@ -27,6 +27,7 @@ from utils.market_utils import is_market_open
 from utils.normalization import (
     _fmt,
     _fmt_vol,
+    finite_float,
     is_bool_like,
     normalize_history_candle,
     normalize_history_frame,
@@ -704,11 +705,11 @@ def _read_market_usdjpy_snapshot() -> tuple[float, float]:
     raw_ts = getattr(market_state, "last_usdjpy_rate_ts", 0.0)
     if is_bool_like(raw_rate) or is_bool_like(raw_ts):
         raise TypeError("bool not allowed")
-    rate_val = float(raw_rate or 0.0)
-    ts_val = float(raw_ts or 0.0)
+    rate_val = finite_float(raw_rate, 0.0)
+    ts_val = finite_float(raw_ts, 0.0)
     return (
-        rate_val if math.isfinite(rate_val) else 0.0,
-        ts_val if math.isfinite(ts_val) else 0.0,
+        0.0 if rate_val is None else rate_val,
+        0.0 if ts_val is None else ts_val,
     )
 
 
@@ -851,7 +852,11 @@ def build_stock_payload(
                 except (TypeError, ValueError, OverflowError):
                     pass
             if resolved_vol is None or resolved_vol <= 0:
-                pos_vols = hist["Volume"][hist["Volume"] > 0]
+                numeric_vols = pd.to_numeric(
+                    hist["Volume"].where(~hist["Volume"].map(is_bool_like)),
+                    errors="coerce",
+                )
+                pos_vols = numeric_vols[numeric_vols > 0]
                 if not pos_vols.empty:
                     latest_pos = pos_vols.iloc[-1]
                     if not is_bool_like(latest_pos):

@@ -366,6 +366,27 @@ class YahooNewsExtractUrlTestCase(unittest.TestCase):
         extracted = ddgs.engines.yahoo_news.extract_url(u)
         self.assertEqual(extracted, u)
 
+    def test_extract_url_preserves_destination_query_params(self):
+        import ddgs.engines.yahoo_news
+
+        unencoded = (
+            "https://r.search.yahoo.com/RV=2/RE=1783/RO=10/"
+            "RU=https://example.com/article?id=42&tab=summary/RK=2/RS=abc123"
+        )
+        self.assertEqual(
+            ddgs.engines.yahoo_news.extract_url(unencoded),
+            "https://example.com/article?id=42&tab=summary",
+        )
+
+        encoded_rs_only = (
+            "https://r.search.yahoo.com/RV=2/"
+            "RU=https%3A%2F%2Fexample.com%2Fnews%3Fid%3D99%26src%3Dyahoo/RS=xyz789"
+        )
+        self.assertEqual(
+            ddgs.engines.yahoo_news.extract_url(encoded_rs_only),
+            "https://example.com/news?id=99&src=yahoo",
+        )
+
 
 class DdgsCollectItemsParallelTestCase(unittest.TestCase):
     """P2: _collect_ddgs_items のクエリ並列化とリランク条件"""

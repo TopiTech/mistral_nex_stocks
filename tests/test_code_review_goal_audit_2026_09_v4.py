@@ -29,9 +29,21 @@ class TestApiIndicesForceSyncAndAnnotation(unittest.TestCase):
     """Test R22: api_indices force sync forwarding and return type annotation."""
 
     def setUp(self) -> None:
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
+
+    def tearDown(self) -> None:
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
 
     def test_schedule_sync_all_stocks_now_return_annotation_is_bool(self) -> None:
         """routes.stocks.common.schedule_sync_all_stocks_now must return bool."""
@@ -98,9 +110,21 @@ class TestSystemOperationalEndpointsOriginDefense(unittest.TestCase):
     """Test R24: Cross-origin untrusted Origin check on operational endpoints."""
 
     def setUp(self) -> None:
+        self._orig_testing = app.config.get("TESTING")
+        self._orig_csrf = app.config.get("WTF_CSRF_ENABLED")
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
         self.client = app.test_client()
+
+    def tearDown(self) -> None:
+        if self._orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = self._orig_testing
+        if self._orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = self._orig_csrf
 
     def test_endpoints_allow_local_request_without_origin(self) -> None:
         """Same-origin GET requests without Origin header succeed for local callers."""

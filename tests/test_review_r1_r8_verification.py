@@ -13,25 +13,48 @@ from services.realtime_engine import RealtimeMarketEngine, TradingViewWSClient
 
 
 def test_r1_portfolio_cache_update_order():
-    """R1: Verify target_stocks_cache is updated before current_stocks_cache under sse_data_lock."""
-    update_order = []
+    """R1: Verify ensure_stock_placeholder_in_caches updates target before current cache."""
+    from route_helpers import ensure_stock_placeholder_in_caches
+
+    access_order = []
 
     class TrackingDict(dict):
         def __init__(self, name, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.name = name
 
-        def get(self, key, default=None):
-            update_order.append(f"get_{self.name}")
-            return super().get(key, default)
+        def __contains__(self, key):
+            access_order.append(f"contains_{self.name}")
+            return super().__contains__(key)
+
+        def __getitem__(self, key):
+            access_order.append(f"get_{self.name}")
+            return super().__getitem__(key)
+
+        def __setitem__(self, key, value):
+            access_order.append(f"set_{self.name}")
+            return super().__setitem__(key, value)
 
     with app_state.cache.sse_data_lock:
+        orig_target = app_state.market.target_stocks_cache
+        orig_current = app_state.market.current_stocks_cache
         target_dict = TrackingDict("target")
         current_dict = TrackingDict("current")
-        for cache in (target_dict, current_dict):
-            cache.get("us", [])
-
-    assert update_order == ["get_target", "get_current"]
+        app_state.market.target_stocks_cache = target_dict
+        app_state.market.current_stocks_cache = current_dict
+    try:
+        with patch.object(app_state.market, "clear_negative_symbol_cache"):
+            ensure_stock_placeholder_in_caches("AAPL", "Apple", "us", shares=2.0, avg_price=150.0)
+        target_indices = [i for i, tag in enumerate(access_order) if tag.endswith("_target")]
+        current_indices = [i for i, tag in enumerate(access_order) if tag.endswith("_current")]
+        assert target_indices and current_indices
+        assert max(target_indices) < min(current_indices)
+        assert target_dict["us"][0]["shares"] == 2.0
+        assert current_dict["us"][0]["shares"] == 2.0
+    finally:
+        with app_state.cache.sse_data_lock:
+            app_state.market.target_stocks_cache = orig_target
+            app_state.market.current_stocks_cache = orig_current
 
 
 def test_r2_realtime_engine_payload_copy():
@@ -125,29 +148,31 @@ def test_r5_ai_portfolio_zero_weights_fallback():
 def test_r6_get_market_deltas_volume_and_change_percent():
     """R6: Verify get_market_deltas detects volume and change_percent updates."""
     engine = RealtimeMarketEngine()
+    try:
+        quote1 = {
+            "symbol": "AAPL",
+            "price": 150.0,
+            "change": 2.0,
+            "change_percent": 1.33,
+            "volume": 1000,
+            "source": "tv",
+            "updated_at": time.time(),
+        }
 
-    quote1 = {
-        "symbol": "AAPL",
-        "price": 150.0,
-        "change": 2.0,
-        "change_percent": 1.33,
-        "volume": 1000,
-        "source": "tv",
-        "updated_at": time.time(),
-    }
+        with engine.client_context() as client_id:
+            engine._handle_producer_update(quote1)
+            deltas1 = engine.get_market_deltas(client_id)
+            assert "AAPL" in deltas1
 
-    with engine.client_context() as client_id:
-        engine._handle_producer_update(quote1)
-        deltas1 = engine.get_market_deltas(client_id)
-        assert "AAPL" in deltas1
+            quote2 = dict(quote1)
+            quote2["volume"] = 2000
+            engine._handle_producer_update(quote2)
 
-        quote2 = dict(quote1)
-        quote2["volume"] = 2000
-        engine._handle_producer_update(quote2)
-
-        deltas2 = engine.get_market_deltas(client_id)
-        assert "AAPL" in deltas2
-        assert deltas2["AAPL"]["volume"] == 2000
+            deltas2 = engine.get_market_deltas(client_id)
+            assert "AAPL" in deltas2
+            assert deltas2["AAPL"]["volume"] == 2000
+    finally:
+        engine.stop()
 
 
 def test_r7_api_chat_cache_hit_db_close(monkeypatch):
@@ -218,7 +243,39 @@ def test_r7_api_chat_cache_hit_db_close(monkeypatch):
 
 
 def test_r8_api_shutdown_leader_lock_release():
-    """R8: Verify shutdown_server invokes _release_leader_lock."""
-    import routes.api_system as api_sys_mod
+    """R8: Verify /api/shutdown background thread releases the leader lock before terminating."""
+    import threading
 
-    assert hasattr(api_sys_mod, "api_shutdown")
+    flask_app = create_app(
+        config_override={"TESTING": True, "WTF_CSRF_ENABLED": False},
+        skip_bootstrap=True,
+    )
+    sequence: list[str] = []
+    terminated = threading.Event()
+
+    def _release():
+        sequence.append("release_leader_lock")
+
+    def _terminate(_logger):
+        sequence.append("terminate")
+        terminated.set()
+
+    with (
+        patch.dict("os.environ", {"MNS_PROD": "0", "MNS_ALLOW_REMOTE_API": "0"}, clear=False),
+        patch("routes.api_system._is_local_request", return_value=True),
+        patch("routes.system.shutdown._is_allowed_shutdown_origin", return_value=True),
+        patch.object(app_state, "consume_shutdown_token", return_value=True),
+        patch.object(app_state, "rotate_shutdown_token"),
+        patch.object(app_state, "shutdown_executors"),
+        patch("app_bg._release_leader_lock", side_effect=_release),
+        patch("routes.system.shutdown._terminate_current_process", side_effect=_terminate),
+        patch("routes.system.shutdown.time.sleep"),
+    ):
+        resp = flask_app.test_client().post(
+            "/api/shutdown",
+            json={"confirm": True, "shutdown_token": "tok-test"},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        assert resp.status_code == 200
+        assert terminated.wait(timeout=3.0), "shutdown_server thread did not finish"
+        assert sequence == ["release_leader_lock", "terminate"]

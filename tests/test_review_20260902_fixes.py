@@ -103,7 +103,11 @@ class TestR7Legacy:
         with patch("services.ai_service.call_mistral_chat") as mock_call:
             mock_call.return_value = {"choices": [{"message": {"content": "ok"}}]}
             res = analyze_chart_image_with_mistral("k", "https://example.com/x.png", symbol="AAPL")
-            assert "choices" not in res or "error" not in res
+            mock_call.assert_called_once()
+            assert "error" not in res
+            assert "choices" not in res
+            assert res["analysis"] == "ok"
+            assert res["symbol"] == "AAPL"
             sent = mock_call.call_args[1]["messages"]
             url = sent[1]["content"][1]["image_url"]
             assert url == "https://example.com/x.png"

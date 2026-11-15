@@ -362,13 +362,26 @@ class YFinanceProviderTestCase(unittest.TestCase):
         mock_state.is_yf_rate_limited.return_value = False
         self.provider._get_market_state.return_value = mock_state
 
-        # _search_fallback が直接呼ばれることを確認
+        # _search_fallback が直接呼ばれることを確認 (実 HTTP はモックする)
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"quotes": []}
+        mock_response.raise_for_status.return_value = None
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+
         original_fallback = self.provider._search_fallback
-        with patch.object(
-            self.provider, "_search_fallback", wraps=original_fallback
-        ) as mock_fallback:
+        with (
+            patch(
+                "services.stock_provider.yf_session_manager.get_session",
+                return_value=mock_session,
+            ),
+            patch.object(
+                self.provider, "_search_fallback", wraps=original_fallback
+            ) as mock_fallback,
+        ):
             self.provider.search("apple", max_results=5)
             mock_fallback.assert_called_once()
+            mock_session.get.assert_called_once()
 
     def test_search_fallback_empty_quotes(self):
         """フォールバック: quotes が空の場合、空リストを返す"""
@@ -708,6 +721,58 @@ class SearchAndNewsLimitNormalizationTestCase(unittest.TestCase):
             res = self.provider._search_fallback("AAPL", 100, mock_state)
             self.assertEqual(len(res), 50)
             self.assertEqual(mock_sess.get.call_args[1]["params"]["quotesCount"], 50)
+
+    def test_derive_quote_handles_object_dtype_volume_safely(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "Open": [100.0, 102.0, 104.0],
+                "High": [103.0, 105.0, 106.0],
+                "Low": [99.0, 101.0, 103.0],
+                "Close": [101.0, 103.0, 105.0],
+                "Volume": pd.Series([5000, "bad", None], dtype=object).array,
+            },
+            index=pd.date_range("2025-01-01", periods=3, freq="D"),
+        )
+        quote = self.provider._derive_quote_from_history(df, "AAPL")
+        self.assertIsNotNone(quote)
+        self.assertEqual(quote["regularMarketPrice"], 105.0)
+        self.assertEqual(quote["regularMarketPreviousClose"], 103.0)
+        self.assertEqual(quote["regularMarketVolume"], 5000)
+
+    def test_stock_payload_handles_object_dtype_volume_and_usdjpy_snapshot(self):
+        from types import SimpleNamespace
+
+        import pandas as pd
+
+        from utils import stock_payload
+
+        df = pd.DataFrame(
+            {
+                "Open": [100.0, 102.0],
+                "High": [103.0, 105.0],
+                "Low": [99.0, 101.0],
+                "Close": [101.0, 104.0],
+                "Volume": pd.Series([2500, None], dtype=object).array,
+            },
+            index=pd.date_range("2025-01-01", periods=2, freq="D"),
+        )
+        with patch("utils.stock_payload.get_stock_info_cached", return_value={}):
+            payload = stock_payload.build_stock_payload(
+                "AAPL",
+                "Apple Inc.",
+                "us",
+                hist=df,
+            )
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["price"], 104.0)
+        self.assertEqual(payload["volume"], 2500)
+
+        fake_market = SimpleNamespace(last_usdjpy_rate="not-a-number", last_usdjpy_rate_ts=MagicMock())
+        with patch("utils.stock_payload.app_state") as mock_state:
+            mock_state.market = fake_market
+            self.assertEqual(stock_payload._read_market_usdjpy_snapshot(), (0.0, 0.0))
 
 
 if __name__ == "__main__":

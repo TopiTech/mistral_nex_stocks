@@ -29,10 +29,22 @@ NEWS_TOKEN = "news-polling-token-0123456789abcdef"
 
 @pytest.fixture
 def client():
+    orig_testing = app.config.get("TESTING")
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
-    with app.test_client() as test_client:
-        yield test_client
+    try:
+        with app.test_client() as test_client:
+            yield test_client
+    finally:
+        if orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = orig_testing
+        if orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = orig_csrf
 
 
 def _reset_rate_limit_state() -> None:

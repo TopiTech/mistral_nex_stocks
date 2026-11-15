@@ -209,47 +209,53 @@ def test_scrapers_do_not_provide_volume():
 def test_realtime_engine_resolves_yfinance_volume():
     """When a scraper updates a symbol, RealtimeMarketEngine must source volume from yfinance."""
     engine = RealtimeMarketEngine()
+    try:
+        with patch("services.realtime.engine._get_yfinance_volume", return_value=12345678):
+            # Initial scraper update with no volume
+            scraper_payload = {
+                "symbol": "7203.T",
+                "price": 2505.0,
+                "change": 5.0,
+                "change_percent": 0.2,
+                "source": "yahoojp",
+            }
+            engine._handle_producer_update(scraper_payload)
 
-    with patch("services.realtime.engine._get_yfinance_volume", return_value=12345678):
-        # Initial scraper update with no volume
-        scraper_payload = {
-            "symbol": "7203.T",
-            "price": 2505.0,
-            "change": 5.0,
-            "change_percent": 0.2,
-            "source": "yahoojp",
-        }
-        engine._handle_producer_update(scraper_payload)
+            # Volume must be resolved from yfinance rather than wiping to 0 or missing
+            assert engine.market_store["7203.T"]["volume"] == 12345678
+            assert engine.market_store["7203.T"]["price"] == 2505.0
 
-        # Volume must be resolved from yfinance rather than wiping to 0 or missing
-        assert engine.market_store["7203.T"]["volume"] == 12345678
-        assert engine.market_store["7203.T"]["price"] == 2505.0
-
-        # Subsequent scraper update: existing yfinance volume must be preserved
-        second_payload = {
-            "symbol": "7203.T",
-            "price": 2510.0,
-            "change": 10.0,
-            "change_percent": 0.4,
-            "source": "yahoojp",
-        }
-        engine._handle_producer_update(second_payload)
-        assert engine.market_store["7203.T"]["volume"] == 12345678
-        assert engine.market_store["7203.T"]["price"] == 2510.0
+            # Subsequent scraper update: existing yfinance volume must be preserved
+            second_payload = {
+                "symbol": "7203.T",
+                "price": 2510.0,
+                "change": 10.0,
+                "change_percent": 0.4,
+                "source": "yahoojp",
+            }
+            engine._handle_producer_update(second_payload)
+            assert engine.market_store["7203.T"]["volume"] == 12345678
+            assert engine.market_store["7203.T"]["price"] == 2510.0
+    finally:
+        engine.stop()
 
 
 def test_get_stock_volume_lookup():
     """get_stock_volume must resolve volume from stocks cache."""
     with app_state.cache.sse_data_lock:
+        saved_cache = dict(app_state.market.current_stocks_cache)
         app_state.market.current_stocks_cache = {
             "jp": [{"symbol": "7203.T", "volume": 9876543, "price": 2500.0}]
         }
+    try:
+        vol = get_stock_volume("7203.T")
+        assert vol == 9876543
 
-    vol = get_stock_volume("7203.T")
-    assert vol == 9876543
-
-    vol_bare = get_stock_volume("7203")
-    assert vol_bare == 9876543
+        vol_bare = get_stock_volume("7203")
+        assert vol_bare == 9876543
+    finally:
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_stocks_cache = saved_cache
 
 
 def test_pyproject_includes_app_factory_and_config():

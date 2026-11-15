@@ -198,55 +198,59 @@ def test_composite_fallback_priority_chain():
 def test_realtime_engine_prioritized_fallback_order():
     """RealtimeMarketEngine must try Yahoo JP -> SBI -> Nikkei225JP -> Minkabu as lowest fallback."""
     engine = RealtimeMarketEngine()
+    try:
+        # Test regular quote fallback chain
+        engine.yahoojp_scraper.fetch_jp_symbol = MagicMock(return_value=None)
+        engine.sbi_scraper.fetch_quote = MagicMock(return_value=None)
+        engine.nikkei225jp_scraper.fetch_quote = MagicMock(
+            return_value={"symbol": "7203.T", "price": 2981.0, "source": "nikkei225jp_adr"}
+        )
+        engine.minkabu_scraper.fetch_quote = MagicMock(
+            return_value={"symbol": "7203.T", "price": 2950.0, "source": "minkabu"}
+        )
 
-    # Test regular quote fallback chain
-    engine.yahoojp_scraper.fetch_jp_symbol = MagicMock(return_value=None)
-    engine.sbi_scraper.fetch_quote = MagicMock(return_value=None)
-    engine.nikkei225jp_scraper.fetch_quote = MagicMock(
-        return_value={"symbol": "7203.T", "price": 2981.0, "source": "nikkei225jp_adr"}
-    )
-    engine.minkabu_scraper.fetch_quote = MagicMock(
-        return_value={"symbol": "7203.T", "price": 2950.0, "source": "minkabu"}
-    )
+        payload = engine.yahoojp_scraper._fetch_regular_with_fallback("7203.T")
+        assert payload is not None
+        assert payload["source"] == "nikkei225jp_adr"
+        engine.sbi_scraper.fetch_quote.assert_called_once_with("7203.T")
+        engine.nikkei225jp_scraper.fetch_quote.assert_called_once_with("7203.T")
+        engine.minkabu_scraper.fetch_quote.assert_not_called()
 
-    payload = engine.yahoojp_scraper._fetch_regular_with_fallback("7203.T")
-    assert payload is not None
-    assert payload["source"] == "nikkei225jp_adr"
-    engine.sbi_scraper.fetch_quote.assert_called_once_with("7203.T")
-    engine.nikkei225jp_scraper.fetch_quote.assert_called_once_with("7203.T")
-    engine.minkabu_scraper.fetch_quote.assert_not_called()
-
-    # When Nikkei225JP fails, Minkabu is called
-    engine.nikkei225jp_scraper.fetch_quote.return_value = None
-    payload_minkabu = engine.yahoojp_scraper._fetch_regular_with_fallback("7203.T")
-    assert payload_minkabu is not None
-    assert payload_minkabu["source"] == "minkabu"
-    engine.minkabu_scraper.fetch_quote.assert_called_once_with("7203.T")
+        # When Nikkei225JP fails, Minkabu is called
+        engine.nikkei225jp_scraper.fetch_quote.return_value = None
+        payload_minkabu = engine.yahoojp_scraper._fetch_regular_with_fallback("7203.T")
+        assert payload_minkabu is not None
+        assert payload_minkabu["source"] == "minkabu"
+        engine.minkabu_scraper.fetch_quote.assert_called_once_with("7203.T")
+    finally:
+        engine.stop()
 
 
 def test_realtime_engine_pts_prioritized_fallback_order():
     """RealtimeMarketEngine _fetch_pts_with_fallback must try Yahoo JP PTS -> SBI PTS -> Nikkei225JP PTS -> Minkabu PTS."""
     engine = RealtimeMarketEngine()
+    try:
+        engine.yahoojp_scraper.fetch_pts_symbol = MagicMock(return_value=None)
+        engine.sbi_scraper.fetch_pts_quote = MagicMock(return_value=None)
+        engine.nikkei225jp_scraper.fetch_pts_quote = MagicMock(
+            return_value={"symbol": "7203.T", "price": 2993.0, "pts": True, "source": "nikkei225jp_pts"}
+        )
+        engine.minkabu_scraper.fetch_pts_quote = MagicMock(
+            return_value={"symbol": "7203.T", "price": 2950.0, "pts": True, "source": "minkabu_pts"}
+        )
 
-    engine.yahoojp_scraper.fetch_pts_symbol = MagicMock(return_value=None)
-    engine.sbi_scraper.fetch_pts_quote = MagicMock(return_value=None)
-    engine.nikkei225jp_scraper.fetch_pts_quote = MagicMock(
-        return_value={"symbol": "7203.T", "price": 2993.0, "pts": True, "source": "nikkei225jp_pts"}
-    )
-    engine.minkabu_scraper.fetch_pts_quote = MagicMock(
-        return_value={"symbol": "7203.T", "price": 2950.0, "pts": True, "source": "minkabu_pts"}
-    )
+        pts_payload = engine._fetch_pts_with_fallback("7203.T")
+        assert pts_payload is not None
+        assert pts_payload["source"] == "nikkei225jp_pts"
+        engine.sbi_scraper.fetch_pts_quote.assert_called_once_with("7203.T")
+        engine.nikkei225jp_scraper.fetch_pts_quote.assert_called_once_with("7203.T")
+        engine.minkabu_scraper.fetch_pts_quote.assert_not_called()
 
-    pts_payload = engine._fetch_pts_with_fallback("7203.T")
-    assert pts_payload is not None
-    assert pts_payload["source"] == "nikkei225jp_pts"
-    engine.sbi_scraper.fetch_pts_quote.assert_called_once_with("7203.T")
-    engine.nikkei225jp_scraper.fetch_pts_quote.assert_called_once_with("7203.T")
-    engine.minkabu_scraper.fetch_pts_quote.assert_not_called()
-
-    # When Nikkei225JP PTS fails, Minkabu PTS is called as last resort
-    engine.nikkei225jp_scraper.fetch_pts_quote.return_value = None
-    pts_minkabu = engine._fetch_pts_with_fallback("7203.T")
-    assert pts_minkabu is not None
-    assert pts_minkabu["source"] == "minkabu_pts"
-    engine.minkabu_scraper.fetch_pts_quote.assert_called_once_with("7203.T")
+        # When Nikkei225JP PTS fails, Minkabu PTS is called as last resort
+        engine.nikkei225jp_scraper.fetch_pts_quote.return_value = None
+        pts_minkabu = engine._fetch_pts_with_fallback("7203.T")
+        assert pts_minkabu is not None
+        assert pts_minkabu["source"] == "minkabu_pts"
+        engine.minkabu_scraper.fetch_pts_quote.assert_called_once_with("7203.T")
+    finally:
+        engine.stop()

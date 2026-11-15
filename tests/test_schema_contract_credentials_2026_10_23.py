@@ -29,6 +29,13 @@ from constants import (
 )
 from error_codes import ErrorCode
 from schemas.config import CredentialsSaveRequest
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 @pytest.fixture

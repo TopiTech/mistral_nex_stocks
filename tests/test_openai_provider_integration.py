@@ -32,6 +32,13 @@ from services.ai_service import (
     call_mistral_chat_with_tools,
     stream_mistral_chat,
 )
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 
 @pytest.fixture

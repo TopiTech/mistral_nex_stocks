@@ -78,10 +78,14 @@ def test_metrics_yf_rate_limited_matches_session_manager(client, monkeypatch):
         patch.object(app_state.market, "is_yf_rate_limited", return_value=False),
         patch("app_state.yf_session_manager.get_rate_limit_until", return_value=0.0),
     ):
+        prev_until = app_state.market.yfinance_rate_limit_until
         app_state.market.yfinance_rate_limit_until = time.time() + 300.0
-        resp = client.get(
-            "/api/metrics", environ_base={"REMOTE_ADDR": "127.0.0.1"}
-        )
+        try:
+            resp = client.get(
+                "/api/metrics", environ_base={"REMOTE_ADDR": "127.0.0.1"}
+            )
+        finally:
+            app_state.market.yfinance_rate_limit_until = prev_until
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["ok"] is True
@@ -119,33 +123,41 @@ def test_metrics_yf_rate_limited_true_when_manager_limited(client):
 def test_update_indices_data_preserves_zero_percent():
     from bg.sync import process as sync_process
 
+    saved_idx = app_state.market.current_indices_cache
     app_state.market.current_indices_cache = {}
-    header_items = [
-        {
-            "symbol": "^N225",
-            "price": 38000.0,
-            "change": 0.0,
-            "change_percent": 0.0,
-            "market": "idx",
-            "market_state": "CLOSED",
-        }
-    ]
-    sync_process._update_indices_data(header_items, [], [])
-    entry = app_state.market.current_indices_cache.get("N225")
-    assert entry is not None
-    assert entry["percent"] == 0.0, "zero percent must not be falsy-coerced to None"
+    try:
+        header_items = [
+            {
+                "symbol": "^N225",
+                "price": 38000.0,
+                "change": 0.0,
+                "change_percent": 0.0,
+                "market": "idx",
+                "market_state": "CLOSED",
+            }
+        ]
+        sync_process._update_indices_data(header_items, [], [])
+        entry = app_state.market.current_indices_cache.get("N225")
+        assert entry is not None
+        assert entry["percent"] == 0.0, "zero percent must not be falsy-coerced to None"
+    finally:
+        app_state.market.current_indices_cache = saved_idx
 
 
 def test_update_indices_data_falls_back_for_index_dict_rows():
     from bg.sync import process as sync_process
 
+    saved_idx = app_state.market.current_indices_cache
     app_state.market.current_indices_cache = {}
-    # fetch_index_data rows carry only "percent"; use a mapped header symbol.
-    header_items = [{"symbol": "^DJI", "price": 100.0, "change": 1.0, "percent": 0.5}]
-    sync_process._update_indices_data(header_items, [], [])
-    entry = app_state.market.current_indices_cache.get("DJI")
-    assert entry is not None
-    assert entry["percent"] == 0.5
+    try:
+        # fetch_index_data rows carry only "percent"; use a mapped header symbol.
+        header_items = [{"symbol": "^DJI", "price": 100.0, "change": 1.0, "percent": 0.5}]
+        sync_process._update_indices_data(header_items, [], [])
+        entry = app_state.market.current_indices_cache.get("DJI")
+        assert entry is not None
+        assert entry["percent"] == 0.5
+    finally:
+        app_state.market.current_indices_cache = saved_idx
 
 
 # ---------------------------------------------------------------------------
@@ -258,74 +270,84 @@ def test_interpolator_writeback_rejects_stale_snapshot():
 
     from bg import sse_interpolator
 
-    with (
-        patch.object(sse_interpolator, "_is_market_open", lambda m: False),
-        patch.object(sse_interpolator, "announce_current_market_state") as announce,
-        patch.object(sse_interpolator, "_invalidate_sse_payload_cache") as invalidate,
-        patch.object(app_state.sse_announcer_mode1, "listener_count", return_value=1),
-    ):
-        # Non-empty target so the loop enters the interpolate/publish branch.
-        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
-        app_state.market.target_stocks_cache = {
-            "us": [{"symbol": "AAPL", "price": 100.0}],
-            "jp": [],
-            "idx": [],
-        }
-        app_state.market.current_indices_cache = {}
-
-        published_us = [{"symbol": "AAPL", "price": 200.0}]
-
-        def fluctuate_publishes_fresh_state(*args, **kwargs):
-            # Simulate sync_all_stocks_now landing mid-compute: it replaces
-            # the container objects the interpolator snapshotted.
-            app_state.market.current_stocks_cache = {"us": published_us, "jp": [], "idx": []}
-            app_state.market.current_indices_cache = {"^N225": {"percent": 1.0}}
-            return []
-
-        with patch.object(
-            sse_interpolator,
-            "_interpolate_and_fluctuate_market",
-            side_effect=fluctuate_publishes_fresh_state,
+    with app_state.cache.sse_data_lock:
+        saved_cur = app_state.market.current_stocks_cache
+        saved_tgt = app_state.market.target_stocks_cache
+        saved_idx = app_state.market.current_indices_cache
+    try:
+        with (
+            patch.object(sse_interpolator, "_is_market_open", lambda m: False),
+            patch.object(sse_interpolator, "announce_current_market_state") as announce,
+            patch.object(sse_interpolator, "_invalidate_sse_payload_cache") as invalidate,
+            patch.object(app_state.sse_announcer_mode1, "listener_count", return_value=1),
         ):
+            # Non-empty target so the loop enters the interpolate/publish branch.
+            app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+            app_state.market.target_stocks_cache = {
+                "us": [{"symbol": "AAPL", "price": 100.0}],
+                "jp": [],
+                "idx": [],
+            }
+            app_state.market.current_indices_cache = {}
+
+            published_us = [{"symbol": "AAPL", "price": 200.0}]
+
+            def fluctuate_publishes_fresh_state(*args, **kwargs):
+                # Simulate sync_all_stocks_now landing mid-compute: it replaces
+                # the container objects the interpolator snapshotted.
+                app_state.market.current_stocks_cache = {"us": published_us, "jp": [], "idx": []}
+                app_state.market.current_indices_cache = {"^N225": {"percent": 1.0}}
+                return []
+
             with patch.object(
-                sse_interpolator, "_get_simulate_fluctuation", return_value=False
-            ), patch.object(
-                sse_interpolator, "_get_app_bg_attr", lambda name, default=None: default
+                sse_interpolator,
+                "_interpolate_and_fluctuate_market",
+                side_effect=fluctuate_publishes_fresh_state,
             ):
-                # Stop the loop right after the first iteration in the test thread.
-                real_shutdown = app_state.execution.shutdown_event
-                test_thread_id = threading.get_ident()
+                with patch.object(
+                    sse_interpolator, "_get_simulate_fluctuation", return_value=False
+                ), patch.object(
+                    sse_interpolator, "_get_app_bg_attr", lambda name, default=None: default
+                ):
+                    # Stop the loop right after the first iteration in the test thread.
+                    real_shutdown = app_state.execution.shutdown_event
+                    test_thread_id = threading.get_ident()
 
-                class _StopAfterOne:
-                    def __init__(self, inner):
-                        self._inner = inner
-                        self._test_thread_iter = 0
+                    class _StopAfterOne:
+                        def __init__(self, inner):
+                            self._inner = inner
+                            self._test_thread_iter = 0
 
-                    def __getattr__(self, name):
-                        return getattr(self._inner, name)
+                        def __getattr__(self, name):
+                            return getattr(self._inner, name)
 
-                    def is_set(self):
-                        if threading.get_ident() == test_thread_id:
-                            return self._test_thread_iter > 1
-                        return self._inner.is_set()
+                        def is_set(self):
+                            if threading.get_ident() == test_thread_id:
+                                return self._test_thread_iter > 1
+                            return self._inner.is_set()
 
-                    def wait(self, timeout=None):
-                        if threading.get_ident() == test_thread_id:
-                            self._test_thread_iter += 1
-                            # First wait before the loop: return False immediately so compute proceeds
-                            return self._test_thread_iter > 1
-                        return self._inner.wait(timeout)
+                        def wait(self, timeout=None):
+                            if threading.get_ident() == test_thread_id:
+                                self._test_thread_iter += 1
+                                # First wait before the loop: return False immediately so compute proceeds
+                                return self._test_thread_iter > 1
+                            return self._inner.wait(timeout)
 
-                app_state.execution.shutdown_event = _StopAfterOne(real_shutdown)
-                try:
-                    sse_interpolator.bg_interpolate_loop()
-                finally:
-                    app_state.execution.shutdown_event = real_shutdown
+                    app_state.execution.shutdown_event = _StopAfterOne(real_shutdown)
+                    try:
+                        sse_interpolator.bg_interpolate_loop()
+                    finally:
+                        app_state.execution.shutdown_event = real_shutdown
 
-        # The fresh publish must SURVIVE: the stale write-back was rejected.
-        assert app_state.market.current_stocks_cache.get("us") is published_us
-        announce.assert_not_called()
-        invalidate.assert_not_called()
+            # The fresh publish must SURVIVE: the stale write-back was rejected.
+            assert app_state.market.current_stocks_cache.get("us") is published_us
+            announce.assert_not_called()
+            invalidate.assert_not_called()
+    finally:
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_stocks_cache = saved_cur
+            app_state.market.target_stocks_cache = saved_tgt
+            app_state.market.current_indices_cache = saved_idx
 
 
 def test_chat_schema_rejects_nonboolean_stream_spelling(flask_app):
@@ -421,21 +443,38 @@ def test_failed_trending_build_is_negative_cached(monkeypatch):
 
 
 def test_ddgs_context_merge_is_ordered(monkeypatch):
+    import concurrent.futures
+    import threading
+
     from services.search import ddgs as ddgs_mod
 
-    def slow_collect(idx, q):
-        # Higher index returns faster — the old as_completed merge kept the
-        # WRONG (later-queried) copy of a duplicate first.
-        return [{"title": f"q{idx}-{q}", "url": f"https://x/{idx}", "body": f"{q}"}]
+    second_finished = threading.Event()
 
-    monkeypatch.setattr(ddgs_mod, "_get_ddgs_search_pool", lambda: None)
-    # Drive the deterministic merge logic directly: the helper reorders by
-    # query index regardless of completion.
-    results_by_index = {0: [{"title": "a0"}], 1: [{"title": "a1"}]}
-    items: list = []
-    for idx in range(2):
-        items.extend(results_by_index.get(idx, []))
-    assert items[0]["title"] == "a0"
+    def fake_news_search(query, **_kwargs):
+        # Query 1 completes first while query 0 waits on it; _collect_ddgs_items
+        # must still preserve query submission order [query0, query1].
+        if query == "query-second":
+            second_finished.set()
+            return [{"title": "second-title", "url": "https://example.com/1", "body": "second"}]
+        assert second_finished.wait(timeout=3.0), "query-second never finished before query-first"
+        return [{"title": "first-title", "url": "https://example.com/0", "body": "first"}]
+
+    monkeypatch.setattr(ddgs_mod.time, "sleep", lambda _sec: None)
+    monkeypatch.setattr(ddgs_mod, "ddgs_news_search", fake_news_search)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        monkeypatch.setattr(ddgs_mod, "_get_ddgs_search_pool", lambda: pool)
+        items = ddgs_mod._collect_ddgs_items(
+            ["query-first", "query-second"],
+            region="wt-wt",
+            timelimit=None,
+            news_n=1,
+            text_n=0,
+            limit=10,
+            query_limit=2,
+        )
+
+    assert [item["title"] for item in items] == ["first-title", "second-title"]
 
 
 def test_ddgs_source_collects_in_submission_order():

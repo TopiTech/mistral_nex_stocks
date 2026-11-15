@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import socket
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 from tests.test_support.executors import SynchronousExecutor
 
@@ -124,3 +129,62 @@ def apply_all_test_patches(temp_path: Path) -> None:
     apply_storage_and_config_patches(temp_path)
     apply_synchronous_executors()
     apply_background_stubs()
+
+
+DEFAULT_STUB_PUBLIC_HOSTS: frozenset[str] = frozenset(
+    {
+        "api.openai.com",
+        "openrouter.ai",
+        "api.groq.com",
+        "integrate.api.nvidia.com",
+        "api.mistral.ai",
+        "api.together.xyz",
+        "generativelanguage.googleapis.com",
+        "api.example.com",
+        "example.com",
+        "example.org",
+        "attacker.example",
+        "custom.example",
+    }
+)
+
+
+@contextmanager
+def stub_public_outbound_dns(
+    extra_hosts: Iterable[str] = (),
+    resolved_ip: str = "93.184.216.34",
+) -> Iterator[None]:
+    """Stub ``utils.networking.socket.getaddrinfo`` for known public test/provider hosts.
+
+    Unlisted hosts, loopback targets, and invalid domains fall through to the
+    original ``socket.getaddrinfo`` so fail-closed DNS/SSRF tests stay intact.
+    """
+    allowed_hosts = DEFAULT_STUB_PUBLIC_HOSTS | {str(h).strip().lower() for h in extra_hosts if h}
+    orig_getaddrinfo = socket.getaddrinfo
+
+    def _stub_getaddrinfo(
+        host: Any,
+        port: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        normalized = str(host or "").strip().lower().rstrip(".")
+        if normalized in allowed_hosts:
+            resolved_port = (
+                int(port)
+                if isinstance(port, int) and not isinstance(port, bool)
+                else 0
+            )
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    (resolved_ip, resolved_port),
+                )
+            ]
+        return orig_getaddrinfo(host, port, *args, **kwargs)
+
+    with patch("utils.networking.socket.getaddrinfo", side_effect=_stub_getaddrinfo):
+        yield

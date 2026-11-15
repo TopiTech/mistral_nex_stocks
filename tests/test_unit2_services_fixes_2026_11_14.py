@@ -457,29 +457,32 @@ def test_u2_04_yfinance_rate_limit_caught_and_calendar_targets_sanitized() -> No
 
 def test_u2_05_realtime_engine_resolves_yf_volume_outside_store_lock() -> None:
     engine = RealtimeMarketEngine()
-    observed_locks: list[bool] = []
+    try:
+        observed_locks: list[bool] = []
 
-    def _probe_yf_vol(_symbol: str) -> int:
-        acquired = engine.store_lock.acquire(blocking=False)
-        observed_locks.append(acquired)
-        if acquired:
-            engine.store_lock.release()
-        return 999
+        def _probe_yf_vol(_symbol: str) -> int:
+            acquired = engine.store_lock.acquire(blocking=False)
+            observed_locks.append(acquired)
+            if acquired:
+                engine.store_lock.release()
+            return 999
 
-    reg = engine._activate_registration("AAPL", "us")
-    with patch("services.realtime.engine._get_yfinance_volume", side_effect=_probe_yf_vol):
-        engine._handle_producer_update(
-            {"symbol": "AAPL", "market": "us", "price": 210.0, "source": "tradingview"},
-            registration=reg,
-        )
-        engine._handle_pts_update(
-            {"symbol": "7203", "market": "jp", "price": 2500.0, "source": "yahoojp"},
-            registration=None,
-        )
+        reg = engine._activate_registration("AAPL", "us")
+        with patch("services.realtime.engine._get_yfinance_volume", side_effect=_probe_yf_vol):
+            engine._handle_producer_update(
+                {"symbol": "AAPL", "market": "us", "price": 210.0, "source": "tradingview"},
+                registration=reg,
+            )
+            engine._handle_pts_update(
+                {"symbol": "7203", "market": "jp", "price": 2500.0, "source": "yahoojp"},
+                registration=None,
+            )
 
-    assert observed_locks == [True, True]
-    assert engine.market_store["AAPL"]["volume"] == 999
-    assert engine.pts_store["7203"]["volume"] == 999
+        assert observed_locks == [True, True]
+        assert engine.market_store["AAPL"]["volume"] == 999
+        assert engine.pts_store["7203"]["volume"] == 999
+    finally:
+        engine.stop()
 
 
 def test_u2_05_scraper_retains_dot_t_dispatch_prices_and_uses_interruptible_sleep() -> None:

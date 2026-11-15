@@ -10,7 +10,6 @@ Verifies:
 """
 
 import json
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -21,6 +20,7 @@ from pydantic import ValidationError
 from routes.stocks.common import _json_safe
 from schemas.stocks import PortfolioUpdateRequest
 from services.ai_tools import _tool_calculate_technical_levels
+from tests.test_support.environment import run_node_script
 from utils.normalization import _fmt, _fmt_vol, normalize_optional_number
 from utils.stock_payload import _finite_or_none
 from utils.validators import AiPortfolioItemSchema
@@ -205,10 +205,10 @@ def test_frontend_accessibility_and_indicators():
 
     console.log("All frontend assertions passed successfully!");
     """
-    proc = subprocess.run(
-        ["node", "--input-type=module", "-e", script],
-        capture_output=True,
-        text=True,
+    proc = run_node_script(
+        script,
+        args=("--input-type=module",),
         check=False,
+        context="frontend verification",
     )
     assert proc.returncode == 0, f"Frontend verification failed: {proc.stderr}\n{proc.stdout}"

@@ -60,55 +60,64 @@ def test_tv_purge_key_variants():
 
 def test_register_symbol_normalizes_to_exchange_prefix():
     engine = RealtimeMarketEngine()
-    engine.register_symbol("TSLA", "us")
-    assert "NASDAQ:TSLA" in engine.tv_client.symbols
-    assert "TSLA" not in engine.tv_client.symbols
+    try:
+        engine.register_symbol("TSLA", "us")
+        assert "NASDAQ:TSLA" in engine.tv_client.symbols
+        assert "TSLA" not in engine.tv_client.symbols
 
-    engine.register_symbol("INDEX:SPX", "us")
-    assert "INDEX:SPX" in engine.tv_client.symbols
+        engine.register_symbol("INDEX:SPX", "us")
+        assert "INDEX:SPX" in engine.tv_client.symbols
 
-    engine.register_symbol("BRK-B", "us")
-    assert "NYSE:BRK.B" in engine.tv_client.symbols
+        engine.register_symbol("BRK-B", "us")
+        assert "NYSE:BRK.B" in engine.tv_client.symbols
+    finally:
+        engine.stop()
 
 
 def test_register_symbols_batch_normalization():
     engine = RealtimeMarketEngine()
-    engine.register_symbols(["AAPL", "INDEX:SPX", "BRK-B"], [])
-    symbols = engine.tv_client.symbols
-    assert "NASDAQ:AAPL" in symbols
-    assert "INDEX:SPX" in symbols
-    assert "NYSE:BRK.B" in symbols
+    try:
+        engine.register_symbols(["AAPL", "INDEX:SPX", "BRK-B"], [])
+        symbols = engine.tv_client.symbols
+        assert "NASDAQ:AAPL" in symbols
+        assert "INDEX:SPX" in symbols
+        assert "NYSE:BRK.B" in symbols
+    finally:
+        engine.stop()
 
 
 def test_unregister_symbol_purges_prefixed_and_dotted_keys():
     engine = RealtimeMarketEngine()
-    engine.register_symbol("BRK-B", "us")
+    try:
+        engine.register_symbol("BRK-B", "us")
 
-    def _payload(symbol):
-        return {
-            "symbol": symbol,
-            "price": 400.0,
-            "change": 1.0,
-            "change_percent": 0.25,
-            "volume": 10,
-            "source": "tradingview",
-            "updated_at": time.time(),
-        }
+        def _payload(symbol):
+            return {
+                "symbol": symbol,
+                "price": 400.0,
+                "change": 1.0,
+                "change_percent": 0.25,
+                "volume": 10,
+                "source": "tradingview",
+                "updated_at": time.time(),
+            }
 
-    engine._handle_producer_update(_payload("NYSE:BRK.B"))
-    engine._handle_producer_update(_payload("BRK-B"))
+        engine._handle_producer_update(_payload("NYSE:BRK.B"))
+        engine._handle_producer_update(_payload("BRK-B"))
 
-    snapshot = engine.get_market_snapshot()
-    assert "NYSE:BRK.B" in snapshot
-    assert "BRK-B" in snapshot
+        snapshot = engine.get_market_snapshot()
+        assert "NYSE:BRK.B" in snapshot
+        assert "BRK-B" in snapshot
 
-    engine.unregister_symbol("BRK-B", "us")
-    assert "NYSE:BRK.B" not in engine.tv_client.symbols
-    snapshot = engine.get_market_snapshot()
-    assert "NYSE:BRK.B" not in snapshot
-    assert "BRK-B" not in snapshot
-    assert "NYSE:BRK.B" not in engine.get_market_deltas()
-    assert "BRK-B" not in engine.get_market_deltas()
+        engine.unregister_symbol("BRK-B", "us")
+        assert "NYSE:BRK.B" not in engine.tv_client.symbols
+        snapshot = engine.get_market_snapshot()
+        assert "NYSE:BRK.B" not in snapshot
+        assert "BRK-B" not in snapshot
+        assert "NYSE:BRK.B" not in engine.get_market_deltas()
+        assert "BRK-B" not in engine.get_market_deltas()
+    finally:
+        engine.stop()
 
 
 def test_tv_ws_on_message_dispatches_dash_alias_for_class_shares():
@@ -344,27 +353,33 @@ def test_worker_loop_skips_fetch_when_yf_rate_limited():
 
 def test_engine_worker_threads_reports_producers():
     engine = RealtimeMarketEngine()
-    assert engine.worker_threads() == []
+    try:
+        assert engine.worker_threads() == []
 
-    engine.tv_client.thread = threading.Thread(name="TradingViewWSWorker")
-    engine.yahoojp_scraper.thread = threading.Thread(name="YahooJPScraperWorker")
-    engine.pts_thread = threading.Thread(name="JPPTSWorker")
-    names = [t.name for t in engine.worker_threads()]
-    assert "TradingViewWSWorker" in names
-    assert "YahooJPScraperWorker" in names
-    assert "JPPTSWorker" in names
+        engine.tv_client.thread = threading.Thread(name="TradingViewWSWorker")
+        engine.yahoojp_scraper.thread = threading.Thread(name="YahooJPScraperWorker")
+        engine.pts_thread = threading.Thread(name="JPPTSWorker")
+        names = [t.name for t in engine.worker_threads()]
+        assert "TradingViewWSWorker" in names
+        assert "YahooJPScraperWorker" in names
+        assert "JPPTSWorker" in names
+    finally:
+        engine.stop()
 
 
 def test_engine_restart_stops_and_starts():
     engine = RealtimeMarketEngine()
-    with (
-        patch.object(engine, "stop") as mock_stop,
-        patch.object(engine, "start") as mock_start,
-        patch("services.realtime_engine.time.sleep", return_value=None),
-    ):
-        engine.restart()
-        mock_stop.assert_called_once()
-        mock_start.assert_called_once()
+    try:
+        with (
+            patch.object(engine, "stop") as mock_stop,
+            patch.object(engine, "start") as mock_start,
+            patch("services.realtime_engine.time.sleep", return_value=None),
+        ):
+            engine.restart()
+            mock_stop.assert_called_once()
+            mock_start.assert_called_once()
+    finally:
+        engine.stop()
 
 
 def test_engine_restart_defers_while_previous_pts_worker_is_alive():
@@ -386,6 +401,7 @@ def test_engine_restart_defers_while_previous_pts_worker_is_alive():
         release.set()
         worker.join(timeout=5.0)
         assert not worker.is_alive()
+        engine.stop()
 
 
 def test_restart_keeps_symbol_registration_usable():
@@ -394,27 +410,27 @@ def test_restart_keeps_symbol_registration_usable():
     ``RuntimeError: cannot schedule new futures after shutdown``.
     """
     engine = RealtimeMarketEngine()
-    with (
-        # Keep the restart producer-free: only the executor lifecycle is under
-        # test here.
-        patch.object(engine.tv_client, "start"),
-        patch.object(engine.yahoojp_scraper, "start"),
-        patch.object(engine, "_pts_worker_loop"),
-        patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=None),
-        patch.object(engine, "_fetch_pts_with_fallback", return_value=None),
-        patch("services.realtime_engine.is_pts_session", return_value=False),
-        patch("services.realtime_engine.time.sleep", return_value=None),
-    ):
-        engine.restart()
-        # No RuntimeError: the executor was rebuilt by start().
-        engine.register_symbol("7203.T", "jp")
-        with engine.yahoojp_scraper.lock:
-            assert "7203.T" in engine.yahoojp_scraper.symbols
-        engine.register_symbols(["AAPL"], [])
-        assert "NASDAQ:AAPL" in engine.tv_client.symbols
-    # Cleanup without touching real producers.
-    engine.running = False
-    engine._bg_executor.shutdown(wait=False, cancel_futures=True)
+    try:
+        with (
+            # Keep the restart producer-free: only the executor lifecycle is under
+            # test here.
+            patch.object(engine.tv_client, "start"),
+            patch.object(engine.yahoojp_scraper, "start"),
+            patch.object(engine, "_pts_worker_loop"),
+            patch.object(engine.yahoojp_scraper, "_fetch_regular_with_fallback", return_value=None),
+            patch.object(engine, "_fetch_pts_with_fallback", return_value=None),
+            patch("services.realtime_engine.is_pts_session", return_value=False),
+            patch("services.realtime_engine.time.sleep", return_value=None),
+        ):
+            engine.restart()
+            # No RuntimeError: the executor was rebuilt by start().
+            engine.register_symbol("7203.T", "jp")
+            with engine.yahoojp_scraper.lock:
+                assert "7203.T" in engine.yahoojp_scraper.symbols
+            engine.register_symbols(["AAPL"], [])
+            assert "NASDAQ:AAPL" in engine.tv_client.symbols
+    finally:
+        engine.stop()
 
 
 def test_watchdog_restarts_dead_realtime_engine():
@@ -473,6 +489,10 @@ def test_tv_ws_batched_heartbeat_and_qsd():
     batched_message = hb_part + qsd_part
 
     client._on_message(mock_ws, batched_message)
+    mock_ws.send.assert_called_once_with(hb_part)
+    assert [item["symbol"] for item in received] == ["NASDAQ:AAPL", "AAPL"]
+    assert received[0]["price"] == 195.5
+    assert received[0]["change"] == 2.5
 
     mock_ws.send.assert_called_once_with(hb_part)
     assert len(received) == 2

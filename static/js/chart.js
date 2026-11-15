@@ -1352,20 +1352,33 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   const rawBaseData = (
     ohlcData && ohlcData.length > 0 ? ohlcData : data
   ).filter((d) => d && typeof d === "object");
+  const _finiteOrNull = (val) => {
+    if (
+      val == null ||
+      val === "" ||
+      typeof val === "boolean" ||
+      Array.isArray(val)
+    )
+      return null;
+    const num = Number(val);
+    return Number.isFinite(num) ? num : null;
+  };
   const normalizedOhlc = rawBaseData
     .map((d) => {
-      const ts = d.x || (d.date ? new Date(d.date).getTime() : 0);
-      return {
-        x: ts,
-        o: d.o != null ? d.o : d.price,
-        h: d.h != null ? d.h : d.price,
-        l: d.l != null ? d.l : d.price,
-        c: d.c != null ? d.c : d.price,
-        v: d.v != null ? d.v : d.y || 0,
-        price: d.price != null ? d.price : d.c != null ? d.c : d.o,
-      };
+      const ts =
+        _finiteOrNull(
+          d.x != null ? d.x : d.date ? new Date(d.date).getTime() : 0,
+        ) ?? 0;
+      const c = _finiteOrNull(d.c != null ? d.c : d.price);
+      if (ts <= 0 || c === null) return null;
+      const o = _finiteOrNull(d.o != null ? d.o : d.price) ?? c;
+      const h = _finiteOrNull(d.h != null ? d.h : d.price) ?? c;
+      const l = _finiteOrNull(d.l != null ? d.l : d.price) ?? c;
+      const price = _finiteOrNull(d.price) ?? c;
+      const v = _finiteOrNull(d.v != null ? d.v : d.y) ?? 0;
+      return { x: ts, o, h, l, c, v, price };
     })
-    .filter((d) => d.x > 0);
+    .filter((d) => d !== null);
 
   // 正規化後に有効点が不足する場合(タイムスタンプ欠損等)、空データの
   // チャートを黙って描かず情報表示を出して中断する。
@@ -1762,7 +1775,13 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
     _safeDestroyChart(canvas);
     return;
   }
-  if (!avgPrice || avgPrice <= 0 || !data || data.length < 2) {
+  if (
+    typeof avgPrice !== "number" ||
+    !Number.isFinite(avgPrice) ||
+    avgPrice <= 0 ||
+    !Array.isArray(data) ||
+    data.length < 2
+  ) {
     _safeDestroyChart(canvas);
     return;
   }
@@ -1771,10 +1790,30 @@ function drawPnLChart(canvas, data, avgPrice, options = {}) {
     typeof getColorSchemePreference === "function" &&
     getColorSchemePreference() === "jp_standard";
 
-  const pnlData = data.map((d) => ({
-    x: d.x,
-    y: (((d.c ?? d.price) - avgPrice) / avgPrice) * 100,
-  }));
+  const pnlData = data
+    .map((d) => {
+      if (!d || typeof d !== "object" || d.x == null) return null;
+      const rawPrice = d.c ?? d.price;
+      if (
+        rawPrice == null ||
+        rawPrice === "" ||
+        typeof rawPrice === "boolean" ||
+        Array.isArray(rawPrice)
+      )
+        return null;
+      const priceNum = Number(rawPrice);
+      if (!Number.isFinite(priceNum)) return null;
+      return {
+        x: d.x,
+        y: ((priceNum - avgPrice) / avgPrice) * 100,
+      };
+    })
+    .filter((pt) => pt !== null && Number.isFinite(pt.y));
+
+  if (pnlData.length < 2) {
+    _safeDestroyChart(canvas);
+    return;
+  }
 
   const posColor = isJpScheme ? "#ff7d7d" : "#7dffb0";
   const negColor = isJpScheme ? "#7dffb0" : "#ff7d7d";

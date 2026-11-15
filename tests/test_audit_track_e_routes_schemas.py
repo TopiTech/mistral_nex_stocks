@@ -22,6 +22,13 @@ from route_helpers import _is_polling_token_inflight
 from routes.api_analysis import _chat_error_response, _stream_chat_response
 from routes.stocks.ai_portfolio import _ai_portfolio_error_response
 from services.ai_service import ProviderAPIError
+from tests.test_support.patches import stub_public_outbound_dns
+
+
+@pytest.fixture(autouse=True)
+def _stub_public_dns():
+    with stub_public_outbound_dns():
+        yield
 
 _LOCAL_HEADERS = {"Origin": "http://localhost:5000"}
 _PNG_1X1_DATA_URI = (

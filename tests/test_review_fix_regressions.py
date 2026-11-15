@@ -88,23 +88,27 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
                 status="OPEN", open_until=0, probing=False
             )
 
-        with (
-            patch("routes.api_stocks._has_cached_key", return_value=False),
-            patch.object(
-                app_state.execution.data_executor,
-                "submit",
-                side_effect=queue.Full,
-            ),
-            app.test_client() as client,
-        ):
-            response = client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1mo")
+        try:
+            with (
+                patch("routes.api_stocks._has_cached_key", return_value=False),
+                patch.object(
+                    app_state.execution.data_executor,
+                    "submit",
+                    side_effect=queue.Full,
+                ),
+                app.test_client() as client,
+            ):
+                response = client.get(f"/api/stock-history?symbol={symbol}&market=us&period=1mo")
 
-        self.assertEqual(response.status_code, 200)
-        with app_state.market.history_circuit_lock:
-            state = app_state.market.history_circuit_state[circuit_key]
-            self.assertEqual(state["status"], "OPEN")
-            self.assertFalse(state["probing"])
-            self.assertGreater(state["open_until"], 0)
+            self.assertEqual(response.status_code, 200)
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state[circuit_key]
+                self.assertEqual(state["status"], "OPEN")
+                self.assertFalse(state["probing"])
+                self.assertGreater(state["open_until"], 0)
+        finally:
+            with app_state.market.history_circuit_lock:
+                app_state.market.history_circuit_state.pop(circuit_key, None)
 
     def test_route_releases_probe_when_duplicate_inflight_is_not_a_probe(self):
         from app import app
@@ -192,17 +196,21 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
                 status="HALF_OPEN", probing=True
             )
 
-        with patch.object(
-            stock_service,
-            "fetch_history_sync_impl",
-            return_value={"error": "upstream unavailable", "symbol": symbol},
-        ):
-            stock_service.fetch_history_async_task(symbol, "us", "1mo", cache_key, 60, probe=True)
+        try:
+            with patch.object(
+                stock_service,
+                "fetch_history_sync_impl",
+                return_value={"error": "upstream unavailable", "symbol": symbol},
+            ):
+                stock_service.fetch_history_async_task(symbol, "us", "1mo", cache_key, 60, probe=True)
 
-        with app_state.market.history_circuit_lock:
-            state = app_state.market.history_circuit_state[circuit_key]
-            self.assertEqual(state["status"], "OPEN")
-            self.assertFalse(state["probing"])
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state[circuit_key]
+                self.assertEqual(state["status"], "OPEN")
+                self.assertFalse(state["probing"])
+        finally:
+            with app_state.market.history_circuit_lock:
+                app_state.market.history_circuit_state.pop(circuit_key, None)
 
     def test_probe_job_releases_probe_on_unexpected_exception(self):
         from app_state import app_state
@@ -217,17 +225,21 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
                 status="HALF_OPEN", probing=True
             )
 
-        with patch.object(
-            stock_service,
-            "fetch_history_sync_impl",
-            side_effect=RuntimeError("unexpected worker failure"),
-        ):
-            stock_service.fetch_history_async_task(symbol, "us", "1mo", cache_key, 60, probe=True)
+        try:
+            with patch.object(
+                stock_service,
+                "fetch_history_sync_impl",
+                side_effect=RuntimeError("unexpected worker failure"),
+            ):
+                stock_service.fetch_history_async_task(symbol, "us", "1mo", cache_key, 60, probe=True)
 
-        with app_state.market.history_circuit_lock:
-            state = app_state.market.history_circuit_state[circuit_key]
-            self.assertEqual(state["status"], "OPEN")
-            self.assertFalse(state["probing"])
+            with app_state.market.history_circuit_lock:
+                state = app_state.market.history_circuit_state[circuit_key]
+                self.assertEqual(state["status"], "OPEN")
+                self.assertFalse(state["probing"])
+        finally:
+            with app_state.market.history_circuit_lock:
+                app_state.market.history_circuit_state.pop(circuit_key, None)
 
 
 class DoubleShutdownIdempotencyTestCase(unittest.TestCase):
@@ -247,43 +259,53 @@ class EphemeralKeyDoubleCheckTestCase(unittest.TestCase):
     def test_concurrent_get_ephemeral_key_no_deadlock(self):
         import crypto_utils
 
-        # Reset for isolation.
+        # Reset for isolation and restore afterward.
+        prev_key = getattr(crypto_utils, "_EPHEMERAL_KEY", None)
         crypto_utils._EPHEMERAL_KEY = None  # type: ignore[attr-defined]
-        results: list[str] = []
-        errors: list[Exception] = []
+        try:
+            results: list[str] = []
+            errors: list[Exception] = []
 
-        def worker():
-            try:
-                results.append(crypto_utils._get_ephemeral_key())
-            except Exception as exc:  # pragma: no cover
-                errors.append(exc)
+            def worker():
+                try:
+                    results.append(crypto_utils._get_ephemeral_key())
+                except Exception as exc:  # pragma: no cover
+                    errors.append(exc)
 
-        threads = [threading.Thread(target=worker) for _ in range(10)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=5)
-            self.assertFalse(t.is_alive(), "worker deadlocked")
+            threads = [threading.Thread(target=worker) for _ in range(10)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=5)
+                self.assertFalse(t.is_alive(), "worker deadlocked")
 
-        self.assertEqual(errors, [])
-        # All threads must agree on the same key (single generation wins).
-        self.assertEqual(len(set(results)), 1)
+            self.assertEqual(errors, [])
+            # All threads must agree on the same key (single generation wins).
+            self.assertEqual(len(set(results)), 1)
+        finally:
+            with crypto_utils._EPHEMERAL_LOCK:
+                crypto_utils._EPHEMERAL_KEY = prev_key  # type: ignore[attr-defined]
 
     def test_nested_lock_does_not_deadlock(self):
         import crypto_utils
 
+        prev_key = getattr(crypto_utils, "_EPHEMERAL_KEY", None)
         crypto_utils._EPHEMERAL_KEY = None  # type: ignore[attr-defined]
         # The bug was: caller holds _EPHEMERAL_LOCK then calls _get_ephemeral_key
         # which tried to acquire the same non-reentrant Lock -> deadlock.
         # With RLock, this must not deadlock.
-        acquired = crypto_utils._EPHEMERAL_LOCK.acquire(timeout=5)
-        self.assertTrue(acquired)
         try:
-            key = crypto_utils._get_ephemeral_key()
-            self.assertIsInstance(key, str)
-            self.assertTrue(len(key) > 0)
+            acquired = crypto_utils._EPHEMERAL_LOCK.acquire(timeout=5)
+            self.assertTrue(acquired)
+            try:
+                key = crypto_utils._get_ephemeral_key()
+                self.assertIsInstance(key, str)
+                self.assertTrue(len(key) > 0)
+            finally:
+                crypto_utils._EPHEMERAL_LOCK.release()
         finally:
-            crypto_utils._EPHEMERAL_LOCK.release()
+            with crypto_utils._EPHEMERAL_LOCK:
+                crypto_utils._EPHEMERAL_KEY = prev_key  # type: ignore[attr-defined]
 
 
 class ChatHistoryPermissionsTestCase(unittest.TestCase):
@@ -371,6 +393,8 @@ class ReviewR1R2RegressionTestCase(unittest.TestCase):
         finally:
             if original_csrf is not None:
                 app.config["WTF_CSRF_ENABLED"] = original_csrf
+            else:
+                app.config.pop("WTF_CSRF_ENABLED", None)
 
     def test_r2_generated_portfolio_save_failure_is_not_success(self):
         from services import ai_portfolio_service as aps

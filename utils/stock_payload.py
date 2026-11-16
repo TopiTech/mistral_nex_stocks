@@ -1265,8 +1265,10 @@ def _wait_for_initial_market_snapshot(
     if getattr(app_state.market, "first_sync_attempted", False):
         return check_ready()
 
-    deadline = time.time() + max(0.0, timeout_sec)
-    while time.time() < deadline:
+    # Elapsed-time budget: a backward wall-clock adjustment must not extend the
+    # request thread's wait past ``timeout_sec``.
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    while time.monotonic() < deadline:
         if check_ready():
             return True
         # If the background sync finished while we were waiting, stop waiting

@@ -47,11 +47,20 @@ _is_sync_leader: bool = False
 def _detach_inherited_leader_lock_locked() -> None:
     """Detach an inherited parent leader-lock handle after fork without closing it."""
     global _LEADER_LOCK_FILE, _LEADER_LOCK_PID
-    if _LEADER_LOCK_PID is not None and _LEADER_LOCK_PID != os.getpid():
-        _LEADER_LOCK_FILE = None
+    if _LEADER_LOCK_PID is None or _LEADER_LOCK_PID == os.getpid():
+        return
+    # A differing PID alone does not prove inheritance: the bookkeeping marker
+    # can be stale after a partial reset that cleared ``_LEADER_LOCK_FILE``
+    # without going through ``_set_leader_lock_file``. Revoking leadership in
+    # that state silently demotes a healthy master on the next ``is_leader()``
+    # call, so only detach when this process actually owns an inherited handle.
+    if _get_leader_lock_file() is None:
         _LEADER_LOCK_PID = None
-        _set_app_bg_attr("_LEADER_LOCK_FILE", None)
-        _set_is_sync_leader(False)
+        return
+    _LEADER_LOCK_FILE = None
+    _LEADER_LOCK_PID = None
+    _set_app_bg_attr("_LEADER_LOCK_FILE", None)
+    _set_is_sync_leader(False)
 
 
 def _reset_leader_lock_in_child() -> None:

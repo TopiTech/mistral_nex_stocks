@@ -251,13 +251,15 @@ def get_backend_verification(port: int | None = None) -> bool | None:
 
 def wait_for_backend_ready(timeout_sec: float = 20.0) -> bool:  # 個人利用向けに最適化
     """バックエンドのヘルスチェックが通るまで待機"""
-    deadline = time.time() + timeout_sec
+    # Elapsed-time budget: a wall-clock jump must neither shorten the wait nor
+    # keep this loop polling for hours.
+    deadline = time.monotonic() + timeout_sec
     port = get_backend_port()
     health_urls = [
         f"http://127.0.0.1:{port}/api/health",
         f"http://localhost:{port}/api/health",
     ]
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         for url in health_urls:
             try:
                 # Use requests for health checks to avoid unsafe urlopen patterns flagged by security linters

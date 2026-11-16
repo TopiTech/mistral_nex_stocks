@@ -314,7 +314,12 @@ def test_leader_reacquire_with_open_mirror_returns_true_and_keeps_handle(tmp_pat
             assert not handle.closed
         finally:
             handle.close()
-            app_bg._LEADER_LOCK_FILE = None
+            # Clear the owner PID marker through the owner API; assigning the
+            # mirror attr directly leaves _LEADER_LOCK_PID pointing at this
+            # process and leaks leadership state into later tests.
+            import bg.leader_election as le
+
+            le._set_leader_lock_file(None)
 
 
 def test_leader_pid_is_refreshed_on_reacquire(tmp_path):
@@ -329,7 +334,11 @@ def test_leader_pid_is_refreshed_on_reacquire(tmp_path):
                 assert app_bg._try_acquire_leader_lock() is True
         finally:
             handle.close()
-            app_bg._LEADER_LOCK_FILE = None
+            # Restore both the handle and the PID marker (see above): the
+            # patched PID must not survive the test.
+            import bg.leader_election as le
+
+            le._set_leader_lock_file(None)
 
         lock_content = (tmp_path / ".mns_sync_leader.lock").read_text(encoding="utf-8")
         assert lock_content.strip() == "654321"

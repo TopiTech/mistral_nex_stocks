@@ -407,7 +407,10 @@ def _reset_sync_and_leader() -> None:
                 _lock_f.close()
             except OSError:
                 pass
-            _le._set_leader_lock_file(None)
+        # Always clear the marker through the owner API: when the handle is
+        # already None a stale PID would survive and the next is_leader()
+        # call would misinterpret it as an inherited lock from a parent.
+        _le._set_leader_lock_file(None)
 
         lock = getattr(app_bg, "_sync_execution_lock", None)
         if lock is not None and lock.locked():

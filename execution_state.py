@@ -68,12 +68,15 @@ class ExecutionState:
             except TypeError:
                 ex.shutdown(wait=wait)
 
-        deadline = time.time() + max_join_timeout
+        # A wall-clock deadline can stretch the join budget by hours when the
+        # system clock is adjusted (NTP/manual change) mid-shutdown; the
+        # elapsed-time budget must use a monotonic clock.
+        deadline = time.monotonic() + max_join_timeout
         threads_to_join = self.get_background_threads()
         for t in threads_to_join:
             try:
                 if t.is_alive():
-                    remaining = max(0.01, deadline - time.time())
+                    remaining = max(0.01, deadline - time.monotonic())
                     t.join(timeout=remaining)
             except Exception:
                 logger.debug("Background thread join failed (expected during shutdown)")

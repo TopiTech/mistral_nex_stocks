@@ -185,6 +185,42 @@ class SyncStaleRecoveryTests(unittest.TestCase):
         with app_state.market.is_syncing_lock:
             self.assertFalse(app_state.market.is_syncing)
 
+    def test_forced_sync_preserved_when_takeover_times_out(self):
+        """A forced manual refresh must not vanish when the wedged lock wins."""
+
+        class FakeLock:
+            def acquire(self, blocking=True, timeout=-1):
+                return False
+
+            def release(self):
+                pass
+
+        self._make_stale()
+        with app_state.market.sync_schedule_lock:
+            app_state.market.sync_pending = False
+            app_state.market.sync_forced = False
+        fetch_calls = []
+        try:
+            with (
+                patch.object(app_bg, "_sync_execution_lock", FakeLock()),
+                patch(
+                    "app_bg.fetch_stocks_batch",
+                    side_effect=lambda items, snapshot_ts_ms=None, **kwargs: (
+                        fetch_calls.append(1) or []
+                    ),
+                ),
+            ):
+                app_bg.sync_all_stocks_now(force_fetch=True)
+
+            self.assertEqual(fetch_calls, [])
+            with app_state.market.sync_schedule_lock:
+                self.assertTrue(app_state.market.sync_pending)
+                self.assertTrue(app_state.market.sync_forced)
+        finally:
+            with app_state.market.sync_schedule_lock:
+                app_state.market.sync_pending = False
+                app_state.market.sync_forced = False
+
     # ------------------------------------------------------------------
     # schedule_sync_all_stocks_now recovery (via a fresh module import:
     # conftest stubs the module-level schedule function for the suite)

@@ -86,6 +86,15 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
             )
             _mark_wedged_sync_lock(lock)
             _rotate_sync_execution_lock_if_default(lock)
+            # A forced request carries user intent (manual refresh) that the
+            # periodic loop does not reproduce. Record it before returning so
+            # the next scheduled run still honours it instead of dropping the
+            # request silently. Non-forced calls need no marker: the periodic
+            # fetch loop would perform the same work anyway.
+            if force_fetch:
+                with app_state.market.sync_schedule_lock:
+                    app_state.market.sync_pending = True
+                    app_state.market.sync_forced = True
             return
     _clear_wedged_sync_lock(lock)
 

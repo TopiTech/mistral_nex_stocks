@@ -228,6 +228,42 @@ def test_parse_news_request():
         assert status == 400
         assert resp.get_json()["error_code"] == int(ErrorCode.MALFORMED_INPUT)
 
+    # return_token=True with valid request_token
+    valid_token = "abc_DEF-1234567890_valid"
+    with app.test_request_context(
+        "/api/news",
+        method="POST",
+        json={"force": True, "request_token": valid_token},
+    ):
+        req = MagicMock(args=MultiDict())
+        force, token, err = _parse_news_request(req, return_token=True)
+        assert err is None
+        assert force is True
+        assert token == valid_token
+
+    # return_token=True without request_token
+    with app.test_request_context("/api/news", method="POST", json={"force": False}):
+        req = MagicMock(args=MultiDict())
+        force, token, err = _parse_news_request(req, return_token=True)
+        assert err is None
+        assert force is False
+        assert token is None
+
+    # return_token=True with invalid request_token format
+    with app.test_request_context(
+        "/api/news",
+        method="POST",
+        json={"request_token": "too_short"},
+    ):
+        req = MagicMock(args=MultiDict())
+        force, token, err = _parse_news_request(req, return_token=True)
+        assert force is None
+        assert token is None
+        assert err is not None
+        resp, status = err
+        assert status == 400
+        assert resp.get_json()["error_code"] == int(ErrorCode.MALFORMED_INPUT)
+
 
 def test_sanitize_error_message_naked_tokens():
     """Verify _sanitize_error_message redacts naked API keys without labels."""

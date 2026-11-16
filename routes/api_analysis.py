@@ -1359,7 +1359,7 @@ def api_news():
         return error_response(ErrorCode.INVALID_API_KEY, status_code=401)
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
-    force_refresh, err_resp = _parse_news_request(request)
+    force_refresh, news_token, err_resp = _parse_news_request(request, return_token=True)
     if err_resp or force_refresh is None:
         return err_resp or error_response(
             ErrorCode.MALFORMED_INPUT,
@@ -1403,9 +1403,6 @@ def api_news():
         else f"news_bundle_latest_{strategy}_openai"
     )
 
-    body_json = request.get_json(silent=True)
-    raw_token = body_json.get("request_token") if isinstance(body_json, dict) else None
-    news_token = raw_token.strip() if isinstance(raw_token, str) and raw_token.strip() else None
     news_token_cache_key = f"{inflight_key}:{news_token}" if news_token else None
 
     from constants import CACHE_DURATION_NEWS

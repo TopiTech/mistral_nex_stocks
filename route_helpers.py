@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Mapping
 from functools import wraps
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 
 from flask import Flask, Response, current_app, g, has_app_context, request
 from pydantic import ValidationError
@@ -1741,28 +1741,54 @@ def _parse_chart_image_request(
         return None, _chart_image_error_from_validation(exc)
 
 
+@overload
 def _parse_news_request(
     req: Any,
-) -> tuple[bool | None, tuple[Any, int] | None]:
+    *,
+    return_token: Literal[False] = False,
+) -> tuple[bool | None, tuple[Any, int] | None]: ...
+
+
+@overload
+def _parse_news_request(
+    req: Any,
+    *,
+    return_token: Literal[True],
+) -> tuple[bool | None, str | None, tuple[Any, int] | None]: ...
+
+
+def _parse_news_request(
+    req: Any,
+    return_token: bool = False,
+) -> tuple[bool | None, tuple[Any, int] | None] | tuple[bool | None, str | None, tuple[Any, int] | None]:
     """Validate POST /api/news request body and query parameters via AINewsRequest."""
     body = _parse_optional_json_request()
     if body is None:
-        return None, error_response(
+        err = error_response(
             ErrorCode.MALFORMED_INPUT,
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
+        if return_token:
+            return None, None, err
+        return None, err
     try:
         validated = AINewsRequest.model_validate(body)
         body_force = validated.force
+        token = validated.request_token
     except ValidationError:
-        return None, error_response(
+        err = error_response(
             ErrorCode.MALFORMED_INPUT,
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
+        if return_token:
+            return None, None, err
+        return None, err
     query_force = (req.args.get("force") or "").strip().lower() in ("true", "1", "yes")
     force_refresh = bool(query_force or body_force)
+    if return_token:
+        return force_refresh, token, None
     return force_refresh, None
 
 

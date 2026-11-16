@@ -240,7 +240,7 @@ class TestR47StaleSyncRecoveryAndScheduling:
     ) -> None:
         """Stale recovery must reset app_bg._sync_start_time AND sync_state._sync_start_time,
         reset is_syncing, and emit a critical alert log."""
-        stale_time = time.time() - (app_bg.SYNC_STALE_TIMEOUT_SEC + 30.0)
+        stale_time = time.monotonic() - (app_bg.SYNC_STALE_TIMEOUT_SEC + 30.0)
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
         app_bg._sync_start_time = stale_time
@@ -260,7 +260,7 @@ class TestR47StaleSyncRecoveryAndScheduling:
         """Active sync that has not exceeded timeout should not be cancelled."""
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
-        recent_time = time.time() - 5.0
+        recent_time = time.monotonic() - 5.0
         app_bg._sync_start_time = recent_time
         sync_state._sync_start_time = recent_time
 

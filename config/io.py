@@ -506,6 +506,19 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                     ):
                         if protected_key not in data and protected_key in existing_data:
                             data[protected_key] = copy.deepcopy(existing_data[protected_key])
+                    # ``DEFAULT_CONFIG`` supplies an empty api_credentials dict,
+                    # so a caller that saves only preferences (without loading
+                    # first) would otherwise overwrite every stored API key with
+                    # {}. Preserve the existing credentials only when the
+                    # caller OMITS the key; an explicit {} still clears them
+                    # (clear_api_credentials relies on that contract).
+                    existing_credentials = existing_data.get("api_credentials")
+                    if (
+                        "api_credentials" not in cfg
+                        and isinstance(existing_credentials, dict)
+                        and existing_credentials
+                    ):
+                        data["api_credentials"] = copy.deepcopy(existing_credentials)
         except (OSError, ValueError, TypeError, RecursionError) as merge_exc:
             logger.debug("Could not merge protected config keys before save: %s", merge_exc)
 

@@ -174,7 +174,9 @@ def test_bg001_wedged_lock_rotation_prevents_permanent_lockout() -> None:
     try:
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
-        sync_state._set_sync_start_time(time.time() - (sync_state.SYNC_STALE_TIMEOUT_SEC + 30.0))
+        sync_state._set_sync_start_time(
+            time.monotonic() - (sync_state.SYNC_STALE_TIMEOUT_SEC + 30.0)
+        )
 
         with (
             patch.object(app_bg, "SYNC_STALE_LOCK_WAIT_SEC", 0.01),

@@ -208,7 +208,10 @@ def _recover_stale_sync_state_if_needed(
             timeout_sec = float(
                 _get_app_bg_attr("SYNC_STALE_TIMEOUT_SEC", SYNC_STALE_TIMEOUT_SEC)
             )
-        elapsed = time.time() - start_time if start_time > 0 else 0.0
+        # ``_sync_start_time`` is recorded with time.monotonic() by the sync
+        # worker; a wall clock jump must not fabricate staleness (which would
+        # start an overlapping sync) or mask a wedged one.
+        elapsed = time.monotonic() - start_time if start_time > 0 else 0.0
         if elapsed <= timeout_sec:
             return False
         logger.critical(

@@ -169,7 +169,9 @@ def _enforce_sec_fetch_site_check():
 
 def _log_request_start():
     """Log the start of an incoming request with a unique request ID."""
-    g.request_start_ts = time.time()
+    # Elapsed duration must use a monotonic clock: a wall-clock adjustment
+    # during a request would otherwise log a negative or inflated latency.
+    g.request_start_ts = time.monotonic()
     g.request_id = uuid.uuid4().hex[:10]
 
     if LOG_LEVEL <= logging.INFO and request.path in DETAILED_API_LOG_PATHS:
@@ -221,7 +223,11 @@ def add_extension_cors_headers(response):
     response.headers["Access-Control-Expose-Headers"] = "X-MNS-Request-Id"
 
     started = getattr(g, "request_start_ts", None)
-    elapsed_ms = int((time.time() - started) * 1000) if isinstance(started, (int, float)) else -1
+    elapsed_ms = (
+        max(0, int((time.monotonic() - started) * 1000))
+        if isinstance(started, (int, float))
+        else -1
+    )
     status_code = int(response.status_code or 0)
     from utils.networking import mask_sensitive_url
 

@@ -561,7 +561,9 @@ class TestSyncMirrorEquivalenceEvidence:
         def _set_stale() -> None:
             with app_state.market.is_syncing_lock:
                 app_state.market.is_syncing = True
-            app_bg._sync_start_time = time.time() - (app_bg.SYNC_STALE_TIMEOUT_SEC + 10)
+            app_bg._sync_start_time = time.monotonic() - (
+                app_bg.SYNC_STALE_TIMEOUT_SEC + 10
+            )
 
         # Entry point 1: the app_bg copy.
         _set_stale()

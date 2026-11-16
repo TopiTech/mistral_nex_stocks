@@ -43,7 +43,7 @@ class SyncStaleRecoveryTests(unittest.TestCase):
             seconds_old = app_bg.SYNC_STALE_TIMEOUT_SEC + 10
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
-        app_bg._sync_start_time = time.time() - seconds_old
+        app_bg._sync_start_time = time.monotonic() - seconds_old
 
     # ------------------------------------------------------------------
     # _recover_stale_sync_state_if_needed
@@ -60,7 +60,7 @@ class SyncStaleRecoveryTests(unittest.TestCase):
     def test_recover_stale_sync_state_noop_when_sync_is_recent(self):
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
-        app_bg._sync_start_time = time.time()  # just started
+        app_bg._sync_start_time = time.monotonic()  # just started
         recovered = app_bg._recover_stale_sync_state_if_needed()
         self.assertFalse(recovered)
         with app_state.market.is_syncing_lock:
@@ -203,7 +203,9 @@ class SyncStaleRecoveryTests(unittest.TestCase):
         fresh = self._fresh_app_bg()
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
-        fresh._sync_start_time = time.time() - (fresh.SYNC_STALE_TIMEOUT_SEC + 10)
+        fresh._sync_start_time = time.monotonic() - (
+            fresh.SYNC_STALE_TIMEOUT_SEC + 10
+        )
 
         with patch.object(fresh, "_run_scheduled_sync_job", lambda: None):
             result = fresh.schedule_sync_all_stocks_now()
@@ -216,7 +218,7 @@ class SyncStaleRecoveryTests(unittest.TestCase):
         fresh = self._fresh_app_bg()
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
-        fresh._sync_start_time = time.time()  # just started
+        fresh._sync_start_time = time.monotonic()  # just started
 
         with patch.object(fresh, "_run_scheduled_sync_job", lambda: None):
             result = fresh.schedule_sync_all_stocks_now()

@@ -95,7 +95,10 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
     try:
         with app_state.market.is_syncing_lock:
             app_state.market.is_syncing = True
-            _set_sync_start_time(time.time())
+            # Elapsed-time budget: staleness is measured against a monotonic
+            # clock, so an NTP/manual clock jump cannot mark a healthy sync
+            # stale (allowing a concurrent run) or hide a wedged one.
+            _set_sync_start_time(time.monotonic())
             # Atomic increment returning this run's generation (C-1): a lost
             # update here would let a stale run clear a newer run's is_syncing.
             sync_generation = _next_sync_generation()

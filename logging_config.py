@@ -288,6 +288,45 @@ class YFinanceNoFundamentalsFilter(logging.Filter):
         return not any(pattern in msg for pattern in self._SUPPRESSED_PATTERNS)
 
 
+def _create_restricted_file_handlers(
+    log_file: Path, error_log_file: Path
+) -> tuple[logging.Handler, logging.Handler]:
+    """Create both rotating file handlers without leaking a partial result.
+
+    Handler construction can fail on the second file (permissions, disk full,
+    AV lock) after the first handler is already open. Without closing it here,
+    ``init_logging``'s stderr fallback left the first file descriptor open for
+    the rest of the process lifetime.
+    """
+    rotating_handler: logging.Handler | None = None
+    try:
+        with restrictive_umask_lock():
+            old_umask = os.umask(0o077)
+            try:
+                rotating_handler = _RestrictiveRotatingFileHandler(
+                    str(log_file),
+                    maxBytes=5 * 1024 * 1024,  # 5MB
+                    backupCount=3,
+                    encoding="utf-8",
+                )
+                error_handler = _RestrictiveRotatingFileHandler(
+                    str(error_log_file),
+                    maxBytes=2 * 1024 * 1024,  # 2MB
+                    backupCount=5,
+                    encoding="utf-8",
+                )
+            finally:
+                os.umask(old_umask)
+        return rotating_handler, error_handler
+    except Exception:
+        if rotating_handler is not None:
+            try:
+                rotating_handler.close()
+            except Exception:
+                pass
+        raise
+
+
 def init_logging(app) -> None:
     """Configure structured logging with rotation, sanitisation, and filters.
 
@@ -330,26 +369,10 @@ def init_logging(app) -> None:
     # Log content is sanitized, but the files themselves live next to
     # secrets-adjacent runtime state; create them 0o600 like the config /
     # user_stocks / DB files so other local users cannot read them.
-    rotating_handler: logging.Handler = logging.NullHandler()
-    error_handler: logging.Handler = logging.NullHandler()
     try:
-        with restrictive_umask_lock():
-            _old_umask = os.umask(0o077)
-            try:
-                rotating_handler = _RestrictiveRotatingFileHandler(
-                    str(log_file),
-                    maxBytes=5 * 1024 * 1024,  # 5MB
-                    backupCount=3,
-                    encoding="utf-8",
-                )
-                error_handler = _RestrictiveRotatingFileHandler(
-                    str(error_log_file),
-                    maxBytes=2 * 1024 * 1024,  # 2MB
-                    backupCount=5,
-                    encoding="utf-8",
-                )
-            finally:
-                os.umask(_old_umask)
+        rotating_handler, error_handler = _create_restricted_file_handlers(
+            log_file, error_log_file
+        )
     except OSError as exc:
         # A read-only/non-directory log path must not prevent the app from
         # starting; keep logging available on stderr instead.
@@ -358,10 +381,6 @@ def init_logging(app) -> None:
             log_dir,
             exc,
         )
-        try:
-            rotating_handler.close()
-        except Exception:
-            pass
         rotating_handler = logging.StreamHandler()
         error_handler = logging.StreamHandler()
     rotating_handler.setLevel(LOG_LEVEL)

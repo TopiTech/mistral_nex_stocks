@@ -11,6 +11,7 @@ from constants import (
     NEWS_CONTEXT_WAIT_TIMEOUT,
     NEWS_SUMMARY_MAX_TOKENS,
 )
+from credential_manager import get_openai_model, is_openai_provider, is_preview_api_key
 from services.ai_service import ProviderAPIError, call_mistral_chat, is_mistral_error
 from services.news_formatter import NewsFormatter
 from services.search_service import (
@@ -120,7 +121,7 @@ class NewsService:
                 ),
                 300,
                 90,
-                False,
+                bool(force_refresh),
             )
             fut_jp_ctx = inner_pool.submit(
                 get_cached_context_with_negative_cache,
@@ -130,7 +131,7 @@ class NewsService:
                 ),
                 300,
                 90,
-                False,
+                bool(force_refresh),
             )
             fut_us_trends = inner_pool.submit(
                 collect_market_trending_titles,
@@ -398,24 +399,38 @@ class NewsService:
         # "success" bundle and keep being served after the providers recover.
         # Return an empty bundle instead and let retrieve_status signal the
         # degraded fetch state to the UI.
+        is_preview = is_preview_api_key(api_key)
+        cache_scope = f"openai_{get_openai_model()}" if is_openai_provider() else ""
+        llm_cache_key = (
+            f"news_bundle_llm_{cache_scope}_{llm_hash}"
+            if cache_scope
+            else f"news_bundle_llm_{llm_hash}"
+        )
+
         if not (us_context or jp_context or trends_context):
             logger.warning(
                 "News bundle skipped: no market news context available "
                 "(all providers returned empty/failed); returning empty result."
             )
             news_bundle = {"us": "", "jp": "", "trends": ""}
+        elif is_preview:
+            logger.info(
+                "News bundle preview mode (bypassing shared LLM cache) context_hash=%s",
+                llm_hash[:12],
+            )
+            news_bundle = _generate_news_bundle()
         elif force_refresh:
             logger.info("News bundle force refresh context_hash=%s", llm_hash[:12])
             news_bundle = _generate_news_bundle()
             if _is_valid_news_bundle(news_bundle):
                 _set_cached_value(
-                    f"news_bundle_llm_{llm_hash}",
+                    llm_cache_key,
                     news_bundle,
                     duration=CACHE_DURATION_NEWS,
                 )
         else:
             news_bundle = get_cached(
-                f"news_bundle_llm_{llm_hash}",
+                llm_cache_key,
                 _generate_news_bundle,
                 duration=CACHE_DURATION_NEWS,
                 valid_func=_is_valid_news_bundle,

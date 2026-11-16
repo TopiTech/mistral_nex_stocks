@@ -22,7 +22,7 @@ from typing import Any
 from requests.exceptions import RequestException
 
 from app_state import app_state
-from bg.common import announce_real_market_state
+from bg.common import _invalidate_sse_payload_cache, announce_real_market_state
 from bg.sync import _shim
 from bg.sync import state as _state
 from bg.sync.fetch import _is_batch_result_invalid, fetch_index_data
@@ -47,11 +47,13 @@ logger = logging.getLogger("bg.sync_worker")
 def _warm_payload_cache_from_disk() -> None:
     """Load cached stock payloads from disk into target cache on cold start or follower sync."""
     try:
+        warmed_indices = False
         try:
             cached_indices = app_state.payload_disk_cache.get("indices_cache", ignore_ttl=True)
             if isinstance(cached_indices, dict) and cached_indices:
                 with app_state.cache.sse_data_lock:
                     app_state.market.current_indices_cache.update(cached_indices)
+                warmed_indices = True
                 logger.info("Warmed indices cache from disk cache")
         except Exception as exc:
             logger.debug("Failed to warm indices cache from disk: %s", exc)
@@ -105,9 +107,6 @@ def _warm_payload_cache_from_disk() -> None:
             logger.info(
                 "Warmed/Updated %d stock payloads from disk cache (including defaults)", warmed
             )
-            current_empty = not any(
-                app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
-            )
 
             def _has_real_prices(stocks_cache: dict) -> bool:
                 for m in ("us", "jp", "idx"):
@@ -116,11 +115,19 @@ def _warm_payload_cache_from_disk() -> None:
                             return True
                 return False
 
-            if current_empty or not _has_real_prices(app_state.market.current_stocks_cache):
-                with app_state.cache.sse_data_lock:
+            with app_state.cache.sse_data_lock:
+                current_empty = not any(
+                    app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
+                )
+                if current_empty or not _has_real_prices(app_state.market.current_stocks_cache):
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache
                     )
+        if warmed_indices or warmed > 0:
+            inval_fn = _get_app_bg_attr(
+                "_invalidate_sse_payload_cache", _invalidate_sse_payload_cache
+            )
+            inval_fn()
     except (OSError, TypeError, AttributeError, RuntimeError) as exc:
         logger.debug("Disk cache warm-up failed (non-critical): %s", exc)
 
@@ -356,7 +363,6 @@ def _process_fetched_stocks(
                 if vol is not None:
                     app_state.market.update_volume_cache(sym, vol)
 
-        announce_real_market_state()
         current_empty = not any(
             app_state.market.current_stocks_cache.get(m) for m in ("us", "jp", "idx")
         )
@@ -364,6 +370,7 @@ def _process_fetched_stocks(
             app_state.market.current_stocks_cache = copy.deepcopy(
                 app_state.market.target_stocks_cache
             )
+    announce_real_market_state()
     return ProcessedStocks(us=new_us, jp=new_jp, idx=new_idx)
 
 

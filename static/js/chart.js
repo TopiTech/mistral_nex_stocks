@@ -654,7 +654,7 @@ function prefetchStockHistory(
     effectiveInterval,
   )
     .then(({ formattedData, ohlcData }) => {
-      _enforcePrefetchCacheLimit();
+      if (!historyPrefetchCache.has(cacheKey)) _enforcePrefetchCacheLimit(1);
       historyPrefetchCache.set(cacheKey, {
         formattedData,
         ohlcData,
@@ -2145,15 +2145,17 @@ async function refreshStockChart(wrapper, period, interval) {
 
     // プレビュー経路と同様、キャッシュ上限を強制してから書き込む
     // (TTLスイープのみに依存して上限を超えたまま滞留しないように)。
-    _enforcePrefetchCacheLimit();
-    historyPrefetchCache.set(
-      getHistoryPrefetchKey(stockKey, targetPeriod, targetInterval),
-      {
-        formattedData,
-        ohlcData,
-        ts: Date.now(),
-      },
+    const prefetchKey = getHistoryPrefetchKey(
+      stockKey,
+      targetPeriod,
+      targetInterval,
     );
+    if (!historyPrefetchCache.has(prefetchKey)) _enforcePrefetchCacheLimit(1);
+    historyPrefetchCache.set(prefetchKey, {
+      formattedData,
+      ohlcData,
+      ts: Date.now(),
+    });
 
     clearChartError(wrapper);
     applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData);

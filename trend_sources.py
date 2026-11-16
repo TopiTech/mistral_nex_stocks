@@ -25,6 +25,7 @@ from constants import (
     TREND_SOURCE_RESULT_TIMEOUT_SEC,
     TREND_SYMBOL_QUERY_LIMIT,
 )
+from utils.http_utils import close_response_quietly
 from utils.threading import DaemonThreadPoolExecutor
 
 try:
@@ -348,31 +349,39 @@ def _request_json(
     req_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if isinstance(headers, dict):
         req_headers.update(headers)
-    response = _get_trend_session().get(
-        url,
-        params=params,
-        timeout=TREND_REQUEST_TIMEOUT,
-        headers=req_headers,
-    )
-    response.raise_for_status()
-    data = response.json()
-    return data if isinstance(data, dict) else {}
+    response = None
+    try:
+        response = _get_trend_session().get(
+            url,
+            params=params,
+            timeout=TREND_REQUEST_TIMEOUT,
+            headers=req_headers,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, dict) else {}
+    finally:
+        close_response_quietly(response)
 
 
 def _fetch_rss_feed(rss_url: str):
     if feedparser is None:
         raise RuntimeError("feedparser is not installed")
     # Fetch feed body with explicit timeout so one hung feed does not block the whole analysis.
-    response = _get_trend_session().get(
-        rss_url,
-        timeout=TREND_REQUEST_TIMEOUT,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
-        },
-    )
-    response.raise_for_status()
-    return feedparser.parse(response.text)
+    response = None
+    try:
+        response = _get_trend_session().get(
+            rss_url,
+            timeout=TREND_REQUEST_TIMEOUT,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+            },
+        )
+        response.raise_for_status()
+        return feedparser.parse(response.text)
+    finally:
+        close_response_quietly(response)
 
 
 def _market_key(market: str) -> str:

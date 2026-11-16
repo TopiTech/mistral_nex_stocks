@@ -15,7 +15,7 @@ import weakref
 from typing import Any, ClassVar
 
 from credential_manager import get_alphavantage_api_key
-from utils.http_utils import parse_retry_after
+from utils.http_utils import close_response_quietly, parse_retry_after
 from utils.normalization import _finite_number, is_bool_like
 
 BeautifulSoup: Any
@@ -304,12 +304,7 @@ class AlphaVantageProvider(BaseFallbackProvider):
             logger.debug("AlphaVantage fallback failed for %s: %s", symbol, safe_exc)
             return None
         finally:
-            close_fn = getattr(resp, "close", None)
-            if callable(close_fn):
-                try:
-                    close_fn()
-                except Exception:
-                    pass
+            close_response_quietly(resp)
 
 
 class YahooWebScraperProvider(_CurlCffiSessionProvider):
@@ -367,6 +362,7 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
             return None
 
         url = f"https://finance.yahoo.com/quote/{symbol}/"
+        resp: Any = None
         try:
             resp = (
                 client.get(url, timeout=10.0)
@@ -490,6 +486,8 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
         except Exception as exc:
             logger.debug("Yahoo HTML scraper failed for %s: %s", symbol, exc)
             return None
+        finally:
+            close_response_quietly(resp)
 
 
 def _extract_yahoo_jp_price(soup, raw_text):
@@ -583,6 +581,7 @@ class YahooJPScraperProvider(_CurlCffiSessionProvider):
         base_symbol = symbol.split(".")[0]
         url = f"https://finance.yahoo.co.jp/quote/{base_symbol}.T"
 
+        resp: Any = None
         try:
             resp = (
                 client.get(url, timeout=10.0)
@@ -628,6 +627,8 @@ class YahooJPScraperProvider(_CurlCffiSessionProvider):
         except Exception as exc:
             logger.debug("Yahoo JP HTML scraper failed for %s: %s", symbol, exc)
             return None
+        finally:
+            close_response_quietly(resp)
 
 
 class Nikkei225JPProvider(_CurlCffiSessionProvider):
@@ -693,6 +694,7 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
             if self._adr_cache and (now - self._adr_cache_time) < max_age:
                 return self._adr_cache
 
+        resp: Any = None
         try:
             resp = (
                 client.get(self.ADR_ALL_URL, timeout=6.0)
@@ -718,9 +720,11 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
                 if cache:
                     with self._cache_lock:
                         self._adr_cache = cache
-                        self._adr_cache_time = now
+                        self._adr_cache_time = time.time()
         except Exception as exc:
             logger.debug("Nikkei225JPProvider failed fetching _adr_all.js: %s", exc)
+        finally:
+            close_response_quietly(resp)
 
         with self._cache_lock:
             return self._adr_cache
@@ -736,6 +740,7 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
         cache: dict[int, list[str]] = {}
         blocked = False
         for url in (self.INDEX_MID_URL, self.INDEX_BTM_URL):
+            resp: Any = None
             try:
                 resp = (
                     client.get(url, timeout=6.0)
@@ -760,20 +765,23 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
                                 cache[code] = parts
             except Exception as exc:
                 logger.debug("Nikkei225JPProvider failed fetching index %s: %s", url, exc)
+            finally:
+                close_response_quietly(resp)
 
         if not blocked:
+            resp_ndy: Any = None
             try:
-                resp = (
+                resp_ndy = (
                     client.get(self.INDEX_NDY_URL, timeout=6.0)
                     if is_session
                     else client.get(self.INDEX_NDY_URL, impersonate="chrome120", timeout=6.0)
                 )
-                self._report_http_block(resp)
-                if resp.status_code == 200:
+                self._report_http_block(resp_ndy)
+                if resp_ndy.status_code == 200:
                     text = (
-                        resp.text
-                        if hasattr(resp, "text")
-                        else resp.content.decode("utf-8", errors="replace")
+                        resp_ndy.text
+                        if hasattr(resp_ndy, "text")
+                        else resp_ndy.content.decode("utf-8", errors="replace")
                     )
                     for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
                         code = int(m.group(1))
@@ -781,11 +789,13 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
                             cache[code] = [m.group(2), m.group(3), "0", "", ""]
             except Exception as exc:
                 logger.debug("Nikkei225JPProvider failed fetching NDY min: %s", exc)
+            finally:
+                close_response_quietly(resp_ndy)
 
         if cache:
             with self._cache_lock:
                 self._index_cache = cache
-                self._index_cache_time = now
+                self._index_cache_time = time.time()
 
         with self._cache_lock:
             return self._index_cache
@@ -847,6 +857,7 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
         parts = adr_cache.get(clean_code)
 
         if not parts:
+            resp: Any = None
             try:
                 url = f"{self.ADR_URL}?a={clean_code}"
                 resp = (
@@ -866,6 +877,8 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
                         )
             except Exception as exc:
                 logger.debug("Nikkei225JPProvider direct fetch failed for %s: %s", symbol, exc)
+            finally:
+                close_response_quietly(resp)
 
         if not parts or len(parts) < 11:
             return None
@@ -904,6 +917,7 @@ class MinkabuProvider(_CurlCffiSessionProvider):
             return None
         code = symbol.split(".")[0].strip()
         url = f"https://minkabu.jp/stock/{code}"
+        resp: Any = None
         try:
             resp = (
                 client.get(url, timeout=6.0)
@@ -942,6 +956,8 @@ class MinkabuProvider(_CurlCffiSessionProvider):
                 )
         except Exception as exc:
             logger.debug("MinkabuProvider fallback failed for %s: %s", symbol, exc)
+        finally:
+            close_response_quietly(resp)
         return None
 
 

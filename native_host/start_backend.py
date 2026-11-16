@@ -3,6 +3,7 @@
 
 import logging
 import os
+import re
 import socket
 import subprocess  # nosec B404
 import sys
@@ -393,7 +394,7 @@ def _start(extension_id=None):
     env["MNS_BACKEND_PORT"] = str(port)
     if isinstance(extension_id, str):
         extension_id = extension_id.strip()
-        if len(extension_id) == 32 and extension_id.isalnum():
+        if re.fullmatch(r"[a-z0-9]{32}", extension_id):
             env["MNS_EXTENSION_ORIGIN"] = f"chrome-extension://{extension_id}"
         else:
             logger.warning("Invalid extensionId passed to start_backend: %r", extension_id)

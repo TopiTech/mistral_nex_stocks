@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import logging
@@ -26,6 +27,7 @@ from flask import (
     stream_with_context,
 )
 
+import credential_manager
 from app_bg import fetch_stock
 from app_state import app_state
 from constants import (
@@ -269,6 +271,7 @@ class FetchJob(TypedDict, total=False):
     start_time: float
     message: str
     fingerprint: str
+    result_cache_keys: set[str]
 
 
 class _ReleaseOnce:
@@ -300,6 +303,10 @@ class _ChatStreamAbortedError(RuntimeError):
 # Module-level tracking for in-flight news fetches to prevent duplicate execution
 news_fetch_lock = threading.Lock()
 news_fetch_inflight: dict[str, Any] = {}
+NEWS_RESULT_CACHE_TTL = 180.0
+news_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
+    maxsize=256, ttl=NEWS_RESULT_CACHE_TTL
+)
 
 # Module-level tracking for in-flight chat completions (mirrors news pattern)
 chat_fetch_lock = threading.Lock()
@@ -1373,14 +1380,45 @@ def api_news():
     # was started with ``force_refresh=False`` and would return the same cached
     # bundle the user explicitly asked to bypass. Non-forced requests keep the
     # shared key so they still deduplicate with each other.
-    inflight_key = f"news_{strategy}_force" if force_refresh else f"news_{strategy}"
-    latest_cache_key = f"news_bundle_latest_{strategy}"
+    # Preview mode and OpenAI-compatible mode must stay isolated from the real
+    # Mistral cache so neither poisons the other's latest bundle.
+    is_preview = credential_manager.is_preview_api_key(api_key)
+    is_openai = credential_manager.is_openai_provider()
+    if is_preview:
+        provider_scope = "_preview"
+    elif is_openai:
+        model_slug = (credential_manager.get_openai_model() or "default").strip()
+        provider_scope = f"_openai_{model_slug}"
+    else:
+        provider_scope = ""
+
+    inflight_key = (
+        f"news_{strategy}{provider_scope}_force"
+        if force_refresh
+        else f"news_{strategy}{provider_scope}"
+    )
+    latest_cache_key = (
+        f"news_bundle_latest_{strategy}"
+        if not is_openai
+        else f"news_bundle_latest_{strategy}_openai"
+    )
+
+    body_json = request.get_json(silent=True)
+    raw_token = body_json.get("request_token") if isinstance(body_json, dict) else None
+    news_token = raw_token.strip() if isinstance(raw_token, str) and raw_token.strip() else None
+    news_token_cache_key = f"{inflight_key}:{news_token}" if news_token else None
 
     from constants import CACHE_DURATION_NEWS
     from utils.caching import _get_cached_value, _set_cached_value
 
-    latest_bundle = _get_cached_value(latest_cache_key, duration=86400)
-    raw_ts = _get_cached_value(f"{latest_cache_key}_ts", duration=86400, default=0.0)
+    latest_bundle = (
+        None if is_preview else _get_cached_value(latest_cache_key, duration=86400)
+    )
+    raw_ts = (
+        0.0
+        if is_preview
+        else _get_cached_value(f"{latest_cache_key}_ts", duration=86400, default=0.0)
+    )
     last_update_ts = 0.0
     if not isinstance(raw_ts, bool) and type(raw_ts).__name__ not in ("bool_", "bool"):
         try:
@@ -1390,7 +1428,9 @@ def api_news():
         except (ValueError, TypeError):
             last_update_ts = 0.0
     now = time.time()
-    needs_revalidate = force_refresh or (now - last_update_ts > CACHE_DURATION_NEWS)
+    needs_revalidate = (not is_preview) and (
+        force_refresh or (now - last_update_ts > CACHE_DURATION_NEWS)
+    )
 
     # SWR: If we have a cached bundle and we're not forcing refresh, return it immediately.
     # In the background, trigger revalidation if it's stale.
@@ -1398,7 +1438,12 @@ def api_news():
     # path.  Only mappings can be safely merged into the API response; a
     # truthy list/string here would make ``{**latest_bundle}`` raise a 500 and
     # permanently break the news screen until the TTL expires.
-    if isinstance(latest_bundle, dict) and latest_bundle and not force_refresh:
+    if (
+        not is_preview
+        and isinstance(latest_bundle, dict)
+        and latest_bundle
+        and not force_refresh
+    ):
         response_bundle = {**latest_bundle, "disclaimer": ANALYSIS_DISCLAIMER}
         if needs_revalidate:
             new_swr_holder: FetchJob | None = None
@@ -1424,7 +1469,7 @@ def api_news():
                             force_refresh=force_refresh,
                         )
                         swr_holder["result"] = res
-                        if _is_cacheable_news_bundle(res):
+                        if not is_preview and _is_cacheable_news_bundle(res):
                             _set_cached_value(latest_cache_key, res, duration=86400)
                             _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
                     except Exception as exc:
@@ -1448,23 +1493,54 @@ def api_news():
                     swr_holder["done"].set()
         return ok_response(response_bundle)
 
-    # Fallback to standard synchronous wait and poll for the first fetch or force refresh
+    # Fallback to standard synchronous wait and poll for the first fetch or force refresh.
+    # Consult news_result_cache before claiming a new job so a forced-refresh poll
+    # carrying the same request_token after background completion does not launch
+    # a duplicate paid LLM run.
+    cached_news: tuple[float, Any, BaseException | None] | None = None
+    result_holder: FetchJob | None = None
+    already_fetching = False
     with news_fetch_lock:
-        if inflight_key in news_fetch_inflight:
-            result_holder = news_fetch_inflight[inflight_key]
-            already_fetching = True
-        else:
-            new_result_holder: FetchJob = {
-                "result": None,
-                "error": None,
-                "done": threading.Event(),
-                "step": "collecting_news",
-                "start_time": time.time(),
-                "message": "市場ニュースおよびトレンド情報を収集中...",
-            }
-            news_fetch_inflight[inflight_key] = new_result_holder
-            result_holder = new_result_holder
-            already_fetching = False
+        if news_token_cache_key:
+            cached_news = news_result_cache.get(news_token_cache_key)
+        if cached_news is None:
+            if inflight_key in news_fetch_inflight:
+                result_holder = news_fetch_inflight[inflight_key]
+                already_fetching = True
+                if result_holder is not None and news_token_cache_key:
+                    tokens = result_holder.get("result_cache_keys")
+                    if isinstance(tokens, set):
+                        tokens.add(news_token_cache_key)
+                    else:
+                        result_holder["result_cache_keys"] = {news_token_cache_key}
+            else:
+                new_result_holder: FetchJob = {
+                    "result": None,
+                    "error": None,
+                    "done": threading.Event(),
+                    "step": "collecting_news",
+                    "start_time": time.time(),
+                    "message": "市場ニュースおよびトレンド情報を収集中...",
+                    "result_cache_keys": (
+                        {news_token_cache_key} if news_token_cache_key else set()
+                    ),
+                }
+                news_fetch_inflight[inflight_key] = new_result_holder
+                result_holder = new_result_holder
+
+    if cached_news is not None:
+        _cached_ts, cached_res, cached_err = cached_news
+        if cached_err is not None:
+            return _analyze_v2_error_response(cached_err, g)
+        if isinstance(cached_res, dict):
+            return ok_response({**cached_res, "disclaimer": ANALYSIS_DISCLAIMER})
+
+    if result_holder is None:
+        return error_response(
+            ErrorCode.INTERNAL_SERVER_ERROR,
+            details={"reason": "ニュース取得の状態を確認できませんでした。再試行してください。"},
+            status_code=500,
+        )
 
     if not already_fetching:
 
@@ -1487,7 +1563,7 @@ def api_news():
                 result_holder["result"] = res
                 result_holder["step"] = "done"
                 result_holder["message"] = "ニュース要約の生成が完了しました"
-                if _is_cacheable_news_bundle(res):
+                if not is_preview and _is_cacheable_news_bundle(res):
                     _set_cached_value(latest_cache_key, res, duration=86400)
                     _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
             except Exception as exc:
@@ -1501,6 +1577,19 @@ def api_news():
                 result_holder["message"] = f"ニュース要約の取得に失敗しました: {exc}"
             finally:
                 with news_fetch_lock:
+                    cached_payload = (
+                        copy.deepcopy(result_holder.get("result"))
+                        if isinstance(result_holder.get("result"), dict)
+                        else None
+                    )
+                    cached_exc = result_holder.get("error")
+                    if cached_payload is not None or cached_exc is not None:
+                        for rc_key in list(result_holder.get("result_cache_keys") or ()):
+                            news_result_cache[rc_key] = (
+                                time.time(),
+                                cached_payload,
+                                cached_exc,
+                            )
                     news_fetch_inflight.pop(inflight_key, None)
                 result_holder["done"].set()
 

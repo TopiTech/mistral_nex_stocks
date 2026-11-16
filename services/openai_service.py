@@ -475,6 +475,33 @@ def _is_stock_analysis_model(pydantic_cls: Any) -> bool:
     )
 
 
+def _normalize_openai_messages(messages: list[Any] | None) -> list[Any]:
+    """Convert chat message dicts or SDK/Pydantic models to JSON-serializable copies."""
+    normalized: list[Any] = []
+    if not messages:
+        return normalized
+    for m in messages:
+        if isinstance(m, dict):
+            normalized.append(copy.deepcopy(m))
+        elif hasattr(m, "model_dump") and callable(m.model_dump):
+            normalized.append(m.model_dump())
+        elif hasattr(m, "dict") and callable(m.dict):
+            normalized.append(m.dict())
+        elif hasattr(m, "role"):
+            item: dict[str, Any] = {"role": getattr(m, "role", "user")}
+            content = getattr(m, "content", None)
+            if content is not None:
+                item["content"] = content
+            for extra_key in ("name", "tool_call_id", "tool_calls"):
+                val = getattr(m, extra_key, None)
+                if val is not None:
+                    item[extra_key] = val
+            normalized.append(item)
+        else:
+            normalized.append(m)
+    return normalized
+
+
 def _build_openai_cache_key(
     model: str,
     messages: list[Any],
@@ -488,15 +515,7 @@ def _build_openai_cache_key(
     base_url: str | None = None,
     credential_scope: str | None = None,
 ) -> str:
-    serializable_msgs: list[Any] = []
-    if messages:
-        for m in messages:
-            if hasattr(m, "model_dump"):
-                serializable_msgs.append(m.model_dump())
-            elif hasattr(m, "dict") and callable(m.dict):
-                serializable_msgs.append(m.dict())
-            else:
-                serializable_msgs.append(m)
+    serializable_msgs = _normalize_openai_messages(messages)
 
     serializable_tools: Any = None
     if tools:
@@ -646,7 +665,7 @@ def call_openai_chat(
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 
-    effective_messages = [copy.deepcopy(m) if isinstance(m, dict) else m for m in messages]
+    effective_messages = _normalize_openai_messages(messages)
     if requires_pydantic_parse and pydantic_cls is not None:
         schema_dict = pydantic_cls.model_json_schema()
         stock_analysis_hints = ""
@@ -1131,7 +1150,7 @@ def stream_openai_chat(
 
     payload: dict[str, Any] = {
         "model": model,
-        "messages": messages,
+        "messages": _normalize_openai_messages(messages),
         token_param_key: token_limit,
         "stream": True,
     }
@@ -1291,7 +1310,7 @@ def stream_openai_chat(
                                 if delta_text and isinstance(delta_text, str):
                                     full_parts.append(delta_text)
                                     yield {"type": "delta", "text": delta_text}
-                                elif r_val:
+                                if r_val:
                                     r_text = (
                                         r_val
                                         if isinstance(r_val, str)
@@ -1300,7 +1319,9 @@ def stream_openai_chat(
                                     if r_text:
                                         if include_thinking is True:
                                             yield {"type": "thinking", "text": r_text}
-                                        elif include_thinking is None:
+                                        elif include_thinking is None and not (
+                                            delta_text and isinstance(delta_text, str)
+                                        ):
                                             full_parts.append(r_text)
                                             yield {"type": "delta", "text": r_text}
 
@@ -1770,10 +1791,13 @@ def analyze_chart_image_with_openai(
             or err_status == 400
         ):
             return {
-                "error": (
-                    f"選択されたモデル ({target_model}) は画像認識（Vision）に対応していません。"
-                    "gpt-4o等のマルチモーダルモデルを設定するか、Mistral（Pixtral）に切り替えてください。"
-                )
+                "error": {
+                    "message": (
+                        f"選択されたモデル ({target_model}) は画像認識（Vision）に対応していません。"
+                        "gpt-4o等のマルチモーダルモデルを設定するか、Mistral（Pixtral）に切り替えてください。"
+                    ),
+                    "status_code": err_status if isinstance(err_status, int) else 400,
+                }
             }
         return response
 

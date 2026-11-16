@@ -39,6 +39,7 @@ from utils.caching import (
     history_short_cache_key,
     legacy_history_frame_disk_key,
 )
+from utils.http_utils import close_response_quietly
 from utils.normalization import (
     coerce_datetime_index,
     is_bool_like,
@@ -1495,9 +1496,13 @@ class YFinanceProvider(BaseStockProvider):
                 "quotesCount": eff_max,
                 "newsCount": 0,
             }
-            resp = sess.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            resp = None
+            try:
+                resp = sess.get(url, params=params, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+            finally:
+                close_response_quietly(resp)
             quotes = data.get("quotes", []) or []
             results = []
             for item in quotes[:eff_max]:

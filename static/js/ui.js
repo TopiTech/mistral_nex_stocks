@@ -315,7 +315,7 @@ async function ensureStockDetails(wrapper) {
     // 成功は「明示的な ok:true」のみとし、失敗フラグの不在を成功と見なさない
     // (空オブジェクトやプロキシの502ボディをキャッシュで恒久汚染しない)。
     if (data && data.ok === true && !data.fetching) {
-      if (!stockDetailsCache.has(stockKey)) _enforceStockDetailsCacheLimit();
+      if (!stockDetailsCache.has(stockKey)) _enforceStockDetailsCacheLimit(1);
       stockDetailsCache.set(stockKey, data);
       stockDetailsCacheAt.set(stockKey, Date.now());
       renderDetailExtras(wrapper, data);
@@ -1804,6 +1804,7 @@ function renderPortfolio() {
 
   if (holdings.length === 0) {
     if (summaryContainer) summaryContainer.style.display = "none";
+    _destroyPortfolioCharts();
     Array.from(container.querySelectorAll(".stock-wrapper")).forEach((w) => {
       // ドロワーが開いたカードを消す場合は先にドロワーを閉じる
       // (detached ラッパーへの描画とチャート取り残しを防ぐ)。
@@ -2127,6 +2128,11 @@ function updatePortfolioHeader(
   if (usdJpyRate == null && hasUsdHoldings) {
     const valEl = DOM.get("pf-total-value");
     if (valEl) valEl.textContent = "為替データ取得中...";
+    const plEl = DOM.get("pf-total-pl");
+    if (plEl) plEl.textContent = "--";
+    const tdayEl = DOM.get("pf-today-pl");
+    if (tdayEl) tdayEl.textContent = "--";
+    drawSectorPieChart([], null, chartAnimationControl);
     return;
   }
 
@@ -2179,6 +2185,19 @@ function updatePortfolioHeader(
 
 let pfSummaryChartInstance = null;
 let pfSectorChartInstance = null;
+
+function _destroyPortfolioCharts() {
+  if (pfSummaryChartInstance) {
+    pfSummaryChartInstance.destroy();
+    pfSummaryChartInstance = null;
+  }
+  lastPfChartSignature = "";
+  if (pfSectorChartInstance) {
+    pfSectorChartInstance.destroy();
+    pfSectorChartInstance = null;
+  }
+}
+
 function drawSectorPieChart(holdings, usdJpyRate, chartAnimationControl) {
   const canvas = DOM.get("pf-sector-canvas");
   if (!canvas) return;
@@ -3522,6 +3541,11 @@ function openStockDetailDrawer(stock, wrapper) {
         chatToggleBtn.style.display = "none";
       }
       if (chatSection) {
+        chatSection.dataset.drawerPrevShow = chatSection.classList.contains(
+          "show",
+        )
+          ? "1"
+          : "0";
         chatSection.classList.add("show");
         chatSection.style.marginTop = "20px";
         aiContent.appendChild(chatSection);
@@ -3706,6 +3730,10 @@ function closeStockDetailDrawer() {
       const chatSection = detailInner.querySelector(".chat-section");
       if (chatSection) {
         chatSection.style.marginTop = "";
+        if (chatSection.dataset.drawerPrevShow === "0") {
+          chatSection.classList.remove("show");
+        }
+        delete chatSection.dataset.drawerPrevShow;
       }
     }
     currentDrawerActiveWrapper = null;

@@ -30,6 +30,7 @@ from services.realtime.utils import (
     _scraper_market_state,
     extract_minkabu_price,
 )
+from utils.http_utils import close_response_quietly
 from utils.normalization import is_bool_like, is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
 
@@ -168,6 +169,7 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
             return None
         code = symbol.replace(".T", "").replace(".t", "")
         params = {**self.DETAIL_PARAMS, "sIssue": code, "getFlg": "on"}
+        resp: Any = None
         try:
             resp = self._get_session().get(self.BASE_URL, params=params, timeout=6.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -182,6 +184,8 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
         except Exception as exc:
             logger.info("[SBI Scraper] Failed fetch for %s: %s", symbol, exc)
             return None
+        finally:
+            close_response_quietly(resp)
 
     @staticmethod
     def _number_after_label(html: str, label: str, signed: bool = False) -> float | None:
@@ -341,6 +345,7 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
             with self._cache_lock:
                 return self._adr_cache
 
+        resp: Any = None
         try:
             resp = self._get_session().get(self.ADR_ALL_URL, timeout=6.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -357,9 +362,11 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                 if cache:
                     with self._cache_lock:
                         self._adr_cache = cache
-                        self._adr_cache_time = now
+                        self._adr_cache_time = time.time()
         except Exception as exc:
             logger.debug("[Nikkei225JP Scraper] Failed to fetch _adr_all.js: %s", exc)
+        finally:
+            close_response_quietly(resp)
 
         with self._cache_lock:
             return self._adr_cache
@@ -377,6 +384,7 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
         cache: dict[int, list[str]] = {}
         session = self._get_session()
         for url in (self.INDEX_MID_URL, self.INDEX_BTM_URL):
+            resp: Any = None
             try:
                 resp = session.get(url, timeout=6.0)
                 _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -391,23 +399,28 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                                 cache[code] = parts
             except Exception as exc:
                 logger.debug("[Nikkei225JP Scraper] Failed to fetch index url %s: %s", url, exc)
+            finally:
+                close_response_quietly(resp)
 
+        resp_ndy: Any = None
         try:
-            resp = session.get(self.INDEX_NDY_URL, timeout=6.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
-            if resp.status_code == 200:
-                text = resp.content.decode("utf-8", errors="replace")
+            resp_ndy = session.get(self.INDEX_NDY_URL, timeout=6.0)
+            _mark_scraper_blocked_from_status(resp_ndy.status_code, propagate_to_yfinance=False)
+            if resp_ndy.status_code == 200:
+                text = resp_ndy.content.decode("utf-8", errors="replace")
                 for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
                     code = int(m.group(1))
                     if code not in cache:
                         cache[code] = [m.group(2), m.group(3), "0", "", ""]
         except Exception as exc:
             logger.debug("[Nikkei225JP Scraper] Failed to fetch NDY min: %s", exc)
+        finally:
+            close_response_quietly(resp_ndy)
 
         if cache:
             with self._cache_lock:
                 self._index_cache = cache
-                self._index_cache_time = now
+                self._index_cache_time = time.time()
 
         with self._cache_lock:
             return self._index_cache
@@ -427,6 +440,7 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
         parts = adr_cache.get(clean_code)
 
         if not parts:
+            resp: Any = None
             try:
                 url = f"{self.ADR_URL}?a={clean_code}"
                 resp = self._get_session().get(url, timeout=6.0)
@@ -441,6 +455,8 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                 logger.debug(
                     "[Nikkei225JP Scraper] Direct adr.php fetch failed for %s: %s", symbol, exc
                 )
+            finally:
+                close_response_quietly(resp)
 
         if not parts or len(parts) < 11:
             self._record_fetch_failure(symbol)
@@ -573,6 +589,7 @@ class MinkabuScraper(_BaseFallbackScraper):
             return None
         code = symbol.replace(".T", "").replace(".t", "")
         url = f"{self.BASE_URL}{code}"
+        resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -603,6 +620,8 @@ class MinkabuScraper(_BaseFallbackScraper):
         except Exception as exc:
             logger.warning("[Minkabu Scraper] Failed fetch for %s: %s", symbol, exc)
             self._record_fetch_failure(symbol)
+        finally:
+            close_response_quietly(resp)
         return None
 
     def fetch_pts_quote(self, symbol: str) -> TickerPayload | None:
@@ -878,6 +897,7 @@ class YahooJPRealtimeScraper:
         if not is_jp_stock_code(clean_code):
             return None
         url = f"https://kabutan.jp/stock/?code={clean_code}"
+        resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -941,6 +961,8 @@ class YahooJPRealtimeScraper:
                     logger.warning("[Kabutan Scraper] HTML parsing error for %s: %s", symbol, exc)
         except Exception as e:
             logger.debug("[Kabutan Scraper] Fetch error for %s: %s", symbol, e)
+        finally:
+            close_response_quietly(resp)
         return None
 
     def _fetch_kabutan_pts_symbol(self, symbol: str) -> TickerPayload | None:
@@ -950,6 +972,7 @@ class YahooJPRealtimeScraper:
         if not is_jp_stock_code(clean_code):
             return None
         url = f"https://kabutan.jp/stock/?code={clean_code}"
+        resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -983,6 +1006,8 @@ class YahooJPRealtimeScraper:
                     logger.warning("[Kabutan PTS Scraper] HTML parsing error for %s: %s", symbol, exc)
         except Exception as e:
             logger.debug("[Kabutan PTS Scraper] Fetch error for %s: %s", symbol, e)
+        finally:
+            close_response_quietly(resp)
         return None
 
     def fetch_jp_symbol(self, symbol: str) -> TickerPayload | None:
@@ -997,6 +1022,7 @@ class YahooJPRealtimeScraper:
             return payload
 
         url = f"{self.BASE_URL}{clean_code}.T"
+        resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -1068,6 +1094,8 @@ class YahooJPRealtimeScraper:
                 )
         except Exception as e:
             logger.info("[Yahoo JP Scraper] Failed scrape for %s: %s", symbol, e)
+        finally:
+            close_response_quietly(resp)
         self._record_fetch_failure(symbol)
         return None
 
@@ -1083,6 +1111,7 @@ class YahooJPRealtimeScraper:
             return payload
 
         url = f"{self.BASE_URL}{clean_code}.T?md=pts"
+        resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
@@ -1132,6 +1161,8 @@ class YahooJPRealtimeScraper:
                 )
         except Exception as e:
             logger.info("[Yahoo JP Scraper] Failed PTS scrape for %s: %s", symbol, e)
+        finally:
+            close_response_quietly(resp)
         self._record_fetch_failure(symbol, kind="pts")
         return None
 

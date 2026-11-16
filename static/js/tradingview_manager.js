@@ -623,6 +623,14 @@
         typeof container === "string"
           ? document.getElementById(container)
           : container;
+      // チャート用コンテナのクリア時に進行中の非同期ウィジェット生成も無効化する。
+      if (
+        el &&
+        (el === activeMessageHandlerOwner ||
+          (typeof el.id === "string" && el.id.includes("chart")))
+      ) {
+        _chartGeneration++;
+      }
       // メッセージハンドラは「チャート用コンテナ」の所有物。テープ用
       // コンテナのクリアではチャートのハンドラを解除しない(所有コンテナと
       // 一致する場合、または所有者が不明な場合のみ解除する)。
@@ -718,11 +726,10 @@
     renderAdvancedChart(containerId, ticker, exchange, options = {}) {
       const container = document.getElementById(containerId);
       if (!container) return;
+      this.clearContainer(container);
       // チャート描画毎に世代を進める。tv.js読み込み待ちの閉包が古い
       // シンボルでマウントしないよう、完了時に世代を照合する(R9相当)。
       const chartGen = ++_chartGeneration;
-
-      this.clearContainer(container);
 
       const baseTicker = String(ticker).includes(":")
         ? String(ticker).split(":")[1]
@@ -933,6 +940,9 @@
         // 世代が変わっていたら(より新しいrenderAdvancedChartが呼ばれた)、
         // 古い閉包はマウントしない。重複ウィジェット/旧シンボル描画を防ぐ。
         if (chartGen !== _chartGeneration) return;
+        if (!container.isConnected || !document.getElementById(innerId)) {
+          return;
+        }
         if (window.TradingView && window.TradingView.widget) {
           try {
             new window.TradingView.widget({

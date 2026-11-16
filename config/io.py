@@ -493,37 +493,94 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
         # anchors that protect every encrypted store. These keys are absent
         # from DEFAULT_CONFIG, so only an explicit caller value suppresses
         # the merge.
-        try:
-            if config_store.CONFIG_FILE.exists():
-                with config_store.CONFIG_FILE.open("r", encoding="utf-8") as existing_file:
-                    existing_data = json.load(existing_file)
-                if isinstance(existing_data, dict):
-                    for protected_key in (
-                        "mns_master_key",
-                        "flask_secret_key",
-                        "extension_api_token",
-                        "extension_api_token_created",
-                    ):
-                        if protected_key not in data and protected_key in existing_data:
-                            data[protected_key] = copy.deepcopy(existing_data[protected_key])
-                    # ``DEFAULT_CONFIG`` supplies an empty api_credentials dict,
-                    # so a caller that saves only preferences (without loading
-                    # first) would otherwise overwrite every stored API key with
-                    # {}. Preserve the existing credentials only when the
-                    # caller OMITS the key; an explicit {} still clears them
-                    # (clear_api_credentials relies on that contract).
-                    existing_credentials = existing_data.get("api_credentials")
-                    if (
-                        "api_credentials" not in cfg
-                        and isinstance(existing_credentials, dict)
-                        and existing_credentials
-                    ):
-                        data["api_credentials"] = copy.deepcopy(existing_credentials)
-        except (OSError, ValueError, TypeError, RecursionError) as merge_exc:
-            logger.debug("Could not merge protected config keys before save: %s", merge_exc)
+        existing_data: dict[str, Any] | None = None
+        if config_store.CONFIG_FILE.exists():
+            protected_keys = (
+                "mns_master_key",
+                "flask_secret_key",
+                "extension_api_token",
+                "extension_api_token_created",
+            )
+            missing_protected = any(k not in data for k in protected_keys) or (
+                "api_credentials" not in cfg
+            )
+            last_read_exc: OSError | None = None
+            for attempt in range(3):
+                try:
+                    with config_store.CONFIG_FILE.open("r", encoding="utf-8") as existing_file:
+                        loaded_existing = json.load(existing_file)
+                    if not isinstance(loaded_existing, dict):
+                        raise TypeError("existing config root must be a JSON object")
+                    existing_data = loaded_existing
+                    last_read_exc = None
+                    break
+                except (
+                    TypeError,
+                    json.JSONDecodeError,
+                    UnicodeDecodeError,
+                    RecursionError,
+                ) as corrupt_exc:
+                    # DATA-7: the on-disk config exists but is unparseable (or
+                    # has a non-object root). Salvage a sanitized backup and
+                    # fail closed instead of silently destroying secrets.
+                    corrupt_backup = config_store.CONFIG_FILE.with_suffix(
+                        config_store.CONFIG_FILE.suffix + f".corrupt.{uuid.uuid4().hex}.bak"
+                    )
+                    try:
+                        _sanitize_and_backup_corrupt_config(
+                            config_store.CONFIG_FILE, corrupt_backup
+                        )
+                        logger.warning("Corrupted config backed up to %s", corrupt_backup)
+                        _rotate_corrupt_backups(config_store.CONFIG_FILE.parent)
+                    except (OSError, ValueError) as backup_exc:
+                        logger.warning(
+                            "Failed to backup corrupted config %s: %s",
+                            config_store.CONFIG_FILE,
+                            backup_exc,
+                        )
+                    config_store._CONFIG_CORRUPTED = True
+                    raise RuntimeError(
+                        "Refusing to save config over corrupted configuration file "
+                        f"{config_store.CONFIG_FILE}. Manual recovery required or "
+                        "remove corrupted file first."
+                    ) from corrupt_exc
+                except OSError as read_exc:
+                    last_read_exc = read_exc
+                    if attempt < 2:
+                        time.sleep(0.02 * (attempt + 1))
+
+            if last_read_exc is not None:
+                if missing_protected:
+                    raise RuntimeError(
+                        f"Refusing to overwrite existing configuration file "
+                        f"{config_store.CONFIG_FILE} after failing to read protected keys: "
+                        f"{last_read_exc}"
+                    ) from last_read_exc
+                logger.warning(
+                    "Could not read existing config before save (all protected keys provided): %s",
+                    last_read_exc,
+                )
+
+            if isinstance(existing_data, dict):
+                for protected_key in protected_keys:
+                    if protected_key not in data and protected_key in existing_data:
+                        data[protected_key] = copy.deepcopy(existing_data[protected_key])
+                # ``DEFAULT_CONFIG`` supplies an empty api_credentials dict,
+                # so a caller that saves only preferences (without loading
+                # first) would otherwise overwrite every stored API key with
+                # {}. Preserve the existing credentials only when the
+                # caller OMITS the key; an explicit {} still clears them
+                # (clear_api_credentials relies on that contract).
+                existing_credentials = existing_data.get("api_credentials")
+                if (
+                    "api_credentials" not in cfg
+                    and isinstance(existing_credentials, dict)
+                    and existing_credentials
+                ):
+                    data["api_credentials"] = copy.deepcopy(existing_credentials)
 
         # 既存の設定があれば、秘密情報を除いたバックアップを作成 (.bak)
-        if create_backup and config_store.CONFIG_FILE.exists():
+        if create_backup and isinstance(existing_data, dict):
             backup_tmp = config_store.CONFIG_FILE.with_suffix(
                 config_store.CONFIG_FILE.suffix + f".bak.{uuid.uuid4().hex}.tmp"
             )
@@ -531,10 +588,7 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 # Back up the configuration that is about to be replaced, not
                 # the caller's new value (which is written below). This makes
                 # .bak a usable rollback point after an accidental change.
-                with config_store.CONFIG_FILE.open("r", encoding="utf-8") as existing_file:
-                    backup_data = json.load(existing_file)
-                if not isinstance(backup_data, dict):
-                    raise TypeError("existing config root must be a JSON object")
+                backup_data = copy.deepcopy(existing_data)
                 backup_data["api_credentials"] = {}
                 # Strip secret entries from backups to avoid leaking secrets —
                 # EXCEPT the master key (DATA-6). mns_master_key is the Fernet
@@ -599,38 +653,6 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                         logger.warning(
                             "Failed to set backup config file permissions: %s", chmod_exc
                         )
-            except (
-                TypeError,
-                json.JSONDecodeError,
-                UnicodeDecodeError,
-                RecursionError,
-            ) as corrupt_exc:
-                # DATA-7: the on-disk config exists but is unparseable (or
-                # has a non-object root). Corruption detection otherwise only
-                # happens lazily in load_config; a save-first process would
-                # os.replace the only recoverable copy. Salvage a sanitized
-                # backup (same helper + naming as the load path) and converge
-                # on the documented fail-closed contract instead of silently
-                # destroying the file.
-                corrupt_backup = config_store.CONFIG_FILE.with_suffix(
-                    config_store.CONFIG_FILE.suffix + f".corrupt.{uuid.uuid4().hex}.bak"
-                )
-                try:
-                    _sanitize_and_backup_corrupt_config(config_store.CONFIG_FILE, corrupt_backup)
-                    logger.warning("Corrupted config backed up to %s", corrupt_backup)
-                    _rotate_corrupt_backups(config_store.CONFIG_FILE.parent)
-                except (OSError, ValueError) as backup_exc:
-                    logger.warning(
-                        "Failed to backup corrupted config %s: %s",
-                        config_store.CONFIG_FILE,
-                        backup_exc,
-                    )
-                config_store._CONFIG_CORRUPTED = True
-                raise RuntimeError(
-                    "Refusing to save config over corrupted configuration file "
-                    f"{config_store.CONFIG_FILE}. Manual recovery required or "
-                    "remove corrupted file first."
-                ) from corrupt_exc
             except OSError as e:
                 logger.warning("Failed to create config backup: %s", e)
             finally:

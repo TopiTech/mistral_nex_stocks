@@ -323,6 +323,21 @@ class MarketDataState:
                 return False
             return False
 
+    def peek_circuit_open(self, service: str, symbol: str | None = None) -> bool:
+        """Read-only check of whether a circuit breaker is open without state transition."""
+        now = time.time()
+        with self.circuit_lock:
+            target: CircuitState | None = (
+                self.history_circuit_states.get(symbol)
+                if symbol
+                else self.circuit_states.get(service)
+            )
+            if not target:
+                return False
+            if target.get("status") == "OPEN":
+                return now < (target.get("open_until") or 0.0)
+            return False
+
     def try_claim_circuit_probe(self, service: str, symbol: str | None = None) -> bool:
         """Atomically claim the HALF_OPEN probe slot.
 

@@ -1088,104 +1088,108 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
             else:
                 resolved[market] = [_strip_portfolio_fields(row) for row in rows]
 
-        # Attach realtime market quotes and PTS quote data if cached in realtime_market_engine
-        try:
-            from services.realtime_engine import realtime_market_engine
+    # Attach realtime market quotes and PTS quote data outside sse_data_lock
+    # so SSE serialization never nests store_lock / scraper locks under it.
+    try:
+        from services.realtime_engine import realtime_market_engine
 
-            market_snapshot = realtime_market_engine.get_market_snapshot()
-            if market_snapshot:
-                for m_key in ("us", "jp", "idx"):
-                    if not resolved.get(m_key):
-                        continue
-                    m_rows = []
-                    for row in resolved[m_key]:
-                        if not isinstance(row, dict):
-                            # Preserve the row as-is instead of raising from
-                            # dict(row) and losing the whole market's merge.
-                            m_rows.append(row)
-                            continue
-                        r_copy = dict(row)
-                        if include_portfolio and m_key in ("jp", "idx"):
-                            # Defend the response boundary against stale rows
-                            # produced by a pre-fix process or cache.
-                            r_copy.pop("avg_fx_rate", None)
-                        sym = r_copy.get("symbol")
-                        rt_info = None
-                        for lookup_key in _realtime_lookup_keys(sym):
-                            rt_info = market_snapshot.get(lookup_key)
-                            if rt_info:
-                                break
-                        if not isinstance(rt_info, dict):
-                            rt_info = None
-                        if rt_info and _is_finite_market_number(rt_info.get("price"), positive=True):
-                            r_copy["price"] = rt_info["price"]
-                            if _is_finite_market_number(rt_info.get("change")):
-                                r_copy["change"] = rt_info["change"]
-                            if _is_finite_market_number(rt_info.get("change_percent")):
-                                r_copy["change_percent"] = rt_info["change_percent"]
-                            # Volume is strictly sourced from yfinance, never from scrapers
-                            if rt_info.get("source") == "tradingview" and _is_finite_market_number(
-                                rt_info.get("volume"), positive=True
-                            ):
-                                r_copy["volume"] = rt_info["volume"]
-                            cur_vol = r_copy.get("volume")
-                            if not _is_finite_market_number(cur_vol, positive=True):
-                                yf_vol = get_stock_volume(sym) if isinstance(sym, str) else None
-                                if yf_vol is not None and yf_vol > 0:
-                                    r_copy["volume"] = yf_vol
-                            if rt_info.get("source"):
-                                r_copy["source"] = rt_info["source"]
-                            if include_portfolio and r_copy.get("shares"):
-                                raw_shares = r_copy.get("shares")
-                                if raw_shares is not None and not is_bool_like(raw_shares):
-                                    try:
-                                        sh = float(raw_shares)
-                                        raw_ap = r_copy.get("avg_price")
-                                        ap = 0.0 if is_bool_like(raw_ap) else float(raw_ap or 0.0)
-                                        raw_afx = r_copy.get("avg_fx_rate")
-                                        afx = (
-                                            float(raw_afx)
-                                            if (raw_afx is not None and not is_bool_like(raw_afx))
-                                            else None
-                                        )
-                                        cur = str(r_copy.get("currency") or "JPY")
-                                        p_val, p_pl = _build_portfolio_metrics(
-                                            sh, ap, afx, cur, float(rt_info["price"])
-                                        )
-                                        r_copy["portfolio_value"] = p_val
-                                        r_copy["portfolio_pl"] = p_pl
-                                    except (TypeError, ValueError, OverflowError):
-                                        pass
-                        m_rows.append(r_copy)
-                    resolved[m_key] = m_rows
-
-            pts_snapshot = realtime_market_engine.get_pts_snapshot()
-            if resolved.get("jp"):
-                jp_rows = []
-                for row in resolved["jp"]:
+        market_snapshot = realtime_market_engine.get_market_snapshot()
+        if market_snapshot:
+            for m_key in ("us", "jp", "idx"):
+                if not resolved.get(m_key):
+                    continue
+                m_rows = []
+                for row in resolved[m_key]:
                     if not isinstance(row, dict):
-                        jp_rows.append(row)
+                        # Preserve the row as-is instead of raising from
+                        # dict(row) and losing the whole market's merge.
+                        m_rows.append(row)
                         continue
                     r_copy = dict(row)
+                    if include_portfolio and m_key in ("jp", "idx"):
+                        # Defend the response boundary against stale rows
+                        # produced by a pre-fix process or cache.
+                        r_copy.pop("avg_fx_rate", None)
                     sym = r_copy.get("symbol")
-                    pts_info = None
-                    for lookup_key in _realtime_lookup_keys(sym, dash_variant=False):
-                        pts_info = pts_snapshot.get(lookup_key)
-                        if pts_info:
+                    rt_info = None
+                    for lookup_key in _realtime_lookup_keys(sym):
+                        rt_info = market_snapshot.get(lookup_key)
+                        if rt_info:
                             break
-                    if not isinstance(pts_info, dict):
-                        pts_info = None
-                    if pts_info and pts_info.get("price"):
-                        r_copy["pts_price"] = pts_info.get("price")
-                        r_copy["pts_change"] = pts_info.get("change")
-                        r_copy["pts_trading"] = pts_info.get("pts_trading", False)
-                        r_copy["pts_time"] = pts_info.get("pts_time", "")
-                    elif isinstance(sym, str) and sym:
-                        realtime_market_engine.register_symbol(sym, "jp")
-                    jp_rows.append(r_copy)
-                resolved["jp"] = jp_rows
-        except Exception as exc:
-            logger.debug("Failed to resolve PTS snapshot for response: %s", exc)
+                    if not isinstance(rt_info, dict):
+                        rt_info = None
+                    if rt_info and _is_finite_market_number(rt_info.get("price"), positive=True):
+                        r_copy["price"] = rt_info["price"]
+                        if _is_finite_market_number(rt_info.get("change")):
+                            r_copy["change"] = rt_info["change"]
+                        if _is_finite_market_number(rt_info.get("change_percent")):
+                            r_copy["change_percent"] = rt_info["change_percent"]
+                        # Volume is strictly sourced from yfinance, never from scrapers
+                        if rt_info.get("source") == "tradingview" and _is_finite_market_number(
+                            rt_info.get("volume"), positive=True
+                        ):
+                            r_copy["volume"] = rt_info["volume"]
+                        cur_vol = r_copy.get("volume")
+                        if not _is_finite_market_number(cur_vol, positive=True):
+                            yf_vol = get_stock_volume(sym) if isinstance(sym, str) else None
+                            if yf_vol is not None and yf_vol > 0:
+                                r_copy["volume"] = yf_vol
+                        if rt_info.get("source"):
+                            r_copy["source"] = rt_info["source"]
+                        if include_portfolio and r_copy.get("shares"):
+                            raw_shares = r_copy.get("shares")
+                            if raw_shares is not None and not is_bool_like(raw_shares):
+                                try:
+                                    sh = float(raw_shares)
+                                    raw_ap = r_copy.get("avg_price")
+                                    ap = 0.0 if is_bool_like(raw_ap) else float(raw_ap or 0.0)
+                                    raw_afx = r_copy.get("avg_fx_rate")
+                                    afx = (
+                                        float(raw_afx)
+                                        if (raw_afx is not None and not is_bool_like(raw_afx))
+                                        else None
+                                    )
+                                    cur = str(r_copy.get("currency") or "JPY")
+                                    p_val, p_pl = _build_portfolio_metrics(
+                                        sh, ap, afx, cur, float(rt_info["price"])
+                                    )
+                                    r_copy["portfolio_value"] = p_val
+                                    r_copy["portfolio_pl"] = p_pl
+                                except (TypeError, ValueError, OverflowError):
+                                    pass
+                    m_rows.append(r_copy)
+                resolved[m_key] = m_rows
+
+        pts_snapshot = realtime_market_engine.get_pts_snapshot()
+        symbols_to_register: list[str] = []
+        if resolved.get("jp"):
+            jp_rows = []
+            for row in resolved["jp"]:
+                if not isinstance(row, dict):
+                    jp_rows.append(row)
+                    continue
+                r_copy = dict(row)
+                sym = r_copy.get("symbol")
+                pts_info = None
+                for lookup_key in _realtime_lookup_keys(sym, dash_variant=False):
+                    pts_info = pts_snapshot.get(lookup_key)
+                    if pts_info:
+                        break
+                if not isinstance(pts_info, dict):
+                    pts_info = None
+                if pts_info and pts_info.get("price"):
+                    r_copy["pts_price"] = pts_info.get("price")
+                    r_copy["pts_change"] = pts_info.get("change")
+                    r_copy["pts_trading"] = pts_info.get("pts_trading", False)
+                    r_copy["pts_time"] = pts_info.get("pts_time", "")
+                elif isinstance(sym, str) and sym:
+                    symbols_to_register.append(sym)
+                jp_rows.append(r_copy)
+            resolved["jp"] = jp_rows
+        for sym in symbols_to_register:
+            realtime_market_engine.register_symbol(sym, "jp")
+    except Exception as exc:
+        logger.debug("Failed to resolve PTS snapshot for response: %s", exc)
     return resolved
 
 

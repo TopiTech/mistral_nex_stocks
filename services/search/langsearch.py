@@ -26,8 +26,8 @@ from constants import (
     LANGSEARCH_TIMEOUT,
     LANGSEARCH_TOTAL_TIMEOUT_SEC,
 )
+from utils.http_utils import close_response_quietly, parse_retry_after
 from utils.http_utils import extract_external_error_metadata as _external_error_metadata
-from utils.http_utils import parse_retry_after
 from utils.normalization import is_bool_like, normalize_search_limit
 
 logger = logging.getLogger(__name__)
@@ -110,12 +110,7 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
                     raise requests.HTTPError(f"LangSearch code={code_int} msg={msg}", response=response)
         return parsed
     finally:
-        close_fn = getattr(response, "close", None)
-        if callable(close_fn):
-            try:
-                close_fn()
-            except Exception:
-                pass
+        close_response_quietly(response)
 
 
 def _langsearch_request_retryable(exc: BaseException) -> bool:

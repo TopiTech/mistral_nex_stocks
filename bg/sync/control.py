@@ -160,6 +160,15 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
 
         if items and result.is_empty:
             logger.warning("Stock sync produced no valid items; preserving previous target cache.")
+            if target_empty:
+                inval_fn = _get_app_bg_attr(
+                    "_invalidate_sse_payload_cache", _invalidate_sse_payload_cache
+                )
+                inval_fn()
+                ann_fn = _get_app_bg_attr(
+                    "announce_current_market_state", announce_current_market_state
+                )
+                ann_fn()
             return
 
         with app_state.market.is_syncing_lock:

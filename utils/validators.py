@@ -1160,7 +1160,18 @@ def _normalize_analysis_aliases(result: dict[str, Any]) -> dict[str, Any]:
             val_s = res[list_key].strip()
             # Only auto-split if explicitly multiline or bulleted list
             if "\n" in val_s or any(val_s.startswith(b) for b in ("•", "-", "*")):
-                items = [it.strip().lstrip("•-*0123456789. ") for it in re.split(r"[\n;]+", val_s) if it.strip()]
+                items = []
+                for it in re.split(r"[\n;]+", val_s):
+                    stripped_it = it.strip()
+                    if not stripped_it:
+                        continue
+                    cleaned = re.sub(
+                        r"^\s*(?:(?:[•\*]+|-(?!\d)|\d{1,3}[.)．、](?!\d))\s*)+",
+                        "",
+                        stripped_it,
+                    ).strip()
+                    if cleaned:
+                        items.append(cleaned)
                 if items:
                     res[list_key] = items
 

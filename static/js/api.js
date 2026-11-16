@@ -1758,6 +1758,7 @@ async function loadNews(forceRefresh = false) {
         );
         const pollData = poll.data;
         if (pollData && !pollData.fetching) {
+          delete data.fetching;
           Object.assign(data, pollData);
           finished = true;
           break;
@@ -2344,6 +2345,9 @@ async function streamChatReply(payload, onDelta, options) {
         if (evt.done) {
           sawDoneFrame = true;
           reply = evt.reply || reply;
+          if (!reply || !String(reply).trim()) {
+            throw new Error("応答を取得できませんでした");
+          }
           return reply;
         }
       }
@@ -2358,7 +2362,9 @@ async function streamChatReply(payload, onDelta, options) {
       truncErr.isStreamFallback = true;
       throw truncErr;
     }
-    if (!reply) throw new Error("応答を取得できませんでした");
+    if (!reply || !String(reply).trim()) {
+      throw new Error("応答を取得できませんでした");
+    }
     return reply;
   } finally {
     // エラー・早期リターン時にストリームロックとバッファを確実に解放する
@@ -2909,28 +2915,7 @@ async function requestStockAnalysis(
       err.name = "AbortError";
       throw err;
     }
-    if (signal) {
-      await new Promise((resolve, reject) => {
-        if (signal.aborted) {
-          const err = new Error("Request aborted");
-          err.name = "AbortError";
-          return reject(err);
-        }
-        const timer = setTimeout(() => {
-          signal.removeEventListener("abort", onAbort);
-          resolve();
-        }, ANALYZE_POLL_INTERVAL_MS);
-        const onAbort = () => {
-          clearTimeout(timer);
-          const err = new Error("Request aborted");
-          err.name = "AbortError";
-          reject(err);
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-      });
-    } else {
-      await sleep(ANALYZE_POLL_INTERVAL_MS);
-    }
+    await abortableSleep(ANALYZE_POLL_INTERVAL_MS, signal);
   }
 
   if (!resOk) {
@@ -3176,7 +3161,12 @@ async function bulkAnalyzeFavorites() {
 
         // Small delay between items to avoid overwhelming the API
         if (bulkAnalyzeCancelled || bulkSignal.aborted) break;
-        await sleep(250);
+        try {
+          await abortableSleep(250, bulkSignal);
+        } catch (sleepErr) {
+          if (sleepErr && sleepErr.name === "AbortError") break;
+          throw sleepErr;
+        }
       }
     };
 

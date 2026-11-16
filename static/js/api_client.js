@@ -443,6 +443,9 @@ class APIClient {
             if (event && event.lastEventId) {
               this.lastEventId = Number(event.lastEventId) || 0;
             }
+            if (type !== "error") {
+              this.sseReconnectAttempt = 0;
+            }
             this._resetHeartbeatTimer(onError);
             try {
               if (typeof listener === "function") {
@@ -500,10 +503,10 @@ class APIClient {
       this._startSleepWatchdog();
       eventSource.onopen = () => {
         _log.info("SSE: Connection established");
-        this.sseReconnectAttempt = 0;
         this._resetHeartbeatTimer(onError);
       };
       eventSource.onmessage = (event) => {
+        this.sseReconnectAttempt = 0;
         if (event && event.lastEventId) {
           this.lastEventId = Number(event.lastEventId) || 0;
         }
@@ -516,6 +519,7 @@ class APIClient {
         }
       };
       eventSource.addEventListener("heartbeat", (event) => {
+        this.sseReconnectAttempt = 0;
         if (event && event.lastEventId) {
           this.lastEventId = Number(event.lastEventId) || 0;
         }
@@ -523,6 +527,12 @@ class APIClient {
         _log.debug("SSE: Heartbeat received");
       });
       eventSource.onerror = (error) => {
+        const maybeData = error?.data;
+        if (typeof maybeData === "string" && maybeData.length > 0) {
+          // Server-sent `event: error` frames carry payload data and are
+          // handled by the dedicated addEventListener("error") listener below.
+          return;
+        }
         _log.error("SSE: Stream error", error);
         this._handleReconnect(onError);
       };
@@ -537,7 +547,7 @@ class APIClient {
         try {
           const payload = JSON.parse(maybeMessage.data);
           const message =
-            typeof payload.message === "string"
+            typeof payload.message === "string" && payload.message
               ? payload.message
               : "サーバーからSSEエラーが通知されました";
           _log.warn("SSE: Server error frame:", message);
@@ -548,7 +558,11 @@ class APIClient {
           }
         } catch (parseErr) {
           _log.debug("SSE: Non-JSON server error frame ignored", parseErr);
+          return;
         }
+        // Reconnect with preserved backoff (sseReconnectAttempt was NOT reset in
+        // onopen), using a no-op handler so onError is not notified twice.
+        this._handleReconnect(() => {});
       });
       options.onReconnect?.(eventSource);
       return eventSource;

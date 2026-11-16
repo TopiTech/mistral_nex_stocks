@@ -244,57 +244,65 @@ def _is_polling_token_inflight(token: str) -> bool:
     tokens, while returning False here would break legitimate polling
     that has not yet established a conversation scope.
     """
+    conv: str | None = None
     try:
         from flask import session as _flask_session
 
-        conv = _flask_session.get("mns_analysis_conversation")  # type: ignore[attr-defined]
-        if isinstance(conv, str) and conv:
-            inflight_keys = (
-                f"chat:{conv}:{token}",
-                f"analyze:{conv}:{token}",
-            )
-            try:
-                from routes.api_analysis import (  # local import to avoid cycle
-                    analyze_fetch_inflight,
-                    analyze_fetch_lock,
-                    analyze_result_cache,
-                    chat_fetch_inflight,
-                    chat_fetch_lock,
-                    chat_result_cache,
-                )
-
-                with chat_fetch_lock:
-                    for k in inflight_keys:
-                        if k in chat_fetch_inflight:
-                            return True
-                    for stored_key in list(chat_fetch_inflight.keys()):
-                        if stored_key.endswith(f":{token}"):
-                            return True
-                    for k in inflight_keys:
-                        if k in chat_result_cache:
-                            return False
-                    for cached_key in list(chat_result_cache.keys()):
-                        if cached_key.endswith(f":{token}"):
-                            return False
-
-                with analyze_fetch_lock:
-                    for k in inflight_keys:
-                        if k in analyze_fetch_inflight:
-                            return True
-                    for stored_key in list(analyze_fetch_inflight.keys()):
-                        if stored_key.endswith(f":{token}"):
-                            return True
-                    for k in inflight_keys:
-                        if k in analyze_result_cache:
-                            return False
-                    for cached_key in list(analyze_result_cache.keys()):
-                        if cached_key.endswith(f":{token}"):
-                            return False
-            except Exception:
-                pass
+        raw_conv = _flask_session.get("mns_analysis_conversation")  # type: ignore[attr-defined]
+        if isinstance(raw_conv, str) and raw_conv:
+            conv = raw_conv
     except Exception:
         return True
-    # Inside a request without conversation scope and no cache hit:
+
+    try:
+        from routes.api_analysis import (  # local import to avoid cycle
+            analyze_fetch_inflight,
+            analyze_fetch_lock,
+            analyze_result_cache,
+            chat_fetch_inflight,
+            chat_fetch_lock,
+            chat_result_cache,
+            news_fetch_lock,
+            news_result_cache,
+        )
+
+        inflight_keys = (f"chat:{conv}:{token}", f"analyze:{conv}:{token}") if conv else ()
+
+        with chat_fetch_lock:
+            for k in inflight_keys:
+                if k in chat_fetch_inflight:
+                    return True
+            for stored_key in list(chat_fetch_inflight.keys()):
+                if stored_key.endswith(f":{token}"):
+                    return True
+            for k in inflight_keys:
+                if k in chat_result_cache:
+                    return False
+            for cached_key in list(chat_result_cache.keys()):
+                if cached_key.endswith(f":{token}"):
+                    return False
+
+        with analyze_fetch_lock:
+            for k in inflight_keys:
+                if k in analyze_fetch_inflight:
+                    return True
+            for stored_key in list(analyze_fetch_inflight.keys()):
+                if stored_key.endswith(f":{token}"):
+                    return True
+            for k in inflight_keys:
+                if k in analyze_result_cache:
+                    return False
+            for cached_key in list(analyze_result_cache.keys()):
+                if cached_key.endswith(f":{token}"):
+                    return False
+
+        with news_fetch_lock:
+            for cached_key in list(news_result_cache.keys()):
+                if cached_key.endswith(f":{token}"):
+                    return False
+    except Exception:
+        return True
+    # No matching active or finished job entry found for this token;
     # conservatively allow bounded skip (the per-token cap of 120 still
     # prevents unbounded bypass; returning False here would break
     # legitimate polling that has not yet established a chat/analyze

@@ -525,26 +525,30 @@ const STOCK_DETAILS_CACHE_MAX_SIZE = 50;
 // a TTL a tab left open all day served the first fetch's values forever.
 const STOCK_DETAILS_CACHE_TTL_MS = 15 * 60 * 1000;
 
-function _enforcePrefetchCacheLimit() {
-  // FIFO eviction: remove oldest entries when exceeding maxSize
-  if (historyPrefetchCache.size >= PREFETCH_CACHE_MAX_SIZE) {
-    // Get the oldest entry (first one added, iteration order maintains insertion order in Map)
-    const firstKey = historyPrefetchCache.keys().next().value;
-    if (firstKey) {
-      historyPrefetchCache.delete(firstKey);
-    }
+function _trimMapCache(cache, maxSize, reserve = 0, auxCache = null) {
+  const cap = Math.max(0, maxSize - (reserve > 0 ? reserve : 0));
+  while (cache.size > cap) {
+    // Get the oldest entry (first one added, Map maintains insertion order)
+    const firstKey = cache.keys().next().value;
+    if (firstKey === undefined) break;
+    cache.delete(firstKey);
+    if (auxCache) auxCache.delete(firstKey);
   }
 }
 
-function _enforceStockDetailsCacheLimit() {
-  // FIFO eviction: remove oldest entries when exceeding maxSize
-  if (stockDetailsCache.size >= STOCK_DETAILS_CACHE_MAX_SIZE) {
-    const firstKey = stockDetailsCache.keys().next().value;
-    if (firstKey) {
-      stockDetailsCache.delete(firstKey);
-      stockDetailsCacheAt.delete(firstKey);
-    }
-  }
+function _enforcePrefetchCacheLimit(reserve = 0) {
+  // FIFO eviction: remove oldest entries when exceeding maxSize (or reserve space before insert)
+  _trimMapCache(historyPrefetchCache, PREFETCH_CACHE_MAX_SIZE, reserve);
+}
+
+function _enforceStockDetailsCacheLimit(reserve = 0) {
+  // FIFO eviction: remove oldest entries when exceeding maxSize (or reserve space before insert)
+  _trimMapCache(
+    stockDetailsCache,
+    STOCK_DETAILS_CACHE_MAX_SIZE,
+    reserve,
+    stockDetailsCacheAt,
+  );
 }
 
 // APIキーはサーバーサイド（config.json / DPAPI/keyring）で安全に管理され、
@@ -580,8 +584,28 @@ async function refreshCredentialState() {
       IS_PREVIEW_MODE = !!data.preview_mode;
       if (typeof APP_CONFIG !== "undefined" && APP_CONFIG) {
         if (data.ai_provider) APP_CONFIG.ai_provider = data.ai_provider;
-        if (data.preview_mode !== undefined)
+        if (data.preview_mode !== undefined) {
           APP_CONFIG.preview_mode = !!data.preview_mode;
+        }
+        if (data.has_ai_access !== undefined) {
+          APP_CONFIG.has_ai_access = !!data.has_ai_access;
+        }
+        if (data.has_mistral_api_key !== undefined) {
+          APP_CONFIG.has_mistral_api_key = !!data.has_mistral_api_key;
+        }
+        if (data.is_ai_technical_lines_eligible !== undefined) {
+          APP_CONFIG.is_ai_technical_lines_eligible =
+            !!data.is_ai_technical_lines_eligible;
+        }
+        if (data.mistral_model !== undefined) {
+          APP_CONFIG.mistral_model = data.mistral_model;
+        }
+        if (data.api_mode !== undefined) {
+          APP_CONFIG.api_mode = data.api_mode;
+        }
+        if (data.openai_model !== undefined) {
+          APP_CONFIG.openai_model = data.openai_model;
+        }
       }
       return data;
     }

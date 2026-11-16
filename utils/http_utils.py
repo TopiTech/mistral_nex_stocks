@@ -98,3 +98,13 @@ def extract_external_error_metadata(exc: BaseException | None) -> tuple[str, str
     if status is None:
         status = getattr(exc, "status_code", None)
     return type(exc).__name__, str(status) if status is not None else "unknown"
+
+
+def close_response_quietly(resp: Any) -> None:
+    """Close an HTTP response object without raising or masking caller errors."""
+    close_fn = getattr(resp, "close", None)
+    if callable(close_fn):
+        try:
+            close_fn()
+        except Exception:
+            pass

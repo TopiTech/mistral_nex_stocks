@@ -516,10 +516,15 @@ const _TOAST_COLOR_MAP = {
 
 function showToast(message, color = "#fff", duration = 5000) {
   const now = Date.now();
+  const rawColor = typeof color === "string" ? color : "";
+  const resolvedColor =
+    rawColor && _TOAST_COLOR_MAP[rawColor.toLowerCase()]
+      ? _TOAST_COLOR_MAP[rawColor.toLowerCase()]
+      : rawColor || "#fff";
   const isErrorColor =
-    typeof color === "string" &&
+    rawColor.toLowerCase() === "error" ||
     ["#ff7d7d", "#f43f5e", "#ef4444", "red"].some((c) =>
-      color.toLowerCase().includes(c.toLowerCase()),
+      resolvedColor.toLowerCase().includes(c.toLowerCase()),
     );
   if (!isErrorColor && _toastHistory.has(message)) {
     const lastTime = _toastHistory.get(message);
@@ -535,11 +540,6 @@ function showToast(message, color = "#fff", duration = 5000) {
       }
     }
   }
-
-  const resolvedColor =
-    typeof color === "string" && _TOAST_COLOR_MAP[color.toLowerCase()]
-      ? _TOAST_COLOR_MAP[color.toLowerCase()]
-      : color || "#fff";
 
   const resolvedDuration =
     typeof duration === "number" && duration > 0 ? duration : 5000;

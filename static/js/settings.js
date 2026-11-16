@@ -1100,6 +1100,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const agentIdGroup = document.getElementById("agent-id-settings-group");
     const agentIdInput = document.getElementById("agent-id-settings-input");
     const agentIdDisplay = document.getElementById("current-agent-id-display");
+    if (agentIdDisplay) {
+      agentIdDisplay.style.display = "none";
+      agentIdDisplay.textContent = "";
+    }
 
     if (data.ai_provider === "openai_compatible") {
       const oaRadio = document.querySelector(
@@ -1492,11 +1496,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (oaUrl) payload.openai_base_url = oaUrl;
         if (oaModel) payload.openai_model = oaModel;
-        // 保存層は空文字を「クリア」ではなく「変更なし」として保護された既存値を
-        // 保持する仕様(test_save_api_credentials_preserves_protected_langsearch_when_blank)。
-        // API キーをクリアするには DELETE /api/credentials(全キー一括)を使う。
-        // そのため入力があるときのみ送信する。
-        if (oaEmb) payload.openai_embeddings_model = oaEmb;
+        // Embeddings モデルは平文設定のため空文字送信でデフォルト値へリセットを許可する。
+        payload.openai_embeddings_model = oaEmb;
+        // APIキーの保存層は空文字を「変更なし」として既存値を保持するため入力時のみ送信する。
         if (oaKey) payload.openai_api_key = oaKey;
       } else {
         if (mistralInput && mistralInput.value.trim()) {

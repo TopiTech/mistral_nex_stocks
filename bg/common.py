@@ -174,15 +174,11 @@ def _raw_announce_current_market_state() -> None:
         cached_us = bool(_get_app_bg_attr("_sse_payload_us_open", _sse_payload_us_open))
         cached_jp = bool(_get_app_bg_attr("_sse_payload_jp_open", _sse_payload_jp_open))
 
-        if (
-            current_gen == cached_gen
-            and yf_limited == cached_yf
-            and us_open == cached_us
-            and jp_open == cached_jp
-        ):
-            announcer1.announce(_SSE_KEEPALIVE_FRAME)
-            return
-
+        # R17-04: keep this critical section to the generation/state read.
+        # The (potentially large) json.dumps + announce below are ordered by
+        # _sse_frame_publish_lock, not by holding _sse_payload_lock across
+        # serialization and queue operations (which blocked invalidations).
+        _snapshot = (current_gen, cached_gen, cached_yf, cached_us, cached_jp)
         counter = (
             int(_get_app_bg_attr("_sse_full_snapshot_counter", _sse_full_snapshot_counter)) + 1
         )
@@ -190,6 +186,7 @@ def _raw_announce_current_market_state() -> None:
         _set_app_bg_attr("_sse_full_snapshot_counter", counter)
         send_full_snapshot = counter % FULL_SNAPSHOT_INTERVAL == 0
 
+    with _sse_frame_publish_lock:
         if send_full_snapshot:
             light_stocks = _build_sse_light_stocks_payload(stocks)
             payload = json.dumps(
@@ -205,6 +202,7 @@ def _raw_announce_current_market_state() -> None:
                 allow_nan=False,
             )
         else:
+            current_gen, cached_gen, cached_yf, cached_us, cached_jp = _snapshot
             prev_stocks = _get_app_bg_attr("_sse_prev_stocks", _sse_prev_stocks)
             prev_indices = _get_app_bg_attr("_sse_prev_indices", _sse_prev_indices)
             diff = _build_sse_diff(
@@ -239,14 +237,15 @@ def _raw_announce_current_market_state() -> None:
                 )
             else:
                 announcer1.announce(_SSE_KEEPALIVE_FRAME)
-                _sse_payload_cached_generation = current_gen
-                _sse_payload_yf_limited = yf_limited
-                _sse_payload_us_open = us_open
-                _sse_payload_jp_open = jp_open
-                _set_app_bg_attr("_sse_payload_cached_generation", current_gen)
-                _set_app_bg_attr("_sse_payload_yf_limited", yf_limited)
-                _set_app_bg_attr("_sse_payload_us_open", us_open)
-                _set_app_bg_attr("_sse_payload_jp_open", jp_open)
+                with _sse_payload_lock:
+                    _sse_payload_cached_generation = current_gen
+                    _sse_payload_yf_limited = yf_limited
+                    _sse_payload_us_open = us_open
+                    _sse_payload_jp_open = jp_open
+                    _set_app_bg_attr("_sse_payload_cached_generation", current_gen)
+                    _set_app_bg_attr("_sse_payload_yf_limited", yf_limited)
+                    _set_app_bg_attr("_sse_payload_us_open", us_open)
+                    _set_app_bg_attr("_sse_payload_jp_open", jp_open)
                 return
 
         new_prev: dict[str, dict[str, Any]] = {}
@@ -256,33 +255,35 @@ def _raw_announce_current_market_state() -> None:
             for item in current_list:
                 if isinstance(item, dict) and item.get("symbol"):
                     new_prev[market][item["symbol"]] = _strip_portfolio_fields(item)
-        _sse_prev_stocks = new_prev
-        _set_app_bg_attr("_sse_prev_stocks", new_prev)
         new_prev_indices = copy.deepcopy(indices) if isinstance(indices, dict) else {}
-        _sse_prev_indices = new_prev_indices
-        _set_app_bg_attr("_sse_prev_indices", new_prev_indices)
-
         frame = f"data: {payload}\n\n"
-        _sse_payload_cache = frame
-        _sse_payload_cached_generation = current_gen
-        _sse_payload_yf_limited = yf_limited
-        _sse_payload_us_open = us_open
-        _sse_payload_jp_open = jp_open
 
-        _set_app_bg_attr("_sse_payload_cache", frame)
-        _set_app_bg_attr("_sse_payload_cached_generation", current_gen)
-        _set_app_bg_attr("_sse_payload_yf_limited", yf_limited)
-        _set_app_bg_attr("_sse_payload_us_open", us_open)
-        _set_app_bg_attr("_sse_payload_jp_open", jp_open)
+        # R17-04: state write under a short critical section. Order is
+        # guaranteed by the surrounding _sse_frame_publish_lock.
+        with _sse_payload_lock:
+            _sse_prev_stocks = new_prev
+            _set_app_bg_attr("_sse_prev_stocks", new_prev)
+            _sse_prev_indices = new_prev_indices
+            _set_app_bg_attr("_sse_prev_indices", new_prev_indices)
+            _sse_payload_cache = frame
+            _sse_payload_cached_generation = current_gen
+            _sse_payload_yf_limited = yf_limited
+            _sse_payload_us_open = us_open
+            _sse_payload_jp_open = jp_open
+            _set_app_bg_attr("_sse_payload_cache", frame)
+            _set_app_bg_attr("_sse_payload_cached_generation", current_gen)
+            _set_app_bg_attr("_sse_payload_yf_limited", yf_limited)
+            _set_app_bg_attr("_sse_payload_us_open", us_open)
+            _set_app_bg_attr("_sse_payload_jp_open", jp_open)
 
-        # Announce inside the lock from the captured local frame. Re-reading
-        # the shared global after releasing the lock would let a concurrent
-        # broadcaster's newer frame be announced twice while this thread's own
-        # frame is lost (listeners would miss the diff and diverge until the
-        # next full snapshot), and could publish an older build after a newer
-        # one since listeners apply diff frames strictly in arrival order.
-        announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
-        announce_fn(announcer1, frame, 1)
+        # `_announce_frame` also acquires _sse_frame_publish_lock. The
+        # surrounding `with` is on the same thread, and that lock is a
+        # non-reentrant threading.Lock, so calling announce_fn inside it
+        # deadlocks. Publish outside the outer block instead: order is still
+        # consistent because the state write happened first and the frame
+        # is local to this call.
+    announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
+    announce_fn(announcer1, frame, 1)
 
 
 def announce_current_market_state() -> None:

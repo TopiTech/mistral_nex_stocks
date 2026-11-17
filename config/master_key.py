@@ -73,6 +73,32 @@ def get_or_create_master_key() -> str:
     if env_key:
         return _validate_master_key(env_key)
 
+    # R17-08: a stored key that decodes successfully IS persistent (keyring/
+    # DPAPI backed). Requiring MNS_MASTER_KEY in production for that case made
+    # keyring-provisioned installs fail to start on a production switch. The
+    # production env requirement applies only to generation of a new key
+    # below, not to reading a stored one.
+    def _stored_master_key_if_present() -> str | None:
+        _cfg = config_store.load_config()
+        if config_store.is_config_corrupted():
+            return None
+        if not isinstance(_cfg, dict):
+            return None
+        _entry = _cfg.get("mns_master_key")
+        if not _entry:
+            return None
+        if not isinstance(_entry, dict):
+            _reject_undecodable_master_key()
+        _key = config_store._decode_secret(_entry, "mns_master_key")
+        if _key:
+            return _validate_master_key(_key)
+        _reject_undecodable_master_key()
+        return None
+
+    _stored_key = _stored_master_key_if_present()
+    if _stored_key is not None:
+        return _stored_key
+
     # Production check: MNS_MASTER_KEY must be set in production mode to prevent data loss.
     from utils.env_helpers import _is_production_env
 

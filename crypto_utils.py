@@ -580,9 +580,18 @@ def protect_data(text: str, key_name: str = "general_data", master_key: str | No
         return {"scheme": "fernet", "value": ""}
 
     if master_key is None:
-        # Fallback: import config_store lazily to avoid circular imports
+        # R17-17: implicitly taking config_update_lock here inverts the
+        # documented _MASTER_KEY_LOCK -> config_update_lock order when the
+        # caller already holds config_update_lock. Refuse the implicit path
+        # and require the caller to resolve the key outside the lock.
         import config_store as _cs  # type: ignore[import-not-found]
 
+        depth = getattr(_cs._UPDATE_LOCK_STATE, "depth", 0)
+        if depth > 0:
+            raise RuntimeError(
+                "protect_data() requires master_key while config_update_lock is held: "
+                "resolve the master key outside the lock (lock-order AB-BA)."
+            )
         master_key = _cs.get_or_create_master_key()
 
     if Fernet is None:

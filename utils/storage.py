@@ -678,9 +678,15 @@ def load_user_stocks(force=False):
             us = data.get("us", {})
             jp = _normalize_jp_holding_keys(data.get("jp", {}))
             idx = _normalize_idx_holding_fields(data.get("idx", {}))
-            app_state.market.user_us = us
-            app_state.market.user_jp = jp
-            app_state.market.user_idx = idx
+            # R17-06: load must preserve the live dict identity (clear/update
+            # like save) so a handler holding an old reference does not
+            # mutate a detached dict (lost update).
+            app_state.market.user_us.clear()
+            app_state.market.user_us.update(us)
+            app_state.market.user_jp.clear()
+            app_state.market.user_jp.update(jp)
+            app_state.market.user_idx.clear()
+            app_state.market.user_idx.update(idx)
             snapshot_us_keys = list(us.keys())
             snapshot_jp_keys = list(jp.keys())
             _update_market_usdjpy_rate(

@@ -49,6 +49,9 @@ _sync_generation: int = 0
 _sync_generation_lock = threading.Lock()
 
 
+# R17-13: bounded at 2000 entries (default watchlist is much smaller; entries
+# for removed symbols are pruned in _warm_payload_cache_from_disk).
+_LAST_LOADED_MTIMES_MAX = 2000
 _last_loaded_mtimes: dict[str, float] = {}
 
 

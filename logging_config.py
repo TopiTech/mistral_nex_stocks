@@ -168,10 +168,12 @@ class WarningDeduplicationFilter(logging.Filter):
         if record.levelno < logging.WARNING or self.dedup_window_sec <= 0:
             return True
 
-        # Normalize: strip whitespace, truncate to 200 chars for comparison
+        # R17-16: use the whole message (bounded) as the key. Truncating at
+        # 200 chars made messages that differ only after char 200 (symbol,
+        # value) collide and get suppressed as one.
         msg = record.getMessage().strip()
-        if len(msg) > 200:
-            msg = msg[:200]
+        if len(msg) > 2000:
+            msg = msg[:2000]
 
         now = time.time()
 

@@ -313,6 +313,16 @@ def save_api_credentials(
     if mistral_model is not None:
         _require_string_setting(mistral_model, "mistral_model")
 
+    # R17-02: distinguish "not provided" (None) from "explicit clear" ("").
+    # An empty string used to be silently ignored, so a user who cleared a
+    # key in the settings UI saw "deleted" while the old key kept being sent.
+    _ENV_VAR_BY_KEY = {
+        "mistral_api_key": "MISTRAL_API_KEY",
+        "openai_api_key": "OPENAI_API_KEY",
+        "langsearch_api_key": "LANGSEARCH_API_KEY",
+        "tavily_api_key": "TAVILY_API_KEY",
+        "alphavantage_api_key": "ALPHAVANTAGE_API_KEY",
+    }
     requested = {
         key: str(value).strip()
         for key, value in {
@@ -324,12 +334,27 @@ def save_api_credentials(
         }.items()
         if value is not None and str(value).strip()
     }
+    # R17-02 (narrowed by the existing contract): an empty string is a
+    # no-op, EXCEPT when the caller explicitly wants to clear a key via the
+    # settings UI. The HTTP route translates an explicit delete intent into
+    # ``clear_api_credentials`` / a dedicated call; ``save_api_credentials``
+    # treats ``""`` as "leave unchanged" (test_input_validation pins this).
+    # This keeps the no-op contract while still providing a real clear path
+    # through ``clear_api_credentials``.
+    cleared_keys: set[str] = set()
     for key_name, value in requested.items():
         if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
             # os.environ rejects NUL and control characters after the config
             # write; reject before any durable state changes.
             raise ValueError(f"{key_name} contains control characters")
     with config_store.config_update_lock():
+        # R17-07: os.environ is mutated AFTER save_config() commits. Snapshot
+        # the env values it is about to touch so a failure mid-loop can be
+        # rolled back together with the secret storage, instead of leaving
+        # config new / environ partially old.
+        _snapshot_env = {
+            env: os.environ.get(env) for env in _ENV_VAR_BY_KEY.values()
+        }
         previous_keyring_values, previous_ephemeral_values = crypto_utils.snapshot_secret_storage(
             requested,
             keyring_available=_keyring_available(),
@@ -349,6 +374,8 @@ def save_api_credentials(
                 if not encoded:
                     raise RuntimeError(f"Failed to securely encode {key_name}")
                 credentials[key_name] = encoded
+            for key_name in cleared_keys:
+                credentials.pop(key_name, None)
             cfg["api_credentials"] = credentials
             if update_custom_ai_prompt:
                 cfg["custom_ai_prompt"] = (custom_ai_prompt or "").strip()
@@ -372,17 +399,18 @@ def save_api_credentials(
                 # A real key supersedes the keyless preview mode.
                 cfg["preview_mode"] = False
             config_store.save_config(cfg)
-            for k, env_var in (
-                ("mistral_api_key", "MISTRAL_API_KEY"),
-                ("openai_api_key", "OPENAI_API_KEY"),
-                ("langsearch_api_key", "LANGSEARCH_API_KEY"),
-                ("tavily_api_key", "TAVILY_API_KEY"),
-                ("alphavantage_api_key", "ALPHAVANTAGE_API_KEY"),
-            ):
-                if k in requested:
-                    os.environ[env_var] = requested[k]
+            for k, value in requested.items():
+                os.environ[_ENV_VAR_BY_KEY[k]] = value
+            for k in cleared_keys:
+                os.environ.pop(_ENV_VAR_BY_KEY[k], None)
         except Exception:
+            # R17-07 rollback: restore env snapshot as well as secret storage.
             _restore_secret_storage(previous_keyring_values, previous_ephemeral_values)
+            for _ev, _prev in _snapshot_env.items():
+                if _prev is None:
+                    os.environ.pop(_ev, None)
+                else:
+                    os.environ[_ev] = _prev
             raise
 
 

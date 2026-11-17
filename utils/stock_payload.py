@@ -1186,8 +1186,10 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                     symbols_to_register.append(sym)
                 jp_rows.append(r_copy)
             resolved["jp"] = jp_rows
-        for sym in symbols_to_register:
-            realtime_market_engine.register_symbol(sym, "jp")
+        # R17-18 (contract-pinned): registration happens here (outside the
+        # sse_data_lock) so a missing PTS subscription is healed on read.
+        for _sym in symbols_to_register:
+            realtime_market_engine.register_symbol(_sym, "jp")
     except Exception as exc:
         logger.debug("Failed to resolve PTS snapshot for response: %s", exc)
     return resolved

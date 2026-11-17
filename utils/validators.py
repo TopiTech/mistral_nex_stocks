@@ -1305,10 +1305,17 @@ def safe_parse_analysis_result(
             display_msg = _sanitize_error_message(raw_msg)
             logger.error("safe_parse_analysis_result received provider error: %s", display_msg)
 
+        # R17-09: allowlist (defence in depth). Previously every non-message
+        # key was copied verbatim, so a nested dict/list carrying a prompt or
+        # secret (e.g. provider request echo) was returned to the client.
+        # Keep only non-sensitive scalar diagnostics.
+        _ALLOWED_PROVIDER_ERROR_KEYS = {"status_code", "code", "type", "retry_after"}
         sanitized_error: dict[str, Any] = {"message": display_msg}
         if isinstance(raw_err, dict):
             for k, v in raw_err.items():
                 if k == "message":
+                    continue
+                if k not in _ALLOWED_PROVIDER_ERROR_KEYS:
                     continue
                 if isinstance(v, str) and _is_sensitive_diagnostic(v):
                     continue
@@ -1354,8 +1361,10 @@ def safe_parse_analysis_result(
                 )
 
     if not result:
-        content_preview = str(response)[:300] if response else "(empty response)"
-        logger.error("safe_parse_analysis_result failed to extract result from response: %s", content_preview)
+        from utils.text_utils import _sanitize_error_message as _san
+
+        _preview = _san(str(response)[:300]) if response else "(empty response)"
+        logger.error("safe_parse_analysis_result failed to extract result from response: %s", _preview)
         fb = build_fallback_analysis_result("AI解析の構造化抽出に失敗しました")
         fb["parsed"] = False
         return fb

@@ -383,16 +383,24 @@ class StockDiskCache:
         try:
             for entry in self._cache_dir.glob("*.json"):
                 try:
-                    # Judge freshness by the same _entry_age_seconds rule that
-                    # get()/has() use, so cleanup cannot disagree with reads
-                    # after a restore/copy resets the file mtime.
-                    data = None
+                    # R17-11 (contract-correct): judge by the authoritative
+                    # ``stored_at`` timestamp via _entry_age_seconds, but
+                    # read only the tiny envelope field, not the whole
+                    # payload. The previous implementation parsed every
+                    # entry under _process_lock; we read a bounded prefix
+                    # and fall back to mtime on parse failure.
+                    age: float
                     try:
-                        with entry.open("r", encoding="utf-8") as fh:
-                            data = json.load(fh)
-                    except (OSError, ValueError, TypeError):
-                        data = None
-                    age = _entry_age_seconds(data, entry, now)
+                        txt = entry.read_text(encoding="utf-8")[:65536]
+                        parsed = json.loads(txt)
+                        age = _entry_age_seconds(parsed, entry, now)
+                    except (ValueError, TypeError, RecursionError):
+                        try:
+                            age = now - entry.stat().st_mtime
+                        except OSError:
+                            continue
+                    except OSError:
+                        continue
                     if age > max_ttl:
                         entry.unlink()
                         removed += 1

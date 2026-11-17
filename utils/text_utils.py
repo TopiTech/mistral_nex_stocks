@@ -99,6 +99,11 @@ def _read_bounded_request_body(*, max_size: int) -> bytes | None:
         # a LimitedStream does not raise after returning exactly its limit.
         request.max_content_length = max_size + 1
         body = request.get_data(cache=True)
+    except RequestEntityTooLarge:
+        # R17-03: RequestEntityTooLarge is a BadRequest subclass; catching it
+        # as BadRequest here turns a 413 into a 400 MALFORMED_INPUT and
+        # bypasses the canonical 413 handler. Re-raise it.
+        raise
     except (BadRequest, ValueError, TypeError, OSError):
         return None
     except Exception:
@@ -234,7 +239,9 @@ def _parse_optional_json_request(*, max_size: int = MAX_JSON_SIZE) -> dict | Non
         return None
     try:
         return {} if not request.get_data(cache=True) else None
-    except (RequestEntityTooLarge, ValueError, TypeError, OSError):
+    except RequestEntityTooLarge:
+        raise
+    except (ValueError, TypeError, OSError):
         return None
 
 

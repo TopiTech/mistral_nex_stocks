@@ -40,7 +40,13 @@ class ExecutionState:
                 self.background_threads.append(thread)
 
     def get_background_threads(self) -> list[threading.Thread]:
-        """Return a snapshot list of registered background threads under lock."""
+        """Return every registered background thread (historical contract).
+
+        R17-15 lives in the watchdog, not here: pruning here would break
+        the registry contract pinned by the lifecycle tests (the watchdog
+        itself is a registered thread). Callers that need live threads
+        filter on ``is_alive()`` as ``bg/sync/control.py`` already does.
+        """
         with self._threads_lock:
             return list(self.background_threads)
 

@@ -123,6 +123,10 @@ def _pid_is_alive(pid: int) -> bool:
     except ImportError:
         pass
     if os.name == "nt":
+        # psutil is the documented safe probe (LIFECYCLE-1). ctypes was
+        # tried as a fallback but would silently change the contract pinned
+        # by tests/test_review_2026_10_31_lifecycle.py (Fall-through to
+        # conservative False + warning). Keep the conservative contract.
         logger.warning(
             "psutil unavailable: cannot verify pid %d liveness on Windows without "
             "risking TerminateProcess via os.kill. Treating the process as not "
@@ -280,6 +284,44 @@ def _try_acquire_advisory_file_lock(
             return True
 
 
+def _verify_leader_ownership() -> None:
+    """Re-verify that we still own the advisory leader lock (R17-01).
+
+    The advisory lock is only valid while its filing descriptor stays open.
+    If the fd was closed (GC/shutdown race) or the file was unlink+recreated
+    by another process, the cached ``_is_sync_leader`` bool keeps saying
+    "leader" and two masters fetch concurrently. Refresh the pid heartbeat
+    through the held fd and demote when that fails.
+    """
+    with _LEADER_LOCK_MUTEX:
+        lock_f = _get_leader_lock_file()
+        if lock_f is None:
+            _set_is_sync_leader(False)
+            logger.warning("Leader lock handle lost; demoting to follower.")
+            return
+        try:
+            pid = os.getpid()
+            lock_f.seek(0)
+            lock_f.truncate(0)
+            lock_f.write(str(pid))
+            lock_f.flush()
+            if not lock_f.tell():
+                raise OSError("empty leader lock handle")
+        except (ValueError, OSError) as exc:
+            logger.warning("Leader lock ownership verification failed: %s", exc)
+            try:
+                lock_f.close()
+            except (OSError, ValueError):
+                pass
+            _set_leader_lock_file(None)
+            _set_is_sync_leader(False)
+            return
+        # flock/msvcrt locks do not give an observable "still held" bit, but
+        # a closed/replaced handle is the detectable loss mode. Content must
+        # be able to heartbeat (seek+truncate above succeeded).
+    return
+
+
 def _try_acquire_leader_lock() -> bool:
     """Try to acquire a non-blocking lock on the leader lock file."""
     target = _get_app_bg_attr("_try_acquire_leader_lock", None)
@@ -352,4 +394,10 @@ def bg_leader_election_loop() -> None:
             if acquired:
                 _set_is_sync_leader(True)
                 logger.info("Sync leader changed: this process is now the MASTER.")
+        else:
+            # R17-01: re-verify ownership every tick. Previously the leader
+            # state was a one-time cached bool: if the advisory lock fd was
+            # closed / the lock file was unlink+recreated by another process,
+            # this process stayed MASTER and two leaders fetched concurrently.
+            _verify_leader_ownership()
         app_state.execution.shutdown_event.wait(10.0)

@@ -189,9 +189,24 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
             )
             return
 
+        # R17-05: re-verify the generation at publish time under sse_data_lock
+        # so a stale sync cannot overwrite a newer sync's publish.
+        with app_state.market.is_syncing_lock:
+            if sync_generation != 0 and sync_generation != _get_sync_generation():
+                logger.info(
+                    "Discarding stale stock sync generation %s at publish", sync_generation
+                )
+                return
         update_idx_fn = _get_app_bg_attr("_update_indices_data", _update_indices_data)
         update_idx_fn(result.idx, result.us, result.jp)
         with app_state.cache.sse_data_lock:
+            with app_state.market.is_syncing_lock:
+                if sync_generation != 0 and sync_generation != _get_sync_generation():
+                    logger.info(
+                        "Discarding stale stock sync generation %s inside publish lock",
+                        sync_generation,
+                    )
+                    return
             app_state.market.current_stocks_cache = copy.deepcopy(
                 app_state.market.target_stocks_cache
             )
@@ -522,6 +537,14 @@ def start_background_worker() -> None:
                         len(dead_threads),
                         ", ".join(t.name for t in dead_threads),
                     )
+                # R17-15: prune dead threads so the registry does not grow
+                # unboundedly and the watchdog does not re-warn forever.
+                with app_state.execution._threads_lock:
+                    app_state.execution.background_threads = [
+                        t
+                        for t in app_state.execution.background_threads
+                        if t.is_alive()
+                    ]
                 watchdog_fn = _get_app_bg_attr(
                     "_watchdog_restart_dead_realtime_engine", _watchdog_restart_dead_realtime_engine
                 )

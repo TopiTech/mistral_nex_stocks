@@ -123,6 +123,15 @@ def _warm_payload_cache_from_disk() -> None:
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache
                     )
+        # R17-13: prune mtimes for symbols no longer in the watchlist and
+        # bound the dict so churn cannot grow it unboundedly.
+        _state._last_loaded_mtimes = {
+            k: v
+            for k, v in list(_state._last_loaded_mtimes.items())[
+                -_state._LAST_LOADED_MTIMES_MAX :
+            ]
+            if k.split("_", 2)[-1].rsplit("_", 1)[0] in symbols_to_warm
+        } if symbols_to_warm else _state._last_loaded_mtimes
         if warmed_indices or warmed > 0:
             inval_fn = _get_app_bg_attr(
                 "_invalidate_sse_payload_cache", _invalidate_sse_payload_cache

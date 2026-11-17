@@ -397,7 +397,13 @@ class AIState:
         return None
 
     def get_or_create_mistral_client(self, api_key: str):
-        cache_key = api_key
+        # R17-12: never use the plaintext key as a cache key (it stays in the
+        # LRUCache and the retired queue for the grace window and would be
+        # readable from a core dump). Fingerprint it; the client object
+        # itself is the only holder.
+        import hashlib
+
+        cache_key = hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest()[:16]
         with self.mistral_clients_lock:
             existing = self._lookup_or_evict_locked(
                 self.mistral_clients,
@@ -429,7 +435,10 @@ class AIState:
             raise ValueError(url_reason)
 
         clean_key = (api_key or "").strip()
-        cache_key = (clean_url, clean_key)
+        import hashlib
+
+        _fp = hashlib.sha256(clean_key.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        cache_key = (clean_url, _fp)
 
         with self.openai_clients_lock:
             existing = self._lookup_or_evict_locked(

@@ -2419,10 +2419,10 @@ def api_analyze_chart_image():
     if not ok:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": reason}, status_code=403)
 
-    data = _parse_json_request(max_size=CHART_IMAGE_MAX_CONTENT_LENGTH)
-    if data is None:
-        return error_response(ErrorCode.BAD_REQUEST, status_code=400)
-
+    # Authenticate before reading the body. This endpoint accepts up to 7 MiB
+    # of base64 image data; parsing/validating that payload for a request that
+    # cannot possibly succeed burns request-worker CPU and memory (the other AI
+    # routes all check the key first).
     api_key = extract_api_key(request)
     if not api_key:
         from credential_manager import is_openai_provider
@@ -2439,6 +2439,9 @@ def api_analyze_chart_image():
             status_code=401,
         )
 
+    data = _parse_json_request(max_size=CHART_IMAGE_MAX_CONTENT_LENGTH)
+    if data is None:
+        return error_response(ErrorCode.BAD_REQUEST, status_code=400)
 
     # Boundary validation lives in ``schemas.AIAnalyzeChartImageRequest``
     # (via ``route_helpers._parse_chart_image_request``); the parsed values

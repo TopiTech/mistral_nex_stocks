@@ -92,6 +92,12 @@ def _load_allowed_extension_origins():
         if manifest_path.exists():
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest_data = json.load(f) or {}
+            # A JSON array/string/number is truthy, so ``or {}`` does not replace
+            # it and ``.get`` raises AttributeError. That escaped the handler
+            # below and turned every state-changing request into a 500 because
+            # this list feeds the trusted-origin check.
+            if not isinstance(manifest_data, dict):
+                raise ValueError("manifest root must be a JSON object")
             for raw in manifest_data.get("allowed_origins", []) or []:
                 origin = _normalize_extension_origin(str(raw or "").strip())
                 if origin:

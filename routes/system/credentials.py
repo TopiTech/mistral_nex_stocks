@@ -12,6 +12,7 @@ import os
 import time
 from typing import Any
 
+import httpx
 from flask import current_app, g, request
 
 import routes.api_system
@@ -693,6 +694,42 @@ def api_credentials_verify():
                 "latency_ms": latency_ms,
                 "message": f"接続成功 ({tier_name}) - 推奨モデル: {recommended_label} (応答: {latency_ms}ms)",
             }
+        )
+    except (httpx.TimeoutException, TimeoutError) as exc:
+        latency_ms = int((time.time() - start_ts) * 1000)
+        current_app.logger.warning(
+            "Mistral API key verification timed out error_type=%s", type(exc).__name__
+        )
+        timeout_msg = (
+            "AIサービスの応答がタイムアウトしました。しばらくしてから再試行してください。"
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            504,
+            message=timeout_msg,
+            details={
+                "reason": timeout_msg,
+                "latency_ms": latency_ms,
+                "error_type": type(exc).__name__,
+            },
+        )
+    except (httpx.NetworkError, ConnectionError) as exc:
+        latency_ms = int((time.time() - start_ts) * 1000)
+        current_app.logger.warning(
+            "Mistral API key verification network error error_type=%s", type(exc).__name__
+        )
+        network_msg = (
+            "AIサービスに接続できませんでした。ネットワーク環境またはAPI接続先を確認してください。"
+        )
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            503,
+            message=network_msg,
+            details={
+                "reason": network_msg,
+                "latency_ms": latency_ms,
+                "error_type": type(exc).__name__,
+            },
         )
     except Exception as exc:
         latency_ms = int((time.time() - start_ts) * 1000)

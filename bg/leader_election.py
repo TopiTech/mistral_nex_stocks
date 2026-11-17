@@ -36,6 +36,14 @@ _ATOMIC_LOCK_STALE_SEC: float = 60.0
 _LEADER_LOCK_MUTEX = threading.RLock()
 _LEADER_LOCK_FILE: Any = None
 _LEADER_LOCK_PID: int | None = None
+# Which acquisition mechanism owns leadership: ``"advisory"`` keeps a locked
+# file descriptor for the whole term, ``"atomic"`` only owns a pid marker file
+# (no descriptor). Ownership verification differs per mode: requiring a handle
+# from the atomic mode demoted a healthy leader on every tick (the election
+# loop then re-won the same marker forever, running as follower half the
+# time), while the advisory mode needs the handle plus file-identity checks.
+_LEADER_LOCK_MODE: str | None = None
+_LEADER_LOCK_PATH: Path | None = None
 # LIFECYCLE-7: "follower until elected" — a process must not claim leadership
 # before the election loop has won the leader lock, otherwise every worker in
 # multi-process mode fetches as leader during the startup window (the exact
@@ -60,6 +68,7 @@ def _detach_inherited_leader_lock_locked() -> None:
     _LEADER_LOCK_FILE = None
     _LEADER_LOCK_PID = None
     _set_app_bg_attr("_LEADER_LOCK_FILE", None)
+    _set_leader_lock_mode(None)
     _set_is_sync_leader(False)
 
 
@@ -69,6 +78,7 @@ def _reset_leader_lock_in_child() -> None:
     _LEADER_LOCK_FILE = None
     _LEADER_LOCK_PID = None
     _set_app_bg_attr("_LEADER_LOCK_FILE", None)
+    _set_leader_lock_mode(None)
     _set_is_sync_leader(False)
 
 
@@ -87,6 +97,29 @@ def _set_leader_lock_file(f: Any) -> None:
         _LEADER_LOCK_FILE = f
         _LEADER_LOCK_PID = os.getpid() if f is not None else None
         _set_app_bg_attr("_LEADER_LOCK_FILE", f)
+
+
+def _get_leader_lock_mode() -> str | None:
+    with _LEADER_LOCK_MUTEX:
+        return _get_app_bg_attr("_LEADER_LOCK_MODE", _LEADER_LOCK_MODE)
+
+
+def _get_leader_lock_path() -> Path | None:
+    with _LEADER_LOCK_MUTEX:
+        return _get_app_bg_attr("_LEADER_LOCK_PATH", _LEADER_LOCK_PATH)
+
+
+def _set_leader_lock_mode(mode: str | None, path: Path | None = None) -> None:
+    """Record which acquisition mechanism currently owns leadership."""
+    global _LEADER_LOCK_MODE, _LEADER_LOCK_PATH
+    with _LEADER_LOCK_MUTEX:
+        _LEADER_LOCK_MODE = mode
+        if path is not None:
+            _LEADER_LOCK_PATH = path
+        elif mode is None:
+            _LEADER_LOCK_PATH = None
+        _set_app_bg_attr("_LEADER_LOCK_MODE", mode)
+        _set_app_bg_attr("_LEADER_LOCK_PATH", _LEADER_LOCK_PATH)
 
 
 def _set_is_sync_leader(val: bool) -> None:
@@ -151,6 +184,7 @@ def _release_leader_lock() -> None:
         _detach_inherited_leader_lock_locked()
         _lock_file = _get_leader_lock_file()
         _set_leader_lock_file(None)
+        _set_leader_lock_mode(None)
         _set_is_sync_leader(False)
         if _lock_file is not None:
             try:
@@ -192,6 +226,7 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                 owner_pid = None
             if owner_pid == pid:
                 logger.debug("Atomic leader lock already held by pid=%d", pid)
+                _set_leader_lock_mode("atomic", lock_path)
                 return True
             stale = False
             try:
@@ -244,6 +279,7 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                 pass
             return False
         _set_leader_lock_file(f)
+        _set_leader_lock_mode("atomic", lock_path)
         logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)
         return True
     return False
@@ -263,6 +299,7 @@ def _try_acquire_advisory_file_lock(
                 lock_f.truncate(0)
                 lock_f.write(str(pid))
                 lock_f.flush()
+                _set_leader_lock_mode("advisory", lock_path)
                 return True
             except (ValueError, OSError):
                 try:
@@ -280,46 +317,85 @@ def _try_acquire_advisory_file_lock(
             lock_f.write(str(pid))
             lock_f.flush()
             _set_leader_lock_file(lock_f)
+            _set_leader_lock_mode("advisory", lock_path)
             stack.pop_all()
             return True
 
 
 def _verify_leader_ownership() -> None:
-    """Re-verify that we still own the advisory leader lock (R17-01).
+    """Re-verify that we still own the leader lock (R17-01).
 
-    The advisory lock is only valid while its filing descriptor stays open.
-    If the fd was closed (GC/shutdown race) or the file was unlink+recreated
-    by another process, the cached ``_is_sync_leader`` bool keeps saying
-    "leader" and two masters fetch concurrently. Refresh the pid heartbeat
-    through the held fd and demote when that fails.
+    Ownership differs by acquisition mode:
+
+    * ``advisory``: valid only while the locked descriptor stays open AND the
+      path still names the same file. If the fd was closed (GC/shutdown race)
+      or the lock file was unlink+recreated by another process, our flock lives
+      on an orphaned inode while a peer locks the new file - the cached
+      ``_is_sync_leader`` bool would keep saying "leader" and two masters would
+      fetch concurrently. The file-identity check (``st_dev``/``st_ino``,
+      populated on POSIX and NTFS) detects that replacement.
+
+    * ``atomic``: ownership is the pid written in the marker file, and there
+      is intentionally no descriptor. Requiring a handle here demoted a
+      healthy leader on every tick, after which the loop immediately re-won
+      the same marker - effectively running as follower for half of every
+      10-second cycle. The marker content is the authoritative check.
     """
     with _LEADER_LOCK_MUTEX:
+        mode = _get_leader_lock_mode()
+        lock_path = _get_leader_lock_path()
         lock_f = _get_leader_lock_file()
-        if lock_f is None:
+        pid = os.getpid()
+
+        def _demote(reason: str) -> None:
+            logger.warning("Leader lock ownership lost (%s); demoting to follower.", reason)
+            if lock_f is not None:
+                try:
+                    lock_f.close()
+                except (OSError, ValueError):
+                    pass
+            _set_leader_lock_file(None)
+            _set_leader_lock_mode(None)
             _set_is_sync_leader(False)
-            logger.warning("Leader lock handle lost; demoting to follower.")
+
+        if mode == "atomic":
+            if lock_path is None:
+                _demote("atomic lock path unknown")
+                return
+            try:
+                owner_raw = lock_path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                _demote(f"atomic lock file unreadable: {exc}")
+                return
+            if owner_raw != str(pid):
+                _demote("atomic lock marker no longer owned")
+                return
+            return
+
+        if lock_f is None:
+            _demote("lock handle missing")
             return
         try:
-            pid = os.getpid()
             lock_f.seek(0)
             lock_f.truncate(0)
             lock_f.write(str(pid))
             lock_f.flush()
             if not lock_f.tell():
                 raise OSError("empty leader lock handle")
+            if lock_path is not None:
+                try:
+                    held_stat = os.fstat(lock_f.fileno())
+                    current_stat = os.stat(lock_path)
+                except FileNotFoundError as exc:
+                    raise OSError("leader lock file was removed") from exc
+                if (held_stat.st_dev, held_stat.st_ino) != (
+                    current_stat.st_dev,
+                    current_stat.st_ino,
+                ):
+                    raise OSError("leader lock file was replaced")
         except (ValueError, OSError) as exc:
-            logger.warning("Leader lock ownership verification failed: %s", exc)
-            try:
-                lock_f.close()
-            except (OSError, ValueError):
-                pass
-            _set_leader_lock_file(None)
-            _set_is_sync_leader(False)
+            _demote(str(exc))
             return
-        # flock/msvcrt locks do not give an observable "still held" bit, but
-        # a closed/replaced handle is the detectable loss mode. Content must
-        # be able to heartbeat (seek+truncate above succeeded).
-    return
 
 
 def _try_acquire_leader_lock() -> bool:

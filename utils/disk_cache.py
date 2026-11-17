@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
 import uuid
@@ -61,6 +62,13 @@ class DiskCacheLockTimeout(OSError):
     entry / skipped write) instead of blocking forever.
     """
 
+
+# Cleanup only parses a complete legacy envelope (one whose ``stored_at``
+# follows the payload) when it is small enough for the read to stay bounded.
+# New entries put ``stored_at`` first, so the bounded prefix reader below
+# handles them regardless of payload size.
+_CLEANUP_LEGACY_PARSE_MAX_BYTES = 64 * 1024
+_STORED_AT_PREFIX_MAX_BYTES = 64
 
 _DEGRADED_RETRY_AFTER_SEC = 10.0
 # A file mtime more than this far in the future means the wall clock was
@@ -132,6 +140,67 @@ def _entry_age_seconds(data: Any, path: Path, now: float | None = None) -> float
         # it as infinitely old and let the caller treat it as expired.
         return math.inf
     return max(0.0, current - mtime)
+
+
+def _read_entry_timestamp_prefix(path: Path, max_bytes: int = _STORED_AT_PREFIX_MAX_BYTES) -> float | None:
+    """Return the envelope's leading ``stored_at`` time without reading the payload.
+
+    Entries written by this version serialize ``stored_at`` first, so a small
+    bounded read is sufficient even when the cached value is many megabytes.
+    The previous cleanup read the whole file and sliced the first 64 KiB;
+    for larger entries the slice was a truncated JSON document, so the parse
+    failed and freshness silently fell back to the file mtime - both an
+    unbounded read under the cache lock and a disagreement with ``get()`` /
+    ``has()``, which use ``stored_at``.
+
+    Returns ``None`` for legacy ordering, corrupt content, or I/O errors; the
+    caller then falls back to a bounded legacy parse or the file mtime.
+    """
+    try:
+        with open(path, "rb") as handle:
+            prefix = handle.read(max_bytes)
+    except OSError:
+        return None
+    marker = b'{"stored_at":'
+    if not prefix.startswith(marker):
+        return None
+    match = re.match(rb"\s*([-+0-9.eE]+)", prefix[len(marker) :])
+    if match is None:
+        return None
+    try:
+        stored_at = float(match.group(1))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return stored_at if math.isfinite(stored_at) and stored_at > 0.0 else None
+
+
+def _path_entry_age_seconds(path: Path, now: float) -> float:
+    """Return a cleanup-safe age for the entry at *path*.
+
+    New envelopes expose ``stored_at`` in a bounded prefix. Legacy envelopes
+    are parsed in full only while they are small; larger ones fall back to the
+    file mtime exactly like the previous implementation. A clock step that
+    leaves the mtime in the future is treated as infinitely old (mirroring
+    ``_entry_age_seconds``) so the entry cannot stay fresh forever.
+    """
+    stored_at = _read_entry_timestamp_prefix(path)
+    if stored_at is not None:
+        age = now - stored_at
+        if math.isfinite(age) and age >= 0.0:
+            return age
+    try:
+        if path.stat().st_size <= _CLEANUP_LEGACY_PARSE_MAX_BYTES:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return _entry_age_seconds(data, path, now)
+    except (OSError, ValueError, TypeError, RecursionError):
+        pass
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return math.inf
+    if mtime > now + _FUTURE_MTIME_SKEW_SEC:
+        return math.inf
+    return max(0.0, now - mtime)
 
 
 def _read_stale_payload(path):
@@ -398,24 +467,12 @@ class StockDiskCache:
         try:
             for entry in self._cache_dir.glob("*.json"):
                 try:
-                    # R17-11 (contract-correct): judge by the authoritative
-                    # ``stored_at`` timestamp via _entry_age_seconds, but
-                    # read only the tiny envelope field, not the whole
-                    # payload. The previous implementation parsed every
-                    # entry under _process_lock; we read a bounded prefix
-                    # and fall back to mtime on parse failure.
-                    age: float
-                    try:
-                        txt = entry.read_text(encoding="utf-8")[:65536]
-                        parsed = json.loads(txt)
-                        age = _entry_age_seconds(parsed, entry, now)
-                    except (ValueError, TypeError, RecursionError):
-                        try:
-                            age = now - entry.stat().st_mtime
-                        except OSError:
-                            continue
-                    except OSError:
-                        continue
+                    # R17-11: judge by the authoritative ``stored_at``
+                    # timestamp, reading only the bounded envelope prefix for
+                    # entries written in the current (stored_at-first)
+                    # order. Whole-payload reads under the cache lock are
+                    # avoided; legacy envelopes stay on the bounded fallback.
+                    age = _path_entry_age_seconds(entry, now)
                     if age > max_ttl:
                         entry.unlink()
                         removed += 1
@@ -609,8 +666,12 @@ class StockDiskCache:
                     # Ensure cache directory exists before writing
                     self._cache_dir.mkdir(parents=True, exist_ok=True)
                     with open(tmp_path, "w", encoding="utf-8") as fh:
+                        # ``stored_at`` must be the first field: cleanup reads
+                        # only a short prefix to judge freshness, and a
+                        # timestamp after a multi-megabyte value would be
+                        # invisible to that bounded read.
                         json.dump(
-                            {"key": str(key), "value": value, "stored_at": time.time()},
+                            {"stored_at": time.time(), "key": str(key), "value": value},
                             fh,
                             ensure_ascii=False,
                             separators=(",", ":"),
@@ -813,6 +874,13 @@ class StockDiskCache:
                         cleaned, changed = _remove_fields_recursive(payload, fields)
                         if not changed:
                             continue
+                        if isinstance(cleaned, dict) and "stored_at" in cleaned:
+                            # Keep rewritten entries readable by the bounded
+                            # freshness prefix reader (current field order).
+                            cleaned = {
+                                "stored_at": cleaned["stored_at"],
+                                **{k: v for k, v in cleaned.items() if k != "stored_at"},
+                            }
                         with tmp_path.open("w", encoding="utf-8") as handle:
                             json.dump(
                                 cleaned,

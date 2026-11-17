@@ -203,6 +203,23 @@ def _request_fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
+def _inflight_fingerprint_conflict(holder: Any, fingerprint: str) -> bool:
+    """Return True when a running job was claimed for a different payload.
+
+    ``request_token`` is the client's idempotency key. Retrying the same
+    request with it must join the running job, but reusing that token for a
+    different symbol/message must not: the joiner would poll and receive the
+    first request's answer (and history append) as if it belonged to the new
+    payload. The result cache already rejects that mixture; the in-flight
+    path has to apply the same contract. Holders created before this field
+    existed carry no fingerprint and keep the historical join behavior.
+    """
+    if not isinstance(holder, dict):
+        return False
+    stored = holder.get("fingerprint")
+    return isinstance(stored, str) and bool(stored) and stored != fingerprint
+
+
 def _normalize_for_history(content: object) -> str:
     """Normalize assistant content for chat history persistence.
 
@@ -489,6 +506,7 @@ def api_chat():
     # window. Same restructure as the analyze-v2 path below.
     result_holder: FetchJob | None = None
     already_fetching = False
+    token_conflict = False
     with chat_fetch_lock:
         cached = chat_result_cache.get(inflight_key)
         stored_fingerprint = chat_result_fingerprints.get(inflight_key)
@@ -515,8 +533,14 @@ def api_chat():
             chat_result_fingerprints.pop(inflight_key, None)
             cached = None
         if cached is None:
-            if inflight_key in chat_fetch_inflight:
-                result_holder = chat_fetch_inflight[inflight_key]
+            existing_holder = chat_fetch_inflight.get(inflight_key)
+            if _inflight_fingerprint_conflict(existing_holder, chat_fingerprint):
+                # Same token, different payload: joining would return the
+                # other request's answer. Reject without appending the user
+                # message or starting a duplicate paid job.
+                token_conflict = True
+            elif existing_holder is not None:
+                result_holder = existing_holder
                 already_fetching = True
             else:
                 new_result_holder: FetchJob = {
@@ -531,6 +555,15 @@ def api_chat():
                 chat_fetch_inflight[inflight_key] = new_result_holder
                 result_holder = new_result_holder
                 already_fetching = False
+    if token_conflict:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "request_token は別のリクエストで使用中です。新しいトークンで再試行してください。",
+                "fields": ["request_token"],
+            },
+            status_code=409,
+        )
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
@@ -1715,6 +1748,7 @@ def api_analyze_v2():
     # fall-through starts a fresh job below).
     result_holder: FetchJob | None = None
     already_fetching = False
+    token_conflict = False
     with analyze_fetch_lock:
         cached = analyze_result_cache.get(inflight_key)
         stored_fingerprint = analyze_result_fingerprints.get(inflight_key)
@@ -1734,8 +1768,11 @@ def api_analyze_v2():
             # fresh job must start, so treat the entry as absent.
             cached = None
         if cached is None:
-            if inflight_key in analyze_fetch_inflight:
-                result_holder = analyze_fetch_inflight[inflight_key]
+            existing_holder = analyze_fetch_inflight.get(inflight_key)
+            if _inflight_fingerprint_conflict(existing_holder, analyze_fingerprint):
+                token_conflict = True
+            elif existing_holder is not None:
+                result_holder = existing_holder
                 already_fetching = True
             else:
                 new_result_holder: FetchJob = {
@@ -1750,6 +1787,15 @@ def api_analyze_v2():
                 analyze_fetch_inflight[inflight_key] = new_result_holder
                 result_holder = new_result_holder
                 already_fetching = False
+    if token_conflict:
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "request_token は別のリクエストで使用中です。新しいトークンで再試行してください。",
+                "fields": ["request_token"],
+            },
+            status_code=409,
+        )
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:

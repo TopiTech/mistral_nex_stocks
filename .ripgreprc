@@ -1,0 +1,6 @@
+--smart-case
+--max-filesize=2M
+--glob=!.venv/**
+--glob=!node_modules/**
+--glob=!.git/**
+--glob=!__pycache__/**

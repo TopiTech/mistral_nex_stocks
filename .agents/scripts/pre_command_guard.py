@@ -1,6 +1,7 @@
-import sys
 import json
 import re
+import sys
+
 
 def process_command(cmd_line: str) -> str:
     if not cmd_line or not isinstance(cmd_line, str):
@@ -12,7 +13,6 @@ def process_command(cmd_line: str) -> str:
     if not match:
         return cmd_line
 
-    rg_start = match.start(2)
     rg_end = match.end(2)
 
     before_rg = cmd_line[:rg_end]

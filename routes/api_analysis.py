@@ -636,7 +636,7 @@ def api_chat():
         safe_price = _safe_prompt_field(raw_price, max_len=30) or "N/A"
         fresh_context = (
             '\n<context type="market_data">'
-            f"[Current context: {symbol} latest known price={safe_price}]"
+            f"[Current context: {safe_symbol} latest known price={safe_price}]"
             "</context>"
         )
         if messages_snapshot and messages_snapshot[-1].get("role") == "user":
@@ -1176,27 +1176,10 @@ def _chat_error_response(
     req_id = getattr(flask_g, "request_id", "-")
     err_type = type(exc).__name__
 
-    if "認証" in exc_str or _HTTP_401_CODE_RE.search(exc_str):
-        current_app.logger.warning(
-            "api_chat auth error id=%s error=%s",
-            req_id,
-            exc_str,
-        )
-        safe_auth_default = "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
-        if "API認証エラー" in exc_str:
-            msg = (
-                "API認証エラー"
-                if exc_str.strip() == "API認証エラー"
-                else "API認証エラー。APIキーを確認してください。"
-            )
-        else:
-            msg = safe_auth_default
-        status_code = 401
-    elif isinstance(exc, ProviderAPIError):
+    if isinstance(exc, ProviderAPIError):
         # Preserve the provider's status class instead of collapsing every
-        # explicit error payload to 500. The previous RuntimeError path lost
-        # status_code, so a 429 surfaced as "chat failed" (500) and the client
-        # retried immediately, worsening the rate limit.
+        # explicit error payload to 500 or letting generic 401/auth substring
+        # heuristics override explicit 429/403/404/5xx statuses.
         current_app.logger.warning(
             "api_chat provider error id=%s status=%s",
             req_id,
@@ -1247,6 +1230,22 @@ def _chat_error_response(
         )
         msg = "AIサービス呼び出しがタイムアウトしました。モデルの応答に時間がかかっています。しばらく待ってから再試行してください。"
         status_code = 504
+    elif "認証" in exc_str or _HTTP_401_CODE_RE.search(exc_str):
+        current_app.logger.warning(
+            "api_chat auth error id=%s error=%s",
+            req_id,
+            exc_str,
+        )
+        safe_auth_default = "AI APIの認証に失敗しました (HTTP 401)。APIキーを確認してください。"
+        if "API認証エラー" in exc_str:
+            msg = (
+                "API認証エラー"
+                if exc_str.strip() == "API認証エラー"
+                else "API認証エラー。APIキーを確認してください。"
+            )
+        else:
+            msg = safe_auth_default
+        status_code = 401
     elif isinstance(exc, queue.Full):
         # L8 (2026-11-07 review): the submitter of a saturated executor gets
         # TOO_MANY_REQUESTS/503 while a same-token waiter mapping the stored
@@ -2046,6 +2045,7 @@ def api_analyze_v2():
                 # analysis: the history write is auxiliary, so log and keep
                 # the result instead of turning the whole request into a 500.
                 chat_key = f"{conversation_scope}:{market}:{symbol}"
+                safe_symbol = _safe_symbol(symbol)
                 try:
                     with app_state.ai.chat_history_lock:
                         app_state.ai.chat_history.record_turn(
@@ -2053,7 +2053,7 @@ def api_analyze_v2():
                             init_messages=[
                                 {
                                     "role": "system",
-                                    "content": f"あなたは{symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
+                                    "content": f"あなたは{safe_symbol}銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
                                 }
                             ],
                             append={

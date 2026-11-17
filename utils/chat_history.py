@@ -295,6 +295,7 @@ class SQLiteChatHistoryStore:
         self._schema_lock = threading.Lock()
         self._active_conns: set[sqlite3.Connection] = set()
         self._conns_lock = threading.Lock()
+        self._conn_epoch: int = 0
         # Lazy initialization: ensure DB schema exists on first use.
         init_db()
         SQLiteChatHistoryStore._instances.add(self)
@@ -366,9 +367,21 @@ class SQLiteChatHistoryStore:
         at most one connection over its lifetime. check_same_thread=False allows
         close_all() to close the connection from another thread upon worker exit.
         """
+        with self._conns_lock:
+            current_epoch = self._conn_epoch
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        local_epoch = getattr(self._local, "conn_epoch", None)
         if conn is not None:
-            return conn
+            if local_epoch == current_epoch:
+                return conn
+            # Close-all ran on another thread and closed this connection; detach
+            # the stale thread-local reference before creating a replacement.
+            stale_guard = getattr(self._local, "guard", None)
+            if stale_guard is not None:
+                stale_guard.conn = None
+            self._local.conn = None  # type: ignore[attr-defined]
+            self._local.guard = None  # type: ignore[attr-defined]
+            self._local.conn_epoch = None  # type: ignore[attr-defined]
         # A transient failure during the one-shot init (locked DB, WAL
         # recovery, disk error) used to leave the process without a schema
         # until restart. Retry lazily before opening the first connection.
@@ -396,12 +409,14 @@ class SQLiteChatHistoryStore:
             except Exception:
                 pass
             raise
+        with self._conns_lock:
+            self._active_conns.add(conn)
+            created_epoch = self._conn_epoch
         self._local.conn = conn
         self._local.guard = _ThreadConnectionGuard(
             conn, self._active_conns, self._conns_lock
         )
-        with self._conns_lock:
-            self._active_conns.add(conn)
+        self._local.conn_epoch = created_epoch
         return conn
 
     # Alias for backward compatibility and internal consistency
@@ -446,11 +461,13 @@ class SQLiteChatHistoryStore:
                 self._active_conns.discard(conn)
         self._local.conn = None  # type: ignore[attr-defined]
         self._local.guard = None  # type: ignore[attr-defined]
+        self._local.conn_epoch = None  # type: ignore[attr-defined]
 
     def close_all(self) -> None:
         """Close all active SQLite connections across all threads."""
         self.close()
         with self._conns_lock:
+            self._conn_epoch += 1
             for conn in list(self._active_conns):
                 try:
                     conn.close()

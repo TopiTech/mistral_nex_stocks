@@ -48,10 +48,12 @@ def get_mistral_embeddings_batch(
     rate-limit slot protection.
     """
     from credential_manager import (
+        get_openai_base_url,
         get_openai_embeddings_model,
         is_openai_provider,
         is_preview_api_key,
     )
+    from schemas.config import normalize_openai_base_url_for_compare
 
     if (
         not texts
@@ -68,7 +70,9 @@ def get_mistral_embeddings_batch(
     effective_batch_size = max(1, parsed_batch_size)
 
     if is_openai_provider():
-        emb_namespace = f"openai:{get_openai_embeddings_model()}"
+        norm_base = normalize_openai_base_url_for_compare(get_openai_base_url() or "")
+        base_tag = hashlib.sha256(norm_base.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        emb_namespace = f"openai:{base_tag}:{get_openai_embeddings_model()}"
     else:
         emb_namespace = "mistral:mistral-embed"
 

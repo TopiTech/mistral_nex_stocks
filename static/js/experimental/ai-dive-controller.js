@@ -380,6 +380,11 @@
         ) {
           return;
         }
+        if (data?.fetching) {
+          throw new Error(
+            "市場ニュースの取得がタイムアウトしました。しばらくして再試行してください。",
+          );
+        }
 
         container.textContent = "";
         const newsList = this.getMarketNewsItems(data, stock);

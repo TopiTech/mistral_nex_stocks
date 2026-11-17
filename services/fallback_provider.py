@@ -234,7 +234,11 @@ class AlphaVantageProvider(BaseFallbackProvider):
         try:
             resp = requests.get(self._base_url, params=params, timeout=10.0)
             if resp.status_code != 200:
-                status = resp.status_code if isinstance(resp.status_code, int) else 0
+                status = (
+                    resp.status_code
+                    if isinstance(resp.status_code, int) and not isinstance(resp.status_code, bool)
+                    else 0
+                )
                 body_text = resp.text if isinstance(getattr(resp, "text", None), str) else ""
                 hint = body_text.lower()
                 if status in (401, 402, 403, 429, 439) or any(

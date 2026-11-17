@@ -1021,7 +1021,9 @@ def call_openai_chat(
 
     except Exception as exc:
         raw_status = getattr(getattr(exc, "response", None), "status_code", None)
-        resp_status = raw_status if isinstance(raw_status, int) else None
+        resp_status = (
+            raw_status if isinstance(raw_status, int) and not isinstance(raw_status, bool) else None
+        )
         # Circuit accounting mirrors the Mistral client: only provider-side
         # conditions may open the circuit — communication-class failures
         # (timeouts, connection resets, protocol errors, raw socket/OS errors)
@@ -1338,7 +1340,9 @@ def stream_openai_chat(
 
     except Exception as exc:
         raw_status = getattr(getattr(exc, "response", None), "status_code", None)
-        resp_status = raw_status if isinstance(raw_status, int) else None
+        resp_status = (
+            raw_status if isinstance(raw_status, int) and not isinstance(raw_status, bool) else None
+        )
         # Same rule as call_openai_chat: only communication-class failures and
         # explicit provider 5xx responses count against the circuit breaker.
         # Application bugs without an HTTP response must not open it.
@@ -1796,7 +1800,11 @@ def analyze_chart_image_with_openai(
                         f"選択されたモデル ({target_model}) は画像認識（Vision）に対応していません。"
                         "gpt-4o等のマルチモーダルモデルを設定するか、Mistral（Pixtral）に切り替えてください。"
                     ),
-                    "status_code": err_status if isinstance(err_status, int) else 400,
+                    "status_code": (
+                        err_status
+                        if isinstance(err_status, int) and not isinstance(err_status, bool)
+                        else 400
+                    ),
                 }
             }
         return response
@@ -1919,10 +1927,16 @@ def get_openai_embeddings_batch(
                         _sanitize_error_message(resp.text[:200]),
                     )
                     # M8 (2026-11-07 review): permanent client errors (auth
-                    # failure, unknown model, malformed request) cannot succeed
-                    # on the next batch; stop instead of burning one provider
-                    # round-trip per remaining batch. Rate limits stay transient.
-                    if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                    # failure, unknown model, malformed request) and explicit
+                    # 429 rate-limit responses cannot succeed on immediately
+                    # following batches; stop instead of flooding the provider.
+                    if resp.status_code == 429:
+                        logger.warning(
+                            "OpenAI embeddings aborted after rate limit (HTTP 429); "
+                            "remaining batches fall back to None",
+                        )
+                        break
+                    if 400 <= resp.status_code < 500:
                         logger.warning(
                             "OpenAI embeddings aborted after client error (HTTP %d); "
                             "remaining batches fall back to None",
@@ -1931,7 +1945,11 @@ def get_openai_embeddings_batch(
                         break
             except Exception as exc:
                 raw_status = getattr(getattr(exc, "response", None), "status_code", None)
-                resp_status = raw_status if isinstance(raw_status, int) else None
+                resp_status = (
+                    raw_status
+                    if isinstance(raw_status, int) and not isinstance(raw_status, bool)
+                    else None
+                )
                 is_provider_failure = isinstance(
                     exc, (httpx.TransportError, ConnectionError, OSError)
                 ) or (resp_status is not None and resp_status >= 500)

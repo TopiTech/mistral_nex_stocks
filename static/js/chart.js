@@ -1985,7 +1985,7 @@ function drawFullscreenChartIfActive(
   }
 }
 
-async function refreshStockChart(wrapper, period, interval) {
+async function refreshStockChart(wrapper, period, interval, options = {}) {
   if (!wrapper || wrapper.isConnected === false) return;
   const stockKey = wrapper.dataset.stockKey;
   const stock = getStockByKey(stockKey);
@@ -2036,13 +2036,15 @@ async function refreshStockChart(wrapper, period, interval) {
         period: targetPeriod,
         interval: targetInterval,
       });
-      drawFullscreenChartIfActive(
-        wrapper,
-        formattedData,
-        ohlcData,
-        targetPeriod,
-        targetInterval,
-      );
+      if (!options?.skipFullscreenDraw) {
+        drawFullscreenChartIfActive(
+          wrapper,
+          formattedData,
+          ohlcData,
+          targetPeriod,
+          targetInterval,
+        );
+      }
     } else {
       const pnlCanvas =
         wrapper.querySelector(".chart-canvas-pnl") ||
@@ -2165,13 +2167,15 @@ async function refreshStockChart(wrapper, period, interval) {
         period: targetPeriod,
         interval: targetInterval,
       });
-      drawFullscreenChartIfActive(
-        wrapper,
-        formattedData,
-        ohlcData,
-        targetPeriod,
-        targetInterval,
-      );
+      if (!options?.skipFullscreenDraw) {
+        drawFullscreenChartIfActive(
+          wrapper,
+          formattedData,
+          ohlcData,
+          targetPeriod,
+          targetInterval,
+        );
+      }
     } else {
       const pnlCanvas =
         wrapper.querySelector(".chart-canvas-pnl") ||

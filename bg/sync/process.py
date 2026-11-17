@@ -61,6 +61,7 @@ def _warm_payload_cache_from_disk() -> None:
         load_fn = _get_app_bg_attr("load_user_stocks", load_user_stocks)
         load_fn(force=True)
         warmed = 0
+        expected_keys: set[str] = set()
         for market in ("us", "jp", "idx"):
             user_map = {}
             with app_state.market.user_stocks_lock:
@@ -77,6 +78,7 @@ def _warm_payload_cache_from_disk() -> None:
 
             for symbol in symbols_to_warm:
                 key = f"payload_{symbol}_{market}"
+                expected_keys.add(key)
                 cache_file = app_state.payload_disk_cache._entry_path(key)
 
                 try:
@@ -123,15 +125,16 @@ def _warm_payload_cache_from_disk() -> None:
                     app_state.market.current_stocks_cache = copy.deepcopy(
                         app_state.market.target_stocks_cache
                     )
-        # R17-13: prune mtimes for symbols no longer in the watchlist and
-        # bound the dict so churn cannot grow it unboundedly.
-        _state._last_loaded_mtimes = {
-            k: v
-            for k, v in list(_state._last_loaded_mtimes.items())[
-                -_state._LAST_LOADED_MTIMES_MAX :
-            ]
-            if k.split("_", 2)[-1].rsplit("_", 1)[0] in symbols_to_warm
-        } if symbols_to_warm else _state._last_loaded_mtimes
+        # R17-13: prune mtimes for symbols no longer in the watchlist across all
+        # markets and bound the dict so churn cannot grow it unboundedly.
+        if expected_keys:
+            _state._last_loaded_mtimes = {
+                k: v
+                for k, v in list(_state._last_loaded_mtimes.items())[
+                    -_state._LAST_LOADED_MTIMES_MAX :
+                ]
+                if k in expected_keys
+            }
         if warmed_indices or warmed > 0:
             inval_fn = _get_app_bg_attr(
                 "_invalidate_sse_payload_cache", _invalidate_sse_payload_cache

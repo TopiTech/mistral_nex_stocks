@@ -702,9 +702,13 @@ def get_model_name() -> str:
     # string methods and model resolution without turning a bad preference
     # into a request-time 500.
     if isinstance(configured_model, str):
-        return configured_model
+        cleaned = configured_model.strip()
+        if cleaned:
+            return cleaned
     default_model = config_store.DEFAULT_CONFIG.get("mistral_model")
-    return default_model if isinstance(default_model, str) else "mistral-medium-3.5"
+    if isinstance(default_model, str) and default_model.strip():
+        return default_model.strip()
+    return "mistral-medium-3.5"
 
 
 def set_model_name(model_name: str) -> bool:

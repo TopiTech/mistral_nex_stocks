@@ -39,10 +39,10 @@ _sse_payload_yf_limited: bool = False
 _sse_payload_us_open: bool = False
 _sse_payload_jp_open: bool = False
 _sse_payload_lock = threading.Lock()
-# Serializes the emit+announce pair inside _announce_frame so concurrent
-# broadcasters cannot allocate adjacent sequence ids and then deliver them in
-# the opposite order (listeners apply diff frames strictly in arrival order).
-_sse_frame_publish_lock = threading.Lock()
+# Serializes state calculation + emit+announce inside _raw_announce_current_market_state
+# and _announce_frame so concurrent broadcasters cannot allocate adjacent sequence ids
+# and then deliver them in the opposite order (RLock allows safe re-entry on the same thread).
+_sse_frame_publish_lock = threading.RLock()
 _sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
 _sse_prev_indices: dict[str, Any] = {}
 _sse_full_snapshot_counter: int = 0
@@ -276,14 +276,11 @@ def _raw_announce_current_market_state() -> None:
             _set_app_bg_attr("_sse_payload_us_open", us_open)
             _set_app_bg_attr("_sse_payload_jp_open", jp_open)
 
-        # `_announce_frame` also acquires _sse_frame_publish_lock. The
-        # surrounding `with` is on the same thread, and that lock is a
-        # non-reentrant threading.Lock, so calling announce_fn inside it
-        # deadlocks. Publish outside the outer block instead: order is still
-        # consistent because the state write happened first and the frame
-        # is local to this call.
-    announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
-    announce_fn(announcer1, frame, 1)
+        # Publish inside _sse_frame_publish_lock (re-entrant RLock) so a second
+        # broadcaster cannot overtake this thread between releasing the lock
+        # and calling sse_event_log.emit / announcer.announce.
+        announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
+        announce_fn(announcer1, frame, 1)
 
 
 def announce_current_market_state() -> None:

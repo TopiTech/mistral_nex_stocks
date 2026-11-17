@@ -283,14 +283,39 @@
       this._scheduleDelta(() => this._applyPtsDeltasNow(deltas));
     }
 
+    _syncStatePtsPrice(symbol, cached, ptsPrice) {
+      if (!window.state || !window.state.stocks) return;
+      ["us", "jp", "idx"].forEach((m) => {
+        const list = window.state.stocks[m];
+        if (!Array.isArray(list)) return;
+        const sItem = list.find(
+          (st) =>
+            st &&
+            (st.symbol === symbol ||
+              st.symbol === cached.bareSymbol ||
+              st.symbol === `${cached.cleanCode}.T` ||
+              st.symbol === cached.cleanCode),
+        );
+        if (sItem) {
+          sItem.pts_price = ptsPrice;
+        }
+      });
+    }
+
     _applyPtsDeltasNow(deltas) {
       Object.keys(deltas).forEach((symbol) => {
         const data = deltas[symbol];
         if (!data) return;
 
         const cached = this._getElements(symbol);
+        this._syncStatePtsPrice(symbol, cached, data.price);
+        const syncedWrappers = new Set(
+          Array.isArray(cached.wrappers) ? cached.wrappers : [],
+        );
+
         cached.ptsElements.forEach((el) => {
           const wrapper = el.closest(".stock-wrapper");
+          if (wrapper) syncedWrappers.add(wrapper);
           const stockCtx = (wrapper && wrapper.__stockData) || data;
           let txt = "";
           if (data.price != null && typeof data.price === "number") {
@@ -313,8 +338,19 @@
               el.setAttribute("aria-hidden", "true");
             }
           }
+        });
+
+        syncedWrappers.forEach((wrapper) => {
           if (wrapper && wrapper.__stockData) {
             wrapper.__stockData.pts_price = data.price;
+            if (
+              wrapper.dataset &&
+              typeof window.stockRenderHash === "function"
+            ) {
+              wrapper.dataset.lastDataHash = window.stockRenderHash(
+                wrapper.__stockData,
+              );
+            }
           }
         });
       });

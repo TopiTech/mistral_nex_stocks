@@ -126,7 +126,9 @@ class MessageAnnouncer:
         broadcasters.
         """
         with self.lock:
-            overloaded = [q for q in self.listeners if q.qsize() >= q.maxsize]
+            overloaded = [
+                q for q in self.listeners if q.maxsize > 0 and q.qsize() >= q.maxsize
+            ]
             for q_over in overloaded:
                 try:
                     self.listeners.remove(q_over)

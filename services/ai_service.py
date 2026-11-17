@@ -1039,6 +1039,56 @@ def _extract_error_response(exc: BaseException) -> Any:
     return getattr(exc, "raw_response", None) or getattr(exc, "response", None)
 
 
+def _extract_mistral_error_status(exc: BaseException) -> int:
+    """Extract a positive HTTP status code from a Mistral SDK / HTTP exception.
+
+    Rejects ``bool`` values (``isinstance(True, int)``), checks attached
+    ``raw_response``/``response`` objects, and maps timeout/network exceptions
+    to synthetic 504/503 status codes consistently across chat and streaming paths.
+    """
+    raw_status = getattr(exc, "status_code", 0)
+    if isinstance(raw_status, int) and not isinstance(raw_status, bool) and raw_status > 0:
+        return raw_status
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        try:
+            resp_status = exc.response.status_code
+            if (
+                isinstance(resp_status, int)
+                and not isinstance(resp_status, bool)
+                and resp_status > 0
+            ):
+                return resp_status
+        except (ValueError, TypeError):
+            pass
+    response_obj = _extract_error_response(exc)
+    if response_obj is not None:
+        raw_resp_status = getattr(response_obj, "status_code", 0)
+        if (
+            isinstance(raw_resp_status, int)
+            and not isinstance(raw_resp_status, bool)
+            and raw_resp_status > 0
+        ):
+            return raw_resp_status
+        if not isinstance(raw_resp_status, bool) and raw_resp_status:
+            try:
+                parsed_resp = int(raw_resp_status)
+                if parsed_resp > 0:
+                    return parsed_resp
+            except (ValueError, TypeError):
+                pass
+    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+        return 504
+    if isinstance(exc, (ConnectionError, httpx.NetworkError)):
+        return 503
+    if not isinstance(raw_status, bool) and raw_status:
+        try:
+            parsed = int(raw_status)
+            return max(0, parsed)
+        except (ValueError, TypeError):
+            pass
+    return 0
+
+
 def _extract_error_payload(exc: BaseException) -> dict[str, Any] | None:
     """Best-effort parse of the error body from an SDK exception's response."""
     try:
@@ -1544,23 +1594,7 @@ def call_mistral_chat(
             return copy.deepcopy(data)
 
     except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
-        status_code = getattr(exc, "status_code", 0)
-        if isinstance(status_code, int) and not isinstance(status_code, bool) and status_code > 0:
-            pass
-        elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-            try:
-                status_code = exc.response.status_code
-            except (ValueError, TypeError):
-                status_code = 0
-        elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
-            status_code = 504
-        elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
-            status_code = 503
-        else:
-            try:
-                status_code = int(status_code)
-            except (ValueError, TypeError):
-                status_code = 0
+        status_code = _extract_mistral_error_status(exc)
 
         logger.warning("Mistral SDK call failed type=%s status=%s", type(exc).__name__, status_code)
 
@@ -3048,27 +3082,7 @@ def stream_mistral_chat(
                 app_state.ai.record_mistral_usage(last_usage, model=model)
             yield {"type": "done", "text": "".join(full_parts)}
         except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
-            status_code = getattr(exc, "status_code", 0)
-            if (
-                isinstance(status_code, int)
-                and not isinstance(status_code, bool)
-                and status_code > 0
-            ):
-                pass
-            elif isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-                try:
-                    status_code = exc.response.status_code
-                except (ValueError, TypeError):
-                    status_code = 0
-            elif isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
-                status_code = 504
-            elif isinstance(exc, (ConnectionError, httpx.NetworkError)):
-                status_code = 503
-            else:
-                try:
-                    status_code = int(status_code)
-                except (ValueError, TypeError):
-                    status_code = 0
+            status_code = _extract_mistral_error_status(exc)
 
             logger.warning(
                 "Mistral SDK stream failed type=%s status=%s", type(exc).__name__, status_code

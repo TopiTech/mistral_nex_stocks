@@ -38,6 +38,7 @@ class CacheState:
     file_lock: threading.Lock
     fetch_events: dict[tuple[str, int], threading.Event]
     fetch_events_lock: threading.Lock
+    inflight_tokens: dict[tuple[str, int], object]
     sse_data_lock: threading.RLock
     stats_lock: threading.Lock
     cache_hits: int
@@ -49,6 +50,7 @@ class CacheState:
         self.file_lock = threading.Lock()
         self.fetch_events = {}
         self.fetch_events_lock = threading.Lock()
+        self.inflight_tokens = {}
         self.sse_data_lock = threading.RLock()
         self.stats_lock = threading.Lock()
         self.cache_hits = 0
@@ -243,17 +245,27 @@ def get_cached(key, fetch_func, duration=CACHE_DURATION, valid_func=None):
         # still empty, the fetch completed and produced no valid data, so return None.
         return CACHE_FETCHING if not signaled else None
 
+    fetch_token = object()
+    with global_cache.cache_lock:
+        global_cache.inflight_tokens[fetch_key] = fetch_token
+
     try:
         result = fetch_func()
         if valid_func is None or valid_func(result):
             with global_cache.cache_lock:
-                if duration not in global_cache.caches:
-                    global_cache.caches[duration] = TTLCache(
-                        maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
-                    )
-                global_cache.caches[duration][safe_key] = result
+                # Only populate the cache if no invalidation cleared this key while
+                # ``fetch_func()`` was executing in-flight.
+                if global_cache.inflight_tokens.get(fetch_key) is fetch_token:
+                    if duration not in global_cache.caches:
+                        global_cache.caches[duration] = TTLCache(
+                            maxsize=STOCK_HISTORY_CACHE_MAXSIZE, ttl=duration
+                        )
+                    global_cache.caches[duration][safe_key] = result
         return result
     finally:
+        with global_cache.cache_lock:
+            if global_cache.inflight_tokens.get(fetch_key) is fetch_token:
+                global_cache.inflight_tokens.pop(fetch_key, None)
         with global_cache.fetch_events_lock:
             global_cache.fetch_events.pop(fetch_key, None)
         ev.set()
@@ -295,6 +307,18 @@ def clear_cache_prefix(prefix):
             ]
             for k in keys_to_delete:
                 cache.pop(k, None)
+        inflight_to_invalidate = [
+            fk
+            for fk in list(global_cache.inflight_tokens.keys())
+            if isinstance(fk[0], str)
+            and (
+                fk[0] == prefix_text
+                or fk[0].startswith(prefix_text)
+                or (hashed_head is not None and fk[0].startswith(hashed_head))
+            )
+        ]
+        for fk in inflight_to_invalidate:
+            global_cache.inflight_tokens.pop(fk, None)
 
 
 def clear_cache_key(key: str) -> None:
@@ -303,6 +327,11 @@ def clear_cache_key(key: str) -> None:
     with global_cache.cache_lock:
         for cache in global_cache.caches.values():
             cache.pop(safe_key, None)
+        inflight_to_invalidate = [
+            fk for fk in list(global_cache.inflight_tokens.keys()) if fk[0] == safe_key
+        ]
+        for fk in inflight_to_invalidate:
+            global_cache.inflight_tokens.pop(fk, None)
 
 
 def _ensure_cache_bucket(duration):

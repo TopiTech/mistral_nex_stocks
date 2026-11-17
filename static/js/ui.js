@@ -664,6 +664,7 @@ function updateStockUI(wrapper, stock) {
     !isCooldown
   ) {
     requestAnimationFrame(() => {
+      if (wrapper.isConnected === false) return;
       if (isPortfolioTab) {
         const pnlCanvas =
           wrapper.querySelector(".chart-canvas-pnl") ||
@@ -672,7 +673,7 @@ function updateStockUI(wrapper, stock) {
                 "#drawerTabChartContent .chart-canvas-pnl, #stock-detail-drawer .chart-canvas-pnl",
               )
             : null);
-        if (pnlCanvas)
+        if (pnlCanvas && pnlCanvas.isConnected !== false)
           drawPnLChart(pnlCanvas, stock.chart_data || [], stock.avg_price, {
             animate: false,
           });
@@ -4252,7 +4253,11 @@ function openFullscreenChart(wrapper) {
           const p = getChartPref(stockKey, "period", "3mo");
           const inv = getChartPref(stockKey, "interval", "auto");
           const toolbarReqId = bumpFsToolbarReqId();
-          Promise.resolve(refreshStockChart(targetWrapper, p, inv))
+          Promise.resolve(
+            refreshStockChart(targetWrapper, p, inv, {
+              skipFullscreenDraw: true,
+            }),
+          )
             .then(() => {
               if (
                 modal.classList.contains("hidden") ||
@@ -4353,7 +4358,11 @@ function openFullscreenChart(wrapper) {
           interval: interval,
         });
       } else {
-        Promise.resolve(refreshStockChart(targetWrapper, period, interval))
+        Promise.resolve(
+          refreshStockChart(targetWrapper, period, interval, {
+            skipFullscreenDraw: true,
+          }),
+        )
           .then(() => {
             if (
               modal.classList.contains("hidden") ||

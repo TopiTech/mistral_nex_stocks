@@ -334,10 +334,68 @@ class AIState:
             self.mistral_429_streak = 0
 
     @staticmethod
-    def _close_client_safely(client: Any, label: str) -> None:
+    def _is_client_closed(client: Any) -> bool:
+        """Return whether an HTTP/SDK client has already been closed.
+
+        ``httpx.Client`` exposes ``is_closed: bool``. Real ``mistralai.Mistral``
+        clients instead implement ``__exit__`` and close/clear their internal
+        ``sdk_configuration.client`` rather than exposing ``.is_closed`` or
+        ``.close()``. Using ``isinstance(..., bool)`` and inspecting
+        ``vars(client)`` avoids false positives on mock doubles.
+        """
+        explicit_closed = getattr(client, "is_closed", None)
+        if isinstance(explicit_closed, bool):
+            return explicit_closed
         try:
-            if hasattr(client, "close") and callable(client.close):
-                client.close()
+            instance_vars = vars(client)
+        except TypeError:
+            instance_vars = None
+        if isinstance(instance_vars, dict) and "sdk_configuration" in instance_vars:
+            sdk_cfg = instance_vars["sdk_configuration"]
+            try:
+                cfg_vars = vars(sdk_cfg)
+            except TypeError:
+                cfg_vars = None
+            if isinstance(cfg_vars, dict) and "client" in cfg_vars:
+                inner_client = cfg_vars["client"]
+                if inner_client is None:
+                    return cfg_vars.get("client_supplied") is False
+                inner_closed = getattr(inner_client, "is_closed", None)
+                if isinstance(inner_closed, bool):
+                    return inner_closed
+        return False
+
+    @staticmethod
+    def _close_client_safely(client: Any, label: str) -> None:
+        """Close either a `.close()` HTTP client or a context-managed SDK client."""
+        try:
+            close_fn = getattr(client, "close", None)
+            if callable(close_fn):
+                close_fn()
+            else:
+                exit_fn = getattr(client, "__exit__", None)
+                if callable(exit_fn):
+                    exit_fn(None, None, None)
+
+            # Close any remaining inner httpx client attached to a Mistral SDK instance.
+            try:
+                instance_vars = vars(client)
+            except TypeError:
+                instance_vars = None
+            if isinstance(instance_vars, dict) and "sdk_configuration" in instance_vars:
+                sdk_cfg = instance_vars["sdk_configuration"]
+                for attr_name in ("client", "async_client"):
+                    try:
+                        cfg_vars = vars(sdk_cfg)
+                    except TypeError:
+                        cfg_vars = None
+                    if not isinstance(cfg_vars, dict):
+                        break
+                    inner = cfg_vars.get(attr_name)
+                    inner_close = getattr(inner, "close", None)
+                    inner_closed = getattr(inner, "is_closed", None)
+                    if inner is not None and callable(inner_close) and inner_closed is not True:
+                        inner_close()
         except Exception as exc:
             logger.debug("Error closing %s client error_type=%s", label, type(exc).__name__)
 
@@ -352,7 +410,7 @@ class AIState:
         now = time.monotonic()
         while retired_queue:
             retired_ts, old_client = retired_queue[0]
-            if getattr(old_client, "is_closed", False):
+            if cls._is_client_closed(old_client):
                 retired_queue.popleft()
                 continue
             if (now - retired_ts) >= grace_sec or len(retired_queue) > max_retired:
@@ -375,7 +433,7 @@ class AIState:
 
         if cache_key in pool:
             client = pool[cache_key]
-            if not getattr(client, "is_closed", False):
+            if not cls._is_client_closed(client):
                 return client
             # Evict the closed client for this key before checking pool capacity
             # so an unrelated live client is never evicted needlessly.
@@ -384,7 +442,7 @@ class AIState:
         while len(pool) >= maxsize:
             try:
                 _, old_client = pool.popitem()
-                if not getattr(old_client, "is_closed", False):
+                if not cls._is_client_closed(old_client):
                     # Defer closing an evicted live client so any concurrent
                     # caller that already borrowed it can finish cleanly.
                     retired_queue.append((time.monotonic(), old_client))

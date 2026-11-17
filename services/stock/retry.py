@@ -16,10 +16,16 @@ from functools import wraps
 from typing import Any, TypeVar
 
 from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import HTTPError as RequestsHTTPError
 
 from constants import CurlRequestsTimeout, RequestsTimeout
 from services.stock import _shim
 from services.stock.errors import _is_yfinance_rate_limit_error
+
+try:
+    from curl_cffi.requests.exceptions import HTTPError as CurlRequestsHTTPError
+except ImportError:
+    CurlRequestsHTTPError = RequestsHTTPError  # type: ignore[misc,assignment,unused-ignore]
 
 logger = logging.getLogger("services.stock_provider")
 
@@ -55,6 +61,34 @@ def _get_backoff_base_cached():
     return _cached_backoff_base
 
 
+def _rate_limit_multiplier(self_obj: Any = None) -> float:
+    """Return 3x multiplier if app-level rate limiter is active."""
+    if self_obj and hasattr(self_obj, "_get_market_state"):
+        try:
+            m_state = self_obj._get_market_state()
+            if m_state and m_state.is_yf_rate_limited():
+                return 3.0
+        except (AttributeError, RuntimeError):
+            pass
+        return 1.0
+
+    state_ref = _get_app_state_cached()
+    if state_ref is None:
+        return 1.0
+    try:
+        if (
+            hasattr(state_ref, "market")
+            and state_ref.market
+            and state_ref.market.is_yf_rate_limited()
+        ):
+            return 3.0
+        if hasattr(state_ref, "is_yf_rate_limited") and state_ref.is_yf_rate_limited():
+            return 3.0
+    except (ImportError, AttributeError):
+        pass
+    return 1.0
+
+
 def with_yfinance_retry(
     func: F | None = None,
     *,
@@ -64,7 +98,7 @@ def with_yfinance_retry(
 ) -> Callable[..., Any] | F:
     """Decorator: exponential-backoff retry for yfinance operations.
 
-    Handles rate limiting (429), timeouts, and transient connection errors.
+    Handles rate limiting (429), timeouts, 5xx HTTP errors, and transient connection errors.
     Uses exponential backoff: delay = base_delay * backoff_factor^attempt
     plus jitter of ±25%.
 
@@ -79,33 +113,6 @@ def with_yfinance_retry(
         base_delay: Initial delay in seconds
         backoff_factor: Multiplier for exponential backoff
     """
-
-    def _rate_limit_multiplier(self_obj: Any = None) -> float:
-        """Return 3x multiplier if app-level rate limiter is active."""
-        if self_obj and hasattr(self_obj, "_get_market_state"):
-            try:
-                m_state = self_obj._get_market_state()
-                if m_state and m_state.is_yf_rate_limited():
-                    return 3.0
-            except (AttributeError, RuntimeError):
-                pass
-            return 1.0
-
-        state_ref = _get_app_state_cached()
-        if state_ref is None:
-            return 1.0
-        try:
-            if (
-                hasattr(state_ref, "market")
-                and state_ref.market
-                and state_ref.market.is_yf_rate_limited()
-            ):
-                return 3.0
-            if hasattr(state_ref, "is_yf_rate_limited") and state_ref.is_yf_rate_limited():
-                return 3.0
-        except (ImportError, AttributeError):
-            pass
-        return 1.0
 
     def decorator(f: F) -> F:
         @wraps(f)
@@ -203,86 +210,90 @@ def with_yfinance_retry(
                     if isinstance(exc, TimeoutError) and "server overloaded" in str(exc):
                         raise
                     last_exception = exc
-                    if attempt < max_retries:
-                        if is_testing:
-                            time.sleep(0.0001)
-                            continue
-                        rl_mult = _rate_limit_multiplier(self_obj)
-                        delay = base_delay * (effective_backoff**attempt) * rl_mult
-                        jitter = delay * random.SystemRandom().uniform(-0.25, 0.25)
-                        total_delay = delay + jitter
-                        _target = getattr(args[0], "symbol", None) if args else None
-                        logger.debug(
-                            "yfinance retry %d/%d for %s after timeout, waiting %.2fs (rl_mult=%.1f)",
-                            attempt + 1,
+                    _sleep_transient_retry(
+                        attempt,
+                        max_retries,
+                        base_delay,
+                        effective_backoff,
+                        self_obj,
+                        is_testing,
+                        is_timeout=True,
+                        args=args,
+                    )
+                except (RequestsHTTPError, CurlRequestsHTTPError) as exc:
+                    # RequestsHTTPError / CurlRequestsHTTPError inherit from OSError; catch
+                    # them before OSError so HTTP 429/401/402/439 hits rate-limit cooldown
+                    # and fast-fail, and non-rate-limit 4xx client errors fail fast.
+                    if _is_yfinance_rate_limit_error(exc):
+                        last_exception = exc
+                        m_state, rate_limit_recorded = _handle_rate_limit_in_retry(
+                            exc,
+                            attempt,
                             max_retries,
-                            _target or str(args),
-                            total_delay,
-                            rl_mult,
+                            base_delay,
+                            effective_backoff,
+                            self_obj,
+                            m_state,
+                            rate_limit_recorded,
+                            initial_rate_limited,
+                            is_testing,
                         )
-                        time.sleep(total_delay)
-                except (ConnectionError, OSError, RequestsConnectionError) as exc:
+                        continue
+                    http_status = _extract_http_error_status(exc)
+                    if http_status is not None and 400 <= http_status < 500:
+                        raise
                     last_exception = exc
-                    if attempt < max_retries:
-                        if is_testing:
-                            time.sleep(0.0001)
-                            continue
-                        rl_mult = _rate_limit_multiplier(self_obj)
-                        delay = base_delay * (effective_backoff**attempt) * rl_mult
-                        jitter = delay * random.SystemRandom().uniform(-0.25, 0.25)
-                        time.sleep(delay + jitter)
+                    _sleep_transient_retry(
+                        attempt,
+                        max_retries,
+                        base_delay,
+                        effective_backoff,
+                        self_obj,
+                        is_testing,
+                    )
+                except (ConnectionError, OSError, RequestsConnectionError) as exc:
+                    if _is_yfinance_rate_limit_error(exc):
+                        last_exception = exc
+                        m_state, rate_limit_recorded = _handle_rate_limit_in_retry(
+                            exc,
+                            attempt,
+                            max_retries,
+                            base_delay,
+                            effective_backoff,
+                            self_obj,
+                            m_state,
+                            rate_limit_recorded,
+                            initial_rate_limited,
+                            is_testing,
+                        )
+                        continue
+                    last_exception = exc
+                    _sleep_transient_retry(
+                        attempt,
+                        max_retries,
+                        base_delay,
+                        effective_backoff,
+                        self_obj,
+                        is_testing,
+                    )
                 except Exception as exc:
                     # Non-retriable errors: re-raise immediately
                     # Check for yfinance rate limit errors
                     if _is_yfinance_rate_limit_error(exc):
                         last_exception = exc
-                        if not m_state and self_obj and hasattr(self_obj, "_get_market_state"):
-                            try:
-                                m_state = self_obj._get_market_state()
-                            except (AttributeError, RuntimeError):
-                                pass
-                        if not m_state:
-                            app_state_ref = _get_app_state_cached()
-                            if app_state_ref:
-                                m_state = getattr(app_state_ref, "market", None)
-                        if m_state and not rate_limit_recorded:
-                            rate_limit_recorded = True
-                            try:
-                                _shim()._handle_yf_rate_limit(
-                                    exc, m_state, context=f"retry {attempt + 1}/{max_retries}"
-                                )
-                            except Exception as block_exc:
-                                logger.debug("Failed to handle rate limit in retry: %s", block_exc)
-
-                        if attempt < max_retries:
-                            # If rate-limiting was ALREADY active before this request started, fast-fail
-                            # without sleeping so callers can immediately return cached or fallback data.
-                            if initial_rate_limited:
-                                logger.info(
-                                    "Fast-failing yfinance retry due to pre-existing rate limit (%s)",
-                                    type(exc).__name__,
-                                )
-                                raise
-                            if is_testing:
-                                time.sleep(0.0001)
-                                continue
-                            rl_mult = _rate_limit_multiplier(self_obj)
-                            # Full jitter (AWS-style): spread retries uniformly in
-                            # [0, backoff] to avoid synchronized re-attacks after a 429/401.
-                            backoff_delay = max(
-                                base_delay * (effective_backoff**attempt) * rl_mult, 1.0
-                            )
-                            sleep_time = max(0.5, random.SystemRandom().uniform(0.0, backoff_delay))
-                            logger.warning(
-                                "yfinance rate limited (%s), retry %d/%d after %.1fs (rl_mult=%.1f)",
-                                type(exc).__name__,
-                                attempt + 1,
-                                max_retries,
-                                sleep_time,
-                                rl_mult,
-                            )
-                            time.sleep(sleep_time)
-                            continue
+                        m_state, rate_limit_recorded = _handle_rate_limit_in_retry(
+                            exc,
+                            attempt,
+                            max_retries,
+                            base_delay,
+                            effective_backoff,
+                            self_obj,
+                            m_state,
+                            rate_limit_recorded,
+                            initial_rate_limited,
+                            is_testing,
+                        )
+                        continue
                     raise
             # All retries exhausted
             if last_exception:
@@ -293,3 +304,106 @@ def with_yfinance_retry(
     if func:
         return decorator(func)
     return decorator
+
+
+def _extract_http_error_status(exc: BaseException) -> int | None:
+    """Return integer HTTP status code from an HTTPError or response, if present."""
+    for candidate in (
+        getattr(getattr(exc, "response", None), "status_code", None),
+        getattr(exc, "status_code", None),
+    ):
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            return candidate
+    return None
+
+
+def _sleep_transient_retry(
+    attempt: int,
+    max_retries: int,
+    base_delay: float,
+    effective_backoff: float,
+    self_obj: Any,
+    is_testing: bool,
+    *,
+    is_timeout: bool = False,
+    args: tuple[Any, ...] = (),
+) -> None:
+    """Sleep with exponential backoff and jitter between transient retry attempts."""
+    if attempt >= max_retries:
+        return
+    if is_testing:
+        time.sleep(0.0001)
+        return
+    rl_mult = _rate_limit_multiplier(self_obj)
+    delay = base_delay * (effective_backoff**attempt) * rl_mult
+    jitter = delay * random.SystemRandom().uniform(-0.25, 0.25)
+    total_delay = delay + jitter
+    if is_timeout:
+        _target = getattr(args[0], "symbol", None) if args else None
+        logger.debug(
+            "yfinance retry %d/%d for %s after timeout, waiting %.2fs (rl_mult=%.1f)",
+            attempt + 1,
+            max_retries,
+            _target or str(args),
+            total_delay,
+            rl_mult,
+        )
+    time.sleep(total_delay)
+
+
+def _handle_rate_limit_in_retry(
+    exc: Exception,
+    attempt: int,
+    max_retries: int,
+    base_delay: float,
+    effective_backoff: float,
+    self_obj: Any,
+    m_state: Any,
+    rate_limit_recorded: bool,
+    initial_rate_limited: bool,
+    is_testing: bool,
+) -> tuple[Any, bool]:
+    """Record rate-limit state once per call and sleep/re-raise consistently."""
+    if not m_state and self_obj and hasattr(self_obj, "_get_market_state"):
+        try:
+            m_state = self_obj._get_market_state()
+        except (AttributeError, RuntimeError):
+            pass
+    if not m_state:
+        app_state_ref = _get_app_state_cached()
+        if app_state_ref:
+            m_state = getattr(app_state_ref, "market", None)
+    if m_state and not rate_limit_recorded:
+        rate_limit_recorded = True
+        try:
+            _shim()._handle_yf_rate_limit(
+                exc, m_state, context=f"retry {attempt + 1}/{max_retries}"
+            )
+        except Exception as block_exc:
+            logger.debug("Failed to handle rate limit in retry: %s", block_exc)
+
+    if attempt < max_retries:
+        if initial_rate_limited:
+            logger.info(
+                "Fast-failing yfinance retry due to pre-existing rate limit (%s)",
+                type(exc).__name__,
+            )
+            raise exc
+        if is_testing:
+            time.sleep(0.0001)
+            return m_state, rate_limit_recorded
+        rl_mult = _rate_limit_multiplier(self_obj)
+        backoff_delay = max(base_delay * (effective_backoff**attempt) * rl_mult, 1.0)
+        sleep_time = max(0.5, random.SystemRandom().uniform(0.0, backoff_delay))
+        logger.warning(
+            "yfinance rate limited (%s), retry %d/%d after %.1fs (rl_mult=%.1f)",
+            type(exc).__name__,
+            attempt + 1,
+            max_retries,
+            sleep_time,
+            rl_mult,
+        )
+        time.sleep(sleep_time)
+        return m_state, rate_limit_recorded
+
+    raise exc

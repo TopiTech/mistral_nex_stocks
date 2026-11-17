@@ -144,27 +144,42 @@ def _read_stale_payload(path):
 
 
 def _remove_fields_recursive(value: Any, fields: frozenset[str]) -> tuple[Any, bool]:
-    """Return a JSON-compatible copy with matching mapping keys removed."""
-    if isinstance(value, dict):
-        changed = False
-        cleaned: dict[Any, Any] = {}
-        for key, item in value.items():
-            if isinstance(key, str) and key in fields:
-                changed = True
-                continue
-            cleaned_item, item_changed = _remove_fields_recursive(item, fields)
-            cleaned[key] = cleaned_item
-            changed = changed or item_changed
-        return cleaned, changed
-    if isinstance(value, list):
-        changed = False
-        cleaned_list = []
-        for item in value:
-            cleaned_item, item_changed = _remove_fields_recursive(item, fields)
-            cleaned_list.append(cleaned_item)
-            changed = changed or item_changed
-        return cleaned_list, changed
-    return value, False
+    """Return a JSON-compatible copy with matching mapping keys removed.
+
+    Uses an explicit heap stack rather than Python call-stack recursion so
+    deeply nested JSON payloads cannot raise ``RecursionError``.
+    """
+    if not isinstance(value, (dict, list)):
+        return value, False
+
+    changed = False
+    root_holder: list[Any] = [None]
+    stack: list[tuple[Any, Any, Any]] = [(root_holder, 0, value)]
+    while stack:
+        parent, key, node = stack.pop()
+        if isinstance(node, dict):
+            cleaned_dict: dict[Any, Any] = {}
+            parent[key] = cleaned_dict
+            for k, item in node.items():
+                if isinstance(k, str) and k in fields:
+                    changed = True
+                    continue
+                if isinstance(item, (dict, list)):
+                    cleaned_dict[k] = None
+                    stack.append((cleaned_dict, k, item))
+                else:
+                    cleaned_dict[k] = item
+        elif isinstance(node, list):
+            cleaned_list: list[Any] = [None] * len(node)
+            parent[key] = cleaned_list
+            for idx, item in enumerate(node):
+                if isinstance(item, (dict, list)):
+                    stack.append((cleaned_list, idx, item))
+                else:
+                    cleaned_list[idx] = item
+        else:
+            parent[key] = node
+    return root_holder[0], changed
 
 
 class StockDiskCache:
@@ -820,7 +835,7 @@ class StockDiskCache:
                                     continue
                                 raise
                         migrated += 1
-                    except (TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    except (TypeError, json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
                         logger.debug("Deleting invalid disk cache entry %s: %s", entry, exc)
                         try:
                             entry.unlink(missing_ok=True)

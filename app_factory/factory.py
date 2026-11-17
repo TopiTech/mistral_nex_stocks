@@ -100,8 +100,8 @@ def add_request_hooks(app: Flask) -> None:
         app: Flask application instance to register hooks on.
     """
     app.before_request(_ensure_bootstrap_called)
-    app.before_request(_enforce_sec_fetch_site_check)
     app.before_request(_log_request_start)
+    app.before_request(_enforce_sec_fetch_site_check)
     app.after_request(add_extension_cors_headers)
     app.teardown_appcontext(_close_current_thread_chat_db)
 

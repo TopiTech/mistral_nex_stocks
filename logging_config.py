@@ -371,20 +371,21 @@ def init_logging(app) -> None:
     # Log content is sanitized, but the files themselves live next to
     # secrets-adjacent runtime state; create them 0o600 like the config /
     # user_stocks / DB files so other local users cannot read them.
+    error_handler: logging.Handler | None = None
     try:
         rotating_handler, error_handler = _create_restricted_file_handlers(
             log_file, error_log_file
         )
     except OSError as exc:
         # A read-only/non-directory log path must not prevent the app from
-        # starting; keep logging available on stderr instead.
+        # starting; keep logging available on stderr instead. Attach only one
+        # StreamHandler so ERROR+ records are not duplicated to stderr.
         logging.getLogger(__name__).warning(
             "File logging unavailable at %s (%s); falling back to stderr.",
             log_dir,
             exc,
         )
         rotating_handler = logging.StreamHandler()
-        error_handler = logging.StreamHandler()
     rotating_handler.setLevel(LOG_LEVEL)
     # Pass the configured level so DEBUG records survive when LOG_LEVEL=DEBUG;
     # with the default (INFO) the filter still drops all DEBUG output.
@@ -396,14 +397,16 @@ def init_logging(app) -> None:
     logging.getLogger().addHandler(rotating_handler)
 
     # --- Dedicated error log (ERROR and above) ---
-    error_handler.setLevel(logging.ERROR)
-    error_handler.addFilter(URLMaskingFilter())
-    error_handler.setFormatter(_log_formatter)
-    logging.getLogger().addHandler(error_handler)
+    if error_handler is not None:
+        error_handler.setLevel(logging.ERROR)
+        error_handler.addFilter(URLMaskingFilter())
+        error_handler.setFormatter(_log_formatter)
+        logging.getLogger().addHandler(error_handler)
 
     logging.getLogger().setLevel(LOG_LEVEL)
     app.logger.addHandler(rotating_handler)
-    app.logger.addHandler(error_handler)
+    if error_handler is not None:
+        app.logger.addHandler(error_handler)
     app.logger.setLevel(LOG_LEVEL)
     app.logger.propagate = False
 

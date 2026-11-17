@@ -2311,14 +2311,10 @@ async function streamChatReply(payload, onDelta, options) {
   // the pre-existing code returned it as the complete answer.
   let sawDoneFrame = false;
   try {
-    for (;;) {
-      const { done, value } = await readStreamChunk(
-        reader,
-        CHAT_STREAM_IDLE_TIMEOUT_MS,
-        signal,
-      );
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+    const processBufferedEvents = () => {
+      if (buffer.indexOf("\r") !== -1) {
+        buffer = buffer.replace(/\r\n/g, "\n");
+      }
       let sep;
       while ((sep = buffer.indexOf("\n\n")) !== -1) {
         const raw = buffer.slice(0, sep);
@@ -2348,8 +2344,31 @@ async function streamChatReply(payload, onDelta, options) {
           if (!reply || !String(reply).trim()) {
             throw new Error("応答を取得できませんでした");
           }
+          return true;
+        }
+      }
+      return false;
+    };
+
+    for (;;) {
+      const { done, value } = await readStreamChunk(
+        reader,
+        CHAT_STREAM_IDLE_TIMEOUT_MS,
+        signal,
+      );
+      if (done) {
+        const flushed = decoder.decode();
+        if (flushed) {
+          buffer += flushed;
+        }
+        if (processBufferedEvents()) {
           return reply;
         }
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      if (processBufferedEvents()) {
+        return reply;
       }
     }
     if (!sawDoneFrame) {

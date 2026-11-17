@@ -851,7 +851,8 @@ def api_copy_ai_portfolio_to_my() -> Any:
             try:
                 resolved_fx, is_est = get_current_usdjpy_rate(default_rate=DEFAULT_USDJPY_RATE)
                 valid_resolved = (
-                    not is_bool_like(resolved_fx)
+                    isinstance(resolved_fx, (int, float))
+                    and not is_bool_like(resolved_fx)
                     and math.isfinite(resolved_fx)
                     and resolved_fx > 0
                 )

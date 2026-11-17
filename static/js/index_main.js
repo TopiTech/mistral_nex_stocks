@@ -993,8 +993,8 @@ function openAlertModal(stockKey) {
   openModal("alertModal", () => {
     DOM.get("alert-modal-symbol").textContent =
       `${stock.symbol} - アラート設定`;
-    DOM.get("alert-price-up").value = cfg.priceUp || "";
-    DOM.get("alert-price-down").value = cfg.priceDown || "";
+    DOM.get("alert-price-up").value = cfg.priceUp ?? "";
+    DOM.get("alert-price-down").value = cfg.priceDown ?? "";
     DOM.get("alert-ma-cross").checked = !!cfg.maCross;
   });
 
@@ -1107,26 +1107,31 @@ function checkAlerts(stock, oldPrice) {
 
   const currentPrice = stock.price;
 
-  if (cfg.priceUp && !cfg.triggeredUp && currentPrice >= cfg.priceUp) {
+  const hasPriceUp =
+    typeof cfg.priceUp === "number" && Number.isFinite(cfg.priceUp);
+  const hasPriceDown =
+    typeof cfg.priceDown === "number" && Number.isFinite(cfg.priceDown);
+
+  if (hasPriceUp && !cfg.triggeredUp && currentPrice >= cfg.priceUp) {
     const msg = `目標価格 (${cfg.priceUp}) に到達しました！ 現在値: ${currentPrice}`;
     showToast(`🔔 【${stock.symbol}】 ${msg}`, "#7dffb0");
     showBrowserNotification(`価格アラート: ${stock.symbol}`, msg);
     cfg.triggeredUp = true;
     updateRequired = true;
-  } else if (cfg.priceUp && cfg.triggeredUp && currentPrice < cfg.priceUp) {
+  } else if (hasPriceUp && cfg.triggeredUp && currentPrice < cfg.priceUp) {
     // リセット
     cfg.triggeredUp = false;
     updateRequired = true;
   }
 
-  if (cfg.priceDown && !cfg.triggeredDown && currentPrice <= cfg.priceDown) {
+  if (hasPriceDown && !cfg.triggeredDown && currentPrice <= cfg.priceDown) {
     const msg = `設定価格 (${cfg.priceDown}) を下回りました。 現在値: ${currentPrice}`;
     showToast(`📉 【${stock.symbol}】 ${msg}`, "#ff7d7d");
     showBrowserNotification(`価格アラート: ${stock.symbol}`, msg);
     cfg.triggeredDown = true;
     updateRequired = true;
   } else if (
-    cfg.priceDown &&
+    hasPriceDown &&
     cfg.triggeredDown &&
     currentPrice > cfg.priceDown
   ) {

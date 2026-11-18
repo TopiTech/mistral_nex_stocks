@@ -434,7 +434,17 @@ def _schedule_market_trends_refresh_async(
         else:
             _target = _job
 
-        app_state.execution.executor.submit(_target)
+        future = app_state.execution.executor.submit(_target)
+
+        def _handle_cancelled_refresh(done_future: Any) -> None:
+            # A queued refresh cancelled during executor shutdown never enters
+            # _job(), so its finally block cannot release the inflight claim.
+            if not done_future.cancelled():
+                return
+            with app_state.ai.trends_refresh_lock:
+                app_state.ai.trends_refresh_inflight.discard(cache_key)
+
+        future.add_done_callback(_handle_cancelled_refresh)
         return True
     except (queue.Full, RuntimeError) as exc:
         # キュー飽和やシャットダウン中は inflight マーカーを除去して

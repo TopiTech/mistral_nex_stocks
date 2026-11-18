@@ -632,6 +632,64 @@ def test_util004_chat_history_role_validation_limit_and_fernet_rotation(tmp_path
         ch.SQLiteChatHistoryStore._reset_for_testing()
 
 
+def test_util004b_chat_history_batch_resolves_master_key_once(tmp_path, monkeypatch):
+    """A transcript read/write must not re-read the OS key store per message.
+
+    ``_get_fernet()`` calls ``get_or_create_master_key()``, which performs a
+    blocking keyring/DPAPI lookup. Resolving it inside the per-row encryption
+    and decryption helpers turned one 5-message sync into 10 key-store reads;
+    each batch operation must resolve it exactly once.
+    """
+    from cryptography.fernet import Fernet
+
+    import config_store
+    from utils import chat_history as ch
+
+    monkeypatch.setattr(ch, "DB_PATH", tmp_path / "chat.db")
+    ch._reset_db_state()
+    store = ch.SQLiteChatHistoryStore(max_sessions=2)
+    try:
+        key = Fernet.generate_key().decode("ascii")
+        calls = {"count": 0}
+
+        def _counting_master_key() -> str:
+            calls["count"] += 1
+            return key
+
+        monkeypatch.setattr(config_store, "get_or_create_master_key", _counting_master_key)
+        ch._reset_db_state()
+
+        messages = [
+            {"role": "user" if idx % 2 == 0 else "assistant", "content": f"message-{idx}"}
+            for idx in range(5)
+        ]
+        calls["count"] = 0
+        store["batch"] = messages
+        write_calls = calls["count"]
+
+        calls["count"] = 0
+        loaded = store["batch"]
+        read_calls = calls["count"]
+
+        assert [msg["content"] for msg in loaded] == [msg["content"] for msg in messages]
+        assert write_calls == 1
+        assert read_calls == 1
+
+        def _fail_master_key() -> str:
+            raise RuntimeError("master key unavailable")
+
+        # Batch key resolution must stay fail-closed: a broken key store may
+        # not fall back to persisting plaintext, and the failed transaction
+        # must leave no session/message row behind.
+        monkeypatch.setattr(config_store, "get_or_create_master_key", _fail_master_key)
+        ch._reset_db_state()
+        with pytest.raises(RuntimeError, match="Chat history encryption failed"):
+            store["unavailable"] = [{"role": "user", "content": "must not leak"}]
+        assert "unavailable" not in store
+    finally:
+        ch.SQLiteChatHistoryStore._reset_for_testing()
+
+
 # ---------------------------------------------------------------------------
 # UTIL-005: stock_payload sentinel filtering & finite snapshot fields
 # ---------------------------------------------------------------------------

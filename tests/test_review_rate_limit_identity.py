@@ -14,12 +14,101 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from flask import Flask, jsonify
+
 import route_helpers
 from app import app
 
 
 class RateLimitIdentityTests(unittest.TestCase):
     """R1: _rate_limit_identity picks the right client key per deployment mode."""
+
+    def test_malformed_polling_token_cannot_bypass_endpoint_quota(self):
+        """A token rejected by the request schema must not become a skip identity.
+
+        The rate-limit decorator runs before the view's schema validation.  If
+        it trusts every client-supplied string, a short/malformed token that the
+        endpoint always rejects can still register a per-token bucket and make
+        every repeated request skip the endpoint quota (up to the polling cap).
+        """
+        test_app = Flask(__name__)
+
+        @test_app.route("/probe", methods=["POST"])
+        @route_helpers.rate_limit(
+            max_requests=1, window_seconds=60, skip_polling_duplicates=True
+        )
+        def probe():
+            return jsonify({"ok": True})
+
+        store: dict[str, list[float]] = {}
+        windows: dict[str, int] = {}
+        counts: dict[str, int] = {}
+        with (
+            patch.object(route_helpers, "_rate_limit_store", store),
+            patch.object(route_helpers, "_rate_limit_window_by_key", windows),
+            patch.object(route_helpers, "_rate_limit_distinct_token_counts", counts),
+            patch.object(route_helpers, "_is_polling_token_inflight", return_value=True),
+            patch.dict(
+                "os.environ",
+                {
+                    "MNS_ALLOW_REMOTE_API": "0",
+                    "MNS_PROXY_FIX": "0",
+                    "MNS_LOCAL_RATE_LIMIT_MULTIPLE": "1",
+                    "MNS_DISABLE_LOCAL_RATE_LIMIT": "0",
+                },
+                clear=False,
+            ),
+        ):
+            client = test_app.test_client()
+            for bad_token in ("too_short", f" {'a' * 16} "):
+                store.clear()
+                windows.clear()
+                counts.clear()
+                first = client.post("/probe", json={"request_token": bad_token})
+                second = client.post("/probe", json={"request_token": bad_token})
+
+                self.assertEqual(first.status_code, 200)
+                self.assertEqual(second.status_code, 429)
+                self.assertFalse(any(":token:" in key for key in store))
+
+    def test_valid_polling_token_can_reuse_quota_skip(self):
+        """The stricter shape check must preserve legitimate polling behavior."""
+        test_app = Flask(__name__)
+
+        @test_app.route("/probe", methods=["POST"])
+        @route_helpers.rate_limit(
+            max_requests=1, window_seconds=60, skip_polling_duplicates=True
+        )
+        def probe():
+            return jsonify({"ok": True})
+
+        store: dict[str, list[float]] = {}
+        windows: dict[str, int] = {}
+        counts: dict[str, int] = {}
+        token = "a" * 16
+        with (
+            patch.object(route_helpers, "_rate_limit_store", store),
+            patch.object(route_helpers, "_rate_limit_window_by_key", windows),
+            patch.object(route_helpers, "_rate_limit_distinct_token_counts", counts),
+            patch.object(route_helpers, "_is_polling_token_inflight", return_value=True),
+            patch.dict(
+                "os.environ",
+                {
+                    "MNS_ALLOW_REMOTE_API": "0",
+                    "MNS_PROXY_FIX": "0",
+                    "MNS_LOCAL_RATE_LIMIT_MULTIPLE": "1",
+                    "MNS_DISABLE_LOCAL_RATE_LIMIT": "0",
+                },
+                clear=False,
+            ),
+        ):
+            client = test_app.test_client()
+            first = client.post("/probe", json={"request_token": token})
+            second = client.post("/probe", json={"request_token": token})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(any(":token:" in key for key in store))
 
     def _identity(self, env: dict, overrides: dict):
         with (

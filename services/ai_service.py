@@ -1153,6 +1153,11 @@ def _response_has_content(data: Any) -> bool:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError):
         return False
+    # SDK/agent responses can be dict-shaped in tests or via compatibility
+    # shims; a non-object message must not crash the success path after the
+    # provider call has already completed.
+    if not isinstance(message, dict):
+        return False
     content = message.get("content")
     if isinstance(content, dict):
         return bool(content)

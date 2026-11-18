@@ -675,8 +675,10 @@ def get_api_credential_state() -> dict[str, Any]:
         "api_mode": get_api_mode(),
         "agent_id": get_agent_id(),
         "preview_mode": is_preview_mode(),
-        # Agents API: model is fixed only if a specific deployed agent_id is configured.
-        "model_selectable": True if is_openai else (not bool(get_agent_id())),
+        # Agents API: model is fixed only while agents mode is active and a
+        # specific deployed agent_id is configured. A stale agent_id kept for
+        # a later switch back must not lock model selection in chat mode.
+        "model_selectable": True if is_openai else not (is_agents_mode() and bool(get_agent_id())),
         "mistral_model": model_name,
         "is_ai_technical_lines_eligible": True if is_openai else is_medium_or_large_model(model_name),
         "is_free_tier_model": False if is_openai else is_free_tier_model(model_name),

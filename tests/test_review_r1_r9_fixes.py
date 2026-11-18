@@ -306,8 +306,8 @@ class TestR7ChatSessionCapOnAppend:
             mock_inst.decrypt.side_effect = lambda b: b
             # Avoid prefix handling
             with (
-                patch.object(ch, "_encrypt_content", side_effect=lambda c: c),
-                patch.object(ch, "_decrypt_content", side_effect=lambda c: c),
+                patch.object(ch, "_encrypt_content", side_effect=lambda c, fernet=None: c),
+                patch.object(ch, "_decrypt_content", side_effect=lambda c, fernet=None: c),
             ):
                 store = ch.SQLiteChatHistoryStore(max_sessions=3, max_msgs_per_session=5)
                 for i in range(5):

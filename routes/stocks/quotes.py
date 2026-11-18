@@ -57,6 +57,16 @@ from utils.stock_payload import (
 
 logger = logging.getLogger(__name__)
 
+# Standard envelope keys owned by ``error_response()``. A cached history
+# payload is merged into ``extra_fields`` for backward compatibility, but it
+# must not overwrite the canonical error envelope: when the stored
+# ``error_code`` is not a valid ErrorCode the route falls back to
+# FETCH_FAILED/API_RATE_LIMITED, and re-merging the raw value made ``code``
+# and ``error_code`` disagree (and exposed a non-enum numeric code).
+_HISTORY_ENVELOPE_RESERVED_KEYS = frozenset(
+    {"error", "ok", "error_flag", "success", "code", "error_code", "message", "details"}
+)
+
 quotes_bp = Blueprint("quotes", __name__)
 
 
@@ -68,7 +78,17 @@ def _submit_async_info_fetch(symbol: str) -> None:
             return
         app_state.info_fetch_inflight.add(info_key)
     try:
-        app_state.execution.data_executor.submit(_run_async_info_fetch, symbol)
+        future = app_state.execution.data_executor.submit(_run_async_info_fetch, symbol)
+
+        def _handle_cancelled_info_fetch(done_future: Any) -> None:
+            # A queued future can be cancelled during executor shutdown; its
+            # task finally never runs, so the submitter must release the claim.
+            if not done_future.cancelled():
+                return
+            with app_state.info_fetch_lock:
+                app_state.info_fetch_inflight.discard(info_key)
+
+        future.add_done_callback(_handle_cancelled_info_fetch)
     except Exception as exc:
         current_app.logger.warning("Failed to submit info fetch symbol=%s: %s", symbol, exc)
         with app_state.info_fetch_lock:
@@ -110,12 +130,16 @@ def _submit_async_history_fetch(
             interval=interval,
             probe=probe,
         )
-        if probe:
-            circuit_key = history_circuit_key(symbol, market)
+        circuit_key = history_circuit_key(symbol, market) if probe else None
 
-            def _handle_cancelled_probe(done_future: Any) -> None:
-                if not done_future.cancelled():
-                    return
+        def _handle_cancelled_fetch(done_future: Any) -> None:
+            if not done_future.cancelled():
+                return
+            # A cancelled job never reaches fetch_history_async_task's
+            # finally block. Every submitted future owns the inflight claim,
+            # so release it for normal jobs too; only probes additionally
+            # report the failed recovery attempt to the circuit breaker.
+            if circuit_key is not None:
                 app_state.market.report_circuit_result(
                     "yfinance_history",
                     success=False,
@@ -123,10 +147,10 @@ def _submit_async_history_fetch(
                     threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
                     open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
                 )
-                with app_state.history_fetch_lock:
-                    app_state.history_fetch_inflight.discard(cache_key)
+            with app_state.history_fetch_lock:
+                app_state.history_fetch_inflight.discard(cache_key)
 
-            future.add_done_callback(_handle_cancelled_probe)
+        future.add_done_callback(_handle_cancelled_fetch)
         if log_label:
             logger.info("Async history fetch submitted: %s key=%s", log_label, cache_key)
         return True
@@ -217,7 +241,7 @@ def api_stocks() -> Any:
     yf_limited = app_state.market.is_yf_rate_limited()
     yf_until = None
     if yf_limited:
-        rl_until = app_state.yf_session_manager.get_rate_limit_until("yfinance")
+        rl_until = app_state.market.get_yf_rate_limit_until()
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
@@ -358,7 +382,7 @@ def api_stock_history() -> Any:
             extra = {
                 key: value
                 for key, value in payload.items()
-                if key not in ("error", "ok", "error_flag", "success")
+                if key not in _HISTORY_ENVELOPE_RESERVED_KEYS
             }
             # The service returns one error payload for "no bars", transient
             # rate limits/timeouts, and provider failures. Hardcoding

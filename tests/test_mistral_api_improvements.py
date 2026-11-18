@@ -569,6 +569,16 @@ class StreamMistralChatTestCase(unittest.TestCase):
 
         self.assertEqual(_extract_stream_delta(Wrapper("ya")), "ya")
 
+    def test_response_has_content_rejects_non_dict_message(self):
+        """Malformed provider shapes must not crash the post-call cache check."""
+        from services.ai_service import _response_has_content
+
+        self.assertFalse(_response_has_content({"choices": [{"message": "oops"}]}))
+        self.assertFalse(_response_has_content({"choices": ["oops"]}))
+        self.assertTrue(
+            _response_has_content({"choices": [{"message": {"content": "hi"}}]})
+        )
+
     @patch("services.ai_service._get_mistral_model_name", return_value="mistral-small-2603")
     @patch("services.ai_service._get_mistral_client")
     def test_stream_yields_delta_and_done(self, mock_get_client, mock_get_name):

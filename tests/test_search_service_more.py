@@ -6,6 +6,7 @@ compact context, hybrid search, and market trending functions.
 
 import sys
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
 from unittest.mock import patch
 
@@ -309,6 +310,24 @@ class ScheduleMarketTrendsRefreshAsyncTestCase(unittest.TestCase):
         search_service._schedule_market_trends_refresh_async("us", "ddgs_only", "")
         result = search_service._schedule_market_trends_refresh_async("us", "ddgs_only", "")
         self.assertFalse(result)
+
+    @patch("services.search_service._set_cached_value")
+    @patch("services.search_service.app_state.execution.executor.submit")
+    def test_cancelled_submission_releases_inflight(self, mock_submit, mock_set):
+        from app_state import app_state
+
+        cache_key = "market_trends_us_ddgs_only"
+        cancelled_future = Future()
+        cancelled_future.cancel()
+        mock_submit.return_value = cancelled_future
+
+        result = search_service._schedule_market_trends_refresh_async(
+            "us", "ddgs_only", langsearch_api_key=""
+        )
+
+        self.assertTrue(result)
+        with app_state.ai.trends_refresh_lock:
+            self.assertNotIn(cache_key, app_state.ai.trends_refresh_inflight)
 
 
 class ExecuteSearchStrategyTestCase(unittest.TestCase):

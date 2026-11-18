@@ -212,6 +212,72 @@ class CircuitBreakerHalfOpenSingleProbeTestCase(unittest.TestCase):
             with app_state.market.history_circuit_lock:
                 app_state.market.history_circuit_state.pop(circuit_key, None)
 
+    def test_cancelled_non_probe_future_releases_inflight(self):
+        """A cancelled normal history job never runs its finally block.
+
+        The submitted future owns the inflight claim.  Cancellation cleanup
+        therefore has to be registered for every job, not only HALF_OPEN
+        probes; otherwise the cache key stays suppressed forever and every
+        later request returns the fetching placeholder without starting work.
+        """
+        from app_state import app_state
+        from routes.stocks.quotes import _submit_async_history_fetch
+
+        symbol = "TESTNONPROBECANCEL"
+        cache_key = f"hist_{symbol}_us_1mo"
+        cancelled_future = Future()
+        cancelled_future.cancel()
+
+        class _CancelledExecutor:
+            def submit(self, *args, **kwargs):
+                return cancelled_future
+
+        with app_state.history_fetch_lock:
+            app_state.history_fetch_inflight.discard(cache_key)
+        try:
+            with patch.object(app_state.execution, "data_executor", _CancelledExecutor()):
+                submitted = _submit_async_history_fetch(
+                    cache_key, symbol, "us", "1mo", 60
+                )
+
+            self.assertTrue(submitted)
+            with app_state.history_fetch_lock:
+                self.assertNotIn(cache_key, app_state.history_fetch_inflight)
+        finally:
+            with app_state.history_fetch_lock:
+                app_state.history_fetch_inflight.discard(cache_key)
+
+    def test_cancelled_info_future_releases_inflight(self):
+        """Stock-detail polling relies on the same submit-ownership cleanup.
+
+        A cancelled info future never reaches _run_async_info_fetch's finally
+        block.  Leaving ``info_<symbol>`` claimed makes every later
+        /api/stock-details request return the fetching placeholder without
+        ever submitting another fetch.
+        """
+        from app_state import app_state
+        from routes.stocks.quotes import _submit_async_info_fetch
+
+        info_key = "info_TESTINFOCANCEL"
+        cancelled_future = Future()
+        cancelled_future.cancel()
+
+        class _CancelledExecutor:
+            def submit(self, *args, **kwargs):
+                return cancelled_future
+
+        with app_state.info_fetch_lock:
+            app_state.info_fetch_inflight.discard(info_key)
+        try:
+            with patch.object(app_state.execution, "data_executor", _CancelledExecutor()):
+                _submit_async_info_fetch("TESTINFOCANCEL")
+
+            with app_state.info_fetch_lock:
+                self.assertNotIn(info_key, app_state.info_fetch_inflight)
+        finally:
+            with app_state.info_fetch_lock:
+                app_state.info_fetch_inflight.discard(info_key)
+
     def test_probe_job_releases_probe_on_unexpected_exception(self):
         from app_state import app_state
         from market_state import CircuitState

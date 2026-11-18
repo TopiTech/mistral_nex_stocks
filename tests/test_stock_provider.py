@@ -316,6 +316,18 @@ class YFinanceProviderTestCase(unittest.TestCase):
         mock_search.assert_not_called()
 
     @patch("services.stock_provider.yf.Search")
+    def test_search_forwards_normalized_limit_to_yfinance(self, mock_search):
+        """Requested result count must override yfinance's default of 8."""
+        mock_search.return_value.quotes = []
+
+        self.provider.search("apple", max_results=10)
+
+        mock_search.assert_called_once()
+        kwargs = mock_search.call_args.kwargs
+        self.assertEqual(kwargs["max_results"], 10)
+        self.assertEqual(kwargs["news_count"], 0)
+
+    @patch("services.stock_provider.yf.Search")
     def test_search_handles_empty_quotes(self, mock_search):
         """quotes が空の場合、空リストを返す"""
         mock_instance = MagicMock()

@@ -78,6 +78,31 @@ def test_r1_trend_sources_monotonic_slot_reservation_no_rollback() -> None:
     assert recorded_delays[1] == pytest.approx(2.6)
 
 
+def test_r1b_trend_sources_backward_clock_reanchors_pacing() -> None:
+    """A large wall-clock rollback must not sleep through the whole skew."""
+    mock_client = MagicMock()
+    mock_client.suggestions.return_value = [{"title": "Suggestion 1"}]
+
+    recorded_delays: list[float] = []
+    with (
+        patch.object(trend_sources, "TrendReq", object()),
+        patch.object(trend_sources, "_google_trends_client", return_value=mock_client),
+        patch.object(trend_sources, "_GOOGLE_TRENDS_MIN_INTERVAL", 1.5),
+        patch.object(trend_sources.time, "time", return_value=1000.0),
+        patch.object(trend_sources.time, "sleep", side_effect=recorded_delays.append),
+    ):
+        with trend_sources._GOOGLE_TRENDS_LOCK:
+            trend_sources._GOOGLE_TRENDS_LAST_CALL = 100_000.0
+
+        res = trend_sources._trend_queries_for_keyword("query", "us")
+
+    assert res == ["Suggestion 1"]
+    # Re-anchored to 1000.0, then the normal one-interval pacing applies; the
+    # old code slept for the entire ~99,000s skew.
+    assert recorded_delays == pytest.approx([1.5])
+    assert trend_sources._GOOGLE_TRENDS_LAST_CALL == pytest.approx(1001.5)
+
+
 def _verify_provider_multithreaded_sessions(p_cls: type) -> None:
     provider = p_cls()
     mock_sessions: list[MagicMock] = []

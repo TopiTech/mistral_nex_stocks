@@ -106,10 +106,12 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
         """Reset yfinance rate limit state"""
         app_state.market.yfinance_rate_limit_until = 0.0
         app_state.market.yfinance_429_streak = 0
+        app_state.market.is_yfinance_rate_limited = False
 
     def tearDown(self):
         app_state.market.yfinance_rate_limit_until = 0.0
         app_state.market.yfinance_429_streak = 0
+        app_state.market.is_yfinance_rate_limited = False
 
     @patch("market_state.yf_session_manager.mark_rate_limited")
     def test_mark_yf_429_sets_exclusion_window(self, mock_mark):
@@ -134,6 +136,45 @@ class YfinanceRateLimitingTestCase(unittest.TestCase):
         app_state.market.yfinance_rate_limit_until = time.time() + 5
         app_state.market.mark_yf_429(retry_after=200)
         self.assertGreaterEqual(app_state.market.yfinance_rate_limit_until, time.time() + 199)
+
+    @patch("market_state.yf_session_manager.get_rate_limit_until", return_value=0.0)
+    @patch("market_state.yf_session_manager.is_rate_limited", return_value=False)
+    def test_local_backoff_survives_failed_session_manager_update(
+        self, _mock_is_limited, _mock_until
+    ):
+        """A 429 must still block requests when the shared manager update fails."""
+        with patch(
+            "market_state.yf_session_manager.mark_rate_limited",
+            side_effect=RuntimeError("session manager unavailable"),
+        ):
+            app_state.market.mark_yf_429()
+
+        self.assertTrue(app_state.market.is_yf_rate_limited())
+        self.assertGreater(app_state.market.get_yf_rate_limit_until(), time.time())
+
+    @patch("market_state.yf_session_manager.is_rate_limited", return_value=False)
+    def test_local_flag_clears_only_after_local_window(self, _mock_is_limited):
+        """The local 429 flag remains authoritative until its own window expires."""
+        app_state.market.is_yfinance_rate_limited = True
+        app_state.market.yfinance_rate_limit_until = time.time() + 60
+
+        self.assertTrue(app_state.market.is_yf_rate_limited())
+        self.assertTrue(app_state.market.is_yfinance_rate_limited)
+
+        app_state.market.yfinance_rate_limit_until = time.time() - 1
+        self.assertFalse(app_state.market.is_yf_rate_limited())
+        self.assertFalse(app_state.market.is_yfinance_rate_limited)
+
+    @patch("market_state.yf_session_manager.get_rate_limit_until", return_value=0.0)
+    @patch("market_state.yf_session_manager.is_rate_limited", return_value=False)
+    def test_stale_local_timestamp_without_flag_does_not_limit(
+        self, _mock_is_limited, _mock_until
+    ):
+        """A future timestamp left by older code must not block on its own (M29)."""
+        app_state.market.yfinance_rate_limit_until = time.time() + 300
+
+        self.assertFalse(app_state.market.is_yf_rate_limited())
+        self.assertEqual(app_state.market.get_yf_rate_limit_until(), 0.0)
 
 
 class RetryAfterParsingTestCase(unittest.TestCase):
@@ -424,6 +465,22 @@ class AdaptiveIntervalDecayTestCase(unittest.TestCase):
         self.mgr._last_request_ts = time.time()
         wait = self.mgr._compute_wait()
         self.assertGreaterEqual(wait, 2.0)  # ~3s minus the tiny elapsed
+
+    def test_compute_wait_does_not_sleep_through_backward_clock_step(self):
+        """A reservation left in the future must not become an hours-long sleep.
+
+        ``_last_request_ts`` is wall-clock based. If the clock steps backwards
+        after a request reserved the next slot, the naive ``min_interval -
+        elapsed`` formula returns the full skew as sleep time, stalling every
+        yfinance fetch in the process. The wait must be bounded by the current
+        interval and the reservation re-anchored on the new clock.
+        """
+        self.mgr._adaptive_interval_sec = 3.0
+        self.mgr._last_request_ts = time.time() + 3600.0
+        wait = self.mgr._compute_wait()
+        self.assertGreaterEqual(wait, 0.0)
+        self.assertLessEqual(wait, 3.0)
+        self.assertAlmostEqual(self.mgr._last_request_ts, time.time() + wait, delta=1.0)
 
     def test_handle_block_grows_interval_and_uses_status_window(self):
         """A 429 block must grow the adaptive interval and set a ~300s exclusion."""

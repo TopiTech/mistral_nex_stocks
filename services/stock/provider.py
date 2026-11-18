@@ -1448,7 +1448,10 @@ class YFinanceProvider(BaseStockProvider):
 
         try:
             sess = _shim().yf_session_manager.get_session()
-            s = yf.Search(query, session=sess)
+            # yfinance defaults to 8 quotes; forward the caller's normalized
+            # limit (and skip the unused news payload) so /api/search actually
+            # returns the requested number instead of silently truncating.
+            s = yf.Search(query, max_results=eff_max, news_count=0, session=sess)
             quotes = getattr(s, "quotes", []) or []
             results = []
             for item in quotes[:eff_max]:

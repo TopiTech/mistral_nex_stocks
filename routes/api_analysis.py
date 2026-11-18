@@ -616,39 +616,74 @@ def api_chat():
             status_code=500,
         )
 
-    # チャット履歴の管理
-    with app_state.ai.chat_history_lock:
-        # symbol はユーザー入力。_safe_symbol の単一許可文字リスト（M-1）で無害化
-        # してからプロンプトのプレースホルダへ埋め込む。サニタイズは多層防御の一部で
-        # あり、可能なら「プロンプトへ埋め込まず構造化データとして渡す」方針を優先する。
-        safe_symbol = _safe_symbol(symbol)
-        init_history = [
-            {
-                "role": "system",
-                "content": "あなたは株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
-            },
-            {
-                "role": "user",
-                "content": f"[対象銘柄: {safe_symbol}] この銘柄について質問します。",
-            },
-            {
-                "role": "assistant",
-                "content": f"{safe_symbol}銘柄についてお答えします。",
-            },
-        ]
-        history = app_state.ai.chat_history.record_turn(
-            chat_key,
-            init_messages=init_history,
-            append=({"role": "user", "content": user_msg}) if not already_fetching else None,
-            max_msgs=CHAT_HISTORY_MAX_MSGS,
-        )
-
-        # B-3: keep the LLM request within a character budget so long
-        # conversations cannot blow the model context window or inflate cost.
-        messages_snapshot = _trim_history_to_budget(list(history), CHAT_CONTEXT_MAX_CHARS)
-
     def _rollback_user_message() -> None:
         _rollback_chat_user_message(chat_key, user_msg)
+
+    def _abort_chat_setup(setup_exc: BaseException) -> None:
+        """Release a request-thread chat claim after local setup fails."""
+        current_app.logger.error(
+            "Failed to prepare chat id=%s symbol=%s error_type=%s",
+            getattr(g, "request_id", "-"),
+            symbol,
+            type(setup_exc).__name__,
+        )
+        if not already_fetching:
+            with chat_fetch_lock:
+                chat_fetch_inflight.pop(inflight_key, None)
+            if result_holder is not None:
+                result_holder["error"] = setup_exc
+                result_holder["done"].set()
+            _rollback_user_message()
+        try:
+            app_state.ai.chat_history.close()
+        except Exception as close_exc:
+            current_app.logger.debug(
+                "Failed to close chat DB after chat setup failure: %s", close_exc
+            )
+
+    # Prepare the conversation before claiming/starting work.  A history-store
+    # failure used to escape here after the inflight entry was claimed, leaving
+    # the token permanently in ``already_fetching`` state with no job to finish
+    # it.  Treat setup as part of the same lifecycle as submission: release the
+    # claim, fail waiters, roll back a partially appended user turn, close the
+    # thread-local DB handle, then let the global error handler render the 500.
+    try:
+        with app_state.ai.chat_history_lock:
+            # symbol はユーザー入力。_safe_symbol の単一許可文字リスト（M-1）で無害化
+            # してからプロンプトのプレースホルダへ埋め込む。サニタイズは多層防御の一部で
+            # あり、可能なら「プロンプトへ埋め込まず構造化データとして渡す」方針を優先する。
+            safe_symbol = _safe_symbol(symbol)
+            init_history = [
+                {
+                    "role": "system",
+                    "content": "あなたは株式銘柄の専門家です。簡潔かつ投資家に有益な回答をしてください。",
+                },
+                {
+                    "role": "user",
+                    "content": f"[対象銘柄: {safe_symbol}] この銘柄について質問します。",
+                },
+                {
+                    "role": "assistant",
+                    "content": f"{safe_symbol}銘柄についてお答えします。",
+                },
+            ]
+            history = app_state.ai.chat_history.record_turn(
+                chat_key,
+                init_messages=init_history,
+                append=({"role": "user", "content": user_msg})
+                if not already_fetching
+                else None,
+                max_msgs=CHAT_HISTORY_MAX_MSGS,
+            )
+
+            # B-3: keep the LLM request within a character budget so long
+            # conversations cannot blow the model context window or inflate cost.
+            messages_snapshot = _trim_history_to_budget(
+                list(history), CHAT_CONTEXT_MAX_CHARS
+            )
+    except Exception as setup_exc:
+        _abort_chat_setup(setup_exc)
+        raise
 
     # Append current stock data context to the user message for freshness.
     # The context is wrapped in an XML block with a clear non-instruction
@@ -680,6 +715,11 @@ def api_chat():
             messages_snapshot.append({"role": "user", "content": fresh_context})
     except (ValueError, TypeError, KeyError, RuntimeError):
         pass  # Non-critical: proceed without fresh context
+    except Exception as setup_exc:
+        # The cache-only lookup is auxiliary, but an unexpected exception must
+        # not strand the inflight claim before the job is submitted.
+        _abort_chat_setup(setup_exc)
+        raise
 
     # C-2: ストリーミング要求の場合は、executorへオフロードせずにこの
     # リクエストスレッドからSSEで段階的に配信する。同一トークンの重複
@@ -700,6 +740,11 @@ def api_chat():
             )
             with chat_fetch_lock:
                 chat_fetch_inflight.pop(inflight_key, None)
+            if result_holder is not None:
+                result_holder["error"] = queue.Full(
+                    "chat stream concurrency cap reached"
+                )
+                result_holder["done"].set()
             if not already_fetching:
                 _rollback_user_message()
             try:
@@ -725,7 +770,7 @@ def api_chat():
                 release_once,
                 on_abort=_rollback_user_message,
             )
-        except Exception:
+        except Exception as exc:
             # スロット解放は _ReleaseOnce により冪等に保護されているため、
             # 例外時にも安全に 1 回のみ解放される。
             release_once()
@@ -738,6 +783,9 @@ def api_chat():
                 chat_fetch_inflight.pop(inflight_key, None)
                 chat_result_cache.pop(inflight_key, None)
                 chat_result_fingerprints.pop(inflight_key, None)
+            if result_holder is not None:
+                result_holder["error"] = exc
+                result_holder["done"].set()
             _rollback_user_message()
             try:
                 app_state.ai.chat_history.close()
@@ -1091,9 +1139,20 @@ def _stream_chat_response(
                 elif event["type"] == "done":
                     done_text = event.get("text")
                     with stream_state_lock:
-                        full_text = str(done_text) if done_text is not None else full_text
+                        # The provider can emit a well-formed done event with
+                        # no text (e.g. an empty completion). The non-streaming
+                        # path substitutes _EMPTY_CHAT_REPLY; do the same here
+                        # so the client never receives an empty terminal frame
+                        # and the completed turn is persisted consistently.
+                        completed_text = (
+                            str(done_text)
+                            if done_text is not None and str(done_text)
+                            else full_text
+                        )
+                        if not completed_text:
+                            completed_text = _EMPTY_CHAT_REPLY
+                        full_text = completed_text
                         stream_completed = True
-                        completed_text = full_text
                     yield (
                         "data: "
                         + json.dumps(
@@ -1367,6 +1426,18 @@ def _is_cacheable_news_bundle(bundle: Any) -> bool:
 # (Locks relocated to top of file)
 
 
+def _sanitized_service_error_message(label: str, job_err: object) -> str:
+    """Return a client-visible service-error message with credentials redacted.
+
+    ``result_holder["message"]`` is returned by the news/analyze polling branch
+    while the job is still finishing, i.e. before ``_analyze_v2_error_response``
+    can sanitize the terminal error. Compose those progress messages through
+    this helper so upstream error text cannot leak credential-shaped fragments
+    (``api_key=``, ``token=``, ...) on the polling path.
+    """
+    return f"{label}: {_sanitize_error_message(str(job_err))}"
+
+
 @api_analysis_bp.route("/api/news", methods=["POST"])
 # FE-02: the client polls this endpoint while a summary is generating (up to
 # ~30 requests per job). Without the polling-skip the first slow job consumed
@@ -1416,10 +1487,12 @@ def api_news():
     # Mistral cache so neither poisons the other's latest bundle.
     is_preview = credential_manager.is_preview_api_key(api_key)
     is_openai = credential_manager.is_openai_provider()
+    model_slug = (
+        (credential_manager.get_openai_model() or "default").strip() if is_openai else ""
+    )
     if is_preview:
         provider_scope = "_preview"
     elif is_openai:
-        model_slug = (credential_manager.get_openai_model() or "default").strip()
         provider_scope = f"_openai_{model_slug}"
     else:
         provider_scope = ""
@@ -1429,10 +1502,13 @@ def api_news():
         if force_refresh
         else f"news_{strategy}{provider_scope}"
     )
+    # The LLM bundle cache in NewsService is scoped by OpenAI model; the route's
+    # latest-bundle cache must use the same dimension or a model switch serves
+    # the previous model's summary until the 24h TTL expires.
     latest_cache_key = (
         f"news_bundle_latest_{strategy}"
         if not is_openai
-        else f"news_bundle_latest_{strategy}_openai"
+        else f"news_bundle_latest_{strategy}_openai_{model_slug}"
     )
 
     news_token_cache_key = f"{inflight_key}:{news_token}" if news_token else None
@@ -1603,7 +1679,9 @@ def api_news():
                 )
                 result_holder["error"] = exc
                 result_holder["step"] = "error"
-                result_holder["message"] = f"ニュース要約の取得に失敗しました: {exc}"
+                result_holder["message"] = _sanitized_service_error_message(
+                    "ニュース要約の取得に失敗しました", exc
+                )
             finally:
                 with news_fetch_lock:
                     cached_payload = (
@@ -2049,7 +2127,9 @@ def api_analyze_v2():
                     except Exception:
                         sc_int = 502
                     result_holder["step"] = "error"
-                    result_holder["message"] = f"AIサービスエラー: {err_msg}"
+                    result_holder["message"] = _sanitized_service_error_message(
+                        "AIサービスエラー", err_msg
+                    )
                     result_holder["result"] = result
                     result_holder["error"] = ProviderAPIError(str(err_msg), status_code=sc_int, details=prov_err if isinstance(prov_err, dict) else {})
                     return

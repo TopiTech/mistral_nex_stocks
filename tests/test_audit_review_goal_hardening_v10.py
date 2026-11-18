@@ -26,6 +26,7 @@ from services.ai_portfolio_service import (
     PortfolioStorageError,
     _load_saved_ai_portfolios_strict,
     _write_saved_ai_portfolios,
+    delete_custom_ai_portfolio,
     load_saved_ai_portfolios,
 )
 from shutdown_manager import _write_atomic_restricted
@@ -222,6 +223,36 @@ def test_load_saved_ai_portfolios_graceful_on_storage_error(tmp_path: Path):
             _load_saved_ai_portfolios_strict()
 
         # load_saved_ai_portfolios should catch PortfolioStorageError and return []
+        assert load_saved_ai_portfolios() == []
+
+
+def test_legacy_portfolio_without_id_keeps_stable_deletable_identity(tmp_path: Path) -> None:
+    """A legacy plaintext entry without an id must keep one identity across reads.
+
+    The read path used to let sanitize_ai_portfolio mint a random id on every
+    load, so the id returned by GET /api/ai-portfolio never matched the entry
+    on DELETE and the legacy portfolio could not be removed.
+    """
+    test_file = tmp_path / "ai_portfolios.json"
+    legacy = [
+        {
+            "title": "IDなし旧形式",
+            "theme": "legacy-theme",
+            "items": [
+                {"symbol": "AAPL", "market": "us", "weight_pct": 100.0}
+            ],
+        }
+    ]
+    test_file.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    with patch("services.ai_portfolio_service.AI_PORTFOLIO_STORAGE_FILE", test_file):
+        first = load_saved_ai_portfolios()
+        second = load_saved_ai_portfolios()
+        assert len(first) == 1
+        assert first[0]["id"].startswith("legacy-")
+        assert first[0]["id"] == second[0]["id"]
+        assert first[0]["items"][0]["symbol"] == "AAPL"
+
+        assert delete_custom_ai_portfolio(first[0]["id"]) is True
         assert load_saved_ai_portfolios() == []
 
 

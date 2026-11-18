@@ -143,6 +143,24 @@ def test_agents_mode_blocks_model_selection(client):
     )
 
 
+def test_chat_mode_ignores_stale_agent_id_for_model_selection(client):
+    """A kept agent_id must not lock model selection after switching to chat."""
+    save_api_credentials(
+        mistral_api_key="01234567890123456789012345678901",
+        api_mode="agents",
+        agent_id="ag_sample_agent_12345",
+    )
+    save_api_credentials(api_mode="chat")
+
+    res = client.get("/api/credentials", headers={"Origin": "http://localhost:5000"})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["api_mode"] == "chat"
+    assert data["agent_id"] == "ag_sample_agent_12345"
+    assert data["model_selectable"] is True
+    assert len(data["available_models"]) > 0
+
+
 def test_agents_mode_does_not_require_agent_id(client):
     """Test that switching to agents mode without agent_id is accepted (Agents SDK)."""
     res = client.post(

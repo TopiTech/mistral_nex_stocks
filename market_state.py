@@ -401,11 +401,40 @@ class MarketDataState:
     # --- yfinance Rate Limiting ---
 
     def is_yf_rate_limited(self) -> bool:
+        """Return True while either recorded yfinance cooldown is active.
+
+        ``mark_yf_429`` raises both ``is_yfinance_rate_limited`` and the
+        session-manager window.  The local window is the fallback when the
+        session-manager update fails (the failure is logged and swallowed), and
+        gating it on the flag keeps a stale future timestamp from a previous
+        run from blocking requests on its own (M29).
+        """
         with self.yfinance_lock:
-            limited = yf_session_manager.is_rate_limited("yfinance")
-            if not limited and time.time() >= self.yfinance_rate_limit_until:
+            now = time.time()
+            local_limited = (
+                self.is_yfinance_rate_limited and now < self.yfinance_rate_limit_until
+            )
+            limited = local_limited or yf_session_manager.is_rate_limited("yfinance")
+            if not limited:
                 self.is_yfinance_rate_limited = False
             return limited
+
+    def get_yf_rate_limit_until(self) -> float:
+        """Return the effective UNIX expiry of the yfinance cooldown.
+
+        The session manager and the local 429 window can each outlive the
+        other (a failed session-manager update, or a scraper block propagated
+        only into the session manager), so status endpoints must report their
+        union instead of one half.
+        """
+        with self.yfinance_lock:
+            local_until = (
+                self.yfinance_rate_limit_until if self.is_yfinance_rate_limited else 0.0
+            )
+            return max(
+                local_until,
+                yf_session_manager.get_rate_limit_until("yfinance"),
+            )
 
     # --- Previous-close cache (realtime producer hot path) ---
 

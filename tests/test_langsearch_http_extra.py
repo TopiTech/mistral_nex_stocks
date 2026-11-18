@@ -608,6 +608,13 @@ class LangsearchRerankTestCase(unittest.TestCase):
             out = ls.langsearch_rerank("q", self._docs(), "key")
         self.assertEqual(out[0]["relevance_score"], 0.8)
 
+    def test_non_mapping_response_returns_documents(self):
+        """A JSON array from the rerank endpoint must degrade, not raise."""
+        docs = self._docs()
+        with patch.object(ls, "_langsearch_post_json", return_value=[]):
+            out = ls.langsearch_rerank("q", docs, "key")
+        self.assertEqual(out, docs)
+
     def test_document_without_text_uses_placeholder(self):
         """Documents lacking summary/title get a placeholder text for reranking."""
         docs = [{"url": "u1"}, {"url": "u2"}]

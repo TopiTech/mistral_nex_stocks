@@ -183,3 +183,22 @@ def test_api_news_preview_and_provider_isolation_prevent_cross_cache_poisoning(c
             r_oa = client.post("/api/news", json={}, environ_base={"REMOTE_ADDR": "127.0.0.1"})
         assert r_oa.status_code == 200
         assert calls == [PREVIEW_API_KEY, "real-mistral-key", "sk-openai-real"]
+
+        # Switching OpenAI models must not serve the previous model's bundle:
+        # NewsService already scopes its LLM cache by model, so the route's
+        # latest-bundle cache must carry the same scope.
+        with (
+            patch.object(api_analysis, "extract_api_key", return_value="sk-openai-real"),
+            patch("credential_manager.is_openai_provider", return_value=True),
+            patch("credential_manager.get_openai_model", return_value="gpt-4o"),
+        ):
+            r_oa_model_switch = client.post(
+                "/api/news", json={}, environ_base={"REMOTE_ADDR": "127.0.0.1"}
+            )
+        assert r_oa_model_switch.status_code == 200
+        assert calls == [
+            PREVIEW_API_KEY,
+            "real-mistral-key",
+            "sk-openai-real",
+            "sk-openai-real",
+        ]

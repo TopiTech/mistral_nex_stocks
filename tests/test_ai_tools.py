@@ -75,6 +75,26 @@ def test_tool_calculate_technical_levels_protected_history(monkeypatch):
     assert mock_ticker.history.called
 
 
+def test_tool_boundary_rejects_market_symbol_mismatch():
+    from services.ai_tools import (
+        _tool_calculate_technical_levels,
+        _tool_get_company_fundamentals,
+        _tool_get_stock_quote,
+    )
+
+    for tool in (
+        _tool_get_stock_quote,
+        _tool_get_company_fundamentals,
+        _tool_calculate_technical_levels,
+    ):
+        for args in (
+            {"symbol": "AAPL", "market": "jp"},
+            {"symbol": "7203.T", "market": "us"},
+        ):
+            result = tool(args)
+            assert "mismatch" in result.get("error", ""), (tool.__name__, args, result)
+
+
 def test_tool_calculate_technical_levels_rate_limited(monkeypatch):
     from app_state import app_state
     from services.ai_tools import _tool_calculate_technical_levels

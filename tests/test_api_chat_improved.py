@@ -7,6 +7,7 @@ process lifetime).
 """
 
 import json
+import queue
 import sys
 import threading
 from pathlib import Path
@@ -16,6 +17,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app_state import app_state
 from tests.test_api_integration import APIIntegrationTestCase
+
+
+class _CapturingChatInflight(dict):
+    """Dict that records the holder removed by a failed chat lifecycle."""
+
+    def __init__(self):
+        super().__init__()
+        self.popped = {}
+
+    def pop(self, key, default=None):
+        value = super().pop(key, default)
+        self.popped[key] = value
+        return value
 
 
 class APIChatImprovedTestCase(APIIntegrationTestCase):
@@ -216,6 +230,39 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
                         {"role": "system", "content": "system prompt"},
                         {"role": "user", "content": "Will this turn be rolled back?"},
                         {"role": "assistant", "content": "completed reply"},
+                    ],
+                )
+        finally:
+            response.close()
+
+    @patch("routes.api_analysis.stream_mistral_chat")
+    def test_empty_done_stream_persists_nonstream_fallback(self, mock_stream):
+        """An empty done frame must use the same fallback as the polling path."""
+        from routes import api_analysis as ra
+
+        mock_stream.return_value = iter([{"type": "done", "text": ""}])
+        response, chat_key, inflight_key, result_holder, rollback, slot = (
+            self._make_stream_response("empty-done")
+        )
+        try:
+            body = "".join(response.response)
+            self.assertIn(ra._EMPTY_CHAT_REPLY, body)
+            response.close()
+
+            self.assertEqual(result_holder["result"], ra._EMPTY_CHAT_REPLY)
+            self.assertIsNone(result_holder["error"])
+            cached_result, cached_error = ra.chat_result_cache[inflight_key][1:]
+            self.assertEqual(cached_result, ra._EMPTY_CHAT_REPLY)
+            self.assertIsNone(cached_error)
+            rollback.assert_not_called()
+            self._assert_stream_slot_released(slot)
+            with app_state.ai.chat_history_lock:
+                self.assertEqual(
+                    app_state.ai.chat_history[chat_key],
+                    [
+                        {"role": "system", "content": "system prompt"},
+                        {"role": "user", "content": "Will this turn be rolled back?"},
+                        {"role": "assistant", "content": ra._EMPTY_CHAT_REPLY},
                     ],
                 )
         finally:
@@ -580,3 +627,175 @@ class APIChatImprovedTestCase(APIIntegrationTestCase):
             app_state.ai.chat_history.close = original_close
             app_state.execution.executor = original_executor
             real_executor.shutdown(wait=False)
+
+    def test_api_chat_history_setup_failure_releases_inflight(self):
+        """A history-store failure must not leave the token permanently in-flight."""
+        from routes import api_analysis as ra
+
+        request_token = "history-setup-failure-01"
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"),
+            patch("routes.api_analysis.get_stock_info_cached", return_value={}),
+            patch.object(
+                app_state.ai.chat_history,
+                "record_turn",
+                side_effect=OSError("chat history unavailable"),
+            ),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "us",
+                    "symbol": "AAPL_HFAIL",
+                    "message": "Will setup fail cleanly?",
+                    "request_token": request_token,
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        with ra.chat_fetch_lock:
+            self.assertFalse(
+                any(key.endswith(f":{request_token}") for key in ra.chat_fetch_inflight)
+            )
+            self.assertFalse(
+                any(key.endswith(f":{request_token}") for key in ra.chat_result_cache)
+            )
+
+    def test_api_chat_stream_cap_failure_completes_joined_waiter(self):
+        """A rejected stream claim must wake a non-stream waiter, not wedge it."""
+        from routes import api_analysis as ra
+
+        class _FullSlots:
+            def acquire(self, blocking=False):
+                return False
+
+            def release(self):
+                raise AssertionError("a rejected claim must not release a slot")
+
+        request_token = "stream-cap-failure-01"
+        capturing = _CapturingChatInflight()
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"),
+            patch.object(ra, "stream_chat_slots", _FullSlots()),
+            patch.object(ra, "chat_fetch_inflight", capturing),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "us",
+                    "symbol": "AAPL_SCAPFAIL",
+                    "message": "Will the cap fail cleanly?",
+                    "request_token": request_token,
+                    "stream": True,
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        holders = [
+            value
+            for key, value in capturing.popped.items()
+            if key.endswith(f":{request_token}")
+        ]
+        self.assertEqual(len(holders), 1)
+        holder = holders[0]
+        self.assertIsNotNone(holder)
+        self.assertIsInstance(holder["error"], queue.Full)
+        self.assertTrue(holder["done"].is_set())
+
+    def test_api_chat_stream_setup_failure_completes_joined_waiter(self):
+        """A stream setup exception must wake a non-stream waiter with the error."""
+        from routes import api_analysis as ra
+
+        class _AvailableSlots:
+            def __init__(self):
+                self.released = 0
+
+            def acquire(self, blocking=False):
+                return True
+
+            def release(self):
+                self.released += 1
+
+        request_token = "stream-setup-failure-01"
+        slots = _AvailableSlots()
+        capturing = _CapturingChatInflight()
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"),
+            patch.object(ra, "stream_chat_slots", slots),
+            patch.object(ra, "chat_fetch_inflight", capturing),
+            patch.object(
+                ra,
+                "_stream_chat_response",
+                side_effect=RuntimeError("stream setup exploded"),
+            ),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "us",
+                    "symbol": "AAPL_SSETFAIL",
+                    "message": "Will stream setup fail cleanly?",
+                    "request_token": request_token,
+                    "stream": True,
+                },
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(slots.released, 1)
+        holders = [
+            value
+            for key, value in capturing.popped.items()
+            if key.endswith(f":{request_token}")
+        ]
+        self.assertEqual(len(holders), 1)
+        holder = holders[0]
+        self.assertIsNotNone(holder)
+        self.assertIsInstance(holder["error"], RuntimeError)
+        self.assertTrue(holder["done"].is_set())
+
+    def test_api_chat_context_lookup_failure_releases_inflight(self):
+        """An unexpected cache-only context failure must release the claim too."""
+        from routes import api_analysis as ra
+
+        request_token = "context-setup-failure-01"
+        conversation_scope = "ctxscope-1234567890"
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"),
+            patch(
+                "routes.api_analysis.get_stock_info_cached",
+                side_effect=OSError("stock cache unavailable"),
+            ),
+        ):
+            response = self.client.post(
+                "/api/chat",
+                json={
+                    "market": "us",
+                    "symbol": "AAPL_CTXFAIL",
+                    "message": "Will context lookup fail cleanly?",
+                    "request_token": request_token,
+                },
+                headers={"X-Conversation-Scope": conversation_scope},
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        with ra.chat_fetch_lock:
+            self.assertFalse(
+                any(key.endswith(f":{request_token}") for key in ra.chat_fetch_inflight)
+            )
+            self.assertFalse(
+                any(key.endswith(f":{request_token}") for key in ra.chat_result_cache)
+            )
+            history = app_state.ai.chat_history.get(
+                f"chat:{conversation_scope}:AAPL_CTXFAIL", []
+            )
+        self.assertFalse(
+            any(
+                message.get("role") == "user"
+                and message.get("content") == "Will context lookup fail cleanly?"
+                for message in history
+            )
+        )

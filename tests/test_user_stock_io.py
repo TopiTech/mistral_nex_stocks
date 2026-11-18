@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -113,6 +114,10 @@ class StockDetailsOffloadTests(unittest.TestCase):
         def fake_submit(fn, sym):
             submitted["fn"] = fn
             submitted["sym"] = sym
+            # Executor.submit returns a Future; returning None here used to
+            # hide the ownership callback and make this test assert a state
+            # that the production helper cannot rely on.
+            return Future()
 
         with app.app_context():
             with patch.object(app_state.execution.data_executor, "submit", side_effect=fake_submit):

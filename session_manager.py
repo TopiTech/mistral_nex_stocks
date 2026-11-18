@@ -685,7 +685,12 @@ class YFinanceSessionManager:
                     self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,
                 )
             min_interval = self._adaptive_interval_sec
-            elapsed = now - self._last_request_ts
+            # Wall clock stepped backwards (NTP correction, manual change, VM
+            # restore): the stored reservation is now in the future, so the raw
+            # gap would sleep for the whole skew (potentially hours) and stall
+            # every yfinance request. Treat the interval as exhausted and
+            # re-anchor the reservation on the new clock.
+            elapsed = max(0.0, now - self._last_request_ts)
             if elapsed < min_interval:
                 wait_time = min_interval - elapsed
                 self._last_request_ts = now + wait_time

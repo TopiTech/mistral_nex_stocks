@@ -88,6 +88,11 @@ def _openai_response_has_content(data: Any) -> bool:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError):
         return False
+    # Provider bodies are untrusted: a 200 response may carry a string/list
+    # where the Chat Completions schema requires an object. Treat that shape as
+    # no content instead of raising AttributeError during post-processing.
+    if not isinstance(message, dict):
+        return False
     content = message.get("content")
     if isinstance(content, dict):
         return bool(content)
@@ -970,8 +975,9 @@ def call_openai_chat(
 
             # Structured output & fallback post-processing
             choices = data.get("choices") or []
-            if choices and isinstance(choices, list) and choices:
-                msg = choices[0].get("message") or {}
+            if choices and isinstance(choices, list) and isinstance(choices[0], dict):
+                raw_message = choices[0].get("message")
+                msg = raw_message if isinstance(raw_message, dict) else {}
                 raw_content = (
                     msg.get("content")
                     or msg.get("reasoning")

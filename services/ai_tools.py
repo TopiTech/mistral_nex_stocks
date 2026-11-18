@@ -19,6 +19,7 @@ from utils.normalization import (
     is_bool_like,
     is_jp_stock_code,
     is_valid_symbol,
+    market_symbol_mismatch,
     normalize_symbol,
 )
 
@@ -236,6 +237,9 @@ def _validate_symbol_market(
         return {"error": "invalid symbol"}
     if market not in allowed_markets:
         return {"symbol": symbol, "error": "invalid market"}
+    mismatch = market_symbol_mismatch(symbol, market)
+    if mismatch:
+        return {"symbol": symbol, "market": market, "error": mismatch}
     return None
 
 

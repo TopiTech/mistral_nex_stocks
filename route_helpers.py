@@ -170,6 +170,11 @@ _RATE_LIMIT_MAX_TOKEN_POLLS: int = _env_int("MNS_RATE_LIMIT_MAX_TOKEN_POLLS", 12
 _RATE_LIMIT_MAX_REQUEST_TOKEN_LEN: int = _env_int(
     "MNS_RATE_LIMIT_MAX_REQUEST_TOKEN_LEN", 128, 32, 1024
 )
+# The request schemas own the operation-token contract.  The rate limiter runs
+# before view validation, so it must apply the same shape before treating a
+# client-supplied token as a polling identity; otherwise a malformed token that
+# the endpoint later rejects can still register a per-token quota bypass.
+_REQUEST_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 # Max distinct per-token buckets per client IP / endpoint pair (random-token
 # flood mitigation). Once this budget is spent, new tokens count normally so
 # they cannot be used to poll-bypass the quota via distinct-token floods.
@@ -498,18 +503,19 @@ def rate_limit(
                     raw_token = (_parse_json_request() or {}).get("request_token")
                 except Exception:
                     raw_token = None
-                if isinstance(raw_token, str) and raw_token.strip():
-                    stripped = raw_token.strip()
+                if isinstance(raw_token, str) and raw_token:
                     # R2: bound token length — over-long tokens are treated as
                     # absent (so they count normally and cannot blow up the key
                     # space). 40-char hex tokens are the normal case.
-                    if len(stripped) > _RATE_LIMIT_MAX_REQUEST_TOKEN_LEN:
+                    if len(raw_token) > _RATE_LIMIT_MAX_REQUEST_TOKEN_LEN:
                         logger.debug(
                             "Over-long request_token (%s chars) ignored for polling skip",
-                            len(stripped),
+                            len(raw_token),
                         )
+                    elif not _REQUEST_TOKEN_RE.fullmatch(raw_token):
+                        logger.debug("Malformed request_token ignored for polling skip")
                     else:
-                        token = stripped
+                        token = raw_token
                         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
                         token_key = f"{remote_addr}:{endpoint}:token:{token_hash}"
                         distinct_key = f"{remote_addr}:{endpoint}:distinct"

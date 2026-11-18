@@ -4,6 +4,7 @@ Provides dynamic AI theme portfolio generation powered by Web Search & Mistral A
 encrypted-at-rest JSON storage (ai_portfolios.json), and automatic rebalancing.
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -264,6 +265,42 @@ def _decrypt_portfolio_payload(entry: Any, *, master_key: str | None = None) -> 
         return None
 
 
+def _stable_legacy_portfolio_id(item: dict[str, Any]) -> str:
+    """Derive a deterministic id for a legacy entry that predates persisted ids.
+
+    ``sanitize_ai_portfolio`` mints a random id when one is missing. That is
+    correct when a new portfolio is first saved, but wrong for an entry read
+    from storage: every GET returned a different id, so DELETE could never
+    match the id it had just shown to the client and the legacy portfolio was
+    undeletable. Hash the stored content instead so the compatibility path
+    keeps one stable identity across reads.
+    """
+    seed = {key: value for key, value in item.items() if key != "id"}
+    serialized = json.dumps(seed, sort_keys=True, ensure_ascii=False, default=str)
+    digest = hashlib.sha256(serialized.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return f"legacy-{digest}"
+
+
+def _sanitize_stored_ai_portfolios(raw_items: list[Any]) -> list[dict[str, Any]]:
+    """Sanitize persisted entries without changing missing ids on every read."""
+    cleaned: list[dict[str, Any]] = []
+    seen_ids: dict[str, int] = {}
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        raw_id = item.get("id")
+        if isinstance(raw_id, str) and raw_id.strip():
+            candidate = item
+        else:
+            candidate = dict(item)
+            base_id = _stable_legacy_portfolio_id(item)
+            occurrence = seen_ids.get(base_id, 0) + 1
+            seen_ids[base_id] = occurrence
+            candidate["id"] = base_id if occurrence == 1 else f"{base_id}-{occurrence}"
+        cleaned.append(sanitize_ai_portfolio(candidate))
+    return cleaned
+
+
 def _write_saved_ai_portfolios(
     portfolios: list[dict[str, Any]], *, master_key: str | None = None
 ) -> None:
@@ -398,12 +435,12 @@ def _load_saved_ai_portfolios_strict(*, master_key: str | None = None) -> list[d
             return []
         if isinstance(data, list):
             # Legacy plaintext database (pre-encryption) - read compatibility.
-            return [sanitize_ai_portfolio(item) for item in data if isinstance(item, dict)]
+            return _sanitize_stored_ai_portfolios(data)
         if isinstance(data, dict) and "scheme" in data and "value" in data:
             raw = _decrypt_portfolio_payload(data, master_key=master_key)
             if raw is None:
                 raise PortfolioStorageError("saved AI portfolio database cannot be decrypted")
-            return [sanitize_ai_portfolio(item) for item in raw if isinstance(item, dict)]
+            return _sanitize_stored_ai_portfolios(raw)
         raise PortfolioStorageError("saved AI portfolio database has an unsupported format")
     except PortfolioStorageError:
         raise

@@ -36,9 +36,7 @@ def api_health():
     yf_limited = app_state.market.is_yf_rate_limited()
     yf_until = None
     if yf_limited:
-        from app_state import yf_session_manager
-
-        rl_until = yf_session_manager.get_rate_limit_until("yfinance")
+        rl_until = app_state.market.get_yf_rate_limit_until()
         if rl_until:
             yf_until = datetime.fromtimestamp(rl_until, tz=UTC).isoformat()
 
@@ -131,19 +129,15 @@ def api_metrics():
         cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
 
     with app_state.market.yfinance_lock:
-        from app_state import yf_session_manager
-
         yf_limited = app_state.market.is_yf_rate_limited()
         yf_clears_in = 0.0
         if yf_limited:
-            rl_until = yf_session_manager.get_rate_limit_until("yfinance")
+            rl_until = app_state.market.get_yf_rate_limit_until()
             yf_clears_in = _seconds_until(rl_until)
         yfinance_metrics = {
-            # M29 (2026-11-07 review): the old expression AND-compared a
-            # bound method (`is_yfinance_rate_limited` — always truthy) with a
-            # legacy timestamp that is raised but never reset, contradicting
-            # the session-manager flag the rest of the app uses; both values
-            # now come from the authoritative session manager.
+            # M29: report the effective cooldown (the local 429 window gated by
+            # its flag, unioned with the session manager) so the metric and the
+            # enforcement path cannot disagree.
             "rate_limited": yf_limited,
             "rate_limit_clears_in_sec": yf_clears_in,
         }

@@ -67,6 +67,12 @@ atexit.register(lambda: _EXECUTOR.shutdown(wait=False, cancel_futures=True))
 _GOOGLE_TRENDS_LOCK = threading.Lock()
 _GOOGLE_TRENDS_LAST_CALL = 0.0
 _GOOGLE_TRENDS_MIN_INTERVAL = 1.5  # seconds between calls
+# A wall-clock step backwards leaves the stored reservation in the future by
+# the whole skew, and the unconditional ``sleep(delay)`` below would park the
+# trend worker for hours. Only re-anchor a reservation that is implausibly far
+# ahead (legitimate queued slots are a few intervals); smaller offsets keep the
+# existing monotonic-reservation contract.
+_GOOGLE_TRENDS_MAX_SKEW_SEC = 300.0
 # M12 (2026-11-07 review): one client per market (keyed by resolved locale),
 # cached instead of reconstructed per keyword — TrendReq.__init__ performs a
 # live cookie fetch, which multiplied Google request pressure per keyword and
@@ -493,6 +499,11 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
         delay = 0.0
         with _GOOGLE_TRENDS_LOCK:
             now = time.time()
+            if _GOOGLE_TRENDS_LAST_CALL > now + _GOOGLE_TRENDS_MAX_SKEW_SEC:
+                logger.warning(
+                    "Google Trends pacing clock moved backwards; re-anchoring reservation"
+                )
+                _GOOGLE_TRENDS_LAST_CALL = now
             start_time = max(_GOOGLE_TRENDS_LAST_CALL + _GOOGLE_TRENDS_MIN_INTERVAL, now)
             _GOOGLE_TRENDS_LAST_CALL = start_time
             delay = max(0.0, start_time - now)

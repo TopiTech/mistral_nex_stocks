@@ -328,6 +328,35 @@ def test_api_news_does_not_mutate_cached_result_dict(api_client):
 
 
 # ---------------------------------------------------------------------------
+# API-004b: polling messages must be credential-sanitized
+# ---------------------------------------------------------------------------
+
+
+def test_service_error_progress_message_redacts_credentials():
+    """A background job's client-visible message must not leak secrets.
+
+    ``result_holder["message"]`` is returned by the news/analyze polling branch
+    while the job is still finishing, before ``_analyze_v2_error_response`` can
+    sanitize the terminal error, so the message composer itself must redact
+    credential-shaped substrings.
+    """
+    from routes.api_analysis import _sanitized_service_error_message
+
+    message = _sanitized_service_error_message(
+        "ニュース要約の取得に失敗しました",
+        RuntimeError("upstream 401 api_key=sk-abcdefghijklmnopqrstuvwxyz012345"),
+    )
+    assert message.startswith("ニュース要約の取得に失敗しました: ")
+    assert "sk-abcdefghijklmnopqrstuvwxyz012345" not in message
+    assert "[REDACTED]" in message
+
+    safe = _sanitized_service_error_message(
+        "AIサービスエラー", RuntimeError("quota exceeded")
+    )
+    assert safe == "AIサービスエラー: quota exceeded"
+
+
+# ---------------------------------------------------------------------------
 # API-004: Word-boundary 401 detection & upstream error/log sanitization
 # ---------------------------------------------------------------------------
 

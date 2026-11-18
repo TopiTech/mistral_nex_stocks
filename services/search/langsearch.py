@@ -474,6 +474,11 @@ def langsearch_rerank(query, documents, api_key):
 
     try:
         parsed = _langsearch_post_json(f"{LANGSEARCH_BASE_URL}/v1/rerank", payload, headers)
+        if not isinstance(parsed, dict):
+            # The rerank endpoint can return a bare JSON array (or another
+            # non-object) on some error paths. Treat it like an empty result
+            # set instead of failing the caller with AttributeError.
+            return documents
         raw_results = (
             parsed.get("results")
             or (

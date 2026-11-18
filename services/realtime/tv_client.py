@@ -199,7 +199,16 @@ class TradingViewWSClient:
                 if isinstance(qsd_data, dict):
                     symbol = qsd_data.get("n")
                     values = qsd_data.get("v", {})
-                    if not symbol or not values or not self.on_update_callback:
+                    # ``v`` is provider-controlled JSON. Requiring a mapping and
+                    # a string symbol here keeps a malformed frame from raising
+                    # and discarding the remaining qsd frames in the same batch.
+                    if (
+                        not isinstance(symbol, str)
+                        or not symbol
+                        or not isinstance(values, dict)
+                        or not values
+                        or not self.on_update_callback
+                    ):
                         continue
 
                     with self.lock:

@@ -205,6 +205,42 @@ def test_stock_history_transient_error_is_not_symbol_not_found(client):
     assert resp.headers.get("Cache-Control") == "no-store"
 
 
+def test_stock_history_invalid_cached_error_code_is_not_remerged(client):
+    """An unparseable cached ``error_code`` must not override the envelope.
+
+    The route normalizes an unknown payload code to FETCH_FAILED (or
+    API_RATE_LIMITED for a transient failure during a rate limit), but merging
+    the whole payload back as ``extra_fields`` used to re-inject the raw value
+    over the canonical numeric ``error_code``, so ``code`` and ``error_code``
+    could disagree or expose a value outside the ErrorCode enum.
+    """
+    from error_codes import ErrorCode
+    from routes.stocks import quotes as quotes_mod
+
+    cached_payload = {
+        "error": "temporary upstream failure",
+        "error_code": 77777,  # not a valid ErrorCode value
+        "transient": True,
+    }
+    with (
+        patch.object(
+            quotes_mod,
+            "_get_cached_value_if_present",
+            return_value=(True, cached_payload),
+        ),
+        patch.object(quotes_mod, "_submit_async_history_fetch", return_value=False),
+        patch.object(quotes_mod.app_state.market, "is_circuit_open", return_value=False),
+        patch.object(quotes_mod.app_state.market, "is_yf_rate_limited", return_value=True),
+    ):
+        resp = client.get("/api/stock-history?symbol=AAPL&market=us&period=1mo")
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["error_code"] == int(ErrorCode.API_RATE_LIMITED)
+    # Backward-compatible extras survive; only envelope-owned keys are reserved.
+    assert body["transient"] is True
+
+
 def test_indices_skip_bootstrap_does_not_wait_for_snapshot(client):
     from routes.stocks import quotes as quotes_mod
 

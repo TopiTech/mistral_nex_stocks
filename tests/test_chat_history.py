@@ -160,7 +160,7 @@ def test_encrypt_failure_is_fail_closed(temp_db, monkeypatch):
     """Encryption failure must not persist plaintext chat content."""
     import sqlite3
 
-    def _boom(_content: str) -> str:
+    def _boom(_content: str, _fernet: object = None) -> str:
         raise RuntimeError("no master key")
 
     monkeypatch.setattr(chat_history_module, "_encrypt_content", _boom)

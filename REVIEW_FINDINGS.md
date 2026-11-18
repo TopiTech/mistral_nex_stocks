@@ -3616,3 +3616,595 @@ SDKの環境ガード、テストが `app_state` を初期化する正当なパ�
 - **変更(19)**: `config/atomic_write.py`, `config/io.py`, `eslint.config.mjs`, `package.json`, `route_helpers.py`, `scripts/verify_generated_frontend.mjs`, `services/ai_service.py`, `services/ai_tools.py`, `services/search/ddgs.py`, `static/js/api.js`, `static/js/api_client.js`(compile 生成物), `static/js/api_client.ts`, `static/js/ui.js`, `static/js/utils.js`, `tests/test_api_integration.py`, `tests/test_review_2026_10_31_services.py`, `tests/test_review_fixes_2026_11_07_unit6.py`, `tests/test_review_goal_fixes.py`, `tests/test_review_render_stocks_order_2026_11_08.py`
 - **新規(8)**: `scripts/verify_ui_drawer_contract.mjs`, `scripts/verify_stock_update_signature.mjs`, `scripts/verify_chat_stream_idle_timeout.mjs`, `tests/test_ai_service_agent_stream_backpressure.py`, `tests/test_ai_tools_market_news_matching.py`, `tests/test_config_legacy_migration_secrets.py`, `tests/test_ddgs_pool_saturation.py`, `tests/test_screener_length_error_fields.py`
 - `git diff --stat`: 19 files changed, 621 insertions(+), 171 deletions(-)。未追跡の一時ファイル・デバッグ用スクリプトは 0(検証用の負例パッチャはすべてリポジトリ外の `%TEMP%` で実行)。
+
+---
+
+## Appendix O — 2026-11-18 `routes/api_analysis.py` 全行精査
+
+### O.1 対象と読了台帳
+
+- 対象は `routes/api_analysis.py`。精査開始時点の実測は **2,563 行**で、
+  1–400 / 401–800 / 801–1,200 / 1,201–1,600 / 1,601–2,000 / 2,001–2,400 /
+  2,401–2,563 の 7 区間を重複・欠落なく読了した。部分読了で次のファイルへ
+  飛んでいない。修正後の同ファイルは **2,611 行**（+48 行は本節の修正と
+  ガードで、台帳の読了行数には精査時点の 2,563 行を計上する）。
+- 既読: **38 / 126 ファイル、45,907 行**（前回 37 / 126、43,344 行）。
+- 未読: **88 / 126 ファイル、13,548 行**。現在の作業ツリー全体は
+  実測 **126 ファイル、59,455 行**（`git ls-files '*.py' | grep -v '^tests/'`
+  の 126 ファイル / `wc -l` 合計）。未読行数は実測総行数から精査済み
+  45,907 行を引いた残差で、既読と未読の合計は実測総行数に一致する。
+
+### O.2 確定欠陥と根本修正
+
+1. **チャット履歴準備の失敗で inflight claim が永久残留**
+   - 症状: `api_chat` は `chat_fetch_inflight[inflight_key]` を claim した後、
+     `record_turn` / `_trim_history_to_budget` を lifecycle の外で実行していた。
+     DB 障害で 500 を返すと token が `already_fetching` のまま残り、同じ token の
+     再試行が永久に待機する。実測: `chat_fetch_inflight` に
+     `chat:<scope>:history-setup-fail-01` が残り、HTTP 500、`chat_result_cache` は空。
+   - 根本原因: claim と準備処理の失敗後始末が別 lifecycle になっていたこと。
+   - 修正: `routes/api_analysis.py:622` の `_abort_chat_setup()` に「owner の
+     claim 解放 → waiter への error/done 通知 → user turn の rollback →
+     thread-local DB close」を集約。履歴準備全体を `try` で囲み（`:651`）、
+     想定外の fresh-context 取得例外も同じ後始末へ通す（`:718`）。
+   - 回帰テスト: `tests/test_api_chat_improved.py:631`
+     `test_api_chat_history_setup_failure_releases_inflight` と `:759`
+     `test_api_chat_context_lookup_failure_releases_inflight`。500 応答、
+     inflight/result cache の不在、user turn の rollback を検証。
+
+2. **ストリーム claim の失敗時に参加 waiter が起床しない競合**
+   - 症状: `stream_chat_slots` の取得失敗（503）と `_stream_chat_response` の
+     setup 例外（500）で inflight を pop するだけで、先行して同じ token に
+     join した非ストリーム waiter の `done` を set していなかった。waiter は
+     `CHAT_PREPARE_WAIT_SEC` まで待たされ、その間に再試行すると不要な二重 job に
+     なり得る。
+   - 根本原因: ストリーム分岐だけが「claim を解放するが holder を完了しない」
+     という sibling 経路と異なる lifecycle を持っていたこと。
+   - 修正: 503 経路で `queue.Full` を holder に記録して `done` を set（`:744`）、
+     setup 例外経路でも例外を holder に記録して `done` を set（`:787`）。
+   - 回帰テスト: `tests/test_api_chat_improved.py:665` と `:707`。捕捉した
+     holder の error 型と `done.is_set()` を検証し、503 経路では slot を
+     release しないこと、500 経路では slot を 1 回だけ release することも固定。
+
+### O.3 却下・据え置き（実測行と根拠）
+
+1. **`_is_cacheable_news_bundle` / news token cache の scope 不在**
+   （`routes/api_analysis.py:1403`, `:1506`）: news は認証ユーザー固有ではなく
+   公開市場データであり、strategy/provider/force を含む `inflight_key` で共有
+   する既存設計。scope を足すとクロスクライアントの dedup を壊すため却下。
+2. **analyze-v2 の再 poll で fingerprint 未確認**（`:1823-1857`）: 初回の
+   cache/inflight 判定で `stored_fingerprint != analyze_fingerprint` を検査し、
+   異なる payload は 409 で拒否される。再 poll まで到達する同一 payload だけが
+   対象で、再現しなかったため却下。
+3. **stream error の `int(event.get("status_code"))`**（`:1162`）: 非数値の
+   provider event は外側の `except Exception`（`:1215`）が generic な SSE error
+   に変換し、SSE の error/done 契約と leak 防止は維持される。実害の再現が
+   ないため、例外処理の追加は見送り。
+4. **chat cache-hit の history append 失敗**（`:576`）: この経路はすでに
+   inflight を保持しておらず、失敗しても claim leak にならない。今回の
+   request-thread setup 欠陥とは別 lifecycle のため却下。
+5. **`_safe_prompt_field` が改行を許可**（`:242-252`）: 既存のプロンプト
+   サニタイズ契約で、ユーザー本文は意図的に履歴へ渡す。改行禁止は正規の
+   複数行入力を壊し、注入境界は XML context と別層で処理しているため却下。
+
+### O.4 横断検索
+
+実行した実測コマンド:
+
+```text
+git grep -n "chat_fetch_inflight\|chat_result_cache\|chat_result_fingerprints" -- '*.py'
+git grep -n "analyze_fetch_inflight\|analyze_result_cache\|analyze_result_fingerprints" -- '*.py'
+git grep -n "news_fetch_inflight\|news_result_cache\|news_token_cache" -- '*.py'
+```
+
+- 3 系統の全 claim/cleanup を確認。analyze/news の job は background 内で
+  `finally` に cache 書き込み・inflight pop・`done.set()` を揃えており、
+  queue.Full / schedule 例外も holder を完了している。chat だけが request
+  スレッドの準備処理を claim 後に持っていたため、今回の共通後始末を追加した。
+- `route_helpers.py` の dead-inflight purge は別スコープで claim を消す既存契約。
+
+### O.5 最終ゲート
+
+| 検査 | 結果 |
+|---|---|
+| `pytest -q`（全体） | exit 0 |
+| `ruff check .` | exit 0（All checks passed） |
+| `mypy` | exit 0（125 source files） |
+| `pyrefly check` | exit 0（0 errors） |
+| `npm run build` | exit 0（typecheck / compile / verify-generated / eslint / prettier） |
+| `git diff --check` | exit 0 |
+| `git status --porcelain --untracked-files=all` | 31 modified / **0 untracked**（本節追加後） |
+
+---
+
+## Appendix P — 2026-11-18 routes/services 未読先頭 8 ファイル
+
+### P.1 読了台帳
+
+未読先頭の routes 系から services 系へ進み、次の 8 ファイルを全行読了した。
+各行数は精査時点の `wc -l` 実測値。
+
+| # | ファイル | 行数 | 読了範囲 | 結果 |
+|---|---|---:|---|---|
+| 1 | `routes/api_stocks.py` | 247 | 1–247 | 互換 facade。全再エクスポートと `__all__` を確認、欠陥なし |
+| 2 | `routes/api_system.py` | 51 | 1–51 | 互換 facade。patch 対象名・再エクスポートを確認、欠陥なし |
+| 3 | `routes/pages.py` | 142 | 1–142 | page routing・schema fallback・favicon を確認、欠陥なし |
+| 4 | `routes/stocks/common.py` | 350 | 1–350 | `_json_safe`・SSE replay・watchlist・heatmap inflight を確認、欠陥なし |
+| 5 | `routes/stocks/portfolio.py` | 296 | 1–296 | 更新/rollback/JP・US・idx FX を確認、欠陥なし |
+| 6 | `services/market_data_service.py` | 362 | 1–362 | heatmap/screener 正規化を確認、欠陥なし |
+| 7 | `services/news_formatter.py` | 229 | 1–229 | JSON/news 平坦化・ノイズ除去を確認、欠陥なし |
+| 8 | `services/preview_responses.py` | 163 | 1–163 | preview 構造化応答・stream event を確認、欠陥なし |
+| | **合計** | **1,840** | **全行** | **確定欠陥 0 件** |
+
+台帳更新:
+
+- 既読: **46 / 126 ファイル、47,747 行**（今回 +8 ファイル / +1,840 行）
+- 未読: **80 / 126 ファイル、11,708 行**
+- 実測総行数: **59,455 行**（47,747 + 11,708）
+
+### P.2 確定欠陥と修正
+
+今回の 8 ファイルには、実測行・呼び出し元・既存契約の 3 点が揃い、再現可能な
+欠陥はありませんでした。したがってコード変更および新規回帰テストは追加して
+いません。既存の pytest 全体・静的解析・ビルドで契約を再検証しています。
+
+### P.3 採用しなかった所見
+
+1. **`routes/stocks/common.py` の `_json_safe` の広い例外フォールバック**
+   （`:168-196`）: `tolist`/`to_dict`/pandas 判定の失敗時に最終 `str()` へ
+   落とす既存の JSON 境界契約。既存テスト（`test_audit_review_goal_hardening_v10.py`
+   ほか）が NaN/Inf/pandas/numpy の変換を固定しており、変更すると境界契約を
+   壊すため却下。
+2. **`_fetch_heatmap_cached` の `except Exception` + `finally`**（`:341-350`）:
+   取得失敗をログし、所有 token が一致する場合だけ inflight を掃除する
+   既存の多重リクエスト競合対策。呼び出し元は `views.api_heatmap` の
+   submit 経路で、失敗時も 503/disk-cache fallback があるため欠陥ではない。
+3. **`routes/stocks/portfolio.py` の persist 失敗 rollback**（`:224-253`）:
+   `user_stocks_rev` と `written_snapshot` による条件付き rollback は
+   API-7 の既存契約で、`tests/test_review_fixes_2026_11_07_unit3.py` が固定。
+   一括 restore に変えると同時更新を失うため却下。
+4. **`news_formatter._coerce_news_section_text_v2` の文末切り詰め**
+   （`:17-40`）: 途中で切れた LLM 出力を表示可能な文末へ寄せる意図的処理。
+   数値・URL の途中を切る可能性はあるが、既存の表示契約とテストを壊す
+   過剰変更になるため却下。
+5. **`preview_responses._generic_sample` の未知アノテーションで `None`**
+   （`:75-100`）: 未知の Pydantic 型では構造化サンプルを諦め、呼び出し側が
+   テキスト preview にフォールバックする設計。型の弱体化や推測生成を避ける
+   既存契約のため却下。
+6. **`routes/api_stocks.py` / `routes/api_system.py` の再エクスポート facade**:
+   旧 import 名と `patch("routes.api_system.X")` の互換性を保つための意図的な
+   構成。削除・統合は後方互換性を壊すため却下。
+
+### P.4 横断検索
+
+実行コマンド:
+
+```text
+git grep -n "build_heatmap_payload\|_build_market_row\|_fetch_heatmap_cached\|_watchlist_has_capacity\|_stored_symbol_aliases\|_json_safe\|_replay_frame_for_entry" -- tests
+git grep -n "api_system\|api_stocks\|pages\|news_formatter\|preview_responses\|market_data_service" -- tests/test_review_2026_11_1* tests/test_api*
+git grep -n "TODO\|FIXME\|XXX\|HACK\|pragma: no cover\|type: ignore\|noqa" -- routes/api_stocks.py routes/api_system.py routes/pages.py routes/stocks/common.py routes/stocks/portfolio.py services/market_data_service.py services/news_formatter.py services/preview_responses.py
+```
+
+- 8 ファイルの公開関数・呼び出し元・既存テストを突合し、今回の範囲に
+  未対応の claim/cleanup、型弱体化、skip は見つからなかった。
+- `routes/api_system.py` の `noqa` は facade の patch 対象を保持するための
+  既存コメント付き再エクスポートで、新規抑制ではない。
+
+### P.5 最終ゲート
+
+| 検査 | 結果 |
+|---|---|
+| `pytest -q`（全体） | exit 0 |
+| `ruff check .` | exit 0（All checks passed） |
+| `mypy` | exit 0（125 source files） |
+| `pyrefly check` | exit 0（0 errors） |
+| `npm run build` | exit 0 |
+| `git diff --check` | exit 0 |
+| `git status --porcelain --untracked-files=all` | **0 untracked** |
+
+---
+
+## Appendix Q — 2026-11-18 未読先頭 8 ファイル精査と async claim cleanup
+
+### Q.1 台帳再計算（実測）
+
+台帳の未読先頭から services / データ層の次の 8 ファイルを、1 ファイルずつ
+冒頭から末尾まで区間飛ばしなしで読了した。行数は精査時点の `wc -l`。
+
+| # | ファイル | 精査時行数 | 修正後行数 | 読了範囲 | 結果 |
+|---|---|---:|---:|---|---|
+| 1 | `services/stock/errors.py` | 182 | 182 | 1–182 | エラー分類・rate-limit 判定、欠陥なし |
+| 2 | `services/stock/sanitize.py` | 73 | 73 | 1–73 | 非有限値・bool の sanitize、欠陥なし |
+| 3 | `services/stock/retry.py` | 409 | 409 | 1–409 | 指数バックオフ・429 記録、欠陥なし |
+| 4 | `services/stock_service.py` | 454 | 454 | 1–454 | history fetch・circuit・inflight、欠陥なし |
+| 5 | `services/stock_provider.py` | 64 | 64 | 1–64 | facade の再エクスポート、欠陥なし |
+| 6 | `services/search/tavily.py` | 344 | 344 | 1–344 | circuit probe・retry・複数 query、欠陥なし |
+| 7 | `services/search_service.py` | 478 | 488 | 1–478 | trend cache・search 分岐。**async claim cleanup 1件修正** |
+| 8 | `services/embeddings_service.py` | 370 | 370 | 1–370 | cache・batch・cosine、欠陥なし |
+| | **合計** | **2,374** | **2,384** | **全行** | **修正 1 件（横断 3 サイト）** |
+
+台帳の再計算:
+
+- 旧台帳: 既読 46 / 126 ファイル・47,747 行、未読 80 / 126 ファイル・
+  11,708 行、合計 59,455 行。`46 + 80 = 126`、`47,747 + 11,708 = 59,455`
+  を実ファイル一覧（`git ls-files '*.py' | grep -v '^tests/'` = 126 ファイル）
+  と再突合し、旧集計にファイル数・行数の不一致はなかった。
+- 今回の 8 ファイルの精査時合計は 2,374 行。未読は `11,708 - 2,374 = 9,334` 行、
+  ファイル数は `80 - 8 = 72`。
+- 修正後の非テスト Python 実測総行数は **59,479 行 / 126 ファイル**
+  （今回の修正で `routes/stocks/quotes.py` が 608→622、
+  `services/search_service.py` が 478→488。既読ファイルの増分 +24）。
+- 更新後: 既読 **54 / 126 ファイル・50,145 行**、未読 **72 / 126 ファイル・
+  9,334 行**。`54 + 72 = 126`、`50,145 + 9,334 = 59,479` で実測総行数に一致。
+- `routes/stocks/quotes.py` は既読 46 ファイルに含まれるため、今回の横断修正分は
+  未読行数ではなく既読行数へ計上した。
+
+### Q.2 確定欠陥と根本修正
+
+**Q-1. 非 probe の history 非同期ジョブがキャンセルされると inflight claim が残る**
+
+- 実測行: `routes/stocks/quotes.py:106-153`。`_submit_async_history_fetch` は
+  `:117-120` で claim を追加し、`:123` で future を submit するが、修正前は
+  `if probe:` の中だけで `add_done_callback` を登録していた。
+- 呼び出し元: `routes/stocks/quotes.py:518-520`（`/api/stock-history` の
+  cache_miss 経路）と `:450-459`（HALF_OPEN probe 経路）。
+- 既存契約: `routes/stocks/quotes.py:118-119` は同じ cache_key の inflight 中は
+  新規 submit を抑止する。`tests/test_review_fix_regressions.py` の
+  `test_route_releases_probe_when_submitted_future_is_cancelled` は、キャンセル時に
+  claim と circuit probe を解放する契約を既に固定している。
+- 症状: executor shutdown などで queued future がキャンセルされると、
+  `fetch_history_async_task` の `finally` は実行されない。非 probe では callback も
+  未登録なので marker が永久に残り、以後の `/api/stock-history` は
+  `_submit_async_history_fetch` が `False` を返し、実際の fetch を開始しないまま
+  fetching 応答を返し続ける。
+- 根本原因: 後始末を「ジョブ本体の finally」にだけ置き、submit した future の
+  キャンセルという別の終端経路を所有していなかったこと。
+- 修正: `:133-153` で probe かどうかに関係なく future に done callback を登録し、
+  `cancelled()` の場合だけ claim を解放する。probe のときだけ従来どおり circuit に
+  失敗を報告する。正常完了時の job 側 cleanup はそのまま。
+- 回帰テスト: `tests/test_review_fix_regressions.py:215`（非 probe キャンセル）。
+
+**Q-2. stock-details の info 非同期ジョブも同じ claim leak を持つ**
+
+- 実測行: `routes/stocks/quotes.py:73-95`。`:80-81` で submit するが future を
+  保持していなかった。呼び出し元は `/api/stock-details` の `:301`。
+- 既存契約: `:77-79` の `info_fetch_inflight` 重複抑止と、`_run_async_info_fetch`
+  の `:98-103` の finally cleanup。
+- 症状: queued future のキャンセルで finally が走らず、`info_<symbol>` が残る。
+  以後の詳細取得は fetching placeholder を返し続ける。
+- 修正: `:81-91` で future を保持し、キャンセル時だけ claim を解放する callback を
+  登録。
+- 回帰テスト: `tests/test_review_fix_regressions.py:250`。
+
+**Q-3. trends refresh の submit も同じ所有権漏れを持つ**
+
+- 実測行: `services/search_service.py:390-456`。`:398` で claim を追加し、
+  修正前は `:437` の submit 戻り値を捨てていた。
+- 呼び出し元/契約: `_schedule_market_trends_refresh_async` の inflight 重複抑止
+  (`:395-398`) と、`_job` の finally (`:418-420`)。
+- 症状: queued refresh がキャンセルされると `_job` の finally が走らず、同じ
+  cache key の refresh が二度と開始されない。
+- 修正: `:437-447` で future を保持し、キャンセル時だけ inflight を解放。
+- 回帰テスト: `tests/test_search_service_more.py:316`。
+
+既存テスト `tests/test_user_stock_io.py:114-118` の `fake_submit` は
+`Executor.submit` の契約に反して `None` を返していたため、`Future()` を返すよう
+修正した。これはアサーションを緩和したのではなく、production の submit 契約に
+テストダブルを合わせたもの。
+
+### Q.3 却下・据え置き（実測行と根拠）
+
+1. **`services/stock_service.py:454` の無条件 `history_fetch_inflight.discard`**:
+   古い job が新しい job の marker を消す競合、という候補。`_submit_async_history_fetch`
+   は marker が存在する間は新規 submit を拒否し、job の finally は job の実行中に
+   だけ走る。キャンセル時はジョブ本体が走らないため、Q-1 の done callback で
+   所有権を別途解放する設計が正しい。token 比較を追加すると現在の 1 ジョブ契約を
+   複雑化するだけで、再現可能な競合はないため却下。
+2. **`services/search_service.py:459-488` の同期的な trend build**:
+   `_schedule_market_trends_refresh_async` を cache miss 時に呼ばないのは、
+   M13 (commit 39f5f72) が空結果の negative cache を導入した意図的な仕様変更。
+   非同期 refresh を再度呼ぶと M13 の「provider outage 時に 30–80 秒の cascade を
+   毎回再実行しない」契約を壊すため却下。
+3. **`services/search/tavily.py:260-310` の deadline と retry の境界**:
+   3 attempt + backoff の最悪値が `_TAVILY_TOTAL_DEADLINE_SEC` を数秒超え得るが、
+   query 間で deadline を再確認し、結果は最大 `limit` に切り詰められる。正確な
+   時間上限の契約はテストで固定されておらず、機能・データ整合性の欠陥ではない
+   ため、今回は変更せず残余リスクとして記録。
+4. **`services/embeddings_service.py:56` の `len(texts)`**: `texts` は list 契約で
+   あり、全呼び出し元が list を渡す。`None` を許す変更は型契約の弱体化になるため却下。
+5. **heatmap のキャンセル時 marker**: `routes/stocks/views.py:706-714` は 30 秒の
+   stale reclaim を持ち、キャンセル後も最大 30 秒で回復する。history/info/trends
+   のような永久 leak ではないため、既存の token 付き reclaim 契約を維持。
+
+### Q.4 横断検索（実行コマンドと結果）
+
+```text
+git grep -n "history_fetch_inflight" -- '*.py'
+git grep -n "_submit_async_info_fetch\|info_fetch_inflight" -- '*.py'
+git grep -n "_inflight\.add\|inflight\.add\|_inflight\.discard\|inflight\.discard" -- '*.py'
+git grep -n "add_done_callback\|cancelled()\|\.cancel()" -- '*.py'
+```
+
+- `history_fetch_inflight` の production 参照は `quotes.py` と
+  `stock_service.py` の 2 モジュールのみ。`stock_service.py` は job の finally、
+  `quotes.py` は submit 所有権の 2 経路で cleanup する形に整理した。
+- `info_fetch_inflight` の production 参照は `quotes.py` のみ。同じ submit
+  所有権 callback を追加した。
+- `trends_refresh_inflight` は `search_service.py` のみ。同じ cancel 所有権を追加した。
+- 他の `cancel()` 呼び出し（`bg/sync/fetch.py`, `services/news_service.py`,
+  `trend_sources.py`, `services/search/ddgs.py`）は inflight marker を所有せず、
+  それぞれ timeout 待機・部分結果採用の既存契約であることを確認。
+- `add_done_callback` は `utils/threading.py` の semaphore 解放、
+  `bg/sync/fetch.py` の遅延失敗ログ、今回追加した 3 経路のみ。
+
+### Q.5 最終ゲート（最終ツリー実測）
+
+| 検査 | コマンド | 結果 |
+|---|---|---|
+| pytest 全体 | `.venv/Scripts/python.exe -m pytest tests/ -q` | exit 0（既存 POSIX-only 1 skip を含む） |
+| Ruff | `.venv/Scripts/python.exe -m ruff check .` | exit 0（All checks passed） |
+| mypy | `.venv/Scripts/python.exe -m mypy` | exit 0（125 source files） |
+| pyrefly | `.venv/Scripts/python.exe -m pyrefly check` | exit 0（0 errors） |
+| frontend build | `npm run build` | exit 0（typecheck / verify-generated / compile / eslint / prettier） |
+| whitespace | `git diff --check` | exit 0 |
+| worktree | `git status --porcelain --untracked-files=all` | 35 modified / **0 untracked** |
+
+テストの `1 skipped` は既存の POSIX 専用 permission テスト
+(`tests/test_review_fix_regressions.py:380`) で、今回追加した skip/xfail はない。
+キャンセルは `Future.cancel()` を直接使って再現し、実 executor shutdown の
+タイミング依存までは実機再現していない。
+
+---
+
+## Appendix R — 2026-11-18 realtime/search 未読先頭 8 ファイル
+
+### R.1 台帳の再突合と読了結果
+
+台帳の未読先頭から services 層の realtime/search 系 8 ファイルを、1 ファイルずつ
+冒頭から末尾まで区間飛ばしなしで読了した。行数は精査時点の `wc -l` 実測値。
+
+| # | ファイル | 精査時行数 | 修正後行数 | 読了範囲 | 結果 |
+|---|---|---:|---:|---|---|
+| 1 | `services/realtime/engine.py` | 987 | 987 | 1–987 | producer/consumer・client cursor・PTS worker・lifecycle。欠陥なし |
+| 2 | `services/realtime/utils.py` | 629 | 629 | 1–629 | symbol 正規化・previous close・PTS parser・market session。欠陥なし |
+| 3 | `services/realtime/__init__.py` | 96 | 96 | 1–96 | package 再エクスポートと singleton。欠陥なし |
+| 4 | `services/realtime_engine.py` | 107 | 107 | 1–107 | 後方互換 facade。欠陥なし |
+| 5 | `services/search/ddgs.py` | 601 | 601 | 1–601 | DDGS pool・news/text・future 回収。欠陥なし |
+| 6 | `services/search/langsearch.py` | 579 | 584 | 1–579 | retry・circuit・response 解析・rerank。**R-2 を修正** |
+| 7 | `services/realtime/tv_client.py` | 489 | 498 | 1–489 | WS framing・再接続・購読。**R-1 を修正** |
+| 8 | `services/search/__init__.py` | 1 | 1 | 1 | package marker。欠陥なし |
+| | **合計** | **3,489** | **3,503** | **全行** | **修正 2 件** |
+
+台帳の再計算:
+
+- 再突合前の台帳は既読 54 / 126 ファイル・50,145 行、未読 72 / 126 ファイル・
+  9,334 行、合計 59,479 行。`git ls-files '*.py'` から `tests/` を除いた実測は
+  **126 ファイル・59,479 行**で、旧台帳のファイル数・行数に不一致はなかった。
+- 今回の 8 ファイル精査時合計は 3,489 行。旧未読 `9,334 - 3,489 = 5,845` 行、
+  ファイル数は `72 - 8 = 64`。
+- 今回の修正で `services/realtime/tv_client.py` が 489→498（+9）、
+  `services/search/langsearch.py` が 579→584（+5）。非テスト Python の実測総行数は
+  **59,479 + 14 = 59,493 行 / 126 ファイル**。
+- 更新後: 既読 **62 / 126 ファイル・53,648 行**、未読 **64 / 126 ファイル・
+  5,845 行**。`62 + 64 = 126`、`53,648 + 5,845 = 59,493` で実測総行数に一致。
+  既読行数は精査時 3,489 行に、読了ファイル内の修正増分 +14 を加えた値。
+
+### R.2 確定欠陥と根本修正
+
+**R-1. TradingView の `qsd.v` が非オブジェクトだとバッチ内の後続フレームも落ちる**
+
+- 実測行: `services/realtime/tv_client.py:197-212`。`qsd_data.get("v", {})` の戻り値を
+  dict と仮定し、`:223-239` で `values["lp"]` 等を文字列キーで参照していた。
+- 呼び出し元: `TradingViewWSClient._on_message` は `TradingViewWSClient.start()` が
+  構築する `WebSocketApp(on_message=...)` のコールバック（`:329-347`）。
+- 既存契約: 同じ `_on_message` の不正 quote を無視する契約が
+  `tests/test_realtime_engine.py:132` の `test_tradingview_ws_client_skips_malformed_quote`
+  で固定されている。1 つの壊れた quote で例外を出さず、後続の正常 quote は処理する。
+- 症状: `v` が `["lp"]` のフレームで `TypeError: list indices must be integers` が
+  `:214` から発生。同一 WS メッセージに連結された後続の正常な qsd フレームが
+  処理されず、その銘柄の更新が欠落する。修正前テストはこの行で失敗することを実測。
+- 根本原因: 外部プロバイダ由来 JSON の型境界を、値単位の `_finite_number` だけで
+  検証し、コンテナ型と symbol 型を検証していなかったこと。
+- 修正: `:200-212` で `symbol` が非空 `str`、`values` が非空 `dict` のときだけ
+  後続処理へ進むようにした。価格・change・volume の既存の finite/range 検証は維持。
+- 回帰テスト: `tests/test_realtime_engine.py:162`
+  `test_tradingview_ws_client_skips_malformed_values_and_keeps_next_frame`。
+  不正な `v` と正常な qsd を同一バッチに入れ、正常側の prefixed/bare 2 更新だけを検証。
+
+**R-2. LangSearch rerank の非オブジェクト応答が AttributeError で検索全体を落とす**
+
+- 実測行: `services/search/langsearch.py:476-489`。`_langsearch_post_json` の戻り値を
+  dict と仮定して `parsed.get("results")` を呼んでいた。
+- 呼び出し元: `_collect_langsearch_items` の `:575`。`LANGSEARCH_RERANK_ENABLED` が
+  有効なときだけ到達するが、例外は `langsearch_search` 用の try の外にあり、
+  `_collect_langsearch_items` 全体を失敗させる。
+- 既存契約: `langsearch_rerank` は HTTP 例外・RuntimeError・不正な result 要素を
+  「リランクせず元の documents を返す」契約
+  (`tests/test_langsearch_http_extra.py:589` ほか)。
+- 症状: モック応答 `[]` で `AttributeError: 'list' object has no attribute 'get'` が
+  `:478` から発生。修正前テストはこの行で失敗することを実測。
+- 根本原因: 外部 API のトップレベル JSON 型を検証せず、要素単位の防御だけを
+  実装していたこと。
+- 修正: `:477-481` で dict 以外の応答は空結果として扱い、元の documents を返す。
+  既存の `results`/`data.results` 両形式の解析は維持。
+- 回帰テスト: `tests/test_langsearch_http_extra.py:611`
+  `test_non_mapping_response_returns_documents`。
+
+### R.3 採用しなかった所見（実測行と根拠）
+
+1. **`TradingViewWSClient.add_symbol` / `remove_symbol` の 1 秒 lock timeout で
+   購読送信が省略され得る**（`services/realtime/tv_client.py:125-134`, `:147-156`）:
+   timeout 時も `self.symbols` の変更は保持され、`_on_open` が接続時に全シンボルを
+   再送する既存の再接続契約がある。lock 保持区間は参照代入のみで、実測できる
+   再現ケースがないため却下。
+2. **`parse_tv_messages` が heartbeat を JSON として debug ログに出す**
+   （`services/realtime/tv_client.py:106-109`）: heartbeat は `_on_message` の
+   `:180-189` で先に検出して echo 済み。parse 側の debug ログは機能に影響せず、
+   既存の index テストも通るため意図された許容範囲として却下。
+3. **DDGS の early exit 後に running future の `cancel()` が効かない**
+   （`services/search/ddgs.py:577-579`）: `Future.cancel()` は実行中 future に
+   対して False を返すが、inflight marker や接続を所有せず、結果は deadline 内で
+   回収される。`tests/test_ddgs_pool_saturation.py` が pool 枯渇時の部分結果契約を
+   固定しているため、終了待ちの追加は過剰変更として却下。
+4. **LangSearch の HALF_OPEN probe を finally で再度 release する**
+   （`services/search/langsearch.py:294-301`）: `market_state.release_circuit_probe`
+   は probing フラグだけを冪等に解除する既存契約（`market_state.py:360-380`）。
+   429 など circuit に計上しない失敗で HALF_OPEN が固まるのを防ぐ意図があり、
+   二重 release による状態変化はないため却下。
+5. **TradingView の prefixed/bare 二重 callback**（`services/realtime/tv_client.py:257-277`）:
+   既存テスト `test_tradingview_ws_client_on_message` が 2 更新を明示的に固定しており、
+   prefixed と bare の両 consumer を支える意図された仕様のため却下。
+
+### R.4 横断検索（実行コマンドと結果）
+
+```text
+git grep -n "langsearch_rerank\|parsed\.get\|_langsearch_post_json" -- '*.py'
+git grep -n 'values\["lp"\]\|values\["ch"\]\|values\["chp"\]\|values\["volume"\]' -- '*.py'
+git grep -n 'get("v", {})' -- '*.py'
+git grep -n "add_done_callback\|cancelled()\|\.cancel()" -- services/realtime services/search
+```
+
+- `values[...]` の外部 JSON 参照は `services/realtime/tv_client.py` の 4 箇所のみ。
+  同ファイル内でコンテナ型ガードを追加し、他に同型の参照はなかった。
+- `get("v", {})` は `tv_client.py` の 1 箇所のみ。
+- `parsed.get` は `services/search/langsearch.py` の rerank/search 解析と
+  `route_helpers.py` の別契約。langsearch 側は HTTP エラー本文が dict のときだけ
+  `.get` しており、今回の rerank トップレベル境界だけが未防備だった。
+- `add_done_callback` / `cancel` は `services/search/ddgs.py` の best-effort cancel のみ。
+  inflight claim を所有する async cleanup は前ターンの 3 経路で完了しており、
+  realtime/search に同型の claim leak は見つからなかった。
+
+### R.5 最終ゲート（最終ツリー実測）
+
+| 検査 | コマンド | 結果 |
+|---|---|---|
+| pytest 全体 | `.venv/Scripts/python.exe -m pytest tests/ -q` | exit 0（既存の条件付き skip を含む。新規 skip/xfail 0） |
+| 対象回帰 | 上記 R-1/R-2 の 2 テスト | exit 0 |
+| Ruff | `.venv/Scripts/python.exe -m ruff check .` | exit 0 |
+| mypy | `.venv/Scripts/python.exe -m mypy` | exit 0 |
+| pyrefly | `.venv/Scripts/python.exe -m pyrefly check` | exit 0 |
+| frontend build | `npm run build` | exit 0 |
+| whitespace | `git diff --check` | exit 0 |
+| worktree | `git status --porcelain --untracked-files=all` | 39 modified / **0 untracked** |
+
+今回追加した skip/xfail・エラー抑制コメント・デバッグコード・型弱体化はない。
+
+---
+
+## Appendix S — 2026-11-18 台帳再計算・未読優先 20 ファイル完読・最終差分レビュー
+
+### S.1 台帳の再計算（実測）
+
+`git ls-files '*.py'` から `tests/` を除いた実測は **126 ファイル / 59,493 行**。
+旧台帳の「既読 62 / 53,648 行、未読 64 / 5,845 行」は、次の 2 点で成立しない。
+
+1. 今回完読した 20 ファイルだけで 5,964 行あり、旧未読 5,845 行を 119 行上回る。
+   旧未読行数は実ファイル集合の残余行数として不足している。
+2. セクション 10 の `Full` 40 ファイル（現在行 21,464）と、P/Q/R の重複を除く 21
+   ファイル（6,583）、`routes/api_analysis.py`（2,611）の合計は **62 ファイル /
+   30,658 行**。旧 53,648 行は同じ 62 ファイル集合の実測より 22,990 行大きく、
+   ファイル行の二重計上または別時期の行数混入がない限り成立しない。
+
+今回の 20 ファイル（5,964 行）と台帳突合のための 3 ファイル（`error_codes.py` 137、
+`.agents/scripts/pre_command_guard.py` 114、`gunicorn.conf.py` 142）を加えた
+更新後の台帳は次のとおり。
+
+| 区分 | ファイル数 | 行数 |
+|---|---:|---:|
+| 既読（セクション 10 Full 40 + P/Q/R 21 + O 1 + 今回 23） | **85** | **37,015** |
+| 未読（実ファイル一覧との差） | **41** | **22,478** |
+| 合計 | **126** | **59,493** |
+
+`85 + 41 = 126`、`37,015 + 22,478 = 59,493`。既読行は各ファイルの現在の
+`wc -l` 合計であり、旧台帳の読了時行数を現在のファイル集合へ機械的に足した
+ものではない。未読 41 ファイルのうち 0 行の `__init__.py` 4 件を除く主な残りは
+`services/ai_service.py`、`services/openai_service.py`、`route_helpers.py`、
+`services/stock/provider.py` などで、次回以降の未読先頭として残る。
+
+### S.2 今回完読した 23 ファイル（実測行数）
+
+1 ファイルにつき冒頭から末尾まで区間飛ばしなしで読了した。`read_files` の出力上限に
+達したファイルはない。
+
+| # | ファイル | 行数 | 読了範囲 | 結果 |
+|---|---|---:|---|---|
+| 1 | `market_state.py` | 672 | 1–672 | yfinance 429 とローカル window の整合。欠陥なし |
+| 2 | `logging_config.py` | 442 | 1–442 | handler 初期化・ローテーション・機密マスク。欠陥なし |
+| 3 | `shutdown_manager.py` | 362 | 1–362 | token の原子的書込・使用済み marker・rotation。欠陥なし |
+| 4 | `mistral_compat.py` | 356 | 1–356 | SDK 互換層の例外・レスポンス変換。欠陥なし |
+| 5 | `error_handlers.py` | 192 | 1–192 | HTTP/API 例外の統一 envelope。欠陥なし |
+| 6 | `app_bg.py` | 200 | 1–200 | BG 再エクスポートと起動 bridge。欠陥なし |
+| 7 | `sectors.py` | 264 | 1–264 | セクター分類・正規化。欠陥なし |
+| 8 | `execution_state.py` | 147 | 1–147 | executor の安全な submit/shutdown。欠陥なし |
+| 9 | `utils/threading.py` | 201 | 1–201 | daemon pool・semaphore・shutdown。欠陥なし |
+| 10 | `utils/worker_validation.py` | 343 | 1–343 | worker 数・リモート構成の fail-closed。欠陥なし |
+| 11 | `utils/text_utils.py` | 345 | 1–345 | JSON 境界・長さ制限・エラーマスク。欠陥なし |
+| 12 | `utils/normalization.py` | 451 | 1–451 | symbol/market/limit/candle 正規化。欠陥なし |
+| 13 | `utils/market_utils.py` | 491 | 1–491 | 市場判定・為替・yfinance slot。欠陥なし |
+| 14 | `bg/common.py` | 322 | 1–322 | SSE diff・announce・keepalive。欠陥なし |
+| 15 | `bg/sync/state.py` | 233 | 1–233 | sync generation と stale recovery。欠陥なし |
+| 16 | `bg/sse_interpolator.py` | 281 | 1–281 | 補間・fluctuation・snapshot_ts。欠陥なし |
+| 17 | `app_factory/hooks.py` | 286 | 1–286 | CORS/Sec-Fetch-Site/request log。欠陥なし |
+| 18 | `app_factory/boot.py` | 146 | 1–146 | bootstrap ロック・PID 認識・初期 job。欠陥なし |
+| 19 | `app_factory/early.py` | 166 | 1–166 | 起動例外ログ・atexit cleanup。欠陥なし |
+| 20 | `utils/formatting.py` | 64 | 1–64 | 日時 parse・fallback analysis。欠陥なし |
+| 21 | `error_codes.py` | 137 | 1–137 | ErrorCode と日英メッセージの対応。欠陥なし |
+| 22 | `.agents/scripts/pre_command_guard.py` | 114 | 1–114 | rg 前処理ガード。アプリ実行経路外 |
+| 23 | `gunicorn.conf.py` | 142 | 1–142 | single worker・SSE thread 容量検証。欠陥なし |
+| | **合計** | **6,357** | **全行** | **新規確定欠陥 0** |
+
+### S.3 確定欠陥と修正
+
+今回の 23 ファイルには、実測行・呼び出し元・既存契約の 3 点が揃い、再現可能な
+新規欠陥はなかった。したがって今回のターンで本番コードの変更は追加していない。
+前ターンまでの 39 変更ファイル（R-1/R-2、async claim cleanup、rate limit token
+境界、history envelope、AI portfolio legacy id、時計後退対策など）は差分レビューの
+対象とし、後述の最終ゲートで全テストと静的解析を通した。
+
+### S.4 採用しなかった所見（実測行と根拠）
+
+1. **`_parse_datetime_to_utc` の 14 桁数値の曖昧性**（`utils/formatting.py:23-25`）:
+   14 桁の `YYYYMMDDHHMMSS` は 13 桁以上のため epoch 秒/ミリ秒として解釈され得る。
+   ただし呼び出し元は `services/news_service.py` の RFC/ISO 日時とテストの
+   8/10/13 桁だけで、14 桁 compact を渡す呼び出し元・契約がない。既存の 8 桁
+   ガードテスト（`tests/test_formatting.py:79`）を維持し、推測の入力仕様を
+   追加しないため却下。
+2. **`pre_command_guard.py` の `--regexp=` 時のパス補完**（`:43-58`）:
+   エージェント用の非対話ガードであり、アプリの実行経路・API 契約ではない。
+   今回のプロジェクト実行時欠陥ではないため変更対象外。
+3. **`bg/common.py` の `_sse_payload_cache` が読み出されない**（`:31`, `:268`）:
+   世代キャッシュは書き込まれるが差分判定は毎回 snapshot を構築しており、
+   出力は変わらない。性能上の最適化候補であって再現する不具合ではないため却下。
+
+### S.5 横断検索（実行コマンドと結果）
+
+```text
+git ls-files '*.py'  # tests 除外で 126 ファイル、wc -l 合計 59,493
+git grep -n "request_token" -- '*.py'          # schema pattern と rate_limit の一致を確認
+git grep -n "abort(401\|Unauthorized\|401" -- '*.py' ':!tests/**'  # 401 経路を確認
+git grep -n "_parse_datetime_to_utc" -- '*.py' # 8/10/13 桁の既存契約のみ
+git grep -n "_build_sse_diff\|snapshot_ts_ms" -- tests  # diff の既存契約を確認
+git diff -U0 -- '*.py' ':!tests/**' | grep -E '^\+' | grep -E 'breakpoint|pdb|print\(|type: *ignore|noqa|TODO|FIXME'
+```
+
+- `request_token` は `schemas/analysis.py:48` と `schemas/ai_portfolio.py:84` の
+  `^[A-Za-z0-9_-]{16,128}$` が正本で、`route_helpers.py:173` の追加 regex と一致。
+- 401 は `routes/api_analysis.py:462` ほかで `INVALID_API_KEY` を直接返しており、
+  `HTTPException` の status 写像を変更する必要はなかった。
+- 追加本番行にデバッグ出力・`type: ignore`・`noqa`・TODO/FIXME は 0 件。
+- 未追跡ファイルは 0 件（`git status --porcelain --untracked-files=all`）。
+
+### S.6 最終ゲート（最終ツリー実測）
+
+| 検査 | コマンド | 結果 |
+|---|---|---|
+| 全 pytest | `MNS_SKIP_BOOTSTRAP=1 .venv/Scripts/python.exe -m pytest tests/ -n auto --dist=loadfile --color=no -q` | **exit 0**（100% 完走、新規 skip/xfail 0） |
+| Ruff | `.venv/Scripts/python.exe -m ruff check .` | **exit 0**（All checks passed） |
+| mypy | `.venv/Scripts/python.exe -m mypy` | **exit 0**（125 source files、no issues） |
+| pyrefly | `.venv/Scripts/python.exe -m pyrefly check` | **exit 0**（0 errors） |
+| frontend build | `npm run build` | **exit 0**（typecheck/verify/compile/lint/prettier） |
+| whitespace | `git diff --check` | **exit 0** |
+| worktree | `git status --porcelain --untracked-files=all` | **39 modified / 0 untracked** |
+
+今回のターンで追加したデバッグコード・一時ファイル・skip/xfail・アサーション緩和・
+型弱体化・エラー抑制コメントはない。

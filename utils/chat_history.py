@@ -73,35 +73,59 @@ def _get_fernet():
         return _fernet_instance
 
 
-def _encrypt_content(content: str) -> str:
+def _get_fernet_safe() -> Any:
+    """Return the current Fernet, or ``None`` when it cannot be resolved.
+
+    Batch reads/writes resolve the master key once instead of once per
+    message: ``_get_fernet()`` calls ``get_or_create_master_key()``, which
+    performs a blocking keyring/DPAPI read on every invocation. Returning
+    ``None`` keeps the previous per-row behavior as the fallback, so a
+    transient key-resolution failure still fails closed on encryption and
+    yields empty content on decryption instead of aborting the whole batch.
+    """
+    try:
+        return _get_fernet()
+    except Exception:
+        return None
+
+
+def _encrypt_content(content: str, fernet: Any = None) -> str:
     """Encrypt a chat message body for storage.
 
     FAIL-CLOSED: if encryption is impossible (e.g. secure storage / master key
     unavailable), raise RuntimeError so callers do not persist plaintext chat.
     Legacy plaintext rows remain readable on load for backward compatibility.
+
+    ``fernet`` lets a batch operation reuse one resolved instance for every
+    message instead of re-reading the master key from the OS secret store.
     """
     if not content:
         return content
     try:
-        token = _get_fernet().encrypt(content.encode("utf-8"))
+        instance = fernet if fernet is not None else _get_fernet()
+        token = instance.encrypt(content.encode("utf-8"))
         return _FERNET_PREFIX + token.decode("ascii")
     except Exception as exc:
         logger.error("Chat history encryption failed (fail-closed): %s", exc)
         raise RuntimeError(f"Chat history encryption failed: {exc}") from exc
 
 
-def _decrypt_content(content: str) -> str:
+def _decrypt_content(content: str, fernet: Any = None) -> str:
     """Decrypt a chat message body read from storage.
 
     Values without the ``fernet:`` prefix are legacy plaintext rows and are
     returned unchanged. Decryption failures (e.g. master key rotated) return
     an empty string and log a warning rather than surfacing ciphertext.
+
+    ``fernet`` lets a batch read reuse one resolved instance (and one
+    keyring/DPAPI read) for every row instead of one per message.
     """
     if not content or not content.startswith(_FERNET_PREFIX):
         return content
     try:
         raw = content[len(_FERNET_PREFIX) :].encode("ascii")
-        return _get_fernet().decrypt(raw).decode("utf-8")
+        instance = fernet if fernet is not None else _get_fernet()
+        return instance.decrypt(raw).decode("utf-8")
     except Exception as exc:
         logger.warning("Chat history decryption failed (key rotated?): %s", exc)
         return ""
@@ -624,7 +648,10 @@ class SQLiteChatHistoryStore:
             if cursor.fetchone() is not None:
                 return []
             raise KeyError(key)
-        return [{"role": r[0], "content": _decrypt_content(r[1])} for r in rows]
+        # Resolve the master key once for the whole transcript: doing it inside
+        # the comprehension re-read the keyring/DPAPI entry for every message.
+        fernet = _get_fernet_safe()
+        return [{"role": r[0], "content": _decrypt_content(r[1], fernet)} for r in rows]
 
     def _write_messages(
         self, cursor: sqlite3.Cursor, key: str, value: list[dict[str, Any]]
@@ -662,13 +689,21 @@ class SQLiteChatHistoryStore:
                         if self.max_msgs_per_session > 0
                         else []
                     )
+            # Same as the read path: one key resolution per batch, not per row.
+            # (``to_insert`` can be emptied by the cap logic below.)
+            fernet = _get_fernet_safe() if to_insert else None
             cursor.executemany(
                 """
                 INSERT INTO chat_messages (session_id, role, content, timestamp)
                 VALUES (?, ?, ?, ?)
                 """,
                 [
-                    (key, msg["role"], _encrypt_content(msg["content"]), _get_timestamp())
+                    (
+                        key,
+                        msg["role"],
+                        _encrypt_content(msg["content"], fernet),
+                        _get_timestamp(),
+                    )
                     for msg in to_insert
                 ],
             )

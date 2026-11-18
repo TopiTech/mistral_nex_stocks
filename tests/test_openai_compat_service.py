@@ -870,3 +870,24 @@ def test_get_openai_embeddings_batch_all_empty():
 
     mock_post.assert_not_called()
     assert results == [None, None, None]
+
+
+def test_call_openai_chat_malformed_message_shape_does_not_crash():
+    """A 200 body whose message is not an object must not raise AttributeError."""
+    from services import openai_service
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"choices": [{"message": "not-an-object"}]}
+
+    client = MagicMock()
+    client.post.return_value = mock_resp
+    with patch.object(openai_service, "_get_openai_client", return_value=client):
+        result = call_openai_chat(
+            "sk-test",
+            [{"role": "user", "content": "hi"}],
+            use_cache=False,
+        )
+
+    assert result["choices"][0]["message"] == "not-an-object"
+    assert openai_service._openai_response_has_content(result) is False

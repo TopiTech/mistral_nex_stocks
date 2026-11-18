@@ -159,6 +159,26 @@ def test_tradingview_ws_client_skips_malformed_quote():
     assert received[0]["price"] == 225.5
 
 
+def test_tradingview_ws_client_skips_malformed_values_and_keeps_next_frame():
+    """A non-object ``v`` must not abort the rest of a batched WS message."""
+    received = []
+    client = TradingViewWSClient(on_update_callback=received.append)
+
+    bad_json = json.dumps(
+        {"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:BAD", "v": ["lp"]}]}
+    )
+    ok_json = json.dumps(
+        {"m": "qsd", "p": ["qs_test", {"n": "NASDAQ:AAPL", "v": {"lp": 225.5}}]}
+    )
+    client._on_message(
+        MagicMock(),
+        f"~m~{len(bad_json)}~m~{bad_json}" + f"~m~{len(ok_json)}~m~{ok_json}",
+    )
+
+    assert [item["symbol"] for item in received] == ["NASDAQ:AAPL", "AAPL"]
+    assert received[0]["price"] == 225.5
+
+
 def test_yahoo_jp_scraper_fetch():
     scraper = YahooJPRealtimeScraper()
     mock_html = '{"price": "3500.0", "priceChange": "50.0", "priceChangePercent": "1.45"}'

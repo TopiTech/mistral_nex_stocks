@@ -47,6 +47,27 @@ PTS_JOIN_TIMEOUT_SEC: float = 10.0
 PTS_FETCH_DRAIN_TIMEOUT_SEC: float = 30.0
 
 
+def _producer_symbol(payload: object) -> str | None:
+    """Return a validated symbol from a producer payload, or ``None``.
+
+    Producer callbacks receive data derived from upstream websocket/scraper
+    responses. A malformed frame must be dropped at this boundary instead of
+    raising ``KeyError``/``AttributeError`` inside the producer thread (which
+    would stop every subsequent quote update). The existing symbol length cap
+    matches the request-schema contract and keeps an upstream-supplied
+    arbitrarily long value out of cache keys and log lines.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw_symbol = payload.get("symbol")
+    if not isinstance(raw_symbol, str):
+        return None
+    symbol = raw_symbol.strip()
+    if not symbol or len(symbol) > 32:
+        return None
+    return symbol
+
+
 class RealtimeMarketEngine:
     """Core Market Engine maintaining unified market state & dispatching SSE deltas."""
 
@@ -172,11 +193,18 @@ class RealtimeMarketEngine:
         *,
         registration: tuple[str, str, object, int] | None = None,
     ) -> None:
+        symbol = _producer_symbol(payload)
+        if symbol is None:
+            logger.debug(
+                "Ignoring malformed market producer payload of type %s",
+                type(payload).__name__,
+            )
+            return
+        payload["symbol"] = symbol
         if registration is not None and not self._registration_is_current(registration):
             return
         market_hint = registration[0] if registration is not None else payload.get("market")
-        symbol = payload["symbol"]
-        upper_symbol = symbol.upper() if isinstance(symbol, str) else ""
+        upper_symbol = symbol.upper()
         bare_code = upper_symbol.removesuffix(".T")
         is_jpy = (
             market_hint == "jp"
@@ -248,11 +276,18 @@ class RealtimeMarketEngine:
         *,
         registration: tuple[str, str, object, int] | None = None,
     ) -> None:
+        symbol = _producer_symbol(payload)
+        if symbol is None:
+            logger.debug(
+                "Ignoring malformed PTS producer payload of type %s",
+                type(payload).__name__,
+            )
+            return
+        payload["symbol"] = symbol
         if registration is not None and not self._registration_is_current(registration):
             return
         market_hint = registration[0] if registration is not None else payload.get("market")
-        symbol = payload["symbol"]
-        upper_symbol = symbol.upper() if isinstance(symbol, str) else ""
+        upper_symbol = symbol.upper()
         bare_code = upper_symbol.removesuffix(".T")
         is_jp = (
             market_hint == "jp"

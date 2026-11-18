@@ -10,7 +10,7 @@ import secrets
 import string
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from services.realtime.utils import (
@@ -22,6 +22,51 @@ from services.realtime.utils import (
 from utils.normalization import _finite_number, is_bool_like
 
 logger = logging.getLogger(__name__)
+
+# A TV frame length token is a short decimal count. Python 3.11+ refuses
+# ``int()`` on digit strings longer than ~4300 characters, and a malformed
+# upstream frame must never raise out of the websocket receive callback (that
+# would tear down the quote loop for every subscribed symbol).
+_MAX_TV_FRAME_LENGTH_DIGITS = 20
+
+
+def _iter_tv_frame_bodies(raw: str) -> Iterator[str]:
+    """Yield the body of every complete ``~m~len~m~body`` frame in *raw*.
+
+    The length token is upstream-controlled. It is accepted only when it is a
+    short ASCII decimal; oversized or non-numeric tokens are skipped instead of
+    raising ``ValueError`` from ``int()``. An incomplete trailing frame stops
+    iteration so the transport can wait for the rest of the bytes.
+    """
+    pos = 0
+    raw_len = len(raw)
+    while pos < raw_len:
+        start_m = raw.find("~m~", pos)
+        if start_m == -1:
+            break
+        end_m = raw.find("~m~", start_m + 3)
+        if end_m == -1:
+            break
+        len_str = raw[start_m + 3 : end_m]
+        body_start = end_m + 3
+        if (
+            not len_str
+            or len(len_str) > _MAX_TV_FRAME_LENGTH_DIGITS
+            or not len_str.isascii()
+            or not len_str.isdigit()
+        ):
+            pos = body_start
+            continue
+        try:
+            length = int(len_str)
+        except (ValueError, OverflowError):
+            pos = body_start
+            continue
+        end_body = body_start + length
+        if end_body > raw_len:
+            break
+        yield raw[body_start:end_body]
+        pos = end_body
 
 
 def _get_rt_attr(name: str, fallback: Any) -> Any:
@@ -85,31 +130,11 @@ class TradingViewWSClient:
     def parse_tv_messages(raw: str) -> list[dict[str, Any]]:
         """Parse concatenated ~m~len~m~json messages from raw WS stream."""
         results = []
-        pos = 0
-        raw_len = len(raw)
-        while pos < raw_len:
-            start_m = raw.find("~m~", pos)
-            if start_m == -1:
-                break
-            end_m = raw.find("~m~", start_m + 3)
-            if end_m == -1:
-                break
-            len_str = raw[start_m + 3 : end_m]
-            if not len_str.isdigit():
-                pos = end_m + 3
-                continue
-            length = int(len_str)
-            start_body = end_m + 3
-            end_body = start_body + length
-            if end_body <= raw_len:
-                msg_body = raw[start_body:end_body]
-                try:
-                    results.append(json.loads(msg_body))
-                except Exception:
-                    logger.debug("Failed to parse TV json body: %s", msg_body)
-                pos = end_body
-            else:
-                break
+        for msg_body in _iter_tv_frame_bodies(raw):
+            try:
+                results.append(json.loads(msg_body))
+            except Exception:
+                logger.debug("Failed to parse TV json body: %s", msg_body)
         return results
 
     def add_symbol(self, symbol: str) -> None:
@@ -156,37 +181,13 @@ class TradingViewWSClient:
             self._safe_send(ws_to_send, msg)
 
     def _on_message(self, ws: Any, message: str) -> None:
-        pos = 0
-        raw_len = len(message)
-        has_hb = False
         hb_replies: list[str] = []
+        for msg_body in _iter_tv_frame_bodies(message):
+            if msg_body.startswith("~h~"):
+                hb_replies.append(f"~m~{len(msg_body)}~m~{msg_body}")
 
-        while pos < raw_len:
-            start_m = message.find("~m~", pos)
-            if start_m == -1:
-                break
-            end_m = message.find("~m~", start_m + 3)
-            if end_m == -1:
-                break
-            len_str = message[start_m + 3 : end_m]
-            if not len_str.isdigit():
-                pos = end_m + 3
-                continue
-            length = int(len_str)
-            start_body = end_m + 3
-            end_body = start_body + length
-            if end_body <= raw_len:
-                msg_body = message[start_body:end_body]
-                if msg_body.startswith("~h~"):
-                    has_hb = True
-                    hb_replies.append(f"~m~{len(msg_body)}~m~{msg_body}")
-                pos = end_body
-            else:
-                break
-
-        if has_hb:
-            for hb_reply in hb_replies:
-                self._safe_send(ws, hb_reply)
+        for hb_reply in hb_replies:
+            self._safe_send(ws, hb_reply)
 
         parsed_list = self.parse_tv_messages(message)
         for msg in parsed_list:
@@ -253,6 +254,13 @@ class TradingViewWSClient:
                         "updated_at": time.time(),
                     }
                     with self.lock:
+                        # Re-check the subscription under the same lock that
+                        # publishes the quote. A concurrent remove_symbol()
+                        # between the read above and this write would otherwise
+                        # resurrect the removed symbol in _last_quotes and keep
+                        # reporting quotes for a symbol nobody subscribes to.
+                        if self._subscriptions_managed and symbol not in self.symbols:
+                            continue
                         self._last_quotes[symbol] = payload.copy()
                     logger.debug(
                         "[TradingView WS] Realtime quote update for %s: price=%.2f, change=%.2f (source=tradingview)",

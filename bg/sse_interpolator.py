@@ -117,9 +117,14 @@ def _interpolate_and_fluctuate_market(
                 is_jpy = (c_item.get("currency") == "JPY") or (sym.endswith(".T"))
                 decimals = 2 if is_jpy else 4
 
-                c_item["price"] = round(new_price, decimals)
+                # Derive change from the price actually published. Computing
+                # it from the unrounded interpolation made ``price - prev_close``
+                # disagree with ``change`` by up to one display unit (e.g. JPY
+                # prices are rounded to 2 decimals before reaching the client).
+                published_price = round(new_price, decimals)
+                c_item["price"] = published_price
                 if previous_close != 0 and math.isfinite(previous_close):
-                    new_change = new_price - previous_close
+                    new_change = published_price - previous_close
                     new_change_percent = (new_change / previous_close) * 100
                     c_item["change"] = round(new_change, decimals)
                     c_item["change_percent"] = round(new_change_percent, 2)
@@ -172,15 +177,15 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
             prev_close = price - change
 
             if prev_close != 0 and math.isfinite(prev_close):
-                new_change = new_price - prev_close
+                is_fx = key in ("USDJPY", "EURJPY")
+                published_price = round(new_price, 3 if is_fx else 2)
+                # Change must be consistent with the rounded price that is
+                # actually published (same rule as the stock interpolator).
+                new_change = published_price - prev_close
                 new_percent = (new_change / prev_close) * 100
 
-                if key in ("USDJPY", "EURJPY"):
-                    info["price"] = round(new_price, 3)
-                    info["change"] = round(new_change, 3)
-                else:
-                    info["price"] = round(new_price, 2)
-                    info["change"] = round(new_change, 2)
+                info["price"] = published_price
+                info["change"] = round(new_change, 3 if is_fx else 2)
                 info["percent"] = round(new_percent, 2)
             else:
                 # prev_close == 0 (or non-finite): a percent change is

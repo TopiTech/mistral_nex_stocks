@@ -280,7 +280,7 @@ packaging==26.3 ; python_full_version >= '3.12'
     # via
     #   mistralai-agents
     #   opentelemetry-instrumentation
-pandas==3.0.6
+pandas==3.1.1
     # via
     #   mistral-nex-stocks
     #   pytrends-modern

@@ -19,7 +19,7 @@ attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
-authlib==1.9.5
+authlib==1.9.8
     # via
     #   mistralai
     #   mistralai-workflows-plugins-mistralai

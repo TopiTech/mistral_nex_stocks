@@ -16,8 +16,8 @@ function Test-ExtensionId {
   param([string]$Id)
   if (-not $Id) { return $false }
   $trimmed = $Id.Trim()
-  # 拡張機能IDの形式検証（32文字の16進数）
-  if ($trimmed -notmatch '^[a-z0-9]{32}$') {
+  # 拡張機能IDの形式検証（32文字の小文字英数字）
+  if ($trimmed -cnotmatch '^[a-z0-9]{32}$') {
     Write-Host "[ERROR] Invalid extension ID format: $trimmed" -ForegroundColor Red
     return $false
   }

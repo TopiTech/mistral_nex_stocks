@@ -62,6 +62,7 @@ export default [
         destroyChart: "readonly",
         toFiniteNumber: "readonly",
         sanitizeHexColor: "readonly",
+        formatPtsPriceText: "readonly",
         createEl: "readonly",
         getStockColor: "readonly",
         isValidHexColor: "readonly",

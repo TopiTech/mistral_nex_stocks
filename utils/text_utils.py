@@ -6,8 +6,10 @@ All functions are pure (no app_state dependency).
 """
 
 import hashlib
+import json
 import logging
 import math
+import numbers
 import re
 from typing import Any
 
@@ -343,3 +345,45 @@ def parse_non_negative_float(value, field_name, max_value=None):
     if max_value is not None and parsed > max_value:
         raise ValueError(f"{field_name} must be <= {max_value}")
     return parsed
+
+
+def sanitize_prompt_text(value: Any, max_len: int = 120) -> str:
+    """Strip control/XML metacharacters from client-influenced values before LLM prompt interpolation."""
+    text = str(value if value is not None else "")
+    text = "".join(c for c in text if ord(c) >= 0x20 or c in ("\t", "\n", "\r"))
+    text = text.replace("<", " ").replace(">", " ")
+    return text.strip()[:max_len]
+
+
+def json_safe_tool_value(value: Any) -> Any:
+    """Convert provider/tool values into JSON-safe types before entering an LLM prompt."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
+        return bool(value)
+    if hasattr(value, "tolist") and callable(value.tolist):
+        try:
+            return json_safe_tool_value(value.tolist())
+        except Exception:
+            pass
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        try:
+            return json_safe_tool_value(value.to_dict())
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return {str(key): json_safe_tool_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe_tool_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [json_safe_tool_value(item) for item in sorted(value, key=str)]
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        val_f = float(value)
+        return val_f if math.isfinite(val_f) else None
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False)
+        return value
+    except (TypeError, ValueError):
+        return str(value)[:2_000]

@@ -88,13 +88,21 @@ const aiTechnicalLinesPlugin = {
 
       if (!Number.isFinite(startY) || !Number.isFinite(endY)) return;
 
-      const lineColor =
-        line.color ||
-        (line.type === "support"
+      const fallbackColor =
+        line.type === "support"
           ? "#00ff88"
           : line.type === "resistance"
             ? "#ff3366"
-            : "#3399ff");
+            : line.type === "breakout"
+              ? "#fbbf24"
+              : "#3399ff";
+      const rawColor = typeof line.color === "string" ? line.color.trim() : "";
+      const lineColor =
+        typeof sanitizeHexColor === "function"
+          ? sanitizeHexColor(rawColor, fallbackColor)
+          : /^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(rawColor)
+            ? rawColor
+            : fallbackColor;
       ctx.beginPath();
       ctx.moveTo(startX, startY);
       ctx.lineTo(endX, endY);

@@ -95,6 +95,7 @@ from utils.validators import (
     _clean_reasoning_tags,
     extract_chat_content,
     safe_parse_analysis_result,
+    sanitize_provider_error_info,
 )
 
 # MNS-002: Strip XML/HTML metacharacters and control characters from values
@@ -578,6 +579,12 @@ def api_chat():
                         {"role": "assistant", "content": normalized_cached_result},
                         normalize=_normalize_for_history,
                     )
+            except Exception as hist_exc:
+                current_app.logger.warning(
+                    "Failed to persist cached chat reply id=%s: %s",
+                    getattr(g, "request_id", "-"),
+                    hist_exc,
+                )
             finally:
                 try:
                     app_state.ai.chat_history.close()
@@ -847,9 +854,14 @@ def api_chat():
                         logger.debug("Failed to close chat DB after chat job: %s", close_exc)
                     with chat_fetch_lock:
                         chat_fetch_inflight.pop(inflight_key, None)
+                        cached_result_val = (
+                            result_holder["result"]
+                            if result_holder["error"] is not None
+                            else (result_holder["result"] or _EMPTY_CHAT_REPLY)
+                        )
                         chat_result_cache[inflight_key] = (
                             time.time(),
-                            result_holder["result"] or _EMPTY_CHAT_REPLY,
+                            cached_result_val,
                             result_holder["error"],
                         )
                         chat_result_fingerprints[inflight_key] = result_holder.get(
@@ -911,11 +923,18 @@ def api_chat():
         # R12 fix: compare normalized content so structured (list) and
         # string forms of the same response are recognized as duplicates.
         normalized_ai = _normalize_for_history(ai_content)
-        with app_state.ai.chat_history_lock:
-            app_state.ai.chat_history.append_message_if_not_duplicate(
-                chat_key,
-                {"role": "assistant", "content": normalized_ai},
-                normalize=_normalize_for_history,
+        try:
+            with app_state.ai.chat_history_lock:
+                app_state.ai.chat_history.append_message_if_not_duplicate(
+                    chat_key,
+                    {"role": "assistant", "content": normalized_ai},
+                    normalize=_normalize_for_history,
+                )
+        except Exception as hist_exc:
+            current_app.logger.warning(
+                "Failed to persist completed chat reply id=%s: %s",
+                getattr(g, "request_id", "-"),
+                hist_exc,
             )
 
         current_app.logger.info(
@@ -2103,8 +2122,8 @@ def api_analyze_v2():
                 # Check if provider returned explicit error object
                 if isinstance(response, dict) and "error" in response:
                     err_info = response.get("error", {})
-                    err_msg = err_info.get("message") if isinstance(err_info, dict) else str(err_info)
-                    sanitized_err = _sanitize_error_message(err_msg)
+                    sanitized_info = sanitize_provider_error_info(err_info)
+                    sanitized_err = str(sanitized_info.get("message") or "AIサービスエラー")
                     current_app.logger.error(
                         "Analyze-v2 provider returned error id=%s symbol=%s: %s",
                         req_id,
@@ -2112,19 +2131,21 @@ def api_analyze_v2():
                         sanitized_err,
                     )
                     fb_res = build_fallback_analysis_result(f"AIサービスエラー: {sanitized_err}")
-                    fb_res["provider_error"] = err_info
+                    fb_res["provider_error"] = sanitized_info
                     fb_res["parsed"] = False
                     result_holder["step"] = "error"
                     result_holder["message"] = f"AIサービスエラー: {sanitized_err}"
                     result_holder["result"] = fb_res
-                    raw_sc = err_info.get("status_code", 502) if isinstance(err_info, dict) else 502
+                    raw_sc = sanitized_info.get("status_code", 502)
                     try:
                         sc_int = int(raw_sc)
                         if sc_int < 400 or sc_int > 599:
                             sc_int = 502
                     except Exception:
                         sc_int = 502
-                    result_holder["error"] = ProviderAPIError(sanitized_err, status_code=sc_int, details=err_info if isinstance(err_info, dict) else {})
+                    result_holder["error"] = ProviderAPIError(
+                        sanitized_err, status_code=sc_int, details=sanitized_info
+                    )
                     return
 
                 result_holder["step"] = "parsing_result"
@@ -2136,9 +2157,12 @@ def api_analyze_v2():
                 )
 
                 if isinstance(result, dict) and result.get("provider_error"):
-                    prov_err = result["provider_error"]
-                    err_msg = prov_err.get("message", "AI解析APIエラー") if isinstance(prov_err, dict) else str(prov_err)
-                    raw_sc = prov_err.get("status_code", 502) if isinstance(prov_err, dict) else 502
+                    prov_err = sanitize_provider_error_info(result["provider_error"])
+                    result["provider_error"] = prov_err
+                    err_msg = _sanitize_error_message(
+                        str(prov_err.get("message") or "AI解析APIエラー")
+                    )
+                    raw_sc = prov_err.get("status_code", 502)
                     try:
                         sc_int = int(raw_sc)
                         if sc_int < 400 or sc_int > 599:
@@ -2150,7 +2174,9 @@ def api_analyze_v2():
                         "AIサービスエラー", err_msg
                     )
                     result_holder["result"] = result
-                    result_holder["error"] = ProviderAPIError(str(err_msg), status_code=sc_int, details=prov_err if isinstance(prov_err, dict) else {})
+                    result_holder["error"] = ProviderAPIError(
+                        err_msg, status_code=sc_int, details=prov_err
+                    )
                     return
 
                 result["search_used"] = bool(raw_research_context.strip())

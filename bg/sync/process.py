@@ -52,7 +52,15 @@ def _warm_payload_cache_from_disk() -> None:
             cached_indices = app_state.payload_disk_cache.get("indices_cache", ignore_ttl=True)
             if isinstance(cached_indices, dict) and cached_indices:
                 with app_state.cache.sse_data_lock:
-                    app_state.market.current_indices_cache.update(cached_indices)
+                    existing_indices = (
+                        app_state.market.current_indices_cache
+                        if isinstance(app_state.market.current_indices_cache, dict)
+                        else {}
+                    )
+                    app_state.market.current_indices_cache = {
+                        **existing_indices,
+                        **cached_indices,
+                    }
                 warmed_indices = True
                 logger.info("Warmed indices cache from disk cache")
         except Exception as exc:
@@ -92,7 +100,11 @@ def _warm_payload_cache_from_disk() -> None:
                 cached = app_state.payload_disk_cache.get(key, ignore_ttl=True)
                 if cached and isinstance(cached, dict) and cached.get("symbol"):
                     with app_state.cache.sse_data_lock:
-                        target_list = app_state.market.target_stocks_cache.get(market, [])
+                        if not isinstance(app_state.market.target_stocks_cache, dict):
+                            app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+                        target_list = list(
+                            app_state.market.target_stocks_cache.get(market) or []
+                        )
                         found = False
                         for i, s in enumerate(target_list):
                             if isinstance(s, dict) and s.get("symbol") == symbol:

@@ -318,13 +318,28 @@
           if (wrapper) syncedWrappers.add(wrapper);
           const stockCtx = (wrapper && wrapper.__stockData) || data;
           let txt = "";
-          if (data.price != null && typeof data.price === "number") {
-            txt =
-              typeof window.formatPrice === "function"
-                ? `PTS ${window.formatPrice(data.price, stockCtx)}`
-                : `PTS ${data.price}`;
-          } else if (data.price != null) {
-            txt = `PTS ${data.price}`;
+          if (typeof window.formatPtsPriceText === "function") {
+            txt = window.formatPtsPriceText(data.price, stockCtx);
+          } else if (
+            data.price !== null &&
+            data.price !== undefined &&
+            typeof data.price !== "boolean"
+          ) {
+            let num = NaN;
+            if (typeof data.price === "number") {
+              num = data.price;
+            } else if (typeof data.price === "string") {
+              const trimmed = data.price.trim();
+              if (trimmed && /^[+-]?(?:\d+(?:\.\d*)?|\.?\d+)$/.test(trimmed)) {
+                num = Number(trimmed);
+              }
+            }
+            if (Number.isFinite(num) && num > 0) {
+              txt =
+                typeof window.formatPrice === "function"
+                  ? `PTS ${window.formatPrice(num, stockCtx)}`
+                  : `PTS ${num}`;
+            }
           }
           if (el.textContent !== txt) el.textContent = txt;
           if (txt) {

@@ -108,12 +108,52 @@ function sanitizeTextInput(text, maxLength = 1000) {
   return kept.join("");
 }
 
+function _normalizeHexColor(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (/^#[0-9A-Fa-f]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  const shortMatch = /^#([0-9A-Fa-f]{3})$/.exec(trimmed);
+  if (shortMatch) {
+    const [r, g, b] = shortMatch[1];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return "";
+}
+
 function isValidHexColor(value) {
   return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value.trim());
 }
 
 function sanitizeHexColor(value, fallback = "#6bb6ff") {
-  return isValidHexColor(value) ? value.trim() : fallback;
+  return _normalizeHexColor(value) || fallback;
+}
+
+/**
+ * Formats PTS price values only when positive and finite; non-numeric,
+ * non-positive, or placeholder values return "" so callers hide the badge.
+ */
+function formatPtsPriceText(rawPrice, stockCtx) {
+  if (
+    rawPrice === null ||
+    rawPrice === undefined ||
+    typeof rawPrice === "boolean"
+  ) {
+    return "";
+  }
+  let num;
+  if (typeof rawPrice === "number") {
+    num = rawPrice;
+  } else if (typeof rawPrice === "string") {
+    const trimmed = rawPrice.trim();
+    if (!trimmed || !DECIMAL_NUMBER_PATTERN.test(trimmed)) return "";
+    num = Number(trimmed);
+  } else {
+    return "";
+  }
+  if (!Number.isFinite(num) || num <= 0) return "";
+  return typeof formatPrice === "function"
+    ? `PTS ${formatPrice(num, stockCtx)}`
+    : `PTS ${num}`;
 }
 
 function clearLegacyApiKeyStorage() {
@@ -1249,6 +1289,7 @@ function getAiProviderLabel(variant = "full") {
 window.getAppAiProvider = getAppAiProvider;
 window.isOpenAiCompatibleProvider = isOpenAiCompatibleProvider;
 window.getAiProviderLabel = getAiProviderLabel;
+window.formatPtsPriceText = formatPtsPriceText;
 window.FAST_FETCH_TIMEOUT_MS = FAST_FETCH_TIMEOUT_MS;
 window.DEFAULT_FETCH_TIMEOUT_MS = DEFAULT_FETCH_TIMEOUT_MS;
 

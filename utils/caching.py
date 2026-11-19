@@ -334,6 +334,15 @@ def clear_cache_key(key: str) -> None:
             global_cache.inflight_tokens.pop(fk, None)
 
 
+def clear_cache_key_in_bucket(key: str, duration: int) -> None:
+    """Clear a specific cached item only from the TTL bucket for *duration*."""
+    safe_key = sanitize_cache_key(key)
+    with global_cache.cache_lock:
+        cache = global_cache.caches.get(duration)
+        if cache is not None:
+            cache.pop(safe_key, None)
+
+
 def _ensure_cache_bucket(duration):
     """Ensures a TTLCache bucket exists for the given duration."""
     with global_cache.cache_lock:

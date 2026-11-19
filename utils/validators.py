@@ -1280,6 +1280,36 @@ def _is_sensitive_diagnostic(msg: str) -> bool:
     return any(keyword in msg_lower for keyword in _SENSITIVE_DIAGNOSTIC_KEYWORDS)
 
 
+_ALLOWED_PROVIDER_ERROR_KEYS = frozenset({"status_code", "code", "type", "retry_after"})
+
+
+def sanitize_provider_error_info(raw_err: Any) -> dict[str, Any]:
+    """Sanitize a provider error payload for safe client/cache exposure."""
+    raw_msg = (
+        raw_err.get("message", "unknown provider error")
+        if isinstance(raw_err, dict)
+        else str(raw_err)
+    )
+    if _is_sensitive_diagnostic(str(raw_msg)):
+        display_msg = _CHAT_CONTENT_PROVIDER_ERROR
+        logger.error("sanitize_provider_error_info received sensitive provider error: [REDACTED]")
+    else:
+        from utils.text_utils import _sanitize_error_message
+
+        display_msg = _sanitize_error_message(raw_msg)
+        logger.error("sanitize_provider_error_info received provider error: %s", display_msg)
+
+    sanitized_error: dict[str, Any] = {"message": display_msg}
+    if isinstance(raw_err, dict):
+        for k, v in raw_err.items():
+            if k == "message" or k not in _ALLOWED_PROVIDER_ERROR_KEYS:
+                continue
+            if isinstance(v, str) and _is_sensitive_diagnostic(v):
+                continue
+            sanitized_error[k] = v
+    return sanitized_error
+
+
 def safe_parse_analysis_result(
     response: Any, api_key: str, repair_func: Any = None
 ) -> dict[str, Any]:
@@ -1291,36 +1321,12 @@ def safe_parse_analysis_result(
     from utils.formatting import build_fallback_analysis_result
 
     if isinstance(response, dict) and "error" in response:
-        raw_err = response["error"]
-        raw_msg = (
-            raw_err.get("message", "unknown provider error")
-            if isinstance(raw_err, dict)
-            else str(raw_err)
-        )
-        if _is_sensitive_diagnostic(raw_msg):
-            display_msg = _CHAT_CONTENT_PROVIDER_ERROR
-            logger.error("safe_parse_analysis_result received provider error: [REDACTED]")
-        else:
-            from utils.text_utils import _sanitize_error_message
-
-            display_msg = _sanitize_error_message(raw_msg)
-            logger.error("safe_parse_analysis_result received provider error: %s", display_msg)
-
         # R17-09: allowlist (defence in depth). Previously every non-message
         # key was copied verbatim, so a nested dict/list carrying a prompt or
         # secret (e.g. provider request echo) was returned to the client.
         # Keep only non-sensitive scalar diagnostics.
-        _ALLOWED_PROVIDER_ERROR_KEYS = {"status_code", "code", "type", "retry_after"}
-        sanitized_error: dict[str, Any] = {"message": display_msg}
-        if isinstance(raw_err, dict):
-            for k, v in raw_err.items():
-                if k == "message":
-                    continue
-                if k not in _ALLOWED_PROVIDER_ERROR_KEYS:
-                    continue
-                if isinstance(v, str) and _is_sensitive_diagnostic(v):
-                    continue
-                sanitized_error[k] = v
+        sanitized_error = sanitize_provider_error_info(response["error"])
+        display_msg = sanitized_error["message"]
 
         fb = build_fallback_analysis_result(f"AI解析APIエラー: {display_msg}")
         fb["provider_error"] = sanitized_error

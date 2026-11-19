@@ -21,6 +21,7 @@ from constants import (
     HISTORY_CACHE_DURATION_OPEN_LONG,
     HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
     HISTORY_CIRCUIT_BREAKER_THRESHOLD,
+    NEGATIVE_CACHE_TTL,
 )
 from error_codes import ErrorCode, get_error_message
 from route_helpers import (
@@ -497,20 +498,29 @@ def api_stock_history() -> Any:
             sanitized_cached = sanitize_history_payload(cached_data)
             if sanitized_cached is not None:
                 return make_history_response(sanitized_cached)
+        logger.warning(
+            "Discarding unusable in-memory history cache symbol=%s market=%s period=%s",
+            symbol,
+            market,
+            period,
+        )
+        clear_cache_key(cache_key)
+
+    neg_duration = min(duration, NEGATIVE_CACHE_TTL)
+    if neg_duration != duration:
+        neg_present, neg_data = _get_cached_value_if_present(cache_key, neg_duration)
+        if neg_present:
+            if isinstance(neg_data, dict) and neg_data.get("error"):
+                sanitized_neg = sanitize_history_payload(neg_data)
+                if sanitized_neg is not None:
+                    return make_history_response(sanitized_neg)
             logger.warning(
-                "Discarding unusable in-memory history cache symbol=%s market=%s period=%s",
+                "Discarding unusable negative history cache symbol=%s market=%s period=%s",
                 symbol,
                 market,
                 period,
             )
             clear_cache_key(cache_key)
-        elif cached_data:
-            logger.warning(
-                "Ignoring malformed in-memory history cache symbol=%s market=%s period=%s",
-                symbol,
-                market,
-                period,
-            )
 
     try:
         submitted = _submit_async_history_fetch(

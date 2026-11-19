@@ -43,7 +43,7 @@ foreach ($origin in $origins) {
   if ($null -eq $origin -or -not ($origin -is [string]) -or [string]::IsNullOrWhiteSpace($origin)) {
     throw 'Invalid allowed origin: empty or non-string value.'
   }
-  if ($origin -notmatch '^chrome-extension://[a-z0-9]{32}/$') {
+  if ($origin -cnotmatch '^chrome-extension://[a-z0-9]{32}/$') {
     throw "Invalid allowed origin: $origin"
   }
 }

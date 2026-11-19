@@ -16,7 +16,6 @@ import hashlib
 import json
 import logging
 import math
-import numbers
 import re
 import time
 from datetime import UTC, datetime
@@ -45,6 +44,8 @@ from services.preview_responses import build_preview_chat_response, build_previe
 from utils.networking import validate_outbound_base_url
 from utils.normalization import is_bool_like
 from utils.text_utils import _sanitize_error_message
+from utils.text_utils import json_safe_tool_value as _json_safe_tool_value
+from utils.text_utils import sanitize_prompt_text as _sanitize_prompt_text
 from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import (
     build_assistant_text_message,
@@ -1411,40 +1412,6 @@ def _gen_token() -> str:
     return secrets.token_hex(4)
 
 
-def _json_safe_tool_value(value: Any) -> Any:
-    """Make provider/tool data valid JSON before it enters the LLM prompt."""
-    if value is None or isinstance(value, str):
-        return value
-    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
-        return bool(value)
-    if hasattr(value, "tolist") and callable(value.tolist):
-        try:
-            return _json_safe_tool_value(value.tolist())
-        except Exception:
-            pass
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        try:
-            return _json_safe_tool_value(value.to_dict())
-        except Exception:
-            pass
-    if isinstance(value, dict):
-        return {str(k): _json_safe_tool_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe_tool_value(v) for v in value]
-    if isinstance(value, (set, frozenset)):
-        return [_json_safe_tool_value(v) for v in sorted(value, key=str)]
-    if isinstance(value, numbers.Integral):
-        return int(value)
-    if isinstance(value, numbers.Real):
-        val_f = float(value)
-        return val_f if math.isfinite(val_f) else None
-    try:
-        json.dumps(value, ensure_ascii=False, allow_nan=False)
-        return value
-    except (TypeError, ValueError):
-        return str(value)[:2_000]
-
-
 def call_openai_chat_with_tools(
     api_key: str,
     messages: list[Any],
@@ -1738,15 +1705,6 @@ def call_openai_chat_with_tools(
     )
 
 
-def _sanitize_prompt_text(value: Any, max_len: int = 120) -> str:
-    """Strip control/XML metacharacters from client-influenced values before
-    they are interpolated into an LLM prompt (mirrors services.ai_service._sanitize_prompt_text)."""
-    text = str(value if value is not None else "")
-    text = "".join(c for c in text if ord(c) >= 0x20 or c in ("\t", "\n", "\r"))
-    text = text.replace("<", " ").replace(">", " ")
-    return text.strip()[:max_len]
-
-
 def analyze_chart_image_with_openai(
     api_key: str,
     image_data: str,
@@ -1954,6 +1912,15 @@ def get_openai_embeddings_batch(
                         resp.status_code,
                         _sanitize_error_message(resp.text[:200]),
                     )
+                    if resp.status_code >= 500 and app_state.market.is_circuit_open(
+                        "openai_compatible"
+                    ):
+                        logger.warning(
+                            "OpenAI embeddings aborted after server error (HTTP %d); "
+                            "circuit breaker open, remaining batches fall back to None",
+                            resp.status_code,
+                        )
+                        break
                     # M8 (2026-11-07 review): permanent client errors (auth
                     # failure, unknown model, malformed request) and explicit
                     # 429 rate-limit responses cannot succeed on immediately
@@ -1973,6 +1940,8 @@ def get_openai_embeddings_batch(
                         break
             except Exception as exc:
                 raw_status = getattr(getattr(exc, "response", None), "status_code", None)
+                if raw_status is None:
+                    raw_status = getattr(exc, "status_code", None)
                 resp_status = (
                     raw_status
                     if isinstance(raw_status, int) and not isinstance(raw_status, bool)
@@ -1991,6 +1960,25 @@ def get_openai_embeddings_batch(
                     "OpenAI embeddings call failed (fallback to None): %s",
                     _sanitize_error_message(str(exc)),
                 )
+                if resp_status == 429:
+                    logger.warning(
+                        "OpenAI embeddings aborted after rate limit exception (HTTP 429); "
+                        "remaining batches fall back to None",
+                    )
+                    break
+                if resp_status is not None and 400 <= resp_status < 500:
+                    logger.warning(
+                        "OpenAI embeddings aborted after client error exception (HTTP %d); "
+                        "remaining batches fall back to None",
+                        resp_status,
+                    )
+                    break
+                if is_provider_failure and app_state.market.is_circuit_open("openai_compatible"):
+                    logger.warning(
+                        "OpenAI embeddings aborted after provider failure; "
+                        "circuit breaker open, remaining batches fall back to None",
+                    )
+                    break
             finally:
                 _close_call_owned_openai_client(client)
     finally:

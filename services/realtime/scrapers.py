@@ -12,6 +12,19 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, ClassVar
 
+from services.nikkei225jp_parser import (
+    NIKKEI225JP_ADR_ALL_URL,
+    NIKKEI225JP_ADR_URL,
+    NIKKEI225JP_BASE_URL,
+    NIKKEI225JP_INDEX_BTM_URL,
+    NIKKEI225JP_INDEX_MAP,
+    NIKKEI225JP_INDEX_MID_URL,
+    NIKKEI225JP_INDEX_NDY_URL,
+    extract_direct_adr_parts,
+    parse_adr_all_js,
+    parse_ajax_index_js,
+    parse_ndy_min_js,
+)
 from services.realtime.utils import (
     _ESCAPED_QUOTE_RES,
     _PTS_TRADING_FLAG_RE,
@@ -295,37 +308,15 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
 class Nikkei225JPScraper(_BaseFallbackScraper):
     """Nikkei225JP (nikkei225jp.com) scraper — fallback provider for JP stocks, ADRs, PTS & indices."""
 
-    BASE_URL = "https://nikkei225jp.com/"
-    ADR_URL = "https://nikkei225jp.com/adr/adr.php"
-    ADR_ALL_URL = "https://nikkei225jp.com/_data/_nfsDATA/adr/_adr_all.js"
-    INDEX_MID_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_TOP_mid.js"
-    INDEX_BTM_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_TOP_btm.js"
-    INDEX_NDY_URL = "https://nikkei225jp.com/_data/_nfsDATA/ajaxindex/ajax_NDY_min.js"
+    BASE_URL = NIKKEI225JP_BASE_URL
+    ADR_URL = NIKKEI225JP_ADR_URL
+    ADR_ALL_URL = NIKKEI225JP_ADR_ALL_URL
+    INDEX_MID_URL = NIKKEI225JP_INDEX_MID_URL
+    INDEX_BTM_URL = NIKKEI225JP_INDEX_BTM_URL
+    INDEX_NDY_URL = NIKKEI225JP_INDEX_NDY_URL
     _SCRAPER_LABEL = "Nikkei225JP"
 
-    INDEX_MAP: ClassVar[dict[str, int]] = {
-        "^N225": 111,
-        "N225": 111,
-        "^DJI": 211,
-        "DJI": 211,
-        "^IXIC": 212,
-        "NASDAQ": 212,
-        "^GSPC": 213,
-        "SP500": 213,
-        "^NDX": 214,
-        "NASDAQ100": 214,
-        "USDJPY=X": 511,
-        "USDJPY": 511,
-        "JPY=X": 511,
-        "EURJPY=X": 514,
-        "EURJPY": 514,
-        "EURUSD=X": 523,
-        "EURUSD": 523,
-        "^VIX": 621,
-        "VIX": 621,
-        "BTC-USD": 1001,
-        "BTC": 1001,
-    }
+    INDEX_MAP: ClassVar[dict[str, int]] = NIKKEI225JP_INDEX_MAP
 
     def __init__(self) -> None:
         super().__init__()
@@ -351,14 +342,7 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
                 text = resp.content.decode("utf-8", errors="replace")
-                cache: dict[str, list[str]] = {}
-                for line in text.splitlines():
-                    if line.startswith("A0["):
-                        m = re.search(r'A0\[\w+\]="([^"]+)"', line)
-                        if m:
-                            parts = m.group(1).split("_")
-                            if len(parts) >= 21:
-                                cache[parts[0]] = parts
+                cache = parse_adr_all_js(text)
                 if cache:
                     with self._cache_lock:
                         self._adr_cache = cache
@@ -390,13 +374,7 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                 _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
                 if resp.status_code == 200:
                     text = resp.content.decode("utf-8", errors="replace")
-                    for line in text.splitlines():
-                        m = re.search(r'A\[(\d+)\]="([^"]+)"', line)
-                        if m:
-                            code = int(m.group(1))
-                            parts = m.group(2).split("_")
-                            if len(parts) >= 3:
-                                cache[code] = parts
+                    parse_ajax_index_js(text, cache)
             except Exception as exc:
                 logger.debug("[Nikkei225JP Scraper] Failed to fetch index url %s: %s", url, exc)
             finally:
@@ -408,10 +386,7 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
             _mark_scraper_blocked_from_status(resp_ndy.status_code, propagate_to_yfinance=False)
             if resp_ndy.status_code == 200:
                 text = resp_ndy.content.decode("utf-8", errors="replace")
-                for m in re.finditer(r"var NDY(\d+)V=([\d.]+),NDY\1Z=([+-]?[\d.]+);", text):
-                    code = int(m.group(1))
-                    if code not in cache:
-                        cache[code] = [m.group(2), m.group(3), "0", "", ""]
+                parse_ndy_min_js(text, cache)
         except Exception as exc:
             logger.debug("[Nikkei225JP Scraper] Failed to fetch NDY min: %s", exc)
         finally:
@@ -447,10 +422,8 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                 _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
                 body_html = decode_http_response_text(resp)
                 if resp.status_code == 200 and f'var Sno="{clean_code}"' in body_html:
-                    m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', body_html)
-                    if m_parts:
-                        parts = m_parts.group(1).split("_")
-                    else:
+                    parts = extract_direct_adr_parts(body_html)
+                    if not parts:
                         parts = self._refresh_adr_cache(max_age=0.0).get(clean_code)
             except Exception as exc:
                 logger.debug(

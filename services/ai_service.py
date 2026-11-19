@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import math
-import numbers
 import os
 import queue
 import random
@@ -53,6 +52,8 @@ from mistral_compat import (
 )
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.text_utils import _sanitize_error_message, _token_fingerprint
+from utils.text_utils import json_safe_tool_value as _json_safe_tool_value
+from utils.text_utils import sanitize_prompt_text as _sanitize_prompt_text
 from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import (
     build_assistant_text_message,
@@ -184,16 +185,6 @@ def _sanitize_repair_content(raw_content: Any) -> str:
     text = "".join(c for c in text if ord(c) >= 0x20 or c in ("\t", "\n", "\r"))
     sanitized = text.replace("]]>", "]]]]><![CDATA[>")
     return f"<![CDATA[{sanitized}]]>"
-
-
-def _sanitize_prompt_text(value: Any, max_len: int = 120) -> str:
-    """Strip control/XML metacharacters from client-influenced values before
-    they are interpolated into an LLM prompt (MNS-002, mirrors
-    routes.api_analysis._safe_prompt_field)."""
-    text = str(value if value is not None else "")
-    text = "".join(c for c in text if ord(c) >= 0x20 or c in ("\t", "\n", "\r"))
-    text = text.replace("<", " ").replace(">", " ")
-    return text.strip()[:max_len]
 
 
 _ANALYSIS_REPAIR_SCHEMA = {
@@ -1746,40 +1737,6 @@ def call_mistral_chat(
             circuit_probe_claimed = False
 
 
-def _json_safe_tool_value(value: Any) -> Any:
-    """Make provider/tool data valid JSON before it enters the LLM prompt."""
-    if value is None or isinstance(value, str):
-        return value
-    if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
-        return bool(value)
-    if hasattr(value, "tolist") and callable(value.tolist):
-        try:
-            return _json_safe_tool_value(value.tolist())
-        except Exception:
-            pass
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        try:
-            return _json_safe_tool_value(value.to_dict())
-        except Exception:
-            pass
-    if isinstance(value, dict):
-        return {str(key): _json_safe_tool_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe_tool_value(item) for item in value]
-    if isinstance(value, (set, frozenset)):
-        return [_json_safe_tool_value(item) for item in sorted(value, key=str)]
-    if isinstance(value, numbers.Integral):
-        return int(value)
-    if isinstance(value, numbers.Real):
-        val_f = float(value)
-        return val_f if math.isfinite(val_f) else None
-    try:
-        json.dumps(value, ensure_ascii=False, allow_nan=False)
-        return value
-    except (TypeError, ValueError):
-        return str(value)[:2_000]
-
-
 def call_mistral_chat_with_tools(
     api_key: str,
     messages: list[Any],
@@ -2121,6 +2078,30 @@ def repair_technical_lines_json_with_llm(api_key, raw_content):
     )
 
 
+_TECH_LINE_ALLOWED_TYPES = frozenset({"support", "resistance", "trend", "breakout"})
+_TECH_LINE_ALLOWED_STYLES = frozenset({"solid", "dashed", "dotted"})
+_TECH_LINE_DEFAULT_COLORS = {
+    "support": "#00ff88",
+    "resistance": "#ff3366",
+    "trend": "#3399ff",
+    "breakout": "#fbbf24",
+}
+_HEX_COLOR_3_OR_6_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _normalize_technical_line_color(raw_color: Any, line_type: str) -> str:
+    """Return a normalized 6-digit hex color or the type's safe default."""
+    fallback = _TECH_LINE_DEFAULT_COLORS.get(line_type, "#00ff88")
+    if not isinstance(raw_color, str):
+        return fallback
+    trimmed = raw_color.strip()
+    if not _HEX_COLOR_3_OR_6_RE.match(trimmed):
+        return fallback
+    if len(trimmed) == 4:
+        return "#" + "".join(ch * 2 for ch in trimmed[1:]).lower()
+    return trimmed.lower()
+
+
 def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
     """
     株価履歴データからAI（Mistral）を用いてサポート線・抵抗線・トレンドライン等の
@@ -2280,13 +2261,19 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                         or end_p <= 0.0
                     ):
                         continue
+                    raw_type = str(line.get("type") or "").strip().lower()
+                    line_type = raw_type if raw_type in _TECH_LINE_ALLOWED_TYPES else "support"
+                    raw_style = str(line.get("style") or "").strip().lower()
+                    line_style = raw_style if raw_style in _TECH_LINE_ALLOWED_STYLES else "solid"
                     valid_lines.append(
                         {
                             "id": str(line.get("id") or f"line_{idx}"),
-                            "type": str(line.get("type") or "support"),
+                            "type": line_type,
                             "label": str(line.get("label") or "ライン"),
-                            "color": str(line.get("color") or "#00ff88"),
-                            "style": str(line.get("style") or "solid"),
+                            "color": _normalize_technical_line_color(
+                                line.get("color"), line_type
+                            ),
+                            "style": line_style,
                             "start_date": str(line.get("start_date") or ""),
                             "start_price": start_p,
                             "end_date": str(line.get("end_date") or ""),

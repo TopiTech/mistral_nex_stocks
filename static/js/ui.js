@@ -443,6 +443,48 @@ function formatStockChangeMetrics(stock) {
 }
 
 /**
+ * Format and toggle visibility + aria-hidden for compact PTS badges consistently
+ * across card creation and incremental updates.
+ */
+function applyCompactPtsDisplay(ptsEl, ptsPrice, stockCtx) {
+  if (!ptsEl) return;
+  let ptsTxt = "";
+  if (typeof formatPtsPriceText === "function") {
+    ptsTxt = formatPtsPriceText(ptsPrice, stockCtx);
+  } else if (
+    ptsPrice !== null &&
+    ptsPrice !== undefined &&
+    typeof ptsPrice !== "boolean"
+  ) {
+    let num = NaN;
+    if (typeof ptsPrice === "number") {
+      num = ptsPrice;
+    } else if (typeof ptsPrice === "string") {
+      const trimmed = ptsPrice.trim();
+      if (trimmed && /^[+-]?(?:\d+(?:\.\d*)?|\.?\d+)$/.test(trimmed)) {
+        num = Number(trimmed);
+      }
+    }
+    if (Number.isFinite(num) && num > 0) {
+      ptsTxt =
+        typeof formatPrice === "function"
+          ? `PTS ${formatPrice(num, stockCtx)}`
+          : `PTS ${num}`;
+    }
+  }
+  if (ptsEl.textContent !== ptsTxt) {
+    ptsEl.textContent = ptsTxt;
+  }
+  if (ptsTxt) {
+    ptsEl.hidden = false;
+    ptsEl.removeAttribute("aria-hidden");
+  } else {
+    ptsEl.hidden = true;
+    ptsEl.setAttribute("aria-hidden", "true");
+  }
+}
+
+/**
  * Unified UI Update for a stock card.
  */
 function updateStockUI(wrapper, stock) {
@@ -527,32 +569,7 @@ function updateStockUI(wrapper, stock) {
 
   const ptsEl = wrapper.querySelector(".compact-pts");
   if (ptsEl) {
-    let ptsTxt = "";
-    if (
-      stock.pts_price != null &&
-      typeof stock.pts_price === "number" &&
-      stock.pts_price > 0
-    ) {
-      ptsTxt =
-        typeof formatPrice === "function"
-          ? `PTS ${formatPrice(stock.pts_price, stock)}`
-          : `PTS ${stock.pts_price}`;
-    } else if (
-      stock.pts_price != null &&
-      String(stock.pts_price).trim() !== ""
-    ) {
-      ptsTxt = `PTS ${stock.pts_price}`;
-    }
-    if (ptsEl.textContent !== ptsTxt) {
-      ptsEl.textContent = ptsTxt;
-    }
-    if (ptsTxt) {
-      ptsEl.hidden = false;
-      ptsEl.removeAttribute("aria-hidden");
-    } else {
-      ptsEl.hidden = true;
-      ptsEl.setAttribute("aria-hidden", "true");
-    }
+    applyCompactPtsDisplay(ptsEl, stock.pts_price, stock);
   }
 
   if (isPortfolioTab) {
@@ -1257,27 +1274,8 @@ function createStockCard(stock, marketContext) {
   const changeEl = createEl("div", changeCls, changeText);
   changeEl.setAttribute("aria-label", changeAriaLabel);
   right.appendChild(changeEl);
-  let ptsTxt = "";
-  if (
-    stock.pts_price != null &&
-    typeof stock.pts_price === "number" &&
-    stock.pts_price > 0
-  ) {
-    ptsTxt =
-      typeof formatPrice === "function"
-        ? `PTS ${formatPrice(stock.pts_price, stock)}`
-        : `PTS ${stock.pts_price}`;
-  } else if (stock.pts_price != null && String(stock.pts_price).trim() !== "") {
-    ptsTxt = `PTS ${stock.pts_price}`;
-  }
-  const ptsEl = createEl("div", "compact-pts", ptsTxt);
-  if (ptsTxt) {
-    ptsEl.hidden = false;
-    ptsEl.removeAttribute("aria-hidden");
-  } else {
-    ptsEl.hidden = true;
-    ptsEl.setAttribute("aria-hidden", "true");
-  }
+  const ptsEl = createEl("div", "compact-pts", "");
+  applyCompactPtsDisplay(ptsEl, stock.pts_price, stock);
   right.appendChild(ptsEl);
   right.appendChild(createEl("div", "compact-pf-info"));
   const sparkline = createEl("div", "sparkline");
@@ -3111,13 +3109,15 @@ async function sendAiDrawerMessage() {
             signal: requestController.signal,
           });
           data = fetched || {};
-          if (!res.ok) {
+          if (!res.ok || data.ok === false || data.error_flag === true) {
             const detailReason = data?.details?.reason
               ? String(data.details.reason)
               : "";
+            const fallbackMsg = !res.ok
+              ? `HTTP ${res.status}`
+              : data.reply || "AI応答の生成に失敗しました";
             const errMsg =
-              detailReason ||
-              String(data.message || data.error || `HTTP ${res.status}`);
+              detailReason || String(data.message || data.error || fallbackMsg);
             throw new Error(errMsg);
           }
           if (!data.fetching) {
@@ -4067,11 +4067,15 @@ function renderAiTechnicalLinesSummary(wrapper, data) {
 
   const header = createEl("div", "ai-tech-header");
   const badge = createEl("span", "ai-tech-badge", "✨ AIテクニカル分析要約");
-  const biasCls = (data.trend_bias || "").toLowerCase();
+  const rawBias = typeof data.trend_bias === "string" ? data.trend_bias : "";
+  const biasMatch = rawBias
+    .toLowerCase()
+    .match(/\b(bullish|bearish|neutral)\b/);
+  const biasCls = biasMatch ? biasMatch[1] : "";
   const bias = createEl(
     "span",
-    `ai-tech-bias ${biasCls}`,
-    data.trend_bias || "Neutral",
+    biasCls ? `ai-tech-bias ${biasCls}` : "ai-tech-bias",
+    rawBias || "Neutral",
   );
   header.appendChild(badge);
   header.appendChild(bias);
@@ -4081,15 +4085,45 @@ function renderAiTechnicalLinesSummary(wrapper, data) {
   summaryBox.appendChild(summaryText);
 
   if (Array.isArray(data.lines) && data.lines.length > 0) {
+    const allowedLineTypes = new Set([
+      "support",
+      "resistance",
+      "trend",
+      "trendline",
+      "breakout",
+    ]);
     const list = createEl("div", "ai-tech-lines-list");
     data.lines.forEach((line) => {
-      const item = createEl("div", `ai-tech-line-item ${line.type || ""}`);
+      if (!line || typeof line !== "object") return;
+      const rawType =
+        typeof line.type === "string" ? line.type.trim().toLowerCase() : "";
+      const safeType = allowedLineTypes.has(rawType) ? rawType : "";
+      const item = createEl(
+        "div",
+        safeType ? `ai-tech-line-item ${safeType}` : "ai-tech-line-item",
+      );
+      const defaultDotColor =
+        safeType === "resistance"
+          ? "#ff3366"
+          : safeType === "trend" || safeType === "trendline"
+            ? "#3399ff"
+            : safeType === "breakout"
+              ? "#fbbf24"
+              : "#00ff88";
+      const rawDotColor =
+        typeof line.color === "string" ? line.color.trim() : "";
+      const safeDotColor =
+        typeof sanitizeHexColor === "function"
+          ? sanitizeHexColor(rawDotColor, defaultDotColor)
+          : /^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(rawDotColor)
+            ? rawDotColor
+            : defaultDotColor;
       const colorDot = createEl("span", "ai-line-dot");
-      colorDot.style.backgroundColor = line.color || "#00ff88";
+      colorDot.style.backgroundColor = safeDotColor;
       const labelSpan = createEl(
         "strong",
         "ai-line-label",
-        line.label || line.type,
+        line.label || safeType || "line",
       );
       const descSpan = createEl("span", "ai-line-desc", line.description || "");
 

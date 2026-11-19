@@ -732,7 +732,11 @@ class YFinanceProvider(BaseStockProvider):
                 batch_downloaded = self._yf_download_with_retry(
                     cache_miss_symbols, period, YFINANCE_TIMEOUT_BATCH
                 )
-                if not batch_downloaded.empty:
+                if (
+                    batch_downloaded is not None
+                    and isinstance(batch_downloaded, pd.DataFrame)
+                    and not batch_downloaded.empty
+                ):
                     for sym in cache_miss_symbols:
                         try:
                             if isinstance(batch_downloaded.columns, pd.MultiIndex):

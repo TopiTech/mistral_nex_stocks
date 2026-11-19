@@ -491,13 +491,17 @@ class MarketDataState:
     ) -> tuple[float, float]:
         """Atomically update ``last_usdjpy_rate`` and optional ``last_usdjpy_rate_ts``."""
         safe_rate = self._coerce_finite_float(rate, 0.0)
-        if safe_rate <= 0.0:
-            safe_rate = DEFAULT_USDJPY_RATE
         safe_ts: float | None = None
         if ts is not None:
             parsed_ts = self._coerce_finite_float(ts, 0.0)
             safe_ts = max(parsed_ts, 0.0)
         with self.usdjpy_rate_lock:
+            if safe_rate <= 0.0:
+                existing_rate = self._coerce_finite_float(self.last_usdjpy_rate, 0.0)
+                if existing_rate <= 0.0:
+                    self.last_usdjpy_rate = DEFAULT_USDJPY_RATE
+                    self.last_usdjpy_rate_ts = 0.0
+                return self.last_usdjpy_rate, self.last_usdjpy_rate_ts
             self.last_usdjpy_rate = safe_rate
             if safe_ts is not None:
                 self.last_usdjpy_rate_ts = safe_ts

@@ -2419,6 +2419,20 @@ async function chatPollingReply(payload, options = {}) {
       showToast: false,
     });
     data = fetched || {};
+    if (data.ok === false || data.error_flag === true) {
+      const detailReason = data?.details?.reason
+        ? String(data.details.reason)
+        : "";
+      const errMsg =
+        detailReason ||
+        String(
+          data.message ||
+            data.error ||
+            data.reply ||
+            "AI応答の生成に失敗しました",
+        );
+      throw new Error(errMsg);
+    }
     if (!data.fetching) {
       resOk = true;
       break;

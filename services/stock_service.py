@@ -20,6 +20,7 @@ from route_helpers import cleanup_history_circuit_state
 from services.stock_provider import is_yfinance_rate_limit_error, with_yfinance_retry
 from utils.caching import (
     _set_cached_value,
+    clear_cache_key_in_bucket,
     history_short_cache_key,
     history_short_payload_cache_key,
 )
@@ -410,7 +411,10 @@ def fetch_history_async_task(
             else:
                 res = sanitized
         probe_success = isinstance(res, dict) and "error" not in res
+        neg_duration = min(duration, NEGATIVE_CACHE_TTL)
         if isinstance(res, dict) and "error" not in res:
+            if neg_duration != duration:
+                clear_cache_key_in_bucket(cache_key, neg_duration)
             _set_cached_value(cache_key, res, duration)
         # Persist successful history to disk cache for cold-start recovery
         if isinstance(res, dict) and "error" not in res:
@@ -425,7 +429,7 @@ def fetch_history_async_task(
             # Transient failures (e.g. semaphore timeout / server overloaded)
             # must not be cached; doing so would poison the endpoint for
             # NEGATIVE_CACHE_TTL and prevent polling from recovering.
-            _set_cached_value(cache_key, res, min(duration, NEGATIVE_CACHE_TTL))
+            _set_cached_value(cache_key, res, neg_duration)
     except Exception as e:
         logger.error("Async background history fetch failed for %s: %s", symbol, e)
     finally:

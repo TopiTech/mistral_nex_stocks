@@ -187,10 +187,12 @@ def test_trend_sources_rss_passes_raw_bytes_and_isolates_thread_sessions():
     t1.join(timeout=5)
     t2.join(timeout=5)
     assert len(set(thread_sessions.values())) == 2
-    old_id = id(trend_sources._get_trend_session())
+    # Keep a strong reference to the old session: CPython may reuse the id()
+    # of a freed object, so id comparison after cleanup is not reliable.
+    old_session = trend_sources._get_trend_session()
     trend_sources._cleanup_trend_session()
-    new_id = id(trend_sources._get_trend_session())
-    assert new_id != old_id
+    new_session = trend_sources._get_trend_session()
+    assert new_session is not old_session
     trend_sources._cleanup_trend_session()
 
 

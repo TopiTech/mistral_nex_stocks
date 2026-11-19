@@ -379,7 +379,7 @@ six==1.17.0
     #   python-dateutil
 soupsieve==2.10 ; python_full_version < '3.11.5'
     # via beautifulsoup4
-soupsieve==4.1 ; python_full_version >= '3.11.5'
+soupsieve==4.1.1 ; python_full_version >= '3.11.5'
     # via beautifulsoup4
 sse-starlette==3.6.0
     # via mcp

@@ -808,13 +808,24 @@
         return btn;
       };
 
-      // Only show US exchange switches for non-JP equities and non-indices
+      // Only show US exchange switches for US equities (exclude JP, indices, FX, crypto, bonds, commodities)
+      const normalizedPrefix = String(currentPrefix || "").toUpperCase();
+      const usSwitchablePrefixes = new Set([
+        "NASDAQ",
+        "NYSE",
+        "AMEX",
+        "NYSEARCA",
+        "BATS",
+        "IEX",
+        "OTC",
+      ]);
       if (
         !baseTicker.endsWith(".T") &&
         !baseTicker.startsWith("^") &&
-        !currentTvSymbol.startsWith("TSE:") &&
-        !currentTvSymbol.startsWith("FOREXCOM:") &&
-        !currentTvSymbol.startsWith("INDEX:")
+        !baseTicker.endsWith("=X") &&
+        !baseTicker.endsWith("=F") &&
+        (!currentTvSymbol.includes(":") ||
+          usSwitchablePrefixes.has(normalizedPrefix))
       ) {
         switchBtnGroup.appendChild(createExchangeBtn("NASDAQ"));
         switchBtnGroup.appendChild(createExchangeBtn("NYSE"));

@@ -30,7 +30,7 @@ from services.realtime.utils import (
     _scraper_market_state,
     extract_minkabu_price,
 )
-from utils.http_utils import close_response_quietly
+from utils.http_utils import close_response_quietly, decode_http_response_text
 from utils.normalization import is_bool_like, is_jp_stock_code
 from utils.threading import DaemonThreadPoolExecutor
 
@@ -445,8 +445,9 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
                 url = f"{self.ADR_URL}?a={clean_code}"
                 resp = self._get_session().get(url, timeout=6.0)
                 _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
-                if resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text:
-                    m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', resp.text)
+                body_html = decode_http_response_text(resp)
+                if resp.status_code == 200 and f'var Sno="{clean_code}"' in body_html:
+                    m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', body_html)
                     if m_parts:
                         parts = m_parts.group(1).split("_")
                     else:
@@ -595,7 +596,7 @@ class MinkabuScraper(_BaseFallbackScraper):
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
                 try:
-                    html = resp.text
+                    html = decode_http_response_text(resp)
                 except Exception as exc:
                     logger.warning("[Minkabu Scraper] Failed reading HTML for %s: %s", symbol, exc)
                     html = ""
@@ -903,7 +904,7 @@ class YahooJPRealtimeScraper:
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 try:
-                    soup = BeautifulSoup(resp.text, "html.parser")
+                    soup = BeautifulSoup(decode_http_response_text(resp), "html.parser")
                     price_el = soup.select_one(".si_i1_2 span.kabuka") or soup.select_one("span.kabuka")
                     if price_el:
                         price_clean = re.sub(r"[^\d.]", "", price_el.text)
@@ -978,7 +979,7 @@ class YahooJPRealtimeScraper:
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200 and BeautifulSoup is not None:
                 try:
-                    soup = BeautifulSoup(resp.text, "html.parser")
+                    soup = BeautifulSoup(decode_http_response_text(resp), "html.parser")
                     pts_box = soup.select_one(".si_i1_3")
                     if pts_box:
                         pts_val_el = pts_box.select_one(".kabuka2")
@@ -1028,7 +1029,7 @@ class YahooJPRealtimeScraper:
             _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
             if resp.status_code == 200:
                 try:
-                    html = resp.text
+                    html = decode_http_response_text(resp)
                 except Exception as exc:
                     logger.warning("[Yahoo JP Scraper] Failed reading HTML for %s: %s", symbol, exc)
                     html = ""
@@ -1118,7 +1119,7 @@ class YahooJPRealtimeScraper:
 
             if resp.status_code == 200:
                 try:
-                    html = resp.text
+                    html = decode_http_response_text(resp)
                 except Exception as exc:
                     logger.warning("[Yahoo JP Scraper] Failed reading PTS HTML for %s: %s", symbol, exc)
                     html = ""

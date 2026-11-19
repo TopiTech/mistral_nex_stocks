@@ -163,10 +163,20 @@ document.addEventListener("DOMContentLoaded", () => {
     return true;
   }
 
+  function clear3DErrorBanner() {
+    document
+      .querySelectorAll?.(".heatmap-3d-error")
+      ?.forEach((node) => node.remove());
+  }
+
   function switchViewMode(mode) {
+    if (mode === "2d") {
+      clear3DErrorBanner();
+    }
     if (state.viewMode === mode) return;
 
     if (mode === "3d") {
+      clear3DErrorBanner();
       if (!els.canvas3d || typeof THREE === "undefined") {
         // (L21, 2026-11-07 review) #heatmap-3d-canvas carries `hidden` on
         // these paths, so writing the message there gave the user NO
@@ -227,6 +237,7 @@ document.addEventListener("DOMContentLoaded", () => {
         showError(state.lastErrorMessage);
       }
     } else {
+      clear3DErrorBanner();
       state.viewMode = mode;
       els.view2d?.classList.toggle("active", true);
       els.view3d?.classList.toggle("active", false);
@@ -513,6 +524,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ?.querySelectorAll(".heatmap-error-state")
         .forEach((node) => node.remove());
       state.stockCount = normalized.length;
+      clear3DErrorBanner();
       if (state.viewMode === "3d") {
         render3DHeatmap(normalized);
       } else {
@@ -1155,6 +1167,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const { scene } = state.three;
     if (!scene || typeof THREE === "undefined") return;
     // 描画成功時は以前のエラー表示を除去する
+    clear3DErrorBanner();
     els.canvas3d
       ?.querySelectorAll(".heatmap-error-state")
       .forEach((node) => node.remove());

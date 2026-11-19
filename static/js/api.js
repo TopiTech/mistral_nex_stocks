@@ -1845,15 +1845,15 @@ async function loadNews(forceRefresh = false) {
     });
   } catch (e) {
     $logger.error("News error:", e);
-    const message =
-      e?.name === "AbortError"
-        ? "ニュース取得がタイムアウトしました。一部の情報が表示されない可能性があります。"
-        : `ニュース取得エラー: ${e.message}`;
+    const isTimeout = e?.name === "AbortError" || e?.name === "TimeoutError";
+    const message = isTimeout
+      ? "ニュース取得がタイムアウトしました。一部の情報が表示されない可能性があります。"
+      : `ニュース取得エラー: ${e.message}`;
     $logger.warn(message);
 
     if (newsMetaStatsEl) {
       newsMetaStatsEl.textContent = "";
-      if (e?.name === "AbortError") {
+      if (isTimeout) {
         const loadingPlaceholder = "最新情報を検索・分析中...";
         const hasPartial = [usBox, jpBox, trendsBox].some(
           (box) =>
@@ -1872,7 +1872,7 @@ async function loadNews(forceRefresh = false) {
       }
     }
 
-    if (e?.name !== "AbortError") {
+    if (!isTimeout) {
       showToast(message, "#ff7d7d");
       if (usBox) {
         usBox.textContent = `エラー: ${e.message}`;

@@ -3,6 +3,7 @@ utils/http_utils.py - HTTP request/response helper utilities.
 """
 
 import math
+import re
 import time
 from datetime import UTC
 from email.utils import parsedate_to_datetime
@@ -108,3 +109,87 @@ def close_response_quietly(resp: Any) -> None:
             close_fn()
         except Exception:
             pass
+
+
+_CHARSET_RE = re.compile(r"charset\s*=\s*['\"]?([A-Za-z0-9._-]+)", re.IGNORECASE)
+_META_CHARSET_RE = re.compile(
+    rb"""<meta[^>]+charset\s*=\s*['"]?\s*([A-Za-z0-9._-]+)""",
+    re.IGNORECASE,
+)
+
+
+def decode_http_response_text(resp: Any, *, default_encoding: str = "utf-8") -> str:
+    """Decode an HTTP response body without triggering requests' ISO-8859-1 fallback.
+
+    When HTTP servers omit ``charset=`` in ``Content-Type: text/html`` or
+    ``text/xml``, ``requests`` defaults ``response.encoding`` to ``ISO-8859-1``,
+    corrupting UTF-8/Shift_JIS/EUC-JP pages before parsers see them. Prefer
+    raw ``content`` bytes when present (honoring explicit HTTP charset or
+    HTML ``<meta charset>``), falling back to ``response.text`` only for mock
+    objects that expose text without raw bytes.
+    """
+    if resp is None:
+        return ""
+
+    raw = getattr(resp, "content", None)
+    if isinstance(raw, (bytes, bytearray)) and raw:
+        raw_bytes = bytes(raw)
+        candidates: list[str] = []
+
+        headers = getattr(resp, "headers", None)
+        content_type = None
+        if isinstance(headers, dict) or (
+            headers is not None and callable(getattr(headers, "get", None))
+        ):
+            content_type = headers.get("Content-Type") or headers.get("content-type")
+        if isinstance(content_type, str):
+            m_hdr = _CHARSET_RE.search(content_type)
+            if m_hdr:
+                candidates.append(m_hdr.group(1))
+
+        resp_enc = getattr(resp, "encoding", None)
+        if (
+            isinstance(resp_enc, str)
+            and resp_enc.strip()
+            and resp_enc.strip().lower() not in ("iso-8859-1", "latin-1", "latin1")
+        ):
+            candidates.append(resp_enc.strip())
+
+        m_meta = _META_CHARSET_RE.search(raw_bytes[:4096])
+        if m_meta:
+            try:
+                candidates.append(m_meta.group(1).decode("ascii"))
+            except UnicodeDecodeError:
+                pass
+
+        for enc in candidates:
+            try:
+                return raw_bytes.decode(enc)
+            except (LookupError, UnicodeDecodeError):
+                continue
+
+        # Try strict UTF-8 before apparent_encoding so clean UTF-8 pages succeed fast.
+        try:
+            return raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+
+        apparent = getattr(resp, "apparent_encoding", None)
+        if isinstance(apparent, str) and apparent.strip():
+            try:
+                return raw_bytes.decode(apparent.strip())
+            except (LookupError, UnicodeDecodeError):
+                pass
+
+        for fallback_enc in (default_encoding, "cp932", "euc_jp", "utf-8"):
+            if not fallback_enc:
+                continue
+            try:
+                return raw_bytes.decode(fallback_enc)
+            except (LookupError, UnicodeDecodeError):
+                continue
+
+        return raw_bytes.decode(default_encoding or "utf-8", errors="replace")
+
+    text = getattr(resp, "text", None)
+    return text if isinstance(text, str) else ""

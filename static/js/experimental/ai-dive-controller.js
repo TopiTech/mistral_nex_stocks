@@ -35,6 +35,7 @@
       this._newsAbortController = null;
       this._returnFocusTarget = null;
       this._unsubState = null;
+      this._hasAnalysisResult = false;
 
       this.bindEvents();
       this.bindState();
@@ -515,6 +516,7 @@
     resetTier4Ai() {
       const container = this.els.tier4Container;
       const startBtn = this.els.startAiBtn;
+      this._hasAnalysisResult = false;
       if (startBtn) {
         startBtn.disabled = false;
         startBtn.textContent = "✨ AI深層分析を開始";
@@ -659,6 +661,7 @@
           return;
         }
         this.renderAiAnalysisResult(data);
+        this._hasAnalysisResult = true;
       } catch (err) {
         if (
           err?.name !== "AbortError" &&
@@ -685,7 +688,9 @@
           this.isCurrentAiDiveSymbol(stock.symbol)
         ) {
           startBtn.disabled = false;
-          startBtn.textContent = "🔄 AI分析を再実行";
+          startBtn.textContent = this._hasAnalysisResult
+            ? "🔄 AI分析を再実行"
+            : "✨ AI深層分析を開始";
         }
       }
     }

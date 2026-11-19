@@ -128,8 +128,15 @@ class RealtimeMarketEngine:
             return market, symbol, token, self._engine_epoch
 
     def _invalidate_registration(self, symbol: str, market: str) -> None:
+        aliases = set(_tv_purge_key_variants(symbol))
+        aliases.add(symbol)
+        if market == "jp":
+            upper = symbol.upper()
+            bare = upper.removesuffix(".T")
+            aliases.update((bare, f"{bare}.T"))
         with self.store_lock:
-            self._registration_tokens.pop((market, symbol), None)
+            for alias in aliases:
+                self._registration_tokens.pop((market, alias), None)
 
     def _registration_is_current_locked(self, registration: tuple[str, str, object, int]) -> bool:
         market, symbol, token, epoch = registration

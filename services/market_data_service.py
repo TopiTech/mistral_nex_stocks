@@ -125,7 +125,10 @@ def _build_market_row(
     )
     market_cap = _finite_non_negative(mkt_cap_val if mkt_cap_val is not None else shares_cap)
 
-    vol_val = normalize_optional_number(source.get("volume"), allow_zero=True)
+    vol_val = _first_not_none(
+        normalize_optional_number(source.get("volume"), allow_zero=True),
+        normalize_optional_number(source.get("regularMarketVolume"), allow_zero=True),
+    )
     volume = vol_val if vol_val is not None else 0.0
 
     high_val = _first_not_none(

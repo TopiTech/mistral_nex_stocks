@@ -1383,10 +1383,14 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   };
   const normalizedOhlc = rawBaseData
     .map((d) => {
+      const rawX = d.x != null ? d.x : d.date;
+      const numericX = _finiteOrNull(rawX);
       const ts =
-        _finiteOrNull(
-          d.x != null ? d.x : d.date ? new Date(d.date).getTime() : 0,
-        ) ?? 0;
+        numericX !== null
+          ? numericX
+          : typeof rawX === "string" && rawX.trim()
+            ? (_finiteOrNull(Date.parse(rawX)) ?? 0)
+            : 0;
       const c = _finiteOrNull(d.c != null ? d.c : d.price);
       if (ts <= 0 || c === null) return null;
       const o = _finiteOrNull(d.o != null ? d.o : d.price) ?? c;
@@ -1762,7 +1766,10 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     (wrapper ? wrapper.dataset.market : null) ||
     (stockKey && stockKey.endsWith(".T") ? "jp" : "us");
   chart.$currency =
-    options.currency || (chart.$market === "jp" ? "JPY" : "USD");
+    options.currency ||
+    wrapper?.__stockData?.currency ||
+    wrapper?.dataset?.currency ||
+    (chart.$market === "jp" ? "JPY" : "USD");
 
   // (L20) Restore legend-hidden datasets carried over the destroy/recreate.
   if (hiddenByLabel && hiddenByLabel.size > 0) {

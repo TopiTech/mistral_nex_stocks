@@ -15,7 +15,11 @@ import weakref
 from typing import Any, ClassVar
 
 from credential_manager import get_alphavantage_api_key
-from utils.http_utils import close_response_quietly, parse_retry_after
+from utils.http_utils import (
+    close_response_quietly,
+    decode_http_response_text,
+    parse_retry_after,
+)
 from utils.normalization import _finite_number, is_bool_like
 
 BeautifulSoup: Any
@@ -385,9 +389,10 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
                 )
                 return None
 
+            body_html = decode_http_response_text(resp)
             # Pattern 1: root.App.main = {...}
             match = re.search(
-                r"root\.App\.main\s*=\s*(\{.*?\});\s*\(function", resp.text, re.DOTALL
+                r"root\.App\.main\s*=\s*(\{.*?\});\s*\(function", body_html, re.DOTALL
             )
             data = None
             if match:
@@ -407,9 +412,9 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
                         data = None
 
             # Pattern 2: __NEXT_DATA__ JSON script tag
-            if not data and '<script id="__NEXT_DATA__"' in resp.text:
+            if not data and '<script id="__NEXT_DATA__"' in body_html:
                 next_match = re.search(
-                    r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL
+                    r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', body_html, re.DOTALL
                 )
                 if next_match:
                     try:
@@ -420,7 +425,7 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
             if not data:
                 # Fallback: parse direct live price markers from HTML attributes /
                 # testids when the JSON state is unavailable (markup drift).
-                marker_quote = self._parse_live_price_marker(resp.text, symbol)
+                marker_quote = self._parse_live_price_marker(body_html, symbol)
                 if marker_quote is not None:
                     return marker_quote
                 logger.debug("Yahoo HTML scraper failed to find JSON state for %s", symbol)
@@ -439,7 +444,7 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
             if not price_data:
                 # JSON state exists but carries no quote fields (markup drift):
                 # fall back to direct live price markers before giving up.
-                marker_quote = self._parse_live_price_marker(resp.text, symbol)
+                marker_quote = self._parse_live_price_marker(body_html, symbol)
                 if marker_quote is not None:
                     return marker_quote
                 return None
@@ -604,8 +609,9 @@ class YahooJPScraperProvider(_CurlCffiSessionProvider):
                 )
                 return None
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            price_text = _extract_yahoo_jp_price(soup, resp.text)
+            body_html = decode_http_response_text(resp)
+            soup = BeautifulSoup(body_html, "html.parser")
+            price_text = _extract_yahoo_jp_price(soup, body_html)
             if price_text is None:
                 logger.debug("Yahoo JP scraper could not locate a price for %s", symbol)
                 return None
@@ -869,10 +875,11 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
                     if is_session
                     else client.get(url, impersonate="chrome120", timeout=6.0)
                 )
+                body_html = decode_http_response_text(resp)
                 if not self._report_http_block(resp) and (
-                    resp.status_code == 200 and f'var Sno="{clean_code}"' in resp.text
+                    resp.status_code == 200 and f'var Sno="{clean_code}"' in body_html
                 ):
-                    m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', resp.text)
+                    m_parts = re.search(r'var\s+A0\s*=\s*"([^"]+)"', body_html)
                     if m_parts:
                         parts = m_parts.group(1).split("_")
                     else:
@@ -934,7 +941,7 @@ class MinkabuProvider(_CurlCffiSessionProvider):
                 # on the page (e.g. 手数料290円) and returned it as the price.
                 from services.realtime.utils import extract_minkabu_price
 
-                raw_price = extract_minkabu_price(resp.text)
+                raw_price = extract_minkabu_price(decode_http_response_text(resp))
                 price = _finite_number(raw_price) if raw_price is not None else None
                 if price is not None and math.isfinite(price) and price > 0:
                     # Previous close / OHLC are unknown from this page;

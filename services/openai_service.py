@@ -43,6 +43,7 @@ from credential_manager import (
 from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.networking import validate_outbound_base_url
+from utils.normalization import is_bool_like
 from utils.text_utils import _sanitize_error_message
 from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import (
@@ -77,6 +78,21 @@ def _safe_base_url_for_log(base_url: str) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_openai_temperature(temperature: Any) -> float | None:
+    """Validate and clamp OpenAI-compatible sampling temperature to [0.0, 2.0]."""
+    if temperature is None:
+        return None
+    if is_bool_like(temperature):
+        raise ValueError("temperature must be a finite number")
+    try:
+        temp_val = float(temperature)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("temperature must be a finite number") from exc
+    if not math.isfinite(temp_val):
+        raise ValueError("temperature must be finite (NaN/Inf rejected)")
+    return max(0.0, min(temp_val, 2.0))
 
 
 def _openai_response_has_content(data: Any) -> bool:
@@ -723,8 +739,9 @@ def call_openai_chat(
         "messages": effective_messages,
         token_param_key: token_limit,
     }
-    if temperature is not None:
-        payload["temperature"] = max(0.0, min(float(temperature), 2.0))
+    norm_temp = _normalize_openai_temperature(temperature)
+    if norm_temp is not None:
+        payload["temperature"] = norm_temp
     if (
         reasoning_effort
         and isinstance(reasoning_effort, str)
@@ -1166,8 +1183,9 @@ def stream_openai_chat(
         token_param_key: token_limit,
         "stream": True,
     }
-    if temperature is not None:
-        payload["temperature"] = max(0.0, min(float(temperature), 2.0))
+    norm_temp = _normalize_openai_temperature(temperature)
+    if norm_temp is not None:
+        payload["temperature"] = norm_temp
     if (
         reasoning_effort
         and isinstance(reasoning_effort, str)

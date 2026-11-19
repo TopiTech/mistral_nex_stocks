@@ -305,6 +305,16 @@ def _is_polling_token_inflight(token: str) -> bool:
             for cached_key in list(news_result_cache.keys()):
                 if cached_key.endswith(f":{token}"):
                     return False
+
+        from routes.stocks.ai_portfolio import (
+            ai_portfolio_fetch_lock,
+            ai_portfolio_token_records,
+        )
+
+        with ai_portfolio_fetch_lock:
+            token_record = ai_portfolio_token_records.get(token)
+            if token_record is not None:
+                return not token_record[1]
     except Exception:
         return True
     # No matching active or finished job entry found for this token;
@@ -2284,11 +2294,15 @@ def ensure_stock_placeholder_in_caches(
             app_state.market.target_stocks_cache,
             app_state.market.current_stocks_cache,
         ):
-            if norm_market not in cache:
-                cache[norm_market] = []
-            target_list = cache[norm_market]
-            entry = next((s for s in target_list if s.get("symbol") == symbol), None)
-            if entry is None:
+            if norm_market in cache:
+                target_list = list(cache[norm_market] or [])
+            else:
+                target_list = []
+            match_idx = next(
+                (i for i, s in enumerate(target_list) if isinstance(s, dict) and s.get("symbol") == symbol),
+                None,
+            )
+            if match_idx is None:
                 new_entry: dict[str, Any] = {
                     "symbol": symbol,
                     "name": name,
@@ -2304,16 +2318,22 @@ def ensure_stock_placeholder_in_caches(
                     new_entry["avg_fx_rate"] = avg_fx_rate
                 target_list.append(new_entry)
             else:
+                updated_entry = dict(target_list[match_idx])
                 if shares is not None:
-                    entry["shares"] = shares
+                    updated_entry["shares"] = shares
                 if avg_price is not None:
-                    entry["avg_price"] = avg_price
+                    updated_entry["avg_price"] = avg_price
                 if norm_market in ("jp", "idx"):
-                    entry.pop("avg_fx_rate", None)
+                    updated_entry.pop("avg_fx_rate", None)
                 elif avg_fx_rate is not None:
-                    entry["avg_fx_rate"] = avg_fx_rate
+                    updated_entry["avg_fx_rate"] = avg_fx_rate
                 elif shares is not None or avg_price is not None:
-                    entry.pop("avg_fx_rate", None)
+                    updated_entry.pop("avg_fx_rate", None)
+                target_list[match_idx] = updated_entry
+            # Replace the market list container (copy-on-write) so concurrent
+            # snapshot/interpolation writers checking list identity never
+            # overwrite newly added placeholders or updated holdings.
+            cache[norm_market] = target_list
 
 
 def remove_stock_from_caches(symbol, market):

@@ -250,6 +250,8 @@ def _reset_caches_and_sessions(app_state: object) -> None:
         with _ai_portfolio.ai_portfolio_fetch_lock:
             _ai_portfolio.ai_portfolio_fetch_inflight.clear()
             _ai_portfolio.ai_portfolio_result_cache.clear()
+            if hasattr(_ai_portfolio, "ai_portfolio_token_records"):
+                _ai_portfolio.ai_portfolio_token_records.clear()
     except (ImportError, AttributeError):
         pass
 

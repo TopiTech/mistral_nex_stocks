@@ -463,8 +463,13 @@ function updateStockUI(wrapper, stock) {
   if (oldDataStr === newDataStr) return;
   wrapper.dataset.lastDataHash = newDataStr;
 
-  const hasSparklinePoints =
-    Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
+  const validSparklineCount = Array.isArray(stock.chart_data)
+    ? stock.chart_data.reduce((cnt, d) => {
+        const p = typeof d === "number" ? d : (d?.price ?? d?.c);
+        return typeof p === "number" && Number.isFinite(p) ? cnt + 1 : cnt;
+      }, 0)
+    : 0;
+  const hasSparklinePoints = validSparklineCount >= 2;
   const freshSparklineData = hasFreshSparklineData(stock) && hasSparklinePoints;
 
   wrapper.__stockData = { ...stock };
@@ -1466,8 +1471,7 @@ function createStockCard(stock, marketContext) {
   wrapper.dataset.visible = "false";
   initCardIntersectionObserver().observe(wrapper);
 
-  const hasSparklinePoints =
-    Array.isArray(stock.chart_data) && stock.chart_data.length > 0;
+  const hasSparklinePoints = hasValidSparklineData(stock.chart_data);
   setSparklineVisibility(wrapper, hasSparklinePoints);
   if (hasSparklinePoints) {
     if (isElementInViewport(wrapper)) {
@@ -2687,9 +2691,26 @@ function showChartError(wrapper, msg, type = "error") {
   container.appendChild(errDiv);
 }
 
+function hasValidSparklineData(data) {
+  if (!Array.isArray(data) || data.length < 2) return false;
+  let validCount = 0;
+  for (const d of data) {
+    const p = typeof d === "number" ? d : (d?.price ?? d?.c);
+    if (typeof p === "number" && Number.isFinite(p)) {
+      validCount += 1;
+      if (validCount >= 2) return true;
+    }
+  }
+  return false;
+}
+
 const drawSparkline = (wrapper, data) => {
   const canvas = wrapper.querySelector(".spark-canvas");
-  if (!canvas || !data?.length) return;
+  if (!canvas) return;
+  if (!data?.length) {
+    setSparklineVisibility(wrapper, false);
+    return;
+  }
 
   const stockKey = wrapper.dataset.stockKey;
   if (stockKey) {
@@ -2704,8 +2725,11 @@ const drawSparkline = (wrapper, data) => {
   // 描画可能点が揃うまで可視化しない(空のスパークラインを見せるのを防ぐ)。
   const prices = data
     .map((d) => (typeof d === "number" ? d : (d?.price ?? d?.c)))
-    .filter((p) => typeof p === "number" && !isNaN(p));
-  if (prices.length < 2) return;
+    .filter((p) => typeof p === "number" && Number.isFinite(p));
+  if (prices.length < 2) {
+    setSparklineVisibility(wrapper, false);
+    return;
+  }
   setSparklineVisibility(wrapper, true);
 
   const rect = canvas.getBoundingClientRect();
@@ -3830,12 +3854,28 @@ async function triggerAiTechnicalLines(wrapper) {
       stockKey &&
       drawerEl.dataset?.stockKey === stockKey,
     );
+  const fsModal = document.getElementById("chart-fullscreen-modal");
+  const isFsForThisStock = () =>
+    Boolean(
+      fsModal &&
+      !fsModal.classList.contains("hidden") &&
+      stockKey &&
+      fsModal.dataset?.stockKey === stockKey,
+    );
+  const canTouchFsSurface = () =>
+    Boolean(
+      fsModal &&
+      (!fsModal.dataset?.stockKey || fsModal.dataset.stockKey === stockKey),
+    );
+  const isFsActiveAtStart = isFsForThisStock();
   const btns = targetWrapper.querySelectorAll(".ai-tech-lines-btn");
   const drawerBtns =
     isDrawerActive && drawerEl
       ? Array.from(drawerEl.querySelectorAll(".ai-tech-lines-btn") || [])
       : [];
-  const fsBtn = document.getElementById("fs-ai-tech-lines-btn");
+  const fsBtn = isFsActiveAtStart
+    ? document.getElementById("fs-ai-tech-lines-btn")
+    : null;
   const allBtns = Array.from(
     new Set([...Array.from(btns || []), ...drawerBtns, fsBtn].filter(Boolean)),
   );
@@ -3852,14 +3892,11 @@ async function triggerAiTechnicalLines(wrapper) {
       ? drawerEl?.querySelector(".chart-container") ||
         document.querySelector("#stock-detail-drawer .chart-container")
       : null);
-  const fsCanvasWrapper = document.getElementById("fs-chart-canvas-wrapper");
+  const fsCanvasWrapper = isFsActiveAtStart
+    ? document.getElementById("fs-chart-canvas-wrapper")
+    : null;
   showAiTechnicalLoading(chartContainer);
-  if (
-    fsCanvasWrapper &&
-    !document
-      .getElementById("chart-fullscreen-modal")
-      ?.classList.contains("hidden")
-  ) {
+  if (fsCanvasWrapper) {
     showAiTechnicalLoading(fsCanvasWrapper);
   }
 
@@ -3916,9 +3953,8 @@ async function triggerAiTechnicalLines(wrapper) {
     renderAiTechnicalLinesSummary(targetWrapper, data);
     refreshStockChart(targetWrapper, period, interval);
 
-    // If Fullscreen modal is open, redraw it too
-    const fsModal = document.getElementById("chart-fullscreen-modal");
-    if (fsModal && !fsModal.classList.contains("hidden")) {
+    // If Fullscreen modal is open for this stock, redraw it too
+    if (isFsForThisStock()) {
       const fsCanvas = document.getElementById("fs-chart-canvas");
       if (fsCanvas) {
         const freshHistory =
@@ -3952,8 +3988,11 @@ async function triggerAiTechnicalLines(wrapper) {
     // 復元しない（先発の finally が後発の実行中UIを壊し、多重送信を許す）。
     if (isCurrentLinesRequest()) {
       hideAiTechnicalLoading(chartContainer);
-      hideAiTechnicalLoading(fsCanvasWrapper);
+      if (fsCanvasWrapper && canTouchFsSurface()) {
+        hideAiTechnicalLoading(fsCanvasWrapper);
+      }
       allBtns.forEach((b) => {
+        if (b === fsBtn && !canTouchFsSurface()) return;
         b.disabled = false;
         b.classList.remove("loading");
         b.textContent = "✨ AIテクニカル描画";

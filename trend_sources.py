@@ -318,32 +318,42 @@ def extract_titles(items: Iterable[dict], limit: int = 15) -> list[str]:
 
 from requests.adapters import HTTPAdapter
 
-_TREND_SESSION: requests.Session | None = None
+_TREND_SESSION_LOCAL = threading.local()
+_TREND_SESSIONS: set[requests.Session] = set()
 _TREND_SESSION_LOCK = threading.Lock()
+_TREND_SESSION_EPOCH = 0
 
 
 def _get_trend_session() -> requests.Session:
-    global _TREND_SESSION
-    if _TREND_SESSION is None:
-        with _TREND_SESSION_LOCK:
-            if _TREND_SESSION is None:
-                s = requests.Session()
-                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
-                s.mount("https://", adapter)
-                s.mount("http://", adapter)
-                _TREND_SESSION = s
-    return _TREND_SESSION
+    """Return a thread-local HTTP session for trend collection."""
+    with _TREND_SESSION_LOCK:
+        epoch = _TREND_SESSION_EPOCH
+    session = getattr(_TREND_SESSION_LOCAL, "session", None)
+    if session is not None and getattr(_TREND_SESSION_LOCAL, "epoch", -1) == epoch:
+        return session
+    s = requests.Session()
+    adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    _TREND_SESSION_LOCAL.session = s
+    _TREND_SESSION_LOCAL.epoch = epoch
+    with _TREND_SESSION_LOCK:
+        _TREND_SESSIONS.add(s)
+    return s
 
 
 def _cleanup_trend_session() -> None:
-    global _TREND_SESSION
+    global _TREND_SESSION_EPOCH
+    _TREND_SESSION_LOCAL.session = None
     with _TREND_SESSION_LOCK:
-        if _TREND_SESSION is not None:
-            try:
-                _TREND_SESSION.close()
-            except Exception:
-                pass
-            _TREND_SESSION = None
+        _TREND_SESSION_EPOCH += 1
+        sessions = list(_TREND_SESSIONS)
+        _TREND_SESSIONS.clear()
+    for s in sessions:
+        try:
+            s.close()
+        except Exception:
+            pass
 
 
 atexit.register(_cleanup_trend_session)
@@ -385,6 +395,9 @@ def _fetch_rss_feed(rss_url: str):
             },
         )
         response.raise_for_status()
+        raw_content = getattr(response, "content", None)
+        if isinstance(raw_content, (bytes, bytearray)) and raw_content:
+            return feedparser.parse(bytes(raw_content))
         return feedparser.parse(response.text)
     finally:
         close_response_quietly(response)

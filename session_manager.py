@@ -19,6 +19,7 @@ and rate-limit detection.
 """
 
 import logging
+import math
 import threading
 import time
 import weakref
@@ -456,33 +457,27 @@ class YFinanceSessionManager:
                     time.sleep(wait_time)
 
                 # Enforce a hard timeout ceiling of 15.0s to prevent sockets from hanging indefinitely
-                requested_timeout = kwargs.get("timeout")
-                if requested_timeout is None or isinstance(requested_timeout, bool):
-                    kwargs["timeout"] = 15.0
-                elif isinstance(requested_timeout, (int, float)):
-                    kwargs["timeout"] = min(requested_timeout, 15.0)
-                elif isinstance(requested_timeout, tuple):
-                    conn_to = (
-                        requested_timeout[0]
-                        if len(requested_timeout) > 0
-                        and requested_timeout[0] is not None
-                        and not isinstance(requested_timeout[0], bool)
-                        else 15.0
-                    )
-                    read_to = (
-                        requested_timeout[1]
-                        if len(requested_timeout) > 1
-                        and requested_timeout[1] is not None
-                        and not isinstance(requested_timeout[1], bool)
-                        else 15.0
-                    )
+                def _cap_timeout_component(val: Any) -> float:
+                    if val is None or isinstance(val, bool):
+                        return 15.0
                     try:
-                        kwargs["timeout"] = (
-                            min(float(conn_to), 15.0),
-                            min(float(read_to), 15.0),
-                        )
-                    except (ValueError, TypeError):
-                        kwargs["timeout"] = 15.0
+                        parsed = float(val)
+                    except (TypeError, ValueError, OverflowError):
+                        return 15.0
+                    if not math.isfinite(parsed) or parsed <= 0.0:
+                        return 15.0
+                    return min(parsed, 15.0)
+
+                requested_timeout = kwargs.get("timeout")
+                if isinstance(requested_timeout, tuple):
+                    conn_raw = requested_timeout[0] if len(requested_timeout) > 0 else None
+                    read_raw = requested_timeout[1] if len(requested_timeout) > 1 else None
+                    kwargs["timeout"] = (
+                        _cap_timeout_component(conn_raw),
+                        _cap_timeout_component(read_raw),
+                    )
+                else:
+                    kwargs["timeout"] = _cap_timeout_component(requested_timeout)
 
                 # Thundering-herd guard: cap concurrent in-flight yfinance HTTP requests.
                 with self._acquire_concurrency():
@@ -727,12 +722,13 @@ class YFinanceSessionManager:
             with self._lock:
                 self._consecutive_401_count += 1
                 self._last_401_ts = time.time()
+                streak_401 = self._consecutive_401_count
             self._rotate_user_agent()
             logger.warning(
                 "yfinance session received 401 (Invalid Crumb) for url: %s (retry_after=%.0fs, resetting auth/rotating UA, streak=%d)",
                 url,
                 retry_after or 0.0,
-                self._consecutive_401_count,
+                streak_401,
             )
             return
 
@@ -745,6 +741,7 @@ class YFinanceSessionManager:
                 self._adaptive_interval_sec * growth,
                 YFINANCE_REQ_MIN_INTERVAL_MAX,
             )
+            adaptive_interval = self._adaptive_interval_sec
             self._last_block_ts = now_block
 
             # Status-specific default exclusion durations.
@@ -761,7 +758,7 @@ class YFinanceSessionManager:
             label,
             url,
             retry_after or 0.0,
-            self._adaptive_interval_sec,
+            adaptive_interval,
         )
 
     def get_session(self):

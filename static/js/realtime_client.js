@@ -370,6 +370,7 @@
     }
 
     _applyDeltasNow(deltas) {
+      let hasStockUpdate = false;
       Object.keys(deltas).forEach((symbol) => {
         const data = deltas[symbol];
         if (!data) return;
@@ -402,6 +403,7 @@
                     st.symbol === cached.cleanCode),
               );
               if (sItem) {
+                hasStockUpdate = true;
                 foundStock = sItem;
                 foundMarket = sItem.market || m;
                 // Resolve yfinance previous close from stock object
@@ -556,8 +558,20 @@
               }
             }
           }
+          if (cached.wrappers.length > 0) {
+            hasStockUpdate = true;
+          }
         });
       });
+      if (
+        hasStockUpdate &&
+        typeof document !== "undefined" &&
+        document.querySelector?.(".tab.active")?.id === "tab-portfolio" &&
+        typeof window !== "undefined" &&
+        typeof window.debouncedRenderPortfolio === "function"
+      ) {
+        window.debouncedRenderPortfolio();
+      }
     }
   }
 

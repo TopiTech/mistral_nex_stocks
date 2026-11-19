@@ -234,6 +234,9 @@ def bg_interpolate_loop() -> None:
                 # endpoint / _update_indices_data) replaces them meanwhile,
                 # the write-back below silently reverts that fresher payload
                 # and announces the stale one to every SSE listener.
+                owned_target_us = app_state.market.target_stocks_cache.get("us")
+                owned_target_jp = app_state.market.target_stocks_cache.get("jp")
+                owned_target_idx = app_state.market.target_stocks_cache.get("idx")
                 owned_us = app_state.market.current_stocks_cache.get("us")
                 owned_jp = app_state.market.current_stocks_cache.get("jp")
                 owned_idx = app_state.market.current_stocks_cache.get("idx")
@@ -260,7 +263,10 @@ def bg_interpolate_loop() -> None:
 
                 with app_state.cache.sse_data_lock:
                     still_ours = (
-                        app_state.market.current_stocks_cache.get("us") is owned_us
+                        app_state.market.target_stocks_cache.get("us") is owned_target_us
+                        and app_state.market.target_stocks_cache.get("jp") is owned_target_jp
+                        and app_state.market.target_stocks_cache.get("idx") is owned_target_idx
+                        and app_state.market.current_stocks_cache.get("us") is owned_us
                         and app_state.market.current_stocks_cache.get("jp") is owned_jp
                         and app_state.market.current_stocks_cache.get("idx") is owned_idx
                         and app_state.market.current_indices_cache is owned_indices

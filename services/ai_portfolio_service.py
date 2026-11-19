@@ -757,8 +757,12 @@ def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None
 
 
 def _find_saved_ai_portfolio(clean_id: str, search_theme: str) -> dict[str, Any] | None:
-    """Return the first saved portfolio matching the requested id or theme."""
-    for p in load_saved_ai_portfolios():
+    """Return the first saved portfolio matching the requested id or theme.
+
+    Uses the strict storage loader so corrupt/unreadable storage fails fast
+    before consuming external web-search or LLM quota.
+    """
+    for p in _load_saved_ai_portfolios_strict():
         if p.get("id") == clean_id or p.get("theme") == search_theme:
             return p
     return None

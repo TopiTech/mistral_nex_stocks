@@ -806,9 +806,28 @@ def api_chat():
                 try:
                     result_holder["step"] = "calling_llm"
                     result_holder["message"] = "AIモデルへ問い合わせ中..."
-                    result_holder["result"] = _call_mistral_chat_with_retry(
+                    reply_content = _call_mistral_chat_with_retry(
                         api_key, messages_snapshot, market, symbol
                     )
+                    result_holder["result"] = reply_content
+                    # Persist the completed assistant turn directly from the
+                    # worker job (matching _stream_chat_response) so disconnecting
+                    # clients after fetching=True never lose the answer from SQLite.
+                    persisted_text = reply_content or _EMPTY_CHAT_REPLY
+                    normalized_reply = _normalize_for_history(persisted_text)
+                    try:
+                        with app_state.ai.chat_history_lock:
+                            app_state.ai.chat_history.append_message_if_not_duplicate(
+                                chat_key,
+                                {"role": "assistant", "content": normalized_reply},
+                                normalize=_normalize_for_history,
+                            )
+                    except Exception as hist_exc:
+                        current_app.logger.warning(
+                            "Failed to persist async chat reply id=%s: %s",
+                            req_id,
+                            hist_exc,
+                        )
                     result_holder["step"] = "done"
                     result_holder["message"] = "完了"
                 except Exception as exc:

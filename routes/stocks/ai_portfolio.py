@@ -198,6 +198,48 @@ AI_PORTFOLIO_RESULT_CACHE_TTL = 300.0
 ai_portfolio_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=128, ttl=AI_PORTFOLIO_RESULT_CACHE_TTL
 )
+# Tracks validated request_token -> ((operation, conversation_scope, theme), delivered).
+# Bound to ai_portfolio_fetch_lock so cross-payload reuse returns 409 Conflict and
+# consumed /rebalance tokens stop bypassing rate limits.
+ai_portfolio_token_records: TTLCache[str, tuple[tuple[str, str, str], bool]] = TTLCache(
+    maxsize=256, ttl=AI_PORTFOLIO_RESULT_CACHE_TTL
+)
+
+
+def _extract_ai_request_token(data: dict[str, Any]) -> str | None:
+    raw_token = data.get("request_token")
+    if isinstance(raw_token, str):
+        stripped = raw_token.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _claim_ai_portfolio_token_locked(
+    req_token: str | None, req_fingerprint: tuple[str, str, str]
+) -> bool:
+    """Record/validate ``req_token`` under ``ai_portfolio_fetch_lock``. Returns True on conflict."""
+    if req_token is None:
+        return False
+    existing_record = ai_portfolio_token_records.get(req_token)
+    if existing_record is not None and existing_record[0] != req_fingerprint:
+        return True
+    ai_portfolio_token_records[req_token] = (
+        req_fingerprint,
+        existing_record[1] if existing_record is not None else False,
+    )
+    return False
+
+
+def _token_conflict_response() -> tuple[Any, int]:
+    return error_response(
+        ErrorCode.INVALID_INPUT,
+        details={
+            "reason": "request_token は別のリクエストで使用中です。新しいトークンで再試行してください。",
+            "fields": ["request_token"],
+        },
+        status_code=409,
+    )
 
 _OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
@@ -327,31 +369,39 @@ def api_generate_ai_portfolio() -> Any:
     # fallback portfolio; AI-portfolio generation is usable without an LLM.
 
     conversation_scope = _get_conversation_scope(data)
+    req_token = _extract_ai_request_token(data)
+    req_fingerprint = ("generate", conversation_scope, theme)
     inflight_key = f"generate:{conversation_scope}:{theme}"
     # M28 sibling (2026-11-07 review): cache read + inflight claim in ONE
     # critical section — a poll landing between the job's inflight-pop and
     # cache-write otherwise launched a duplicate paid generation job.
     result_holder: FetchJob | None = None
     already_fetching = False
+    token_conflict = False
+    cached = None
     with ai_portfolio_fetch_lock:
-        cached = ai_portfolio_result_cache.get(inflight_key)
-        if cached is not None:
-            _cached_ts, cached_result, cached_err = cached
-        if cached is None and inflight_key in ai_portfolio_fetch_inflight:
-            result_holder = ai_portfolio_fetch_inflight[inflight_key]
-            already_fetching = True
-        elif cached is None:
-            new_result_holder: FetchJob = {
-                "result": None,
-                "error": None,
-                "done": threading.Event(),
-                "step": "generating",
-                "start_time": time.time(),
-                "message": f"AIポートフォリオ（テーマ: {theme}）を生成中...",
-            }
-            ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
-            result_holder = new_result_holder
-            already_fetching = False
+        token_conflict = _claim_ai_portfolio_token_locked(req_token, req_fingerprint)
+        if not token_conflict:
+            cached = ai_portfolio_result_cache.get(inflight_key)
+            if cached is not None:
+                _cached_ts, cached_result, cached_err = cached
+            if cached is None and inflight_key in ai_portfolio_fetch_inflight:
+                result_holder = ai_portfolio_fetch_inflight[inflight_key]
+                already_fetching = True
+            elif cached is None:
+                new_result_holder: FetchJob = {
+                    "result": None,
+                    "error": None,
+                    "done": threading.Event(),
+                    "step": "generating",
+                    "start_time": time.time(),
+                    "message": f"AIポートフォリオ（テーマ: {theme}）を生成中...",
+                }
+                ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
+                result_holder = new_result_holder
+                already_fetching = False
+    if token_conflict:
+        return _token_conflict_response()
     if cached is not None:
         _cached_ts2, cached_result, cached_err = cached
         if cached_err is not None:
@@ -490,28 +540,38 @@ def api_rebalance_ai_portfolio() -> Any:
     # Missing key falls through to the service's fallback path (see generate).
 
     conversation_scope = _get_conversation_scope(data)
+    req_token = _extract_ai_request_token(data)
+    req_fingerprint = ("rebalance", conversation_scope, theme)
     inflight_key = f"rebalance:{conversation_scope}:{theme}"
     # M28 sibling: cache drain + inflight claim in ONE critical section (see
     # the generate path above).
     result_holder: FetchJob | None = None
     already_fetching = False
+    token_conflict = False
+    cached = None
     with ai_portfolio_fetch_lock:
-        cached = ai_portfolio_result_cache.pop(inflight_key, None)
-        if cached is None and inflight_key in ai_portfolio_fetch_inflight:
-            result_holder = ai_portfolio_fetch_inflight[inflight_key]
-            already_fetching = True
-        elif cached is None:
-            new_result_holder: FetchJob = {
-                "result": None,
-                "error": None,
-                "done": threading.Event(),
-                "step": "rebalancing",
-                "start_time": time.time(),
-                "message": f"AIポートフォリオ（テーマ: {theme}）をリバランス中...",
-            }
-            ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
-            result_holder = new_result_holder
-            already_fetching = False
+        token_conflict = _claim_ai_portfolio_token_locked(req_token, req_fingerprint)
+        if not token_conflict:
+            cached = ai_portfolio_result_cache.pop(inflight_key, None)
+            if cached is not None and req_token is not None:
+                ai_portfolio_token_records[req_token] = (req_fingerprint, True)
+            if cached is None and inflight_key in ai_portfolio_fetch_inflight:
+                result_holder = ai_portfolio_fetch_inflight[inflight_key]
+                already_fetching = True
+            elif cached is None:
+                new_result_holder: FetchJob = {
+                    "result": None,
+                    "error": None,
+                    "done": threading.Event(),
+                    "step": "rebalancing",
+                    "start_time": time.time(),
+                    "message": f"AIポートフォリオ（テーマ: {theme}）をリバランス中...",
+                }
+                ai_portfolio_fetch_inflight[inflight_key] = new_result_holder
+                result_holder = new_result_holder
+                already_fetching = False
+    if token_conflict:
+        return _token_conflict_response()
     if cached is not None:
         _cached_ts, cached_result, cached_err = cached
         if cached_err is not None:
@@ -614,6 +674,8 @@ def api_rebalance_ai_portfolio() -> Any:
 
     with ai_portfolio_fetch_lock:
         ai_portfolio_result_cache.pop(inflight_key, None)
+        if req_token is not None:
+            ai_portfolio_token_records[req_token] = (req_fingerprint, True)
 
     if result_holder["error"] is not None:
         return _ai_portfolio_error_response(

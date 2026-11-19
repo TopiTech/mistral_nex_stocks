@@ -502,6 +502,55 @@ def test_backend_verification_requires_pid_to_own_listening_port(tmp_path):
         assert sb.get_backend_verification(5000) is None
 
 
+def test_backend_verification_accepts_launcher_child_owning_port(tmp_path):
+    """Windows venv pythonw.exe redirectors run app.py in a child process."""
+    import native_host.start_backend as sb
+
+    pid_file = tmp_path / ".backend.pid"
+    pid_file.write_text("12345", encoding="utf-8")
+    child_listener = types.SimpleNamespace(
+        pid=54321,
+        laddr=types.SimpleNamespace(port=5000),
+    )
+    # The recorded launcher PID must still be recognised as app.py.
+    identity = {12345: True, 54321: True}.get
+
+    class _FakeChild:
+        def __init__(self, parents):
+            self._parents = parents
+
+        def parents(self):
+            return [types.SimpleNamespace(pid=parent) for parent in self._parents]
+
+    with (
+        patch.object(sb, "PID_FILE", pid_file),
+        patch.object(sb, "_LEGACY_PID_FILE", tmp_path / "legacy.pid"),
+        patch.object(sb, "_pid_is_backend_process", side_effect=identity),
+        patch.object(sb.psutil, "Process", return_value=_FakeChild([12345])),
+        patch.object(sb.psutil, "net_connections", return_value=[child_listener]),
+    ):
+        assert sb.get_backend_verification(5000) is True
+
+    with (
+        patch.object(sb, "PID_FILE", pid_file),
+        patch.object(sb, "_LEGACY_PID_FILE", tmp_path / "legacy.pid"),
+        patch.object(sb, "_pid_is_backend_process", side_effect=identity),
+        patch.object(sb.psutil, "Process", return_value=_FakeChild([777])),
+        patch.object(sb.psutil, "net_connections", return_value=[child_listener]),
+    ):
+        assert sb.get_backend_verification(5000) is False
+
+    # A descendant that is not an app.py process is not accepted either.
+    with (
+        patch.object(sb, "PID_FILE", pid_file),
+        patch.object(sb, "_LEGACY_PID_FILE", tmp_path / "legacy.pid"),
+        patch.object(sb, "_pid_is_backend_process", side_effect={12345: True}.get),
+        patch.object(sb.psutil, "Process", return_value=_FakeChild([12345])),
+        patch.object(sb.psutil, "net_connections", return_value=[child_listener]),
+    ):
+        assert sb.get_backend_verification(5000) is False
+
+
 def test_posix_executable_path_trust_rejects_world_writable_locations():
     from native_host import native_host
 

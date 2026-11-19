@@ -204,11 +204,34 @@ def _pid_is_backend_process(pid: int) -> bool | None:
     return False
 
 
+def _pid_is_descendant_of(pid: int, ancestor_pid: int) -> bool:
+    """Return whether *pid* is *ancestor_pid* or one of its descendants.
+
+    The Windows venv ``pythonw.exe`` is a redirector: it starts the base
+    interpreter as a child, so the PID recorded when spawning the backend
+    differs from the PID that actually owns the listening socket.
+    """
+    if pid == ancestor_pid:
+        return True
+    try:
+        proc = psutil.Process(pid)
+        return any(parent.pid == ancestor_pid for parent in proc.parents())
+    except psutil.NoSuchProcess:
+        return False
+    except (psutil.AccessDenied, OSError) as exc:
+        logger.debug("PID ancestry check failed for pid=%s: %s", pid, exc)
+        return False
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Unexpected PID ancestry check failure for pid=%s: %s", pid, exc)
+        return False
+
+
 def get_backend_verification(port: int | None = None) -> bool | None:
     """Return whether the listening port belongs to this app's backend PID.
 
-    ``True`` means the PID file points at a live ``app.py`` process and that
-    process owns the listening socket. ``False`` means the PID file points at
+    ``True`` means the PID file points at a live ``app.py`` process (or a
+    process it launched, such as a venv launcher's child) that owns the
+    listening socket. ``False`` means the PID file points at
     an unrelated process, or another process owns the port. ``None`` means the
     check is unavailable (no PID file, psutil permission denied, or an OS that
     cannot map socket owners to PIDs), so callers keep the legacy health-only
@@ -243,10 +266,19 @@ def get_backend_verification(port: int | None = None) -> bool | None:
             and str(status).upper() != "LISTEN"
         ):
             continue
-        if getattr(connection, "pid", None) == pid:
-            return True
-        if getattr(connection, "pid", None) is None:
+        connection_pid = getattr(connection, "pid", None)
+        if connection_pid is None:
             unknown_owner = True
+            continue
+        if connection_pid == pid:
+            return True
+        # Accept a verified app.py descendant of the recorded PID: venv
+        # launchers hand the socket to a child while the PID file keeps the
+        # launcher PID that subprocess.Popen returned.
+        if _pid_is_descendant_of(
+            connection_pid, pid
+        ) and _pid_is_backend_process(connection_pid) is True:
+            return True
     return None if unknown_owner else False
 
 

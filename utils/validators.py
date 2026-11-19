@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import re
+from collections.abc import Mapping
 from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -1395,6 +1396,28 @@ def safe_parse_analysis_result(
     normalized_res = normalize_analysis_result(result)
     normalized_res["parsed"] = True
     return normalized_res
+
+
+def build_assistant_text_message(msg: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a normalized assistant message for schema-formatting follow-up turns.
+
+    Strips provider response fields such as an empty ``tool_calls: []`` array
+    or provider-specific metadata that strict OpenAI-compatible endpoints
+    reject when submitting the next turn without active tools.
+    """
+    raw_content = msg.get("content")
+    if isinstance(raw_content, str):
+        content: Any = raw_content
+    elif isinstance(raw_content, list):
+        content = list(raw_content)
+    elif raw_content is None:
+        content = ""
+    else:
+        content = str(raw_content)
+    return {
+        "role": "assistant",
+        "content": content,
+    }
 
 
 from schemas.ai_portfolio import (

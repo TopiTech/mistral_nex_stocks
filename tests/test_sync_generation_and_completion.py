@@ -181,3 +181,81 @@ def test_stale_sync_does_not_clear_newer_is_syncing():
     # Clean up the flag so it does not leak into other tests.
     with app_state.market.is_syncing_lock:
         app_state.market.is_syncing = False
+
+
+def test_stale_sync_does_not_overwrite_indices_or_persist_usdjpy():
+    """F-05: a superseded sync must not overwrite indices, status, or USDJPY caches."""
+    from unittest.mock import patch
+
+    from bg.sync import process as sync_process
+
+    orig_indices = dict(app_state.market.current_indices_cache)
+    orig_status = dict(app_state.market.market_status_cache)
+    orig_usdjpy = app_state.market.get_usdjpy_rate_snapshot()
+    try:
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_indices_cache = {"N225": {"price": 38000.0}}
+        with app_state.market.market_status_lock:
+            app_state.market.market_status_cache = {"us": "CLOSED", "jp": "CLOSED", "idx": "CLOSED"}
+        app_state.market.update_usdjpy_rate(150.0, ts=1000.0)
+
+        app_state.market.current_stocks_cache = {"us": [], "jp": [], "idx": []}
+        app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
+
+        # 1) Direct generation check inside _update_indices_data blocks stale writes
+        #    at the sse_data_lock publish gate even when all indices are already present.
+        _set_sync_generation(2)
+        stale_idx = [
+            {"symbol": sym, "price": 1.0, "change": 0.0, "change_percent": 0.0, "market_state": "REGULAR"}
+            for sym in ("^N225", "^DJI", "USDJPY=X", "EURJPY=X", "^IXIC", "^GSPC", "^VIX")
+        ]
+        with (
+            patch.object(app_bg, "fetch_index_data", side_effect=AssertionError("must not fetch")),
+            patch.object(app_bg, "save_user_stocks", side_effect=AssertionError("must not persist")),
+            patch.object(sync_process, "save_user_stocks", side_effect=AssertionError("must not persist")),
+        ):
+            sync_process._update_indices_data(stale_idx, [], [], sync_generation=1)
+
+        with app_state.cache.sse_data_lock:
+            assert app_state.market.current_indices_cache == {"N225": {"price": 38000.0}}
+        with app_state.market.market_status_lock:
+            assert app_state.market.market_status_cache["jp"] == "CLOSED"
+        assert app_state.market.get_usdjpy_rate_snapshot()[0] == 150.0
+
+        # 2) Full sync path superseded during safety-net fetch discards all updates.
+        _set_sync_generation(0)
+
+        def _supersede_during_safety_net(key, sym):
+            _next_sync_generation()
+            return (key, {"price": 9999.0, "market_state": "REGULAR"})
+
+        with (
+            patch.object(app_bg, "_is_sync_leader", True),
+            patch.object(app_bg, "_warm_payload_cache_from_disk", lambda: None),
+            patch.object(app_bg, "_prepare_sync_items", return_value=[("AAPL", "Apple", "us")]),
+            patch.object(app_bg, "_auto_remove_invalid_symbols", lambda *a, **k: None),
+            patch.object(app_bg, "is_market_open", return_value=True),
+            patch.object(app_bg, "fetch_stocks_batch", return_value=[{"symbol": "AAPL", "market": "us", "price": 150.0}]),
+            patch.object(
+                app_bg,
+                "_process_fetched_stocks",
+                return_value=ProcessedStocks(us=[{"symbol": "AAPL", "market": "us", "price": 150.0}], jp=[], idx=[]),
+            ),
+            patch.object(app_bg, "fetch_index_data", side_effect=_supersede_during_safety_net),
+            patch.object(app_bg, "save_user_stocks", side_effect=AssertionError("must not persist")),
+            patch.object(sync_process, "save_user_stocks", side_effect=AssertionError("must not persist")),
+        ):
+            app_bg.sync_all_stocks_now()
+
+        with app_state.cache.sse_data_lock:
+            assert app_state.market.current_indices_cache == {"N225": {"price": 38000.0}}
+            assert app_state.market.current_stocks_cache == {"us": [], "jp": [], "idx": []}
+        assert app_state.market.first_sync_completed_at == 0.0
+    finally:
+        with app_state.cache.sse_data_lock:
+            app_state.market.current_indices_cache = orig_indices
+        with app_state.market.market_status_lock:
+            app_state.market.market_status_cache = orig_status
+        app_state.market.update_usdjpy_rate(orig_usdjpy[0], ts=orig_usdjpy[1])
+        with app_state.market.is_syncing_lock:
+            app_state.market.is_syncing = False

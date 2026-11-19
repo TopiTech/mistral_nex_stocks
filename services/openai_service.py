@@ -45,7 +45,11 @@ from services.preview_responses import build_preview_chat_response, build_previe
 from utils.networking import validate_outbound_base_url
 from utils.text_utils import _sanitize_error_message
 from utils.threading import DaemonThreadPoolExecutor
-from utils.validators import extract_chat_content, extract_json_payload
+from utils.validators import (
+    build_assistant_text_message,
+    extract_chat_content,
+    extract_json_payload,
+)
 
 
 def _safe_base_url_for_log(base_url: str) -> str:
@@ -1521,7 +1525,7 @@ def call_openai_chat_with_tools(
         if not tool_calls or not isinstance(tool_calls, list):
             # Model gave final direct answer
             if response_format is not None and iteration < max_tool_iterations - 1:
-                current_messages.append(msg)
+                current_messages.append(build_assistant_text_message(msg))
                 current_messages.append(
                     {
                         "role": "user",

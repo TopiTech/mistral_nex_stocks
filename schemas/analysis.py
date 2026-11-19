@@ -28,6 +28,8 @@ from utils.normalization import (
     normalize_text,
 )
 
+_BASE64_CHARSET_RE = re.compile(r"[A-Za-z0-9+/=\s]+")
+
 
 class AIChatRequest(BaseModel):
     """Canonical contract for ``POST /api/chat``.
@@ -402,14 +404,14 @@ class AIAnalyzeChartImageRequest(BaseModel):
                 raise ValueError("image_svg")
             if not re.match(r"^data:image/(png|jpe?g|gif|webp);base64$", header_lower):
                 raise ValueError("image_bad_mime")
-            if not b64part.strip():
+            if not b64part.strip() or not _BASE64_CHARSET_RE.fullmatch(b64part):
                 raise ValueError("image_bad_b64")
         else:
             if image_text.startswith(("http://", "https://")):
                 raise ValueError("image_url")
             if image_text.lower().startswith("data:"):
                 raise ValueError("image_bad_scheme")
-            if not re.fullmatch(r"[A-Za-z0-9+/=\s]+", image_text):
+            if not _BASE64_CHARSET_RE.fullmatch(image_text):
                 raise ValueError("image_bad_base64")
         raw_symbol = data.get("symbol")
         if raw_symbol is not None and not isinstance(raw_symbol, str):

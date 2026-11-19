@@ -3128,17 +3128,34 @@ async function bulkAnalyzeFavorites() {
           "running",
         );
 
+        const drawerEl = document.getElementById("stock-detail-drawer");
+        const isDrawerActiveForStock = Boolean(
+          drawerEl?.classList.contains("open") &&
+          drawerEl.dataset?.stockKey === stockKey,
+        );
+        const drawerAiContent = document.getElementById("drawerTabAiContent");
+        const startedSections = new Set();
+        const openAiSection = (aiSection, wrapperEl) => {
+          if (!aiSection || startedSections.has(aiSection)) return;
+          startedSections.add(aiSection);
+          const listContainer =
+            aiSection.closest?.(".stocks-list") ||
+            wrapperEl?.closest?.(".stocks-list");
+          aiSection.classList.add("show");
+          scheduleCompactLayoutAfterTransition(
+            aiSection,
+            listContainer,
+            "max-height",
+            false,
+          );
+        };
         findAllWrappersByStockKey(stockKey).forEach((wrapper) => {
-          const aiSection = wrapper.querySelector(".ai-section");
-          if (aiSection) {
-            const listContainer = wrapper.closest(".stocks-list");
-            aiSection.classList.add("show");
-            scheduleCompactLayoutAfterTransition(
-              aiSection,
-              listContainer,
-              "max-height",
-              false,
-            );
+          openAiSection(wrapper.querySelector(".ai-section"), wrapper);
+          if (isDrawerActiveForStock) {
+            const drawerAiSection =
+              drawerAiContent?.querySelector(".ai-section") ||
+              drawerEl?.querySelector(".ai-section");
+            openAiSection(drawerAiSection, wrapper);
           }
         });
 

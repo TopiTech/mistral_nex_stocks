@@ -199,6 +199,23 @@ def test_empty_b64_part(client):
     }
 
 
+@pytest.mark.parametrize(
+    "bad_payload",
+    [
+        "data:image/png;base64,<script>alert(1)</script>",
+        "data:image/jpeg;base64,not_valid_base64!",
+        "data:image/webp;base64,abc$def",
+        "data:image/gif;base64,abc\x00def",
+    ],
+)
+def test_data_uri_invalid_b64_charset_rejected(client, bad_payload):
+    resp = _post(client, {"image_data": bad_payload})
+    assert resp.status_code == 400
+    assert _error(resp)["details"] == {
+        "reason": "image_dataのData URIはbase64形式である必要があります"
+    }
+
+
 # ---------------------------------------------------------------------------
 # Raw Base64 branch
 # ---------------------------------------------------------------------------

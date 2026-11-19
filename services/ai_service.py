@@ -54,7 +54,11 @@ from mistral_compat import (
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
 from utils.text_utils import _sanitize_error_message, _token_fingerprint
 from utils.threading import DaemonThreadPoolExecutor
-from utils.validators import extract_chat_content, extract_json_payload
+from utils.validators import (
+    build_assistant_text_message,
+    extract_chat_content,
+    extract_json_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1906,7 +1910,7 @@ def call_mistral_chat_with_tools(
             if response_format is not None and iteration < max_tool_iterations - 1:
                 # A structured schema was requested, but intermediate turns ran with response_format=None.
                 # Execute final synthesis call with response_format without tools.
-                current_messages.append(msg)
+                current_messages.append(build_assistant_text_message(msg))
                 current_messages.append(
                     {
                         "role": "user",

@@ -493,3 +493,55 @@ class ReviewR1R2RegressionTestCase(unittest.TestCase):
         finally:
             with aps._AI_GEN_LOCK:
                 aps._AI_GEN_INFLIGHT.pop(theme, None)
+
+    def test_stock_history_checks_circuit_open_atomically_under_history_circuit_lock(self):
+        """F-04: is_circuit_open evaluation must happen while history_circuit_lock is held."""
+        from app import app
+        from app_state import app_state
+        from market_state import CircuitState
+        from routes.stocks import quotes as quotes_mod
+
+        symbol = "TSTLOCKORDER"
+        circuit_key = f"us:{symbol}"
+        with app_state.market.history_circuit_lock:
+            app_state.market.history_circuit_state[circuit_key] = CircuitState(
+                status="OPEN", open_until=9999999999.0, probing=False
+            )
+
+        observed_lock_held: list[bool] = []
+        orig_is_open = app_state.market.is_circuit_open
+
+        def _spy_is_circuit_open(service: str, symbol: str | None = None) -> bool:
+            held_result: list[bool] = []
+
+            def _probe_other_thread() -> None:
+                acquired = app_state.market.history_circuit_lock.acquire(blocking=False)
+                if acquired:
+                    app_state.market.history_circuit_lock.release()
+                held_result.append(not acquired)
+
+            t = threading.Thread(target=_probe_other_thread)
+            t.start()
+            t.join(timeout=2.0)
+            observed_lock_held.append(bool(held_result and held_result[0]))
+            return orig_is_open(service, symbol=symbol)
+
+        try:
+            with (
+                patch.object(
+                    quotes_mod.app_state.market,
+                    "is_circuit_open",
+                    side_effect=_spy_is_circuit_open,
+                ),
+                patch.object(quotes_mod, "_submit_async_history_fetch") as mock_submit,
+                app.test_client() as client,
+            ):
+                resp = client.get(
+                    f"/api/stock-history?symbol={symbol}&market=us&period=1mo"
+                )
+            self.assertEqual(resp.status_code, 503)
+            self.assertEqual(observed_lock_held, [True])
+            mock_submit.assert_not_called()
+        finally:
+            with app_state.market.history_circuit_lock:
+                app_state.market.history_circuit_state.pop(circuit_key, None)

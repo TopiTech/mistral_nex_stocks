@@ -276,6 +276,21 @@ class ProcessedStocks:
         return not (self.us or self.jp or self.idx)
 
 
+def _is_stale_sync_generation(
+    sync_generation: int | None,
+    *,
+    allow_zero: bool = False,
+) -> bool:
+    """Return True when *sync_generation* has been superseded by a newer sync."""
+    if sync_generation is None:
+        return False
+    if allow_zero and sync_generation == 0:
+        return False
+    with app_state.market.is_syncing_lock:
+        current_sync_gen = _get_sync_generation()
+        return current_sync_gen != 0 and sync_generation != current_sync_gen
+
+
 def _process_fetched_stocks(
     fetched_items: list[dict[str, Any] | None],
     sync_generation: int | None = None,
@@ -294,16 +309,12 @@ def _process_fetched_stocks(
             idx_res.append(item)
 
     with app_state.cache.sse_data_lock:
-        if sync_generation is not None:
-            with app_state.market.is_syncing_lock:
-                current_sync_gen = _get_sync_generation()
-                if current_sync_gen != 0 and sync_generation != current_sync_gen:
-                    logger.info(
-                        "Discarding stale stock sync generation %s (current: %s)",
-                        sync_generation,
-                        current_sync_gen,
-                    )
-                    return ProcessedStocks()
+        if _is_stale_sync_generation(sync_generation):
+            logger.info(
+                "Discarding stale stock sync generation %s",
+                sync_generation,
+            )
+            return ProcessedStocks()
         prev_us = (
             app_state.market.target_stocks_cache.get("us", [])
             if isinstance(app_state.market.target_stocks_cache, dict)
@@ -390,6 +401,7 @@ def _update_indices_data(
     idx_res: list[dict[str, Any]],
     us_res: list[dict[str, Any]],
     jp_res: list[dict[str, Any]],
+    sync_generation: int | None = None,
 ) -> None:
     """Updates the current indices cache and market status cache with fresh values."""
     header_mapping = {
@@ -443,6 +455,12 @@ def _update_indices_data(
         entry = new_header_data.get(key)
         critical_price = entry.get("price") if isinstance(entry, dict) else None
         if key not in new_header_data or critical_price in (None, "", "--"):
+            if _is_stale_sync_generation(sync_generation, allow_zero=True):
+                logger.info(
+                    "Discarding stale stock sync generation %s before indices safety net",
+                    sync_generation,
+                )
+                return
             if app_state.market.is_yf_rate_limited():
                 continue
             if _safety_net_budget <= 0:
@@ -471,6 +489,12 @@ def _update_indices_data(
                 logger.warning("Safety net failed for %s: %s", key, safety_exc)
     if new_header_data:
         with app_state.cache.sse_data_lock:
+            if _is_stale_sync_generation(sync_generation, allow_zero=True):
+                logger.info(
+                    "Discarding stale stock sync generation %s before indices publish",
+                    sync_generation,
+                )
+                return
             app_state.market.current_indices_cache.update(new_header_data)
             indices_snapshot = copy.deepcopy(app_state.market.current_indices_cache)
 
@@ -478,6 +502,13 @@ def _update_indices_data(
             app_state.payload_disk_cache.set("indices_cache", indices_snapshot)
         except Exception as e:
             logger.debug("Failed to cache current_indices_cache to disk: %s", e)
+
+        if _is_stale_sync_generation(sync_generation, allow_zero=True):
+            logger.info(
+                "Discarding stale stock sync generation %s before market status update",
+                sync_generation,
+            )
+            return
 
         with app_state.market.market_status_lock:
             if "N225" in new_header_data:
@@ -516,6 +547,12 @@ def _update_indices_data(
                         # C-03: persist outside user_stocks_lock so slow disk
                         # I/O (encrypt + fsync) never blocks SSE/readers.
                         if should_persist:
+                            if _is_stale_sync_generation(sync_generation, allow_zero=True):
+                                logger.info(
+                                    "Discarding stale stock sync generation %s before USDJPY persist",
+                                    sync_generation,
+                                )
+                                return
                             try:
                                 save_fn = _get_app_bg_attr("save_user_stocks", save_user_stocks)
                                 save_fn()

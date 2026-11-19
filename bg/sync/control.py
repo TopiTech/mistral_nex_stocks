@@ -180,25 +180,18 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
                 ann_fn()
             return
 
-        with app_state.market.is_syncing_lock:
-            current_sync_gen = _get_sync_generation()
-            is_current_generation = current_sync_gen == 0 or sync_generation == current_sync_gen
-        if not is_current_generation:
-            logger.info(
-                "Discarding stale stock sync generation %s before cache publish", sync_generation
-            )
-            return
-
-        # R17-05: re-verify the generation at publish time under sse_data_lock
-        # so a stale sync cannot overwrite a newer sync's publish.
+        # R17-05: verify the generation before indices update and again under
+        # sse_data_lock before publishing stocks, so a stale sync cannot overwrite
+        # indices or stocks from a newer sync generation.
         with app_state.market.is_syncing_lock:
             if sync_generation != 0 and sync_generation != _get_sync_generation():
                 logger.info(
-                    "Discarding stale stock sync generation %s at publish", sync_generation
+                    "Discarding stale stock sync generation %s before cache publish",
+                    sync_generation,
                 )
                 return
         update_idx_fn = _get_app_bg_attr("_update_indices_data", _update_indices_data)
-        update_idx_fn(result.idx, result.us, result.jp)
+        update_idx_fn(result.idx, result.us, result.jp, sync_generation=sync_generation)
         with app_state.cache.sse_data_lock:
             with app_state.market.is_syncing_lock:
                 if sync_generation != 0 and sync_generation != _get_sync_generation():

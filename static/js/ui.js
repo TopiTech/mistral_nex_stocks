@@ -1411,7 +1411,7 @@ function createStockCard(stock, marketContext) {
             b.setAttribute("aria-pressed", String(on));
           });
           updateIntervalControlsVisibility(
-            wrapper,
+            btn.closest(".chart-controls") || wrapper,
             stockKey,
             btn.dataset.period,
           );
@@ -3822,9 +3822,23 @@ async function triggerAiTechnicalLines(wrapper) {
   const isCurrentLinesRequest = () =>
     targetWrapper.__aiTechnicalLinesController === linesController;
 
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerActive =
+    currentDrawerActiveWrapper === targetWrapper ||
+    Boolean(
+      drawerEl?.classList.contains("open") &&
+      stockKey &&
+      drawerEl.dataset?.stockKey === stockKey,
+    );
   const btns = targetWrapper.querySelectorAll(".ai-tech-lines-btn");
+  const drawerBtns =
+    isDrawerActive && drawerEl
+      ? Array.from(drawerEl.querySelectorAll(".ai-tech-lines-btn") || [])
+      : [];
   const fsBtn = document.getElementById("fs-ai-tech-lines-btn");
-  const allBtns = [...Array.from(btns), fsBtn].filter(Boolean);
+  const allBtns = Array.from(
+    new Set([...Array.from(btns || []), ...drawerBtns, fsBtn].filter(Boolean)),
+  );
 
   allBtns.forEach((b) => {
     b.disabled = true;
@@ -3834,7 +3848,10 @@ async function triggerAiTechnicalLines(wrapper) {
 
   const chartContainer =
     targetWrapper.querySelector(".chart-container") ||
-    document.querySelector("#stock-detail-drawer .chart-container");
+    (isDrawerActive
+      ? drawerEl?.querySelector(".chart-container") ||
+        document.querySelector("#stock-detail-drawer .chart-container")
+      : null);
   const fsCanvasWrapper = document.getElementById("fs-chart-canvas-wrapper");
   showAiTechnicalLoading(chartContainer);
   if (

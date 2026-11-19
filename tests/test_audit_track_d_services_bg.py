@@ -1304,3 +1304,64 @@ def test_bg006_sbi_change_percent_edge_cases() -> None:
     assert no_change_quote is not None
     assert no_change_quote["change"] == 0.0
     assert no_change_quote["change_percent"] == 0.0
+
+
+def test_f06_tool_loop_normalizes_direct_reply_message_before_schema_synthesis() -> None:
+    """F-06: final schema follow-up strips empty tool_calls/extra provider keys and None content."""
+
+    class StructuredSummary(BaseModel):
+        summary: str
+
+    for svc_mod, fn_name, patch_target in (
+        (
+            openai_service,
+            "call_openai_chat_with_tools",
+            "services.openai_service.call_openai_chat",
+        ),
+        (
+            ai_service,
+            "call_mistral_chat_with_tools",
+            "services.ai_service.call_mistral_chat",
+        ),
+    ):
+        captured_messages: list[list[dict[str, object]]] = []
+        raw_reply: dict[str, object] = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [],
+            "refusal": None,
+            "annotations": [{"type": "url_citation"}],
+        }
+
+        def _fake_chat(
+            api_key: str,
+            messages: list[dict[str, object]],
+            *,
+            _captured: list[list[dict[str, object]]] = captured_messages,
+            _reply: dict[str, object] = raw_reply,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            _captured.append([dict(m) for m in messages])
+            if len(_captured) == 1:
+                return {"choices": [{"message": _reply}]}
+            return {
+                "choices": [{"message": {"role": "assistant", "content": '{"summary":"ok"}'}}]
+            }
+
+        with patch(patch_target, side_effect=_fake_chat):
+            res = getattr(svc_mod, fn_name)(
+                "sk-real-12345",
+                [{"role": "user", "content": "summarize"}],
+                response_format=StructuredSummary,
+                max_tool_iterations=3,
+            )
+
+        assert res["choices"][0]["message"]["content"] == '{"summary":"ok"}'
+        assert len(captured_messages) == 2
+        forwarded_assistant = captured_messages[1][1]
+        assert forwarded_assistant == {"role": "assistant", "content": ""}
+        assert "tool_calls" not in forwarded_assistant
+        assert "annotations" not in forwarded_assistant
+        # Original provider payload remains untouched.
+        assert raw_reply["tool_calls"] == []
+        assert raw_reply["content"] is None

@@ -347,7 +347,6 @@ def api_stock_history() -> Any:
     interval = parsed.interval or "auto"
 
     circuit_key = history_circuit_key(symbol, market)
-    is_open = app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key)
 
     cache_key = (
         f"hist_{symbol}_{market}_{period}_{interval}"
@@ -434,6 +433,8 @@ def api_stock_history() -> Any:
     }
 
     with app_state.market.history_circuit_lock:
+        if app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key):
+            return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
         state: Any = app_state.market.history_circuit_state.get(circuit_key) or {}
         if state.get("status") == "HALF_OPEN":
             is_probing = state.get("probing")
@@ -489,9 +490,6 @@ def api_stock_history() -> Any:
                             open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
                         )
             return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
-
-    if is_open:
-        return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
 
     cached_present, cached_data = _get_cached_value_if_present(cache_key, duration)
     if cached_present:

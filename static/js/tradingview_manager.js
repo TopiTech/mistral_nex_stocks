@@ -731,9 +731,10 @@
       // シンボルでマウントしないよう、完了時に世代を照合する(R9相当)。
       const chartGen = ++_chartGeneration;
 
-      const baseTicker = String(ticker).includes(":")
-        ? String(ticker).split(":")[1]
-        : String(ticker).trim().toUpperCase();
+      const rawTicker = String(ticker ?? "");
+      const baseTicker = rawTicker.includes(":")
+        ? (rawTicker.split(":")[1] ?? "").trim().toUpperCase()
+        : rawTicker.trim().toUpperCase();
 
       // Reset fallback flag for new symbol loads (unless this is an internal autoFallback re-render)
       if (!options.autoFallback) {

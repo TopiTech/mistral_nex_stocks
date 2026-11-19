@@ -567,6 +567,25 @@ def enforce_secure_permissions(file_path):
             logger.warning("Failed to enforce 0o600 on %s: %s", file_path, exc)
 
 
+def _resolve_implicit_master_key(caller_name: str) -> str:
+    """Resolve the master key when ``master_key=None`` outside ``config_update_lock``.
+
+    Calling ``get_or_create_master_key()`` takes ``_MASTER_KEY_LOCK`` which
+    nests ``config_update_lock``; calling it while ``config_update_lock`` is
+    already held inverts lock order and risks an AB-BA deadlock.
+    """
+    import config_store as _cs  # type: ignore[import-not-found]
+
+    lock_state = getattr(_cs, "_UPDATE_LOCK_STATE", None)
+    depth = getattr(lock_state, "depth", 0)
+    if isinstance(depth, int) and not isinstance(depth, bool) and depth > 0:
+        raise RuntimeError(
+            f"{caller_name}() requires master_key while config_update_lock is held: "
+            "resolve the master key outside the lock (lock-order AB-BA)."
+        )
+    return _cs.get_or_create_master_key()
+
+
 def protect_data(text: str, key_name: str = "general_data", master_key: str | None = None) -> dict:
     """データを Fernet 対称暗号化で安全に保護（暗号化）する
 
@@ -584,15 +603,7 @@ def protect_data(text: str, key_name: str = "general_data", master_key: str | No
         # documented _MASTER_KEY_LOCK -> config_update_lock order when the
         # caller already holds config_update_lock. Refuse the implicit path
         # and require the caller to resolve the key outside the lock.
-        import config_store as _cs  # type: ignore[import-not-found]
-
-        depth = getattr(_cs._UPDATE_LOCK_STATE, "depth", 0)
-        if depth > 0:
-            raise RuntimeError(
-                "protect_data() requires master_key while config_update_lock is held: "
-                "resolve the master key outside the lock (lock-order AB-BA)."
-            )
-        master_key = _cs.get_or_create_master_key()
+        master_key = _resolve_implicit_master_key("protect_data")
 
     if Fernet is None:
         raise RuntimeError("Cryptography is not available")
@@ -648,9 +659,7 @@ def unprotect_data(
             # "return '' on undecodable" contract.
             return ""
         if master_key is None:
-            import config_store as _cs  # type: ignore[import-not-found]
-
-            master_key = _cs.get_or_create_master_key()
+            master_key = _resolve_implicit_master_key("unprotect_data")
         if Fernet is None:
             return ""
 

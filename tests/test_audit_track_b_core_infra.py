@@ -1265,3 +1265,39 @@ def test_qa001_pinned_outbound_transport_blocks_dns_rebinding_and_pins_ip(monkey
         server.shutdown()
         server.server_close()
         thread.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# F-01 (2026-11-19): crypto_utils lock-order guard in unprotect_data
+# ---------------------------------------------------------------------------
+
+
+def test_f01_unprotect_data_refuses_implicit_master_key_under_config_update_lock(tmp_path, monkeypatch):
+    from cryptography.fernet import Fernet
+
+    import config_store
+    import crypto_utils
+
+    monkeypatch.setattr(config_store, "APP_DATA_DIR", tmp_path)
+    monkeypatch.setattr(config_store, "CONFIG_FILE", tmp_path / "config.json")
+    monkeypatch.setattr(config_store, "LEGACY_CONFIG_FILE", tmp_path / "legacy_config.json")
+    raw_key = Fernet.generate_key().decode("ascii")
+    entry = crypto_utils.protect_data("secret-token", "test_key", master_key=raw_key)
+
+    calls = {"count": 0}
+
+    def _fail_if_called() -> str:
+        calls["count"] += 1
+        raise AssertionError("get_or_create_master_key must not run under config_update_lock")
+
+    monkeypatch.setattr(config_store, "get_or_create_master_key", _fail_if_called)
+
+    with config_store.config_update_lock():
+        with pytest.raises(RuntimeError, match="unprotect_data\\(\\) requires master_key.*AB-BA"):
+            crypto_utils.unprotect_data(entry, "test_key")
+        with pytest.raises(RuntimeError, match="protect_data\\(\\) requires master_key.*AB-BA"):
+            crypto_utils.protect_data("other-secret", "test_key")
+        assert crypto_utils.unprotect_data(entry, "test_key", master_key=raw_key) == "secret-token"
+
+    assert calls["count"] == 0
+

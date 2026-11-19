@@ -1288,3 +1288,145 @@ def test_ui_018_all_core_template_buttons_have_explicit_type() -> None:
 
     ui_src = (ROOT_DIR / "static/js/ui.js").read_text(encoding="utf-8")
     assert 'retryBtn.type = "button"' in ui_src
+
+
+def test_ui_021_drawer_reparent_sync_and_tradingview_ticker_trim() -> None:
+    """F-07: drawer reparented sections/controls and colon-prefixed TV baseTicker."""
+    script = _SHARED_NODE_HELPERS + r"""
+(async () => {
+  const apiSrc = readRel("static/js/api.js");
+  const uiSrc = readRel("static/js/ui.js");
+  const tvSrc = readRel("static/js/tradingview_manager.js");
+
+  // 1) api.js: standalone bulkAnalyzeFavorites activates drawer .ai-section without breaking slice extraction
+  const drawerEl = makeElement("div", "stock-detail-drawer");
+  drawerEl.classList.add("open");
+  drawerEl.dataset.stockKey = "us:NVDA";
+  const drawerAiContent = makeElement("div", "drawerTabAiContent");
+  const drawerAiSection = makeElement("div");
+  drawerAiSection.classList.add("ai-section");
+  drawerAiContent.appendChild(drawerAiSection);
+  drawerEl.appendChild(drawerAiContent);
+
+  const cardWrapper = makeElement("div");
+  cardWrapper.classList.add("stock-wrapper");
+  cardWrapper.dataset.stockKey = "us:NVDA";
+  // Simulate detail panel elements moved into drawer (wrapper no longer owns .ai-section)
+  const favWrapper = makeElement("div");
+  favWrapper.classList.add("stock-wrapper");
+  favWrapper.dataset.stockKey = "us:NVDA";
+  const favAiSection = makeElement("div");
+  favAiSection.classList.add("ai-section");
+  favWrapper.appendChild(favAiSection);
+
+  const transitionCalls = [];
+  const apiCtx = {
+    document: {
+      getElementById(id) {
+        if (id === "stock-detail-drawer") return drawerEl;
+        if (id === "drawerTabAiContent") return drawerAiContent;
+        return null;
+      },
+      querySelectorAll() { return []; },
+    },
+    DOM: { get() { return null; } },
+    AbortController,
+    Set,
+    Array,
+    Boolean,
+    Math,
+    Promise,
+    Error,
+    setTimeout: (fn) => { fn(); return 1; },
+    bulkAnalyzeCancelled: false,
+    bulkAnalyzeAbortController: null,
+    state: { favorites: ["us:NVDA"], isAnalyzing: false },
+    getStockByKey: () => ({ symbol: "NVDA", market: "us", name: "NVIDIA" }),
+    findAllWrappersByStockKey: () => [cardWrapper, favWrapper],
+    scheduleCompactLayoutAfterTransition(sec) { transitionCalls.push(sec); },
+    setButtonLoading() {},
+    resetButton() {},
+    setBulkAnalyzeStatus() {},
+    requestStockAnalysis: async () => ({
+      stock: { symbol: "NVDA", market: "us", name: "NVIDIA" },
+      data: { recommendation: "買い", sentiment: "強気" },
+    }),
+    applyAnalysisResult() {},
+    applyAnalysisError() {},
+    abortableSleep: async () => {},
+    $logger: { error() {}, warn() {}, info() {} },
+    showToast() {},
+    HAS_MISTRAL_API_KEY: true,
+  };
+  vm.createContext(apiCtx);
+  vm.runInContext(
+    "let bulkAnalyzeCancelled = false; let bulkAnalyzeAbortController = null;\n" +
+      extractNamedBlock(apiSrc, "async function bulkAnalyzeFavorites("),
+    apiCtx,
+  );
+
+  // Other stock drawer open must NOT get .show when us:NVDA analyzes
+  drawerEl.dataset.stockKey = "us:AAPL";
+  await apiCtx.bulkAnalyzeFavorites({ stopPropagation() {} });
+  assert(!drawerAiSection.classList.contains("show"),
+    "bulkAnalyzeFavorites must ignore drawer belonging to another stockKey");
+  assert(favAiSection.classList.contains("show"),
+    "bulkAnalyzeFavorites must add .show to card/fav .ai-section");
+
+  // Reset and test with matching stockKey drawer open
+  drawerEl.dataset.stockKey = "us:NVDA";
+  drawerAiSection.classList.remove("show");
+  favAiSection.classList.remove("show");
+  transitionCalls.length = 0;
+
+  await apiCtx.bulkAnalyzeFavorites({ stopPropagation() {} });
+  assert(drawerAiSection.classList.contains("show"),
+    "bulkAnalyzeFavorites must add .show to open drawer .ai-section");
+  assert(favAiSection.classList.contains("show"),
+    "bulkAnalyzeFavorites must add .show to card/fav .ai-section");
+  assert(transitionCalls.filter((s) => s === drawerAiSection).length === 1,
+    "bulkAnalyzeFavorites must deduplicate drawer .ai-section layout updates");
+
+  // 2) ui.js: period click handler resolves closest .chart-controls so drawer interval updates work
+  assert(
+    uiSrc.includes('btn.closest(".chart-controls") || wrapper'),
+    "ui.js period button handler must resolve btn.closest('.chart-controls') || wrapper",
+  );
+
+  // 3) tradingview_manager.js: baseTicker strips whitespace and normalizes case after colon split
+  const tvContainer = makeElement("div", "tv-chart-box");
+  const headEl = makeElement("head");
+  const tvDoc = {
+    body: { classList: makeClassList() },
+    head: headEl,
+    getElementById: (id) => {
+      if (id === "tv-chart-box") return tvContainer;
+      if (id === "tv-chart-box-inner") return tvContainer.querySelector("#tv-chart-box-inner");
+      return null;
+    },
+    createElement: (t) => makeElement(t),
+    querySelector: () => null,
+  };
+  const tvCtx = {
+    window: { addEventListener() {}, removeEventListener() {}, document: tvDoc },
+    document: tvDoc,
+    navigator: { language: "ja" },
+    console: { log() {}, warn() {}, error() {} },
+    String,
+    Set,
+    Map,
+    Math,
+    Object,
+  };
+  vm.createContext(tvCtx);
+  vm.runInContext(tvSrc, tvCtx);
+  tvCtx.window.TradingViewManager.renderAdvancedChart("tv-chart-box", " nasdaq: aapl ");
+  assert(
+    tvCtx.window.TradingViewManager.currentSymbol === "AAPL",
+    "TradingViewManager.renderAdvancedChart must trim and uppercase colon-split baseTicker",
+  );
+
+  process.stdout.write("ok");
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+    _run_node_script(script)

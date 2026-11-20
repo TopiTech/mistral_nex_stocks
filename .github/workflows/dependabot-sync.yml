@@ -24,7 +24,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
-          version: "0.11.25"
+          version: "0.13.8"
           enable-cache: true
 
       - name: Update requirements-locked.txt

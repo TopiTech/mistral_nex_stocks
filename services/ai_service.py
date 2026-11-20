@@ -2073,7 +2073,19 @@ def repair_technical_lines_json_with_llm(api_key, raw_content):
     )
 
 
-_TECH_LINE_ALLOWED_TYPES = frozenset({"support", "resistance", "trend", "breakout"})
+# Canonical line types plus the aliases the model actually emits. The prompt
+# asks for a "trendline" (トレンドライン) and TechnicalLineItem.type is a
+# free-form string, so that spelling reaches this normalizer; without the
+# alias it was coerced to "support" and drawn as a green support line even
+# though static/js/ui.js already renders "trendline" as a blue trend line.
+_TECH_LINE_TYPE_ALIASES = {
+    "support": "support",
+    "resistance": "resistance",
+    "trend": "trend",
+    "trendline": "trend",
+    "trend_line": "trend",
+    "breakout": "breakout",
+}
 _TECH_LINE_ALLOWED_STYLES = frozenset({"solid", "dashed", "dotted"})
 _TECH_LINE_DEFAULT_COLORS = {
     "support": "#00ff88",
@@ -2257,7 +2269,7 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
                     ):
                         continue
                     raw_type = str(line.get("type") or "").strip().lower()
-                    line_type = raw_type if raw_type in _TECH_LINE_ALLOWED_TYPES else "support"
+                    line_type = _TECH_LINE_TYPE_ALIASES.get(raw_type, "support")
                     raw_style = str(line.get("style") or "").strip().lower()
                     line_style = raw_style if raw_style in _TECH_LINE_ALLOWED_STYLES else "solid"
                     valid_lines.append(

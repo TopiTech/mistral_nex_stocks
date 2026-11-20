@@ -1281,6 +1281,24 @@ def _is_sensitive_diagnostic(msg: str) -> bool:
 
 
 _ALLOWED_PROVIDER_ERROR_KEYS = frozenset({"status_code", "code", "type", "retry_after"})
+# R17-09's contract is "non-sensitive scalar diagnostics only". Copying an
+# allowed key without checking its value type let a provider echo a nested
+# dict/list (request body, headers, prompt) straight back to the client.
+_ALLOWED_PROVIDER_ERROR_SCALAR_TYPES = (str, int, float, bool)
+_MAX_PROVIDER_ERROR_SCALAR_LEN = 200
+
+
+def _sanitize_provider_error_scalar(value: Any) -> Any:
+    """Return a safe scalar diagnostic value, or ``None`` to drop it."""
+    if not isinstance(value, _ALLOWED_PROVIDER_ERROR_SCALAR_TYPES):
+        return None
+    if isinstance(value, str):
+        if _is_sensitive_diagnostic(value):
+            return None
+        from utils.text_utils import _sanitize_error_message
+
+        return _sanitize_error_message(value)[:_MAX_PROVIDER_ERROR_SCALAR_LEN]
+    return value
 
 
 def sanitize_provider_error_info(raw_err: Any) -> dict[str, Any]:
@@ -1304,9 +1322,10 @@ def sanitize_provider_error_info(raw_err: Any) -> dict[str, Any]:
         for k, v in raw_err.items():
             if k == "message" or k not in _ALLOWED_PROVIDER_ERROR_KEYS:
                 continue
-            if isinstance(v, str) and _is_sensitive_diagnostic(v):
+            safe_value = _sanitize_provider_error_scalar(v)
+            if safe_value is None:
                 continue
-            sanitized_error[k] = v
+            sanitized_error[k] = safe_value
     return sanitized_error
 
 

@@ -1394,13 +1394,18 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.addEventListener("resize", _resizeHandler);
 
-  window.addEventListener("beforeunload", () => {
+  // N20-05: tear down on pagehide as well as beforeunload (bfcache
+  // restores would otherwise keep the resize listener, rAF loop, fetch
+  // controller and WebGL context alive). Mirrors screener.js cleanup.
+  const cleanupHeatmapResources = () => {
     window.removeEventListener("resize", _resizeHandler);
     stop3DAnimation();
     if (state.timeoutId) {
       clearTimeout(state.timeoutId);
+      state.timeoutId = null;
     }
     state.controller?.abort();
+    state.controller = null;
     state.three.controls?.dispose?.();
     if (state.three.stockMeshes) {
       state.three.stockMeshes.forEach((mesh) => {
@@ -1411,8 +1416,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (state.three.renderer) {
       state.three.renderer.dispose();
+      state.three.renderer = null;
     }
-  });
+  };
+  window.addEventListener("beforeunload", cleanupHeatmapResources);
+  window.addEventListener("pagehide", cleanupHeatmapResources);
 
   loadHeatmap();
 });

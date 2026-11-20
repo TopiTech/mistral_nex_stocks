@@ -1880,6 +1880,13 @@ def get_openai_embeddings_batch(
                     app_state.market.report_circuit_result("openai_compatible", success=True)
                     circuit_probe_claimed = False
                     data = resp.json()
+                    # N20-01: account embedding token usage like the chat path
+                    # (call_openai_chat records usage; the embeddings path never
+                    # did, so OpenAI embedding spend stayed at zero). Usage is
+                    # best-effort: ignore missing/malformed bodies.
+                    usage = data.get("usage") if isinstance(data, dict) else None
+                    if isinstance(usage, dict):
+                        app_state.ai.record_openai_usage(usage, model=target_model)
                     raw_data = data.get("data", []) if isinstance(data, dict) else []
                     for fallback_idx, item in enumerate(raw_data):
                         if not isinstance(item, dict):

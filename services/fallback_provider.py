@@ -33,6 +33,7 @@ from utils.http_utils import (
     parse_retry_after,
 )
 from utils.normalization import _finite_number, is_bool_like
+from utils.text_utils import _sanitize_error_message, _short_text
 
 BeautifulSoup: Any
 try:
@@ -267,11 +268,23 @@ class AlphaVantageProvider(BaseFallbackProvider):
 
             if "Note" in data or "Information" in data:
                 msg = data.get("Note") or data.get("Information")
-                logger.warning("AlphaVantage rate limit or info message for %s: %s", symbol, msg)
+                # N20-03: provider-controlled text must not reach logs verbatim
+                # (newlines/terminal escapes enable log forging). Mask secrets
+                # first, then strip C0 controls via _short_text (which also
+                # caps the length), mirroring the request-log path.
+                logger.warning(
+                    "AlphaVantage rate limit or info message for %s: %s",
+                    symbol,
+                    _short_text(_sanitize_error_message(msg), 200),
+                )
                 self._mark_locally_blocked(parse_retry_after(resp))
                 return None
             if "Error Message" in data:
-                logger.warning("AlphaVantage error for %s: %s", symbol, data.get("Error Message"))
+                logger.warning(
+                    "AlphaVantage error for %s: %s",
+                    symbol,
+                    _short_text(_sanitize_error_message(data.get("Error Message")), 200),
+                )
                 return None
 
             quote = data.get("Global Quote", {})

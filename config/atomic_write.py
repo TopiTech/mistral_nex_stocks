@@ -21,6 +21,44 @@ logger = logging.getLogger("config_store")
 _FCNTL_LOCK_MAX_RETRIES = 100
 _FCNTL_LOCK_RETRY_DELAY_SEC = 0.025
 
+# N21-02: grace window before a *.tmp file is considered orphaned (mirrors
+# utils/storage.py and utils/disk_cache.py). Crash-killed atomic writes leak
+# their tmp between the fsync'd write and the os.replace swap; in-process
+# error paths already unlink, so only a hard kill can leak one. Younger files
+# may belong to a concurrent in-flight writer and are left alone.
+_STALE_TMP_GRACE_SEC = 600.0
+
+
+def _sweep_stale_tmp_files(directory: Path, *patterns: str) -> int:
+    """Unlink ``*.tmp`` files older than the grace window (N21-02).
+
+    ``config/io.py`` (``config.json.{uuid}.tmp`` / ``config.json.bak.{uuid}.tmp``),
+    ``config/corruption.py`` (``config.json.corrupt.{uuid}.tmp``) and
+    ``shutdown_manager`` (``.{name}.{uuid}.tmp``) all write through a uuid tmp
+    and delete it on every in-process error path, but a hard process kill
+    between the fsync'd tmp write and the ``os.replace`` swap leaks the file
+    forever — no other cleanup path matches the ``*.tmp`` suffix.  Sweeping
+    here (called from the config load path) mirrors the existing sweepers in
+    ``utils/storage.py`` and ``utils/disk_cache.py``.
+    """
+    removed = 0
+    threshold = time.time() - _STALE_TMP_GRACE_SEC
+    for pattern in patterns:
+        try:
+            entries = list(directory.glob(pattern))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.stat().st_mtime >= threshold:
+                    continue
+                entry.unlink()
+                removed += 1
+                logger.info("Removed stale tmp file: %s", entry.name)
+            except OSError as exc:
+                logger.debug("Could not sweep stale tmp %s: %s", entry.name, exc)
+    return removed
+
 
 def _fsync_directory(directory: Path) -> bool:
     """Best-effort fsync of ``directory`` so a rename/unlink survives a crash.

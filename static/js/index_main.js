@@ -335,8 +335,14 @@ function handleUrlSearchParam() {
   // Deep links from the browser extension must open the requested card, not
   // merely populate the search field. Rendering is asynchronous, so retry
   // briefly until the stock wrapper is available.
+  // N20-06: guard the retry chain with a generation counter so a navigation
+  // or a second ?q= handling cannot leave a stale chain touching the DOM up
+  // to 10s later.
+  const deepLinkGeneration = (handleUrlSearchParam._generation || 0) + 1;
+  handleUrlSearchParam._generation = deepLinkGeneration;
   let attempts = 0;
   const openRequestedCard = () => {
+    if (handleUrlSearchParam._generation !== deepLinkGeneration) return;
     attempts += 1;
     const stock = marketParam
       ? getStockByKey(makeStockKey(marketParam, qParam.toUpperCase()))

@@ -29,6 +29,13 @@ USER_STOCKS_FILE = _DEFAULT_USER_STOCKS_FILE
 LEGACY_USER_STOCKS_FILE = _DEFAULT_LEGACY_USER_STOCKS_FILE
 _USER_STOCKS_READ_FAILED = object()
 _LEGACY_MIGRATION_LOCK = threading.Lock()
+# N21-01: the legacy plaintext store is deleted on successful migration, so
+# "no legacy file + complete target" is a stable terminal state. Memoize it
+# per process to avoid taking the migration lock and re-parsing the full
+# portfolio on every load_user_stocks() call. Reset by tests via
+# _reset_legacy_migration_memo(). The memo is keyed by resolved (legacy,
+# target) paths so monkeypatched test paths never share production state.
+_LEGACY_MIGRATION_DONE: dict[tuple[str, str], bool] = {}
 
 
 def _get_user_stocks_path() -> Path:
@@ -302,6 +309,12 @@ def _user_stocks_target_is_complete(path: Path) -> bool:
     return True
 
 
+def _reset_legacy_migration_memo() -> None:
+    """Clear the N21-01 memo (tests that swap USER_STOCKS paths)."""
+    with _LEGACY_MIGRATION_LOCK:
+        _LEGACY_MIGRATION_DONE.clear()
+
+
 def _migrate_legacy_user_stocks() -> bool:
     """Migrate the legacy plaintext store and report whether it is safe to load.
 
@@ -312,9 +325,17 @@ def _migrate_legacy_user_stocks() -> bool:
     """
     legacy = _get_legacy_user_stocks_path()
     target = _get_user_stocks_path()
+    memo_key = (str(legacy), str(target))
     with _LEGACY_MIGRATION_LOCK:
+        if _LEGACY_MIGRATION_DONE.get(memo_key):
+            return True
         if target.exists():
             if _user_stocks_target_is_complete(target):
+                if not legacy.exists():
+                    # N21-01: stable terminal state (legacy deleted after a
+                    # successful migration). Skip the lock + full parse on
+                    # every later load.
+                    _LEGACY_MIGRATION_DONE[memo_key] = True
                 return True
             if not legacy.exists():
                 # Nothing to retry from; let the normal load path report the
@@ -408,6 +429,14 @@ def _migrate_legacy_user_stocks() -> bool:
                 logger.info("Removed legacy plaintext user stocks file %s", legacy)
             except OSError as rm_exc:
                 logger.warning("Failed to remove legacy plaintext file %s: %s", legacy, rm_exc)
+            # N21-01: legacy is gone and the target is complete — memoize so
+            # later loads skip the migration lock + full parse. A failed
+            # legacy unlink leaves the memo unset (next load retries removal).
+            try:
+                if not legacy.exists():
+                    _LEGACY_MIGRATION_DONE[memo_key] = True
+            except OSError:
+                pass
             return True
         except FileExistsError:
             # Another thread/process atomically won O_EXCL creation; leave it intact.

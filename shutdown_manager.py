@@ -114,6 +114,13 @@ class ShutdownTokenManager:
                     self.runtime_state_dir,
                     exc,
                 )
+        # N21-02: crash-killed atomic writes leak their uuid tmp files
+        # (``.{name}.{uuid}.tmp``); in-process error paths unlink via the
+        # finally clause, so only a hard kill can leak one. Best-effort
+        # sweep mirrors the config/user_stocks/disk-cache sweepers.
+        from config.atomic_write import _sweep_stale_tmp_files
+
+        _sweep_stale_tmp_files(self.runtime_state_dir, ".*.tmp")
 
     def get_or_create_shutdown_token(self) -> str:
         with self._lock:

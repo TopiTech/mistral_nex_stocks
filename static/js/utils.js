@@ -748,7 +748,11 @@ function closeTopmostOverlayOnEscape(e) {
     return true;
   }
 
-  // 2. #ai-portfolio-modal
+  // 2. AI portfolio: legacy #ai-portfolio-modal overlay if present, else the
+  // #ai-portfolio-view inline panel (N20-04). templates/index.html has no
+  // #ai-portfolio-modal element, so the old branch never fired in production
+  // and fell through. Keep the legacy branch for callers/tests that provide
+  // the modal overlay, and blur out of the inline view as a fallback.
   const aiPortfolioModal = document.getElementById("ai-portfolio-modal");
   if (
     aiPortfolioModal &&
@@ -762,6 +766,19 @@ function closeTopmostOverlayOnEscape(e) {
       window.closeAiPortfolioModal();
     } else {
       closeModal("ai-portfolio-modal");
+    }
+    return true;
+  }
+  const aiPortfolioView = document.getElementById("ai-portfolio-view");
+  if (
+    aiPortfolioView &&
+    !aiPortfolioView.classList.contains("hidden") &&
+    aiPortfolioView.contains(document.activeElement) &&
+    document.activeElement !== document.body
+  ) {
+    consumeEscape();
+    if (typeof document.activeElement.blur === "function") {
+      document.activeElement.blur();
     }
     return true;
   }

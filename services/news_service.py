@@ -11,7 +11,12 @@ from constants import (
     NEWS_CONTEXT_WAIT_TIMEOUT,
     NEWS_SUMMARY_MAX_TOKENS,
 )
-from credential_manager import get_openai_model, is_openai_provider, is_preview_api_key
+from credential_manager import (
+    get_model_name,
+    get_openai_model,
+    is_openai_provider,
+    is_preview_api_key,
+)
 from services.ai_service import ProviderAPIError, call_mistral_chat, is_mistral_error
 from services.news_formatter import NewsFormatter
 from services.search_service import (
@@ -400,12 +405,21 @@ class NewsService:
         # Return an empty bundle instead and let retrieve_status signal the
         # degraded fetch state to the UI.
         is_preview = is_preview_api_key(api_key)
-        cache_scope = f"openai_{get_openai_model()}" if is_openai_provider() else ""
-        llm_cache_key = (
-            f"news_bundle_llm_{cache_scope}_{llm_hash}"
-            if cache_scope
-            else f"news_bundle_llm_{llm_hash}"
-        )
+        # N20-02: scope the bundle cache by the effective model on both
+        # providers. The OpenAI branch already scoped by model, but the
+        # Mistral branch used a bare context hash, so switching the Mistral
+        # model kept serving the previous model's summary until the TTL
+        # expired. Model lookup is best-effort: fall back to the legacy
+        # unscoped key rather than failing the news request.
+        if is_openai_provider():
+            cache_scope = f"openai_{get_openai_model()}"
+        else:
+            try:
+                mistral_model = (get_model_name() or "").strip() or "mistral-default"
+            except Exception:
+                mistral_model = "mistral-default"
+            cache_scope = f"mistral_{mistral_model}"
+        llm_cache_key = f"news_bundle_llm_{cache_scope}_{llm_hash}"
 
         if not (us_context or jp_context or trends_context):
             logger.warning(

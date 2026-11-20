@@ -17,7 +17,11 @@ import uuid
 from typing import Any, Literal
 
 import config_store
-from config.atomic_write import _migrate_legacy_runtime_file, _write_and_replace_with_lock
+from config.atomic_write import (
+    _migrate_legacy_runtime_file,
+    _sweep_stale_tmp_files,
+    _write_and_replace_with_lock,
+)
 from config.corruption import (
     _rotate_corrupt_backups,
     _sanitize_and_backup_corrupt_config,
@@ -85,6 +89,11 @@ def load_config() -> dict[str, Any]:
     needs_legacy_sync = False
     with config_store._CONFIG_LOCK:
         _ensure_runtime_dir()
+        # N21-02: crash-killed atomic writes leak their uuid tmp files
+        # (config.json.{uuid}.tmp, .bak.{uuid}.tmp, .corrupt.{uuid}.tmp);
+        # in-process error paths unlink, so only a hard kill can leak one.
+        # Best-effort sweep here mirrors user_stocks/disk-cache sweepers.
+        _sweep_stale_tmp_files(config_store.CONFIG_FILE.parent, "config.json.*.tmp")
 
         # One-time, process-lifetime legacy config merge. Performed at most once
         # per process to avoid unnecessary stat() calls and prevent a stale

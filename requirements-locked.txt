@@ -2,7 +2,7 @@
 #    uv export --locked --no-hashes --no-dev -o requirements-locked.txt
 aiocache==0.12.3 ; python_full_version >= '3.12'
     # via mistralai-workflows-plugins-mistralai
-annotated-doc==0.0.5 ; python_full_version >= '3.12'
+annotated-doc==0.0.6 ; python_full_version >= '3.12'
     # via typer
 annotated-types==0.8.0
     # via pydantic
@@ -36,7 +36,7 @@ cachetools==7.2.5
     # via
     #   mistral-nex-stocks
     #   mistralai-agents
-certifi==2026.10.19
+certifi==2026.10.23
     # via
     #   curl-cffi
     #   httpcore
@@ -90,7 +90,7 @@ googleapis-common-protos==1.76.0 ; python_full_version >= '3.12'
     # via opentelemetry-exporter-otlp-proto-http
 griffe==1.15.0 ; python_full_version >= '3.12'
     # via mistralai
-gunicorn==26.2.0 ; sys_platform != 'win32'
+gunicorn==27.0.1 ; sys_platform != 'win32'
     # via mistral-nex-stocks
 h11==0.16.0
     # via
@@ -146,13 +146,13 @@ jinja2==3.1.6
     # via flask
 joserfc==1.8.0 ; python_full_version >= '3.12'
     # via authlib
-jsonpatch==1.44 ; python_full_version >= '3.12'
+jsonpatch==1.47 ; python_full_version >= '3.12'
     # via
     #   mistralai-vibe-harness
     #   mistralai-workflows
 jsonpath-python==1.1.6
     # via mistralai
-jsonpointer==3.10 ; python_full_version >= '3.12'
+jsonpointer==3.12 ; python_full_version >= '3.12'
     # via jsonpatch
 jsonschema==4.26.0 ; python_full_version >= '3.12'
     # via mcp
@@ -218,8 +218,6 @@ more-itertools==11.2.1
     #   jaraco-functools
 msgpack==1.2.4 ; python_full_version >= '3.12'
     # via mistralai
-multitasking==0.0.13
-    # via yfinance
 nexus-rpc==1.4.0 ; python_full_version >= '3.12'
     # via temporalio
 numpy==2.4.6 ; python_full_version < '3.12'
@@ -242,13 +240,13 @@ opentelemetry-api==1.45.2
     #   opentelemetry-instrumentation-httpx
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-exporter-http-transport==0.66b1 ; python_full_version >= '3.12'
+opentelemetry-exporter-http-transport==0.66b2 ; python_full_version >= '3.12'
     # via opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-common==0.66b1 ; python_full_version >= '3.12'
+opentelemetry-exporter-otlp-common==0.66b2 ; python_full_version >= '3.12'
     # via opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-proto-common==1.45.1 ; python_full_version >= '3.12'
+opentelemetry-exporter-otlp-proto-common==1.45.2 ; python_full_version >= '3.12'
     # via opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-proto-http==1.45.1 ; python_full_version >= '3.12'
+opentelemetry-exporter-otlp-proto-http==1.45.2 ; python_full_version >= '3.12'
     # via
     #   mistralai-otel-observability
     #   mistralai-workflows
@@ -256,7 +254,7 @@ opentelemetry-instrumentation==0.66b2 ; python_full_version >= '3.12'
     # via opentelemetry-instrumentation-httpx
 opentelemetry-instrumentation-httpx==0.66b2 ; python_full_version >= '3.12'
     # via mistralai-workflows
-opentelemetry-proto==1.45.1 ; python_full_version >= '3.12'
+opentelemetry-proto==1.45.2 ; python_full_version >= '3.12'
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-http
@@ -301,7 +299,7 @@ psutil==7.2.2
     # via mistral-nex-stocks
 pycparser==3.0 ; implementation_name != 'PyPy'
     # via cffi
-pydantic==2.13.5
+pydantic==2.14.3
     # via
     #   mcp
     #   mcp-types
@@ -312,7 +310,8 @@ pydantic==2.13.5
     #   mistralai-vibe-sdk
     #   mistralai-workflows
     #   pydantic-settings
-pydantic-core==2.46.5
+    #   typer
+pydantic-core==2.50.4
     # via pydantic
 pydantic-settings==2.16.3 ; python_full_version >= '3.12'
     # via mistralai-workflows
@@ -330,7 +329,7 @@ python-dotenv==1.2.4 ; python_full_version >= '3.12'
     # via pydantic-settings
 python-json-logger==4.2.0
     # via mistral-nex-stocks
-python-multipart==0.0.33 ; python_full_version >= '3.12'
+python-multipart==0.0.34 ; python_full_version >= '3.12'
     # via mcp
 pytrends-modern==0.2.13
     # via mistral-nex-stocks
@@ -381,7 +380,7 @@ soupsieve==2.10 ; python_full_version < '3.11.5'
     # via beautifulsoup4
 soupsieve==4.1.2 ; python_full_version >= '3.11.5'
     # via beautifulsoup4
-sse-starlette==3.6.0 ; python_full_version >= '3.12'
+sse-starlette==3.7.0 ; python_full_version >= '3.12'
     # via mcp
 starlette==1.10.0 ; python_full_version >= '3.12'
     # via
@@ -401,7 +400,7 @@ tavily-python==0.8.5
     # via mistral-nex-stocks
 temporalio==1.35.0 ; python_full_version >= '3.12'
     # via mistralai-workflows
-tenacity==9.1.4
+tenacity==9.2.1
     # via
     #   mistral-nex-stocks
     #   mistralai-vibe-harness
@@ -413,7 +412,7 @@ truststore==0.10.5 ; sys_platform != 'emscripten'
     # via
     #   httpcore2
     #   httpx2
-typer==0.28.0 ; python_full_version >= '3.12'
+typer==0.29.1 ; python_full_version >= '3.12'
     # via mistralai-agents
 types-protobuf==7.35.1.20260906 ; python_full_version >= '3.12'
     # via temporalio
@@ -437,7 +436,7 @@ typing-extensions==4.16.0
     #   starlette
     #   temporalio
     #   typing-inspection
-typing-inspection==0.4.2
+typing-inspection==0.4.5
     # via
     #   mcp
     #   mistralai
@@ -465,7 +464,7 @@ wrapt==2.5.2 ; python_full_version >= '3.12'
     #   opentelemetry-instrumentation-httpx
 wtforms==3.2.2
     # via flask-wtf
-yfinance==1.7.0
+yfinance==1.8.0
     # via mistral-nex-stocks
 zipp==4.1.2 ; python_full_version < '3.12'
     # via importlib-metadata

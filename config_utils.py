@@ -188,7 +188,7 @@ MISTRAL_MODELS = {
         "recommended": False,
         "tier": "paid",
         "tier_label": "有料プラン専用・マルチモーダル",
-        "supports_reasoning": True,
+        "supports_reasoning": False,
         "supports_tools": True,
         "supports_vision": True,
     },

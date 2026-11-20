@@ -1,0 +1,40 @@
+name: Dependabot Sync
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main, master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-requirements:
+    name: Sync requirements-locked.txt
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.25"
+          enable-cache: true
+
+      - name: Update requirements-locked.txt
+        shell: bash
+        run: |
+          uv export --locked --no-hashes --no-dev -o requirements-locked.txt
+          if [[ -n $(git status -s requirements-locked.txt) ]]; then
+            git config --global user.name 'github-actions[bot]'
+            git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+            git add requirements-locked.txt
+            git commit -m "chore(deps): sync requirements-locked.txt with uv.lock"
+            git push
+          fi

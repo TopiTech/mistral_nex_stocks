@@ -33,6 +33,8 @@ def test_supports_reasoning_effort_models():
     assert _supports_reasoning_effort("ministral-8b-latest") is False
     assert _supports_reasoning_effort("ministral-3b-latest") is False
     assert _supports_reasoning_effort("codestral-latest") is False
+    assert _supports_reasoning_effort("mistral-large-4-0") is False
+    assert _supports_reasoning_effort("mistral-large-latest") is False
 
 
 def test_extract_chat_content_strips_thought_tags():

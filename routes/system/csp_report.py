@@ -67,9 +67,8 @@ def _sanitize_csp_report_for_log(report: dict[str, Any]) -> dict[str, Any]:
                 sanitized[key] = token
             elif token:
                 sanitized[key] = "invalid"
-        elif key in _CSP_LOG_NUMERIC_FIELDS:
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                sanitized[key] = value
+        elif key in _CSP_LOG_NUMERIC_FIELDS and isinstance(value, (int, float)) and not isinstance(value, bool):
+            sanitized[key] = value
     return sanitized
 
 

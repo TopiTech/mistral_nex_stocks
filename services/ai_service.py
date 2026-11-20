@@ -375,9 +375,6 @@ MISTRAL_REASONING_MODELS = {
     "mistral-medium-3.5",
     "mistral-medium-3-5",
     "mistral-medium-latest",
-    "mistral-large-4",
-    "mistral-large-4-0",
-    "mistral-large-2610",
 }
 
 
@@ -398,8 +395,6 @@ def _supports_reasoning_effort(model_name: str) -> bool:
                 "mistral-small",
                 "mistral-medium",
                 "magistral",
-                "mistral-large-4",
-                "mistral-large-2610",
             )
         )
         or "reasoning" in name

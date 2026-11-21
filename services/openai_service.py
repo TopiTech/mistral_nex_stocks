@@ -1195,6 +1195,7 @@ def stream_openai_chat(
         payload["reasoning_effort"] = reasoning_effort.lower()
 
     full_parts: list[str] = []
+    last_usage: dict[str, Any] | None = None
     logger.info(
         "OpenAI stream start model=%s base_url=%s",
         model,
@@ -1327,6 +1328,11 @@ def stream_openai_chat(
                             break
                         try:
                             chunk = json.loads(data_part)
+                            if not isinstance(chunk, dict):
+                                continue
+                            chunk_usage = chunk.get("usage")
+                            if isinstance(chunk_usage, dict) and chunk_usage:
+                                last_usage = chunk_usage
                             choices = chunk.get("choices") or []
                             if choices and isinstance(choices, list):
                                 delta = choices[0].get("delta") or {}
@@ -1362,6 +1368,8 @@ def stream_openai_chat(
 
                 app_state.market.report_circuit_result("openai_compatible", success=True)
                 circuit_probe_claimed = False
+                if isinstance(last_usage, dict) and last_usage:
+                    app_state.ai.record_openai_usage(last_usage, model=model)
             finally:
                 _close_stream_context(stream_cm, stream)
 

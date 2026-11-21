@@ -1004,11 +1004,26 @@ endblock %} {% block meta %}
         <span id="fs-stock-name" class="fs-name">--</span>
         <span id="fs-stock-price" class="fs-price">--</span>
       </div>
-      <div id="fs-chart-view-toggle" class="fs-view-toggle">
-        <button type="button" class="fs-view-btn active" data-fs-view="builtin">
+      <div
+        id="fs-chart-view-toggle"
+        class="fs-view-toggle"
+        role="group"
+        aria-label="全画面チャート表示モード"
+      >
+        <button
+          type="button"
+          class="fs-view-btn active"
+          data-fs-view="builtin"
+          aria-pressed="true"
+        >
           📈 アプリ内蔵
         </button>
-        <button type="button" class="fs-view-btn" data-fs-view="tradingview">
+        <button
+          type="button"
+          class="fs-view-btn"
+          data-fs-view="tradingview"
+          aria-pressed="false"
+        >
           🌐 TradingView
         </button>
       </div>

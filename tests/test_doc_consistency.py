@@ -292,6 +292,47 @@ def test_requirements_txt_matches_pyproject_ranges():
     )
 
 
+def _read_pyproject_dependency_group(group: str) -> dict[str, str]:
+    """Map lowercase package name -> spec string from pyproject.toml dependency-groups."""
+    import tomllib
+
+    with open(ROOT / "pyproject.toml", "rb") as f:
+        data = tomllib.load(f)
+    deps: dict[str, str] = {}
+    for entry in data.get("dependency-groups", {}).get(group, []) or []:
+        parsed = _parse_req_entry(str(entry))
+        if parsed:
+            deps.setdefault(parsed[0], parsed[1])
+    return deps
+
+
+@pytest.mark.parametrize(
+    ("req_file", "group_name"),
+    [
+        ("requirements-lint.txt", "lint"),
+        ("requirements-dev.txt", "typecheck"),
+    ],
+)
+def test_dependency_group_mirrors_match_pyproject(req_file: str, group_name: str) -> None:
+    """requirements-lint.txt / requirements-dev.txt must match pyproject.toml dependency-groups."""
+    reqs = _read_requirements_map(req_file)
+    group_deps = _read_pyproject_dependency_group(group_name)
+    assert set(reqs) == set(group_deps), (
+        f"Package set mismatch between {req_file} and [dependency-groups].{group_name}: "
+        f"only_in_req={sorted(set(reqs) - set(group_deps))}, "
+        f"only_in_pyproject={sorted(set(group_deps) - set(reqs))}"
+    )
+    mismatches = [
+        f"{name}: {req_file}={reqs[name]!r} pyproject.toml={group_deps[name]!r}"
+        for name in sorted(group_deps)
+        if reqs[name].replace(" ", "") != group_deps[name].replace(" ", "")
+    ]
+    assert not mismatches, (
+        f"{req_file} and [dependency-groups].{group_name} declare different pins: "
+        + "; ".join(mismatches)
+    )
+
+
 # ---------------------------------------------------------------------------
 # config.json must not contain committed secrets (review finding R1)
 # ---------------------------------------------------------------------------

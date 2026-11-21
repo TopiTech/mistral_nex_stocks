@@ -664,7 +664,33 @@ function registerWrapper(stockKey, wrapper) {
 }
 
 function unregisterWrapper(stockKey, wrapper) {
+  if (
+    wrapper &&
+    typeof currentDrawerActiveWrapper !== "undefined" &&
+    currentDrawerActiveWrapper === wrapper &&
+    typeof closeStockDetailDrawer === "function"
+  ) {
+    closeStockDetailDrawer();
+  }
   const wrappers = wrapperRegistryMap.get(stockKey);
+  if (typeof document !== "undefined") {
+    const fsModal = document.getElementById("chart-fullscreen-modal");
+    const matchesWrapper = fsModal && fsModal._activeWrapper === wrapper;
+    const isLastForKey =
+      !wrappers || (wrappers.size <= 1 && wrappers.has(wrapper));
+    if (
+      fsModal &&
+      !fsModal.classList.contains("hidden") &&
+      typeof closeFsChartModal === "function" &&
+      (matchesWrapper ||
+        (!fsModal._activeWrapper &&
+          isLastForKey &&
+          stockKey &&
+          fsModal.dataset?.stockKey === stockKey))
+    ) {
+      closeFsChartModal();
+    }
+  }
   if (wrappers) {
     wrappers.delete(wrapper);
     // Remove empty set from map to prevent accumulation

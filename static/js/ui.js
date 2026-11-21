@@ -118,7 +118,9 @@ function updateIntervalControlsVisibility(parentEl, stockKey, currentPeriod) {
       const inv = btn.dataset.interval;
       const isSupported = supported.includes(inv);
       btn.style.display = isSupported ? "" : "none";
-      btn.classList.toggle("active", inv === currentInterval);
+      const isCurrentInterval = inv === currentInterval;
+      btn.classList.toggle("active", isCurrentInterval);
+      btn.setAttribute("aria-pressed", String(isCurrentInterval));
     });
   });
 }
@@ -134,6 +136,20 @@ if (
       if (cardIntersectionObserver) {
         cardIntersectionObserver.disconnect();
         cardIntersectionObserver = null;
+      }
+      if (
+        typeof stockDetailDrawerRefreshTimer !== "undefined" &&
+        stockDetailDrawerRefreshTimer !== null
+      ) {
+        clearTimeout(stockDetailDrawerRefreshTimer);
+        stockDetailDrawerRefreshTimer = null;
+      }
+      if (
+        typeof aiDrawerAbortController !== "undefined" &&
+        aiDrawerAbortController
+      ) {
+        aiDrawerAbortController.abort();
+        aiDrawerAbortController = null;
       }
     },
   );
@@ -4185,6 +4201,67 @@ function renderAiTechnicalLinesSummary(wrapper, data) {
   }
 }
 
+function syncChartControlsContainerState(controlsEl, stockKey) {
+  if (!controlsEl || !stockKey) return;
+  const currentType = getChartPref(stockKey, "type", "candlestick");
+  const currentPeriod = getChartPref(stockKey, "period", "3mo");
+
+  controlsEl.querySelectorAll("[data-type]").forEach((b) => {
+    const on = b.dataset.type === currentType;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  controlsEl.querySelectorAll("[data-period]").forEach((b) => {
+    const on = b.dataset.period === currentPeriod;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  if (typeof updateIntervalControlsVisibility === "function") {
+    updateIntervalControlsVisibility(controlsEl, stockKey, currentPeriod);
+  }
+  controlsEl.querySelectorAll("[data-ind]").forEach((b) => {
+    const key = b.dataset.ind;
+    const defVal = key === "ind_ma5" || key === "ind_ma25" ? "on" : "off";
+    const on = getChartPref(stockKey, key, defVal) === "on";
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  controlsEl.querySelectorAll("[data-volume]").forEach((b) => {
+    const on = getChartPref(stockKey, "volume", "on") === "on";
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+}
+
+function syncWrapperChartControls(wrapper, stockKey) {
+  const targets = new Set();
+  const addFromRoot = (root) => {
+    if (!root || typeof root.querySelector !== "function") return;
+    const controls = root.querySelector(".chart-controls");
+    if (controls) targets.add(controls);
+  };
+  addFromRoot(wrapper);
+  if (typeof findAllWrappersByStockKey === "function" && stockKey) {
+    findAllWrappersByStockKey(stockKey).forEach(addFromRoot);
+  }
+  const drawerEl =
+    typeof document !== "undefined"
+      ? document.getElementById("stock-detail-drawer")
+      : null;
+  if (
+    drawerEl &&
+    (currentDrawerActiveWrapper === wrapper ||
+      (drawerEl.classList.contains("open") &&
+        stockKey &&
+        drawerEl.dataset?.stockKey === stockKey))
+  ) {
+    addFromRoot(document.getElementById("drawerTabChartContent") || drawerEl);
+  }
+  targets.forEach((controlsEl) =>
+    syncChartControlsContainerState(controlsEl, stockKey),
+  );
+}
+
 function openFullscreenChart(wrapper) {
   const targetWrapper = wrapper || currentDrawerActiveWrapper;
   if (!targetWrapper) return;
@@ -4203,6 +4280,7 @@ function openFullscreenChart(wrapper) {
   };
   const modalWasHidden = modal.classList.contains("hidden");
   modal.dataset.stockKey = stockKey;
+  modal._activeWrapper = targetWrapper;
   bumpFsToolbarReqId();
   modal.removeAttribute("inert");
   modal.setAttribute("aria-hidden", "false");
@@ -4389,6 +4467,9 @@ function openFullscreenChart(wrapper) {
             btn.classList.toggle("active", next === "on");
             btn.setAttribute("aria-pressed", String(next === "on"));
           }
+          if (typeof syncWrapperChartControls === "function") {
+            syncWrapperChartControls(targetWrapper, stockKey);
+          }
           const p = getChartPref(stockKey, "period", "3mo");
           const inv = getChartPref(stockKey, "interval", "auto");
           const toolbarReqId = bumpFsToolbarReqId();
@@ -4462,7 +4543,9 @@ function openFullscreenChart(wrapper) {
 
     if (viewToggle) {
       viewToggle.querySelectorAll("[data-fs-view]").forEach((btn) => {
-        btn.classList.toggle("active", btn.dataset.fsView === mode);
+        const isActive = btn.dataset.fsView === mode;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-pressed", String(isActive));
       });
     }
 
@@ -4617,6 +4700,7 @@ function closeFsChartModal() {
     modal.setAttribute("aria-hidden", "true");
     modal.setAttribute("inert", "");
     delete modal.dataset.stockKey;
+    modal._activeWrapper = null;
     const fsCanvasWrapper = document.getElementById("fs-chart-canvas-wrapper");
     fsCanvasWrapper
       ?.querySelectorAll(".chart-error")

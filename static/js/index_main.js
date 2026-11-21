@@ -653,6 +653,13 @@ async function fetchInitialStocks(force = false) {
       if (!container) return;
       container.setAttribute("aria-busy", "false");
       container.querySelectorAll(".stock-wrapper").forEach((w) => {
+        if (
+          typeof currentDrawerActiveWrapper !== "undefined" &&
+          currentDrawerActiveWrapper === w &&
+          typeof closeStockDetailDrawer === "function"
+        ) {
+          closeStockDetailDrawer();
+        }
         w.querySelectorAll("canvas").forEach((canvas) => destroyChart(canvas));
         if (cardIntersectionObserver) {
           cardIntersectionObserver.unobserve(w);

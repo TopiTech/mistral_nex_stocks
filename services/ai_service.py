@@ -988,6 +988,28 @@ def _extract_mistral_usage_dict(raw_usage: Any) -> dict[str, Any] | None:
     return None
 
 
+def _extract_stream_chunk_usage(chunk: Any) -> dict[str, Any] | None:
+    """Extract normalized usage metadata from either a stream wrapper or direct chunk."""
+    if isinstance(chunk, dict):
+        raw_usage = chunk.get("usage")
+        if raw_usage is None:
+            chunk_data = chunk.get("data")
+            if isinstance(chunk_data, dict):
+                raw_usage = chunk_data.get("usage")
+            elif chunk_data is not None:
+                raw_usage = getattr(chunk_data, "usage", None)
+        return _extract_mistral_usage_dict(raw_usage)
+
+    raw_usage = getattr(chunk, "usage", None)
+    if raw_usage is None:
+        chunk_data = getattr(chunk, "data", None)
+        if isinstance(chunk_data, dict):
+            raw_usage = chunk_data.get("usage")
+        elif chunk_data is not None:
+            raw_usage = getattr(chunk_data, "usage", None)
+    return _extract_mistral_usage_dict(raw_usage)
+
+
 def _release_mistral_call_slot(reserved_ts: float | None = None) -> None:
     """Roll back an unused pacing reservation (SVC-02).
 
@@ -3069,8 +3091,8 @@ def stream_mistral_chat(
                         full_parts.append(delta_text)
                         yield {"type": "delta", "text": delta_text}
                 # Best-effort usage capture: some SDK versions attach usage to
-                # the final stream chunk (C-4).
-                extracted_chunk_usage = _extract_mistral_usage_dict(getattr(chunk, "usage", None))
+                # the final stream chunk or wrapped chunk.data (C-4).
+                extracted_chunk_usage = _extract_stream_chunk_usage(chunk)
                 if extracted_chunk_usage:
                     last_usage = extracted_chunk_usage
 

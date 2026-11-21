@@ -106,6 +106,7 @@ def get_mistral_embeddings_batch(
         _acquire_mistral_call_slot_with_reservation,
         _extract_error_payload,
         _extract_error_response,
+        _extract_mistral_usage_dict,
         _extract_mistral_wait_seconds,
         _is_mistral_capacity_error,
         _release_mistral_call_slot,
@@ -207,14 +208,9 @@ def get_mistral_embeddings_batch(
                             results[target_orig_idx] = emb
                             _EMBEDDINGS_CACHE[target_hash] = emb
 
-            usage = getattr(resp, "usage", None)
-            if usage is not None:
-                if isinstance(usage, dict):
-                    app_state.ai.record_mistral_usage(usage, model="mistral-embed")
-                elif hasattr(usage, "model_dump") and callable(getattr(usage, "model_dump", None)):
-                    dumped = usage.model_dump()
-                    if isinstance(dumped, dict):
-                        app_state.ai.record_mistral_usage(dumped, model="mistral-embed")
+            usage = _extract_mistral_usage_dict(getattr(resp, "usage", None))
+            if usage:
+                app_state.ai.record_mistral_usage(usage, model="mistral-embed")
         except Exception as exc:
             raw_status_code = getattr(exc, "status_code", 0)
             try:

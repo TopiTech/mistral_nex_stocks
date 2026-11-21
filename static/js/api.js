@@ -1351,21 +1351,62 @@ function stopLoadIndicesLoop() {
   }
 }
 
-window.addEventListener("beforeunload", () => {
-  stopLoadIndicesLoop();
-  stopSseFallbackPolling();
-  if (
-    typeof pollingManager !== "undefined" &&
-    pollingManager &&
-    typeof pollingManager.clearAll === "function"
-  ) {
-    pollingManager.clearAll();
-  }
-  if (activeSearchController) {
-    activeSearchController.abort();
-    activeSearchController = null;
-  }
-});
+let activeNewsRequestController = null;
+let activeAnalyzeAbortController = null;
+
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("beforeunload", () => {
+    stopLoadIndicesLoop();
+    stopSseFallbackPolling();
+    if (typeof sseState !== "undefined" && sseState) {
+      if (sseState.ticketAbortController) {
+        sseState.ticketAbortController.abort();
+        sseState.ticketAbortController = null;
+      }
+      if (sseState.reconnectTimer) {
+        clearTimeout(sseState.reconnectTimer);
+        sseState.reconnectTimer = null;
+      }
+      sseState.stockEventSource = null;
+    }
+    if (
+      typeof sseApiClient !== "undefined" &&
+      sseApiClient &&
+      typeof sseApiClient.closeSSE === "function"
+    ) {
+      sseApiClient.closeSSE();
+    }
+    if (
+      typeof pollingManager !== "undefined" &&
+      pollingManager &&
+      typeof pollingManager.clearAll === "function"
+    ) {
+      pollingManager.clearAll();
+    }
+    if (activeSearchController) {
+      activeSearchController.abort();
+      activeSearchController = null;
+    }
+    if (activeNewsRequestController) {
+      activeNewsRequestController.abort();
+      activeNewsRequestController = null;
+    }
+    if (activeAnalyzeAbortController) {
+      activeAnalyzeAbortController.abort();
+      activeAnalyzeAbortController = null;
+    }
+    if (
+      typeof bulkAnalyzeAbortController !== "undefined" &&
+      bulkAnalyzeAbortController
+    ) {
+      bulkAnalyzeAbortController.abort();
+      bulkAnalyzeAbortController = null;
+    }
+  });
+}
 
 // #endregion SSE & Real-time Integration
 
@@ -1705,6 +1746,7 @@ async function loadNews(forceRefresh = false) {
   if (newsMetaStatsEl) newsMetaStatsEl.textContent = "表示件数: 取得中...";
 
   let timeoutId = null;
+  let newsRequestController = null;
   try {
     const headers = {
       "Content-Type": "application/json",
@@ -1713,7 +1755,10 @@ async function loadNews(forceRefresh = false) {
     // recognise the retries instead of counting each one against the quota.
     const newsRequestToken = createRequestToken();
 
-    const newsRequestController = new AbortController();
+    newsRequestController = new AbortController();
+    if (typeof activeNewsRequestController !== "undefined") {
+      activeNewsRequestController = newsRequestController;
+    }
     timeoutId = setTimeout(() => {
       newsRequestController.abort();
     }, CONSTANTS.TIMEOUT.NEWS_REQUEST);
@@ -1906,6 +1951,13 @@ async function loadNews(forceRefresh = false) {
       });
     }
   } finally {
+    if (
+      typeof activeNewsRequestController !== "undefined" &&
+      newsRequestController &&
+      activeNewsRequestController === newsRequestController
+    ) {
+      activeNewsRequestController = null;
+    }
     if (timeoutId) {
       // No later statement reads this local — clearing alone is enough.
       clearTimeout(timeoutId);
@@ -2574,7 +2626,17 @@ async function sendChat(wrapper, inputEl = null) {
   } finally {
     if (input) {
       input.disabled = false;
-      input.focus();
+      const canRestoreFocus =
+        input.isConnected !== false &&
+        (typeof input.closest !== "function" ||
+          (!input.closest("[inert]") &&
+            !input.closest("[hidden]") &&
+            !input.closest(".hidden") &&
+            !input.closest(".detail-panel:not(.open)") &&
+            !input.closest(".chat-section:not(.show)")));
+      if (canRestoreFocus) {
+        input.focus();
+      }
     }
     if (sendBtn) {
       sendBtn.disabled = false;
@@ -2989,6 +3051,14 @@ async function analyzeStock(btnEl, wrapper) {
     showToast("❌ APIキーが未設定です", "#ff7d7d");
     return;
   }
+  const analyzeController =
+    typeof AbortController === "function" ? new AbortController() : null;
+  if (
+    analyzeController &&
+    typeof activeAnalyzeAbortController !== "undefined"
+  ) {
+    activeAnalyzeAbortController = analyzeController;
+  }
   setButtonLoading(btnEl, "AI分析中...");
   state.isAnalyzing = true;
   try {
@@ -2997,6 +3067,7 @@ async function analyzeStock(btnEl, wrapper) {
       (progressMsg) => {
         setButtonLoading(btnEl, progressMsg);
       },
+      analyzeController?.signal ?? null,
     );
     // すべてのラッパーに反映
     findAllWrappersByStockKey(stockKey).forEach((w) =>
@@ -3009,12 +3080,22 @@ async function analyzeStock(btnEl, wrapper) {
       );
     }
   } catch (e) {
+    if (e?.name === "AbortError" || analyzeController?.signal?.aborted) {
+      return;
+    }
     $logger.error("Analysis error:", e);
     findAllWrappersByStockKey(stockKey).forEach((w) =>
       applyAnalysisError(w, e.message),
     );
     showToast(`❌ 分析エラー: ${e.message}`, "#ff7d7d");
   } finally {
+    if (
+      analyzeController &&
+      typeof activeAnalyzeAbortController !== "undefined" &&
+      activeAnalyzeAbortController === analyzeController
+    ) {
+      activeAnalyzeAbortController = null;
+    }
     resetButton(btnEl);
     state.isAnalyzing = false;
   }

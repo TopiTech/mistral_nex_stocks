@@ -722,21 +722,7 @@ function updateStockUI(wrapper, stock) {
                   )
                 : null);
             const chart = canvas ? chartInstances.get(canvas) : null;
-            if (
-              chart &&
-              chart.data.datasets?.[0]?.data?.length > 0 &&
-              stock.price != null
-            ) {
-              const lastPoint = chart.data.datasets[0].data.at(-1);
-              if (lastPoint && lastPoint.y !== undefined) {
-                lastPoint.y = stock.price;
-              } else if (lastPoint && lastPoint.c !== undefined) {
-                lastPoint.c = stock.price;
-                if (stock.price > lastPoint.h) lastPoint.h = stock.price;
-                if (stock.price < lastPoint.l) lastPoint.l = stock.price;
-              }
-              chart.update("none");
-            }
+            updateChartLastPoint(chart, stock.price);
           }
         } else {
           // 他期間選択中: 既存チャートの最終データポイントのみ現在価格に更新 (SSEデータで上書きしない)
@@ -748,23 +734,18 @@ function updateStockUI(wrapper, stock) {
                 )
               : null);
           if (canvas) {
-            const chart = chartInstances.get(canvas);
-            if (chart && chart.data.datasets?.[0]?.data?.length > 0) {
-              const lastPoint = chart.data.datasets[0].data.at(-1);
-              if (lastPoint && stock.price != null) {
-                if (lastPoint.y !== undefined) {
-                  // ラインチャート: y プロパティを更新
-                  lastPoint.y = stock.price;
-                } else if (lastPoint.c !== undefined) {
-                  // ローソク足チャート: close を更新し、high/low も補正
-                  lastPoint.c = stock.price;
-                  if (stock.price > lastPoint.h) lastPoint.h = stock.price;
-                  if (stock.price < lastPoint.l) lastPoint.l = stock.price;
-                }
-
-                chart.update("none");
-              }
-            }
+            updateChartLastPoint(chartInstances.get(canvas), stock.price);
+          }
+        }
+        const fsModal = document.getElementById("chart-fullscreen-modal");
+        if (
+          fsModal &&
+          !fsModal.classList.contains("hidden") &&
+          fsModal.dataset.stockKey === stockKey
+        ) {
+          const fsCanvas = document.getElementById("fs-chart-canvas");
+          if (fsCanvas) {
+            updateChartLastPoint(chartInstances.get(fsCanvas), stock.price);
           }
         }
       }
@@ -774,24 +755,95 @@ function updateStockUI(wrapper, stock) {
   }
 }
 
+function updateChartLastPoint(chart, price) {
+  if (
+    !chart ||
+    !chart.data?.datasets?.[0]?.data?.length ||
+    typeof price !== "number" ||
+    !Number.isFinite(price) ||
+    price <= 0
+  ) {
+    return;
+  }
+  const lastPoint = chart.data.datasets[0].data.at(-1);
+  if (!lastPoint) return;
+  if (lastPoint.y !== undefined) {
+    lastPoint.y = price;
+  } else if (lastPoint.c !== undefined) {
+    if (chart.$chartType === "heikin_ashi" && chart.$rawLastCandle) {
+      const raw = chart.$rawLastCandle;
+      raw.c = price;
+      if (price > raw.h) raw.h = price;
+      if (price < raw.l) raw.l = price;
+      const prevHa = chart.$prevHeikinAshi;
+      const haOpen = prevHa ? (prevHa.o + prevHa.c) / 2 : (raw.o + raw.c) / 2;
+      const haClose = (raw.o + raw.h + raw.l + raw.c) / 4;
+      lastPoint.o = haOpen;
+      lastPoint.c = haClose;
+      lastPoint.h = Math.max(raw.h, haOpen, haClose);
+      lastPoint.l = Math.min(raw.l, haOpen, haClose);
+    } else {
+      lastPoint.c = price;
+      if (price > lastPoint.h) lastPoint.h = price;
+      if (price < lastPoint.l) lastPoint.l = price;
+    }
+  }
+  chart.update("none");
+}
+
+function resolvePortfolioCurrencyPrefix(stock) {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.getCurrencySymbol === "function"
+  ) {
+    const sym = window.getCurrencySymbol(stock);
+    if (sym) return sym;
+  }
+  const cur = String(stock?.currency || "").toUpperCase();
+  if (cur === "JPY" || cur === "JPX") return "¥";
+  if (cur === "USD") return "$";
+  const m = String(stock?.market || "").toLowerCase();
+  if (m === "jp") return "¥";
+  if (m === "us") return "$";
+  if (typeof stock?.symbol === "string" && stock.symbol.endsWith(".T")) {
+    return "¥";
+  }
+  return "";
+}
+
+function formatPortfolioAmount(value, currencyPrefix, signed = false) {
+  const raw = toFiniteNumber(value, 0);
+  const digits = currencyPrefix === "¥" ? 0 : 2;
+  const factor = digits === 0 ? 1 : 100;
+  const rounded = Math.round(raw * factor) / factor;
+  const normalized = Object.is(rounded, -0) ? 0 : rounded;
+  const absFormatted = Math.abs(normalized).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  if (signed) {
+    const sign = normalized >= 0 ? "+" : "-";
+    return `${sign}${currencyPrefix}${absFormatted}`;
+  }
+  const negSign = normalized < 0 ? "-" : "";
+  return `${negSign}${currencyPrefix}${absFormatted}`;
+}
+
 function updatePortfolioInfoElements(wrapper, stock) {
   const pfInfoEl = wrapper.querySelector(".compact-pf-info");
   const shares = toFiniteNumber(stock.shares, 0);
   const avgPrice = toFiniteNumber(stock.avg_price, 0);
   const currentPrice = toFiniteNumber(stock.price, 0);
+  const currencyPrefix = resolvePortfolioCurrencyPrefix(stock);
 
   if (pfInfoEl && shares > 0) {
     const plVal = (currentPrice - avgPrice) * shares;
-    const plSign = plVal >= 0 ? "+" : "";
     const plClass = plVal >= 0 ? "pos" : "neg";
     pfInfoEl.textContent = `保有: ${shares} | 損益: `;
 
     const plSpan = document.createElement("span");
     plSpan.className = plClass;
-    plSpan.textContent = `${plSign}${plVal.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+    plSpan.textContent = formatPortfolioAmount(plVal, currencyPrefix, true);
     pfInfoEl.appendChild(plSpan);
   } else if (pfInfoEl) {
     pfInfoEl.textContent = "\u00A0";
@@ -808,20 +860,19 @@ function updatePortfolioInfoElements(wrapper, stock) {
     const pfValue = pfBlock.querySelector(".pf-value");
     const plEl = pfBlock.querySelector(".pf-pl");
     if (pfShares) pfShares.textContent = shares;
-    if (pfAvgprice)
-      pfAvgprice.textContent = avgPrice.toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
-    if (pfValue)
-      pfValue.textContent = (currentPrice * shares).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
+    if (pfAvgprice) {
+      pfAvgprice.textContent = formatPortfolioAmount(avgPrice, currencyPrefix);
+    }
+    if (pfValue) {
+      pfValue.textContent = formatPortfolioAmount(
+        currentPrice * shares,
+        currencyPrefix,
+      );
+    }
     if (plEl) {
       plEl.className = `pf-pl ${plVal >= 0 ? "pos" : "neg"}`;
-      const sign = plVal >= 0 ? "+" : "";
-      plEl.textContent = `${sign}${plVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${sign}${plPct.toFixed(2)}%)`;
+      const pctSign = plPct >= 0 ? "+" : "";
+      plEl.textContent = `${formatPortfolioAmount(plVal, currencyPrefix, true)} (${pctSign}${plPct.toFixed(2)}%)`;
     }
   }
 }
@@ -864,11 +915,12 @@ function buildDetailPanel(
     const shares = toFiniteNumber(stock.shares, 0);
     const avgPrice = toFiniteNumber(stock.avg_price, 0);
     const currentPrice = toFiniteNumber(stock.price, 0);
+    const currencyPrefix = resolvePortfolioCurrencyPrefix(stock);
     const plVal = (currentPrice - avgPrice) * shares;
     const plPct =
       avgPrice > 0 ? ((currentPrice - avgPrice) / avgPrice) * 100 : 0;
     const plClass = plVal >= 0 ? "pos" : "neg";
-    const plSign = plVal >= 0 ? "+" : "";
+    const pctSign = plPct >= 0 ? "+" : "";
 
     const pfBlock = createEl("div", "pf-detail-block");
 
@@ -883,10 +935,7 @@ function buildDetailPanel(
     s2.textContent = "平均取得単価: ";
     const s2Strong = document.createElement("strong");
     s2Strong.className = "pf-avgprice";
-    s2Strong.textContent = avgPrice.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+    s2Strong.textContent = formatPortfolioAmount(avgPrice, currencyPrefix);
     s2.appendChild(s2Strong);
     row1.appendChild(s1);
     row1.appendChild(s2);
@@ -896,16 +945,16 @@ function buildDetailPanel(
     s3.textContent = "評価額: ";
     const s3Strong = document.createElement("strong");
     s3Strong.className = "pf-value";
-    s3Strong.textContent = (currentPrice * shares).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+    s3Strong.textContent = formatPortfolioAmount(
+      currentPrice * shares,
+      currencyPrefix,
+    );
     s3.appendChild(s3Strong);
     const s4 = document.createElement("span");
     s4.textContent = "評価損益: ";
     const s4Strong = document.createElement("strong");
     s4Strong.className = `pf-pl ${plClass}`;
-    s4Strong.textContent = `${plSign}${plVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${plSign}${plPct.toFixed(2)}%)`;
+    s4Strong.textContent = `${formatPortfolioAmount(plVal, currencyPrefix, true)} (${pctSign}${plPct.toFixed(2)}%)`;
     s4.appendChild(s4Strong);
     row2.appendChild(s3);
     row2.appendChild(s4);

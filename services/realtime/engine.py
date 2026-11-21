@@ -526,7 +526,7 @@ class RealtimeMarketEngine:
             if (market, symbol) in self._registration_tokens:
                 return
             registration = self._activate_registration(symbol, market)
-        if market == "us":
+        if market in ("us", "idx"):
             self.tv_client.add_symbol(_normalize_tv_symbol(symbol))
         elif market == "jp":
             self.yahoojp_scraper.add_symbol(symbol)
@@ -559,7 +559,7 @@ class RealtimeMarketEngine:
     def unregister_symbol(self, symbol: str, market: str) -> None:
         """Unregister a symbol and purge its stored quote state (incl. PTS)."""
         self._invalidate_registration(symbol, market)
-        if market == "us":
+        if market in ("us", "idx"):
             self.tv_client.remove_symbol(_normalize_tv_symbol(symbol))
         elif market == "jp":
             self.yahoojp_scraper.remove_symbol(symbol)

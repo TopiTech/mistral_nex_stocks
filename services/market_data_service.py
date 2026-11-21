@@ -288,7 +288,7 @@ def build_screener_enrichment(
                         continue
 
                     info = info_fetch(sym, cache_only=(sym != full_fetch_symbol)) or {}
-                    rows[sym] = _build_market_row(
+                    row = _build_market_row(
                         sym,
                         mkt,
                         {
@@ -303,6 +303,9 @@ def build_screener_enrichment(
                         },
                         fallback_name,
                     )
+                    if row["price"] <= 0:
+                        continue
+                    rows[sym] = row
                 except Exception as sym_exc:
                     logger.debug("Failed enriching screener item for %s: %s", sym, sym_exc)
         except Exception:  # pylint: disable=broad-exception-caught

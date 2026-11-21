@@ -317,6 +317,8 @@ def _fetch_live_market_state(market_type):
     symbol = _market_status_symbol(market_type)
     if not symbol:
         return None
+    if app_state.market.is_yf_rate_limited():
+        return None
 
     try:
         ticker = safe_get_ticker(symbol)

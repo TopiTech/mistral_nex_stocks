@@ -8,6 +8,7 @@ import math
 import re
 import threading
 import time
+import weakref
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, ClassVar
@@ -71,7 +72,7 @@ class _BaseFallbackScraper:
         self._thread_local = threading.local()
         self._http_lock = threading.Lock()
         self._sessions_lock = threading.Lock()
-        self._all_sessions: set[Any] = set()
+        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
         self.lock = threading.Lock()
         self._consecutive_failures: dict[str, int] = {}
         self._structure_change_reported: set[str] = set()
@@ -661,7 +662,7 @@ class YahooJPRealtimeScraper:
         self._http_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         self._sessions_lock = threading.Lock()
-        self._all_sessions: set[Any] = set()
+        self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
         self.lock = threading.Lock()
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._structure_change_reported: set[tuple[str, str]] = set()

@@ -329,9 +329,11 @@ class TradingViewWSClient:
                         secrets.choice(string.ascii_lowercase) for _ in range(12)
                     )
 
+                    with self.lock:
+                        sym_count = len(self.symbols)
                     logger.info(
                         "Connecting to TradingView WS (%d subscribed symbol(s))...",
-                        len(self.symbols),
+                        sym_count,
                     )
 
                     def _on_message_current(ws: Any, message: Any) -> None:
@@ -373,10 +375,12 @@ class TradingViewWSClient:
                             except Exception as exc:
                                 logger.debug("Failed closing stale TradingView WS: %s", exc)
                             return
+                        with self.lock:
+                            sym_count = len(self.symbols)
                         logger.info(
                             "TradingView WS connected (session=%s, symbols=%d)",
                             current_session_id,
-                            len(self.symbols),
+                            sym_count,
                         )
                         self._safe_send(
                             ws,

@@ -7,8 +7,6 @@ import copy
 import logging
 import math
 import queue
-import re
-import secrets
 import threading
 import time
 from decimal import ROUND_DOWN, Decimal
@@ -17,7 +15,7 @@ from typing import Any, TypedDict
 import httpx
 import requests
 from cachetools import TTLCache
-from flask import Blueprint, current_app, g, request, session
+from flask import Blueprint, current_app, g, request
 
 from app_state import app_state
 from constants import DEFAULT_USDJPY_RATE, MAX_STOCK_NAME_LENGTH, PORTFOLIO_SHARES_MAX
@@ -33,6 +31,7 @@ from route_helpers import (
     extract_api_key,
     invalidate_stock_caches,
     rate_limit,
+    resolve_conversation_scope,
     sanitize_client_upstream_text,
     sanitize_upstream_log_message,
 )
@@ -241,65 +240,9 @@ def _token_conflict_response() -> tuple[Any, int]:
         status_code=409,
     )
 
-_OPERATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
-
-
 def _get_conversation_scope(data: dict[str, Any] | None = None) -> str:
-    """Return a validated conversation scope token for AI portfolio operations.
-
-    Fallback chain:
-    1. Header: ``X-Conversation-Scope``
-    2. Request data / body / query parameter: ``conversation_scope``
-    3. Cookie session: ``session['mns_analysis_conversation']``
-    4. Auto-generated token via ``secrets.token_urlsafe(24)``
-    """
-    # 1. Header fallback
-    header_scope = request.headers.get("X-Conversation-Scope") if request else None
-    if isinstance(header_scope, str) and _OPERATION_TOKEN_RE.fullmatch(header_scope.strip()):
-        valid_scope = header_scope.strip()
-        try:
-            session["mns_analysis_conversation"] = valid_scope
-        except Exception:
-            pass
-        return valid_scope
-
-    # 2. Request data fallback (passed dict, parsed json, or query args)
-    req_scope: Any = None
-    if isinstance(data, dict):
-        req_scope = data.get("conversation_scope")
-    if not req_scope and request:
-        try:
-            json_data = request.get_json(silent=True)
-            if isinstance(json_data, dict):
-                req_scope = json_data.get("conversation_scope")
-        except Exception:
-            pass
-    if not req_scope and request:
-        req_scope = request.args.get("conversation_scope")
-
-    if isinstance(req_scope, str) and _OPERATION_TOKEN_RE.fullmatch(req_scope.strip()):
-        valid_scope = req_scope.strip()
-        try:
-            session["mns_analysis_conversation"] = valid_scope
-        except Exception:
-            pass
-        return valid_scope
-
-    # 3. Session fallback
-    try:
-        scope = session.get("mns_analysis_conversation")
-        if isinstance(scope, str) and _OPERATION_TOKEN_RE.fullmatch(scope):
-            return scope
-    except Exception:
-        pass
-
-    # 4. Generate new scope
-    scope = secrets.token_urlsafe(24)
-    try:
-        session["mns_analysis_conversation"] = scope
-    except Exception:
-        pass
-    return scope
+    """Return a validated conversation scope token for AI portfolio operations."""
+    return resolve_conversation_scope(data)
 
 
 def _invalidate_ai_portfolio_result_cache(*targets: Any) -> None:

@@ -43,6 +43,7 @@ _sse_payload_lock = threading.Lock()
 # and _announce_frame so concurrent broadcasters cannot allocate adjacent sequence ids
 # and then deliver them in the opposite order (RLock allows safe re-entry on the same thread).
 _sse_frame_publish_lock = threading.RLock()
+_sse_mode2_publish_lock = threading.RLock()
 _sse_prev_stocks: dict[str, dict[str, Any]] = {"us": {}, "jp": {}, "idx": {}}
 _sse_prev_indices: dict[str, Any] = {}
 _sse_full_snapshot_counter: int = 0
@@ -157,36 +158,33 @@ def _raw_announce_current_market_state() -> None:
         _sse_full_snapshot_counter, \
         _sse_prev_stocks, \
         _sse_prev_indices
-    yf_limited = app_state.market.is_yf_rate_limited()
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
-    with app_state.cache.sse_data_lock:
-        stocks = copy.deepcopy(app_state.market.current_stocks_cache)
-        indices = copy.deepcopy(app_state.market.current_indices_cache)
-
     announcer1 = getattr(app_state, "sse_announcer", None) or app_state.sse_announcer_mode1
-    with _sse_payload_lock:
-        current_gen = int(_get_app_bg_attr("_sse_payload_generation", _sse_payload_generation))
-        cached_gen = int(
-            _get_app_bg_attr("_sse_payload_cached_generation", _sse_payload_cached_generation)
-        )
-        cached_yf = bool(_get_app_bg_attr("_sse_payload_yf_limited", _sse_payload_yf_limited))
-        cached_us = bool(_get_app_bg_attr("_sse_payload_us_open", _sse_payload_us_open))
-        cached_jp = bool(_get_app_bg_attr("_sse_payload_jp_open", _sse_payload_jp_open))
-
-        # R17-04: keep this critical section to the generation/state read.
-        # The (potentially large) json.dumps + announce below are ordered by
-        # _sse_frame_publish_lock, not by holding _sse_payload_lock across
-        # serialization and queue operations (which blocked invalidations).
-        _snapshot = (current_gen, cached_gen, cached_yf, cached_us, cached_jp)
-        counter = (
-            int(_get_app_bg_attr("_sse_full_snapshot_counter", _sse_full_snapshot_counter)) + 1
-        )
-        _sse_full_snapshot_counter = counter
-        _set_app_bg_attr("_sse_full_snapshot_counter", counter)
-        send_full_snapshot = counter % FULL_SNAPSHOT_INTERVAL == 0
-
     with _sse_frame_publish_lock:
+        yf_limited = app_state.market.is_yf_rate_limited()
+        with app_state.cache.sse_data_lock:
+            stocks = copy.deepcopy(app_state.market.current_stocks_cache)
+            indices = copy.deepcopy(app_state.market.current_indices_cache)
+
+        with _sse_payload_lock:
+            current_gen = int(_get_app_bg_attr("_sse_payload_generation", _sse_payload_generation))
+            cached_gen = int(
+                _get_app_bg_attr("_sse_payload_cached_generation", _sse_payload_cached_generation)
+            )
+            cached_yf = bool(_get_app_bg_attr("_sse_payload_yf_limited", _sse_payload_yf_limited))
+            cached_us = bool(_get_app_bg_attr("_sse_payload_us_open", _sse_payload_us_open))
+            cached_jp = bool(_get_app_bg_attr("_sse_payload_jp_open", _sse_payload_jp_open))
+
+            _snapshot = (current_gen, cached_gen, cached_yf, cached_us, cached_jp)
+            counter = (
+                int(_get_app_bg_attr("_sse_full_snapshot_counter", _sse_full_snapshot_counter))
+                + 1
+            )
+            _sse_full_snapshot_counter = counter
+            _set_app_bg_attr("_sse_full_snapshot_counter", counter)
+            send_full_snapshot = counter % FULL_SNAPSHOT_INTERVAL == 0
+
         if send_full_snapshot:
             light_stocks = _build_sse_light_stocks_payload(stocks)
             payload = json.dumps(
@@ -299,24 +297,25 @@ def announce_real_market_state() -> None:
 
     if app_state.sse_announcer_mode2.listener_count() == 0:
         return
-    with app_state.cache.sse_data_lock:
-        target_stocks = copy.deepcopy(app_state.market.target_stocks_cache)
-        indices = copy.deepcopy(app_state.market.current_indices_cache)
-    yf_limited = app_state.market.is_yf_rate_limited()
     us_open = is_market_open("us")
     jp_open = is_market_open("jp")
-    light_stocks = _build_sse_light_stocks_payload(target_stocks)
-    payload = json.dumps(
-        {
-            "stream_event": "full_snapshot",
-            "stocks": light_stocks,
-            "indices": indices,
-            "is_yfinance_rate_limited": yf_limited,
-            "is_us_market_open": us_open,
-            "is_jp_market_open": jp_open,
-        },
-        ensure_ascii=False,
-        allow_nan=False,
-    )
-    announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
-    announce_fn(app_state.sse_announcer_mode2, f"data: {payload}\n\n", 2)
+    with _sse_mode2_publish_lock:
+        with app_state.cache.sse_data_lock:
+            target_stocks = copy.deepcopy(app_state.market.target_stocks_cache)
+            indices = copy.deepcopy(app_state.market.current_indices_cache)
+        yf_limited = app_state.market.is_yf_rate_limited()
+        light_stocks = _build_sse_light_stocks_payload(target_stocks)
+        payload = json.dumps(
+            {
+                "stream_event": "full_snapshot",
+                "stocks": light_stocks,
+                "indices": indices,
+                "is_yfinance_rate_limited": yf_limited,
+                "is_us_market_open": us_open,
+                "is_jp_market_open": jp_open,
+            },
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        announce_fn = _get_app_bg_attr("_announce_frame", _announce_frame)
+        announce_fn(app_state.sse_announcer_mode2, f"data: {payload}\n\n", 2)

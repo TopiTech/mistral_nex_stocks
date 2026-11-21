@@ -491,7 +491,7 @@ class YFinanceProvider(BaseStockProvider):
             local_tz = ZoneInfo(tz_str)
             dt = (
                 datetime.fromtimestamp(market_time_sec, local_tz)
-                if market_time_sec
+                if market_time_sec is not None
                 else datetime.now(local_tz)
             )
         except (ValueError, KeyError, OSError, OverflowError):
@@ -667,6 +667,38 @@ class YFinanceProvider(BaseStockProvider):
             timeout=timeout,
         )
 
+    @staticmethod
+    def _concat_symbol_dataframes(dfs: list[pd.DataFrame]) -> pd.DataFrame:
+        """Concatenate per-symbol MultiIndex DataFrames without dropping unaffected symbols."""
+        if not dfs:
+            return pd.DataFrame()
+        normalized: list[pd.DataFrame] = []
+        for df_col in dfs:
+            if df_col.index.has_duplicates:
+                df_col = df_col[~df_col.index.duplicated(keep="last")]
+            normalized.append(df_col)
+        if len(normalized) == 1:
+            return normalized[0]
+        try:
+            return pd.concat(normalized, axis=1)
+        except (ValueError, TypeError, KeyError, pd.errors.InvalidIndexError) as exc:
+            logger.warning(
+                "Batch concat failed (%s); falling back to per-symbol incremental concat",
+                exc,
+            )
+        merged = normalized[0]
+        for df_col in normalized[1:]:
+            try:
+                merged = pd.concat([merged, df_col], axis=1)
+            except (ValueError, TypeError, KeyError, pd.errors.InvalidIndexError) as item_exc:
+                sym_label = (
+                    list(df_col.columns.get_level_values(1))[:1]
+                    if isinstance(df_col.columns, pd.MultiIndex)
+                    else list(df_col.columns)[:1]
+                )
+                logger.warning("Skipping incompatible batch member %s: %s", sym_label, item_exc)
+        return merged
+
     def download_batch(
         self, symbols: list[str], period: str = "3mo", lightweight: bool = False
     ) -> pd.DataFrame:
@@ -684,14 +716,7 @@ class YFinanceProvider(BaseStockProvider):
                     df_col = cached.copy()
                     df_col.columns = pd.MultiIndex.from_product([df_col.columns, [sym]])
                     cached_dfs.append(df_col)
-            if not cached_dfs:
-                return pd.DataFrame()
-            if len(cached_dfs) == 1:
-                return cached_dfs[0]
-            try:
-                return pd.concat(cached_dfs, axis=1)
-            except Exception:
-                return pd.DataFrame()
+            return self._concat_symbol_dataframes(cached_dfs)
 
         # 各銘柄について、履歴データをキャッシュから引き出す、もしくは並行して取得する。
         # 注意: v7/finance/quote 等の別エンドポイントは使用しない。最新価格は
@@ -844,16 +869,7 @@ class YFinanceProvider(BaseStockProvider):
             df_col.columns = pd.MultiIndex.from_product([df_col.columns, [symbol]])
             merged_dfs.append(df_col)
 
-        if not merged_dfs:
-            return pd.DataFrame()
-        if len(merged_dfs) == 1:
-            return merged_dfs[0]
-
-        try:
-            return pd.concat(merged_dfs, axis=1)
-        except (ValueError, TypeError, KeyError):
-            logger.exception("Failed to concatenate merged dataframes in download_batch")
-            return merged_dfs[0] if merged_dfs else pd.DataFrame()
+        return self._concat_symbol_dataframes(merged_dfs)
 
     def _infer_currency_from_symbol(self, symbol: str) -> str | None:
         """Infer currency from symbol suffix — no yfinance call needed.

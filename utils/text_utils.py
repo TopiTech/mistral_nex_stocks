@@ -355,35 +355,59 @@ def sanitize_prompt_text(value: Any, max_len: int = 120) -> str:
     return text.strip()[:max_len]
 
 
-def json_safe_tool_value(value: Any) -> Any:
+_MAX_TOOL_VALUE_DEPTH = 32
+
+
+def json_safe_tool_value(
+    value: Any, *, _seen: set[int] | None = None, _depth: int = 0
+) -> Any:
     """Convert provider/tool values into JSON-safe types before entering an LLM prompt."""
     if value is None or isinstance(value, str):
         return value
     if isinstance(value, bool) or type(value).__name__ in ("bool_", "bool"):
         return bool(value)
-    if hasattr(value, "tolist") and callable(value.tolist):
-        try:
-            return json_safe_tool_value(value.tolist())
-        except Exception:
-            pass
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        try:
-            return json_safe_tool_value(value.to_dict())
-        except Exception:
-            pass
-    if isinstance(value, dict):
-        return {str(key): json_safe_tool_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [json_safe_tool_value(item) for item in value]
-    if isinstance(value, (set, frozenset)):
-        return [json_safe_tool_value(item) for item in sorted(value, key=str)]
     if isinstance(value, numbers.Integral):
         return int(value)
     if isinstance(value, numbers.Real):
         val_f = float(value)
         return val_f if math.isfinite(val_f) else None
+    if _depth >= _MAX_TOOL_VALUE_DEPTH:
+        return "[max-depth]"
+    if _seen is None:
+        _seen = set()
+    obj_id = id(value)
+    if obj_id in _seen:
+        return "[circular]"
+    _seen.add(obj_id)
     try:
-        json.dumps(value, ensure_ascii=False, allow_nan=False)
-        return value
-    except (TypeError, ValueError):
-        return str(value)[:2_000]
+        if hasattr(value, "tolist") and callable(value.tolist):
+            try:
+                return json_safe_tool_value(value.tolist(), _seen=_seen, _depth=_depth + 1)
+            except Exception:
+                pass
+        if hasattr(value, "to_dict") and callable(value.to_dict):
+            try:
+                return json_safe_tool_value(value.to_dict(), _seen=_seen, _depth=_depth + 1)
+            except Exception:
+                pass
+        if isinstance(value, dict):
+            return {
+                str(key): json_safe_tool_value(item, _seen=_seen, _depth=_depth + 1)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [
+                json_safe_tool_value(item, _seen=_seen, _depth=_depth + 1) for item in value
+            ]
+        if isinstance(value, (set, frozenset)):
+            return [
+                json_safe_tool_value(item, _seen=_seen, _depth=_depth + 1)
+                for item in sorted(value, key=str)
+            ]
+        try:
+            json.dumps(value, ensure_ascii=False, allow_nan=False)
+            return value
+        except (TypeError, ValueError):
+            return str(value)[:2_000]
+    finally:
+        _seen.discard(obj_id)

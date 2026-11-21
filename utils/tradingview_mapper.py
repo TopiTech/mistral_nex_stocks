@@ -6,6 +6,7 @@ TradingView exchange-prefixed symbol identifiers (e.g., TSE:7203, NASDAQ:AAPL, F
 
 import logging
 import threading
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,10 @@ JP_STOCK_EXCHANGE_MAP: dict[str, str] = {
 }
 
 
-# Thread-safe in-memory cache for dynamic ticker -> exchange mapping
-_TICKER_EXCHANGE_CACHE: dict[str, str] = {
+_MAX_TICKER_EXCHANGE_CACHE_SIZE = 4096
+
+# Thread-safe bounded LRU cache for dynamic ticker -> exchange mapping
+_TICKER_EXCHANGE_CACHE: OrderedDict[str, str] = OrderedDict({
     # Popular/common NYSE stocks as pre-populated safety cache
     "IBM": "NYSE",
     "IONQ": "NYSE",
@@ -243,7 +246,9 @@ _TICKER_EXCHANGE_CACHE: dict[str, str] = {
     "DKNG": "NASDAQ",
     "ON": "NASDAQ",
     "ROKU": "NASDAQ",
-}
+})
+
+_DEFAULT_TICKER_EXCHANGES = frozenset(_TICKER_EXCHANGE_CACHE.keys())
 
 _CACHE_LOCK = threading.Lock()
 
@@ -336,6 +341,16 @@ def register_ticker_exchange(ticker: str, exchange: str | None) -> None:
         clean_ticker = ticker.strip().upper()
         with _CACHE_LOCK:
             _TICKER_EXCHANGE_CACHE[clean_ticker] = prefix
+            _TICKER_EXCHANGE_CACHE.move_to_end(clean_ticker)
+            while len(_TICKER_EXCHANGE_CACHE) > _MAX_TICKER_EXCHANGE_CACHE_SIZE:
+                evict_key = next(
+                    (k for k in _TICKER_EXCHANGE_CACHE if k not in _DEFAULT_TICKER_EXCHANGES),
+                    None,
+                )
+                if evict_key is None:
+                    _TICKER_EXCHANGE_CACHE.popitem(last=False)
+                else:
+                    _TICKER_EXCHANGE_CACHE.pop(evict_key, None)
 
 
 def is_ticker_exchange_cached(ticker: str) -> bool:
@@ -356,10 +371,13 @@ def get_ticker_exchange(ticker: str) -> str | None:
 
     Cache-only lookup: never performs network I/O.
     """
-    if not is_ticker_exchange_cached(ticker):
+    if not ticker:
         return None
     clean_ticker = ticker.strip().upper()
     with _CACHE_LOCK:
+        if clean_ticker not in _TICKER_EXCHANGE_CACHE:
+            return None
+        _TICKER_EXCHANGE_CACHE.move_to_end(clean_ticker)
         return _TICKER_EXCHANGE_CACHE.get(clean_ticker)
 
 

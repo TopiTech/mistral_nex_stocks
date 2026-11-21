@@ -8,13 +8,14 @@ import ipaddress
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from collections.abc import Mapping
 from functools import wraps
 from typing import Any, Literal, cast, overload
 
-from flask import Flask, Response, current_app, g, has_app_context, request
+from flask import Flask, Response, current_app, g, has_app_context, request, session
 from pydantic import ValidationError
 
 from app_state import app_state
@@ -2382,6 +2383,65 @@ def _extract_text_from_mistral_content(content: Any) -> str:
                 texts.append(chunk.text.strip())
         return "\n".join(texts) if texts else ""
     return ""
+
+
+_CONVERSATION_SCOPE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+
+
+def resolve_conversation_scope(data: dict[str, Any] | None = None) -> str:
+    """Return a validated conversation scope token for AI analysis and portfolio endpoints.
+
+    Fallback chain:
+    1. Header: ``X-Conversation-Scope``
+    2. Request data / body / query parameter: ``conversation_scope``
+    3. Cookie session: ``session['mns_analysis_conversation']``
+    4. Auto-generated token via ``secrets.token_urlsafe(24)``
+    """
+    header_scope = request.headers.get("X-Conversation-Scope") if request else None
+    if isinstance(header_scope, str) and _CONVERSATION_SCOPE_TOKEN_RE.fullmatch(
+        header_scope.strip()
+    ):
+        valid_scope = header_scope.strip()
+        try:
+            session["mns_analysis_conversation"] = valid_scope
+        except Exception:
+            pass
+        return valid_scope
+
+    req_scope: Any = None
+    if isinstance(data, dict):
+        req_scope = data.get("conversation_scope")
+    if not req_scope and request:
+        try:
+            json_data = request.get_json(silent=True)
+            if isinstance(json_data, dict):
+                req_scope = json_data.get("conversation_scope")
+        except Exception:
+            pass
+    if not req_scope and request:
+        req_scope = request.args.get("conversation_scope")
+
+    if isinstance(req_scope, str) and _CONVERSATION_SCOPE_TOKEN_RE.fullmatch(req_scope.strip()):
+        valid_scope = req_scope.strip()
+        try:
+            session["mns_analysis_conversation"] = valid_scope
+        except Exception:
+            pass
+        return valid_scope
+
+    try:
+        scope = session.get("mns_analysis_conversation")
+        if isinstance(scope, str) and _CONVERSATION_SCOPE_TOKEN_RE.fullmatch(scope):
+            return scope
+    except Exception:
+        pass
+
+    scope = secrets.token_urlsafe(24)
+    try:
+        session["mns_analysis_conversation"] = scope
+    except Exception:
+        pass
+    return scope
 
 
 def _seconds_until(timestamp: float | None) -> float:

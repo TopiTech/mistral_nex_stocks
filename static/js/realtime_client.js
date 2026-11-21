@@ -283,6 +283,23 @@
       this._scheduleDelta(() => this._applyPtsDeltasNow(deltas));
     }
 
+    _parsePositivePrice(val) {
+      if (val === null || val === undefined || typeof val === "boolean") {
+        return null;
+      }
+      if (typeof val === "number") {
+        return Number.isFinite(val) && val > 0 ? val : null;
+      }
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) {
+          const num = Number(trimmed);
+          return Number.isFinite(num) && num > 0 ? num : null;
+        }
+      }
+      return null;
+    }
+
     _syncStatePtsPrice(symbol, cached, ptsPrice) {
       if (!window.state || !window.state.stocks) return;
       ["us", "jp", "idx"].forEach((m) => {
@@ -304,11 +321,25 @@
 
     _applyPtsDeltasNow(deltas) {
       Object.keys(deltas).forEach((symbol) => {
-        const data = deltas[symbol];
-        if (!data) return;
+        const rawData = deltas[symbol];
+        if (!rawData) return;
 
+        const rawPrice = rawData.price;
+        const isExplicitClear =
+          rawPrice === null ||
+          rawPrice === undefined ||
+          rawPrice === "" ||
+          rawPrice === "--" ||
+          rawPrice === 0 ||
+          rawPrice === "0";
+        const validPtsPrice = this._parsePositivePrice(rawPrice);
+        if (!isExplicitClear && validPtsPrice === null) {
+          return;
+        }
+
+        const normalizedPtsPrice = validPtsPrice;
         const cached = this._getElements(symbol);
-        this._syncStatePtsPrice(symbol, cached, data.price);
+        this._syncStatePtsPrice(symbol, cached, normalizedPtsPrice);
         const syncedWrappers = new Set(
           Array.isArray(cached.wrappers) ? cached.wrappers : [],
         );
@@ -316,29 +347,16 @@
         cached.ptsElements.forEach((el) => {
           const wrapper = el.closest(".stock-wrapper");
           if (wrapper) syncedWrappers.add(wrapper);
-          const stockCtx = (wrapper && wrapper.__stockData) || data;
+          const stockCtx = (wrapper && wrapper.__stockData) || rawData;
           let txt = "";
-          if (typeof window.formatPtsPriceText === "function") {
-            txt = window.formatPtsPriceText(data.price, stockCtx);
-          } else if (
-            data.price !== null &&
-            data.price !== undefined &&
-            typeof data.price !== "boolean"
-          ) {
-            let num = NaN;
-            if (typeof data.price === "number") {
-              num = data.price;
-            } else if (typeof data.price === "string") {
-              const trimmed = data.price.trim();
-              if (trimmed && /^[+-]?(?:\d+(?:\.\d*)?|\.?\d+)$/.test(trimmed)) {
-                num = Number(trimmed);
-              }
-            }
-            if (Number.isFinite(num) && num > 0) {
+          if (normalizedPtsPrice !== null) {
+            if (typeof window.formatPtsPriceText === "function") {
+              txt = window.formatPtsPriceText(normalizedPtsPrice, stockCtx);
+            } else {
               txt =
                 typeof window.formatPrice === "function"
-                  ? `PTS ${window.formatPrice(num, stockCtx)}`
-                  : `PTS ${num}`;
+                  ? `PTS ${window.formatPrice(normalizedPtsPrice, stockCtx)}`
+                  : `PTS ${normalizedPtsPrice}`;
             }
           }
           if (el.textContent !== txt) el.textContent = txt;
@@ -357,7 +375,7 @@
 
         syncedWrappers.forEach((wrapper) => {
           if (wrapper && wrapper.__stockData) {
-            wrapper.__stockData.pts_price = data.price;
+            wrapper.__stockData.pts_price = normalizedPtsPrice;
             if (
               wrapper.dataset &&
               typeof window.stockRenderHash === "function"
@@ -390,7 +408,8 @@
         const data = deltas[symbol];
         if (!data) return;
 
-        const newPrice = data.price;
+        const validPrice = this._parsePositivePrice(data.price);
+        const newPrice = validPrice;
 
         const cached = this._getElements(symbol);
 
@@ -439,13 +458,8 @@
                 }
 
                 // Recalculate change and percentage using yfinance previous close
-                if (
-                  yfPrevClose &&
-                  yfPrevClose > 0 &&
-                  typeof data.price === "number" &&
-                  Number.isFinite(data.price)
-                ) {
-                  const diff = data.price - yfPrevClose;
+                if (yfPrevClose && yfPrevClose > 0 && validPrice !== null) {
+                  const diff = validPrice - yfPrevClose;
                   const itemMarket = sItem.market || m;
                   const newChange = roundChange(diff, symbol, itemMarket);
                   const newPct = roundPercent((diff / yfPrevClose) * 100);
@@ -454,10 +468,21 @@
                   data.previous_close = yfPrevClose;
                 }
 
-                if (data.price != null) sItem.price = data.price;
-                if (data.change != null) sItem.change = data.change;
-                if (data.change_percent != null)
+                if (validPrice !== null) sItem.price = validPrice;
+                if (
+                  data.change != null &&
+                  typeof data.change === "number" &&
+                  Number.isFinite(data.change)
+                ) {
+                  sItem.change = data.change;
+                }
+                if (
+                  data.change_percent != null &&
+                  typeof data.change_percent === "number" &&
+                  Number.isFinite(data.change_percent)
+                ) {
                   sItem.change_percent = data.change_percent;
+                }
                 if (
                   data.volume != null &&
                   typeof data.volume !== "boolean" &&
@@ -479,10 +504,9 @@
           data.change == null &&
           yfPrevClose &&
           yfPrevClose > 0 &&
-          typeof data.price === "number" &&
-          Number.isFinite(data.price)
+          validPrice !== null
         ) {
-          const diff = data.price - yfPrevClose;
+          const diff = validPrice - yfPrevClose;
           data.change = roundChange(diff, symbol, effectiveMarket);
           data.change_percent = roundPercent((diff / yfPrevClose) * 100);
           data.previous_close = yfPrevClose;
@@ -498,11 +522,40 @@
           data.change_percent = roundPercent(data.change_percent);
         }
 
+        const sanitizedDelta = { ...data };
+        if (validPrice !== null) {
+          sanitizedDelta.price = validPrice;
+        } else {
+          delete sanitizedDelta.price;
+        }
+        if (
+          sanitizedDelta.change != null &&
+          (typeof sanitizedDelta.change !== "number" ||
+            !Number.isFinite(sanitizedDelta.change))
+        ) {
+          delete sanitizedDelta.change;
+        }
+        if (
+          sanitizedDelta.change_percent != null &&
+          (typeof sanitizedDelta.change_percent !== "number" ||
+            !Number.isFinite(sanitizedDelta.change_percent))
+        ) {
+          delete sanitizedDelta.change_percent;
+        }
+        if (
+          sanitizedDelta.previous_close != null &&
+          (typeof sanitizedDelta.previous_close !== "number" ||
+            !Number.isFinite(sanitizedDelta.previous_close) ||
+            sanitizedDelta.previous_close <= 0)
+        ) {
+          delete sanitizedDelta.previous_close;
+        }
+
         // 2. Stock card wrappers
         cached.wrappers.forEach((wrapper) => {
           const currentStock = wrapper.__stockData
-            ? { ...wrapper.__stockData, ...data, is_realtime: true }
-            : { ...data, is_realtime: true };
+            ? { ...wrapper.__stockData, ...sanitizedDelta, is_realtime: true }
+            : { ...sanitizedDelta, is_realtime: true };
 
           // Preserve existing positive volume when scraper/partial deltas omit
           // volume or report 0/null, while allowing newer positive volume updates.
@@ -531,7 +584,7 @@
             window.updateExistingCard(wrapper, currentStock);
           } else if (typeof window.updateStockUI === "function") {
             window.updateStockUI(wrapper, currentStock);
-          } else {
+          } else if (newPrice !== null) {
             // Fallback: update .compact-price inside wrapper ONLY
             const prevPrice = wrapper.__realtimePrevPrice;
             wrapper.__realtimePrevPrice = newPrice;
@@ -546,14 +599,12 @@
                 priceEl.__updatingTimer = null;
               }, 1200);
               const formatted =
-                typeof newPrice === "number"
-                  ? typeof window.formatPrice === "function"
-                    ? window.formatPrice(newPrice, data)
-                    : newPrice.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })
-                  : newPrice;
+                typeof window.formatPrice === "function"
+                  ? window.formatPrice(newPrice, data)
+                  : newPrice.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    });
               if (priceEl.textContent !== formatted) {
                 priceEl.textContent = formatted;
               }

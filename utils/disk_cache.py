@@ -801,7 +801,7 @@ class StockDiskCache:
                                 should_delete = stored_key == prefix_str or stored_key.startswith(
                                     (f"{prefix_str}_", f"{prefix_str}-")
                                 )
-                    except (OSError, ValueError, TypeError):
+                    except (OSError, ValueError, TypeError, RecursionError):
                         should_delete = True
                     if should_delete:
                         try:

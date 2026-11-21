@@ -496,7 +496,6 @@ async function fetchStockHistoryPayload(
       return normalizeHistoryData(data.history);
     }
     if (data?.fetching) return null;
-    if (data?.stale) return normalizeHistoryData([]);
     throw new Error("表示可能なヒストリカルデータがありません。");
   };
 
@@ -629,6 +628,16 @@ async function fetchStockHistoryPayload(
   }
 }
 
+function _storePrefetchedHistory(cacheKey, formattedData, ohlcData) {
+  if (!Array.isArray(formattedData) || formattedData.length === 0) return;
+  if (!historyPrefetchCache.has(cacheKey)) _enforcePrefetchCacheLimit(1);
+  historyPrefetchCache.set(cacheKey, {
+    formattedData,
+    ohlcData,
+    ts: Date.now(),
+  });
+}
+
 /**
  * 個別銘柄のヒストリカルデータを不揮発性/揮発性キャッシュから取得、またはAPIから取得します。
  * @param {HTMLElement} wrapper - 銘柄カードを包むDOM要素。
@@ -662,12 +671,7 @@ function prefetchStockHistory(
     effectiveInterval,
   )
     .then(({ formattedData, ohlcData }) => {
-      if (!historyPrefetchCache.has(cacheKey)) _enforcePrefetchCacheLimit(1);
-      historyPrefetchCache.set(cacheKey, {
-        formattedData,
-        ohlcData,
-        ts: Date.now(),
-      });
+      _storePrefetchedHistory(cacheKey, formattedData, ohlcData);
       const latestRealtimeAt = stockRealtimeUpdateAt.get(stockKey) || 0;
       if (latestRealtimeAt > startedAt) return;
       if (!wrapper.isConnected) return;
@@ -1421,6 +1425,7 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
 
   const closeSeries = normalizedOhlc.map((d) => ({ x: d.x, y: d.c }));
   const datasets = [];
+  let heikinAshiState = null;
 
   // 1. Primary Stock Data Series
   if (type === "candlestick" || type === "heikin_ashi") {
@@ -1428,6 +1433,19 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
       type === "heikin_ashi"
         ? calculateHeikinAshi(normalizedOhlc)
         : normalizedOhlc;
+    if (type === "heikin_ashi" && chartOhlc.length > 0) {
+      const rawLast = normalizedOhlc.at(-1);
+      const prevHa = chartOhlc.length >= 2 ? chartOhlc.at(-2) : null;
+      heikinAshiState = {
+        rawLast: {
+          o: rawLast.o,
+          h: rawLast.h,
+          l: rawLast.l,
+          c: rawLast.c,
+        },
+        prevHa: prevHa ? { o: prevHa.o, c: prevHa.c } : null,
+      };
+    }
     const candleData = chartOhlc.map((d) => ({
       x: d.x,
       o: d.o,
@@ -1778,6 +1796,11 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     wrapper?.__stockData?.currency ||
     wrapper?.dataset?.currency ||
     (chart.$market === "jp" ? "JPY" : "USD");
+  chart.$chartType = type;
+  if (heikinAshiState) {
+    chart.$rawLastCandle = heikinAshiState.rawLast;
+    chart.$prevHeikinAshi = heikinAshiState.prevHa;
+  }
 
   // (L20) Restore legend-hidden datasets carried over the destroy/recreate.
   if (hiddenByLabel && hiddenByLabel.size > 0) {
@@ -2167,12 +2190,7 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
       targetPeriod,
       targetInterval,
     );
-    if (!historyPrefetchCache.has(prefetchKey)) _enforcePrefetchCacheLimit(1);
-    historyPrefetchCache.set(prefetchKey, {
-      formattedData,
-      ohlcData,
-      ts: Date.now(),
-    });
+    _storePrefetchedHistory(prefetchKey, formattedData, ohlcData);
 
     clearChartError(wrapper);
     applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData);

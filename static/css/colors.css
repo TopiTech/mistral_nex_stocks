@@ -400,7 +400,7 @@
   --z-tooltip: 1100;
   --z-loading: 1200;
   --z-modal: 1300;
-  --z-toast: 1400;
+  --z-toast: 20100;
   --z-fullscreen: 20000;
 }
 
@@ -437,7 +437,7 @@ body.theme-color-jp {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: var(--z-toast, 1400);
+  z-index: var(--z-toast, 20100);
   display: flex;
   flex-direction: column;
   gap: 10px;

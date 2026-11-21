@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 
@@ -187,36 +188,51 @@ def get_or_create_master_key() -> str:
         from cryptography.fernet import Fernet
 
         new_key = Fernet.generate_key().decode("ascii")
+        previous_cfg = copy.deepcopy(cfg)
         previous_keyring_values, previous_ephemeral_values = crypto_utils.snapshot_secret_storage(
             ("mns_master_key",),
             log=logger,
         )
+        saved_new_config = False
         try:
             cfg["mns_master_key"] = config_store._encode_secret(new_key, "mns_master_key")
             try:
                 config_store.save_config(cfg)
+                saved_new_config = True
             except Exception as exc:
                 logger.error("Failed to persist generated master key: %s", exc)
                 raise RuntimeError("Failed to persist generated master key") from exc
+
+            config_store._CONFIG_CACHE["data"] = None
+            config_store._CONFIG_CACHE["key"] = None
+            persisted_config = config_store.load_config()
+            persisted = (
+                persisted_config.get("mns_master_key")
+                if isinstance(persisted_config, dict)
+                else None
+            )
+            persisted_key = (
+                config_store._decode_secret(persisted, "mns_master_key")
+                if isinstance(persisted, dict)
+                else ""
+            )
+            if not persisted_key:
+                raise RuntimeError("Failed to verify persisted master key")
         except Exception:
+            if saved_new_config:
+                try:
+                    config_store.save_config(previous_cfg)
+                except Exception as rollback_exc:
+                    logger.warning(
+                        "Failed to roll back config after master key verification error: %s",
+                        rollback_exc,
+                    )
+                config_store._CONFIG_CACHE["data"] = None
+                config_store._CONFIG_CACHE["key"] = None
             crypto_utils.restore_secret_storage(
                 previous_keyring_values,
                 previous_ephemeral_values,
                 log=logger,
             )
             raise
-
-        config_store._CONFIG_CACHE["data"] = None
-        config_store._CONFIG_CACHE["key"] = None
-        persisted_config = config_store.load_config()
-        persisted = (
-            persisted_config.get("mns_master_key") if isinstance(persisted_config, dict) else None
-        )
-        persisted_key = (
-            config_store._decode_secret(persisted, "mns_master_key")
-            if isinstance(persisted, dict)
-            else ""
-        )
-        if not persisted_key:
-            raise RuntimeError("Failed to verify persisted master key")
         return persisted_key

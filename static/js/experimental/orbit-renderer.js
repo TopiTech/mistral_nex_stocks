@@ -648,7 +648,7 @@
       // 過去の星座のシンボルが trail 配列とともに無制限に蓄積していた。
       // 毎フレーム、現行の割当シンボルと描画中の一時ノード
       // (hover/drag/connected) 以外のエントリを破棄する。
-      if (this.nodeRenderData.size > 0 && assignedStocks.length > 0) {
+      if (this.nodeRenderData.size > 0) {
         const keepSymbols = new Set(stateData.connectedSymbols || []);
         if (stateData.hoveredSymbol) keepSymbols.add(stateData.hoveredSymbol);
         if (stateData.draggedSymbol) keepSymbols.add(stateData.draggedSymbol);

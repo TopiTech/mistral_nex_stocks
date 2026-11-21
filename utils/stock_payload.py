@@ -207,18 +207,40 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
     except (OSError, TypeError) as exc:
         logger.debug("Disk cache get failed for %s: %s", symbol, exc)
 
+    # Fundamentals keys whose presence marks a "full" (fast+quoteSummary) result.
+    _FUNDAMENTAL_KEYS = (
+        "trailingPE",
+        "dividendYield",
+        "sector",
+        "industry",
+        "targetMeanPrice",
+        "marketCap",
+        "fiftyTwoWeekHigh",
+    )
+
+    def _is_complete_info(payload: Any) -> bool:
+        return isinstance(payload, dict) and bool(payload) and (
+            symbol.startswith("^") or any(k in payload for k in _FUNDAMENTAL_KEYS)
+        )
+
     if (
         isinstance(cached_disk, dict)
         and cached_disk
         and not cached_disk.get("failed")
         and not cached_disk.get("error")
+        and (
+            _is_complete_info(cached_disk)
+            or cache_only
+            or app_state.market.is_yf_rate_limited()
+        )
     ):
         with app_state.yfinance_short_cache_lock:
             app_state.yfinance_short_cache[short_cache_key] = dict(cached_disk)
-        try:
-            _set_cached_value(f"info_{symbol}", dict(cached_disk), 86400)
-        except (OSError, TypeError, ValueError):
-            pass
+        if _is_complete_info(cached_disk):
+            try:
+                _set_cached_value(f"info_{symbol}", dict(cached_disk), 86400)
+            except (OSError, TypeError, ValueError):
+                pass
         return dict(cached_disk)
 
     if (
@@ -242,17 +264,6 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
     neg_key = f"info_{symbol}__failed"
     if _has_cached_key(neg_key, NEGATIVE_CACHE_TTL):
         return {}
-
-    # Fundamentals keys whose presence marks a "full" (fast+quoteSummary) result.
-    _FUNDAMENTAL_KEYS = (
-        "trailingPE",
-        "dividendYield",
-        "sector",
-        "industry",
-        "targetMeanPrice",
-        "marketCap",
-        "fiftyTwoWeekHigh",
-    )
 
     def _fetch() -> dict:
         try:
@@ -313,7 +324,15 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
             # merged fundamentals result cached. If fundamentals are stale, the
             # 24h cache still serves them until refreshed lazily/on-demand.
             prior = peek_cached(f"info_{symbol}", duration=86400)
-            prior_is_full = isinstance(prior, dict) and any(k in prior for k in _FUNDAMENTAL_KEYS)
+            disk_base: dict[str, Any] = {}
+            if (
+                isinstance(cached_disk, dict)
+                and cached_disk
+                and not cached_disk.get("failed")
+                and not cached_disk.get("error")
+            ):
+                disk_base = cached_disk
+            prior_is_full = _is_complete_info(prior)
             if (
                 not symbol.startswith("^")
                 and not app_state.market.is_yf_rate_limited()
@@ -324,7 +343,12 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
                 except Exception as exc:
                     logger.debug("yfinance ticker.info failed for %s: %s", symbol, exc)
 
-            merged = {**(prior if isinstance(prior, dict) else {}), **fast, **full}
+            merged = {
+                **disk_base,
+                **(prior if isinstance(prior, dict) else {}),
+                **fast,
+                **full,
+            }
             if not merged:
                 from constants import NEGATIVE_CACHE_TTL
 
@@ -334,11 +358,15 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
             with app_state.yfinance_short_cache_lock:
                 app_state.yfinance_short_cache[short_cache_key] = dict(merged)
 
-            # Save to disk cache
-            try:
-                app_state.stock_disk_cache.set(disk_key, dict(merged))
-            except (OSError, TypeError) as disk_exc:
-                logger.debug("Disk cache set failed for %s: %s", symbol, disk_exc)
+            # Only persist to the 24-hour disk cache when we hold complete
+            # fundamentals (or an index symbol). Writing partial fast-only
+            # data into the 24h store would suppress quoteSummary enrichment for
+            # an entire day after a transient get_info() failure.
+            if _is_complete_info(merged):
+                try:
+                    app_state.stock_disk_cache.set(disk_key, dict(merged))
+                except (OSError, TypeError) as disk_exc:
+                    logger.debug("Disk cache set failed for %s: %s", symbol, disk_exc)
 
             return dict(merged)
         except Exception as exc:
@@ -360,8 +388,19 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
                 pass
             return {}
 
-    cached = get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=bool)
-    return dict(cached) if isinstance(cached, dict) else {}
+    cached = get_cached(f"info_{symbol}", _fetch, duration=86400, valid_func=_is_complete_info)
+    if isinstance(cached, dict) and cached:
+        return dict(cached)
+    with app_state.yfinance_short_cache_lock:
+        partial = app_state.yfinance_short_cache.get(short_cache_key)
+    if (
+        isinstance(partial, dict)
+        and partial
+        and not partial.get("failed")
+        and not partial.get("error")
+    ):
+        return dict(partial)
+    return {}
 
 
 def fetch_stock_info_async(symbol: str) -> None:
@@ -1177,11 +1216,14 @@ def _resolve_stocks_for_response(*, include_portfolio: bool = False, real_data_o
                         break
                 if not isinstance(pts_info, dict):
                     pts_info = None
-                if pts_info and pts_info.get("price"):
-                    r_copy["pts_price"] = pts_info.get("price")
-                    r_copy["pts_change"] = pts_info.get("change")
-                    r_copy["pts_trading"] = pts_info.get("pts_trading", False)
-                    r_copy["pts_time"] = pts_info.get("pts_time", "")
+                pts_price = (
+                    finite_float(pts_info.get("price")) if isinstance(pts_info, dict) else None
+                )
+                if pts_info and pts_price is not None and pts_price > 0:
+                    r_copy["pts_price"] = pts_price
+                    r_copy["pts_change"] = finite_float(pts_info.get("change"))
+                    r_copy["pts_trading"] = bool(pts_info.get("pts_trading", False))
+                    r_copy["pts_time"] = str(pts_info.get("pts_time") or "")
                 elif isinstance(sym, str) and sym:
                     symbols_to_register.append(sym)
                 jp_rows.append(r_copy)
@@ -1304,7 +1346,12 @@ def ok_response(payload: dict | None = None, **kwargs: Any) -> Response:
     return jsonify(body)
 
 
-def _sanitize_error_value(value: Any) -> Any:
+_MAX_ERROR_SANITIZE_DEPTH = 32
+
+
+def _sanitize_error_value(
+    value: Any, *, _seen: set[int] | None = None, _depth: int = 0
+) -> Any:
     """Recursively sanitize string leaves in an error-envelope payload.
 
     API-10: ``error_response`` previously sanitized only first-level strings,
@@ -1315,10 +1362,26 @@ def _sanitize_error_value(value: Any) -> Any:
     """
     if isinstance(value, str):
         return _sanitize_error_message(value)
-    if isinstance(value, dict):
-        return {k: _sanitize_error_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_sanitize_error_value(item) for item in value]
+    if isinstance(value, (dict, list, tuple)):
+        if _depth >= _MAX_ERROR_SANITIZE_DEPTH:
+            return "[max-depth]"
+        if _seen is None:
+            _seen = set()
+        obj_id = id(value)
+        if obj_id in _seen:
+            return "[circular]"
+        _seen.add(obj_id)
+        try:
+            if isinstance(value, dict):
+                return {
+                    k: _sanitize_error_value(v, _seen=_seen, _depth=_depth + 1)
+                    for k, v in value.items()
+                }
+            return [
+                _sanitize_error_value(item, _seen=_seen, _depth=_depth + 1) for item in value
+            ]
+        finally:
+            _seen.discard(obj_id)
     return value
 
 

@@ -119,17 +119,19 @@
 
       // 4. Quick jump button (Return to Live)
       if (this.els.timeNowBtn) {
-        this.els.timeNowBtn.addEventListener("click", () => {
+        this._onTimeNowClick = () => {
           this.stopTimelapse();
           this.state.setTimeCursor(0);
-        });
+        };
+        this.els.timeNowBtn.addEventListener("click", this._onTimeNowClick);
       }
 
       // 5. Timelapse Play/Pause button
       if (this.els.timePlayBtn) {
-        this.els.timePlayBtn.addEventListener("click", () => {
+        this._onTimePlayClick = () => {
           this.toggleTimelapse();
-        });
+        };
+        this.els.timePlayBtn.addEventListener("click", this._onTimePlayClick);
       }
     }
 
@@ -248,6 +250,17 @@
           "keydown",
           this._granularityKeydownHandler,
         );
+      }
+      if (this.els.timeNowBtn && this._onTimeNowClick) {
+        this.els.timeNowBtn.removeEventListener("click", this._onTimeNowClick);
+        this._onTimeNowClick = null;
+      }
+      if (this.els.timePlayBtn && this._onTimePlayClick) {
+        this.els.timePlayBtn.removeEventListener(
+          "click",
+          this._onTimePlayClick,
+        );
+        this._onTimePlayClick = null;
       }
     }
 
@@ -566,6 +579,31 @@
       this.updateTimelineUI(this.state.state, true, history);
     }
 
+    _restoreLiveCenterHud(stateData) {
+      const centerPriceEl = document.getElementById("center-stock-price");
+      const centerChangeEl = document.getElementById("center-stock-change");
+      const currentStock =
+        stateData.stocks && typeof stateData.stocks.get === "function"
+          ? stateData.stocks.get(stateData.selectedSymbol)
+          : null;
+      if (!currentStock) return;
+      if (centerPriceEl) {
+        centerPriceEl.textContent =
+          currentStock.price > 0
+            ? global.ObservatoryDataAdapter.formatPrice(
+                currentStock.price,
+                currentStock,
+              )
+            : "--";
+      }
+      if (centerChangeEl) {
+        const liveChg = currentStock.changePercent || 0;
+        const sign = liveChg >= 0 ? "+" : "";
+        centerChangeEl.textContent = `${sign}${liveChg.toFixed(2)}%`;
+        centerChangeEl.className = `center-stat-change ${liveChg >= 0 ? "text-pos" : "text-neg"}`;
+      }
+    }
+
     updateTimelineUI(stateData, hasHistory = true, activeHistory = null) {
       this.syncGranularityUI(stateData.timeGranularity);
       const historyKey = `${stateData.selectedSymbol}:${stateData.timeGranularity}`;
@@ -581,6 +619,9 @@
         }
         if (this.els.timeSlider) {
           this.els.timeSlider.disabled = true;
+        }
+        if (stateData.timeCursor === 0) {
+          this._restoreLiveCenterHud(stateData);
         }
         return;
       }
@@ -624,7 +665,10 @@
       // Update central card reference stock HUD with scrubbed historical price
       const centerPriceEl = document.getElementById("center-stock-price");
       const centerChangeEl = document.getElementById("center-stock-change");
-      const currentStock = stateData.stocks.get(stateData.selectedSymbol);
+      const currentStock =
+        stateData.stocks && typeof stateData.stocks.get === "function"
+          ? stateData.stocks.get(stateData.selectedSymbol)
+          : null;
 
       if (this.els.timeSlider && point) {
         this.els.timeSlider.setAttribute(
@@ -654,23 +698,7 @@
           centerChangeEl.className = `center-stat-change ${histChg >= 0 ? "text-pos" : "text-neg"}`;
         }
       } else if (cursor === 0) {
-        if (currentStock) {
-          if (centerPriceEl) {
-            centerPriceEl.textContent =
-              currentStock.price > 0
-                ? global.ObservatoryDataAdapter.formatPrice(
-                    currentStock.price,
-                    currentStock,
-                  )
-                : "--";
-          }
-          if (centerChangeEl) {
-            const liveChg = currentStock.changePercent || 0;
-            const sign = liveChg >= 0 ? "+" : "";
-            centerChangeEl.textContent = `${sign}${liveChg.toFixed(2)}%`;
-            centerChangeEl.className = `center-stat-change ${liveChg >= 0 ? "text-pos" : "text-neg"}`;
-          }
-        }
+        this._restoreLiveCenterHud(stateData);
       }
     }
   }

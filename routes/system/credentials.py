@@ -423,7 +423,27 @@ def api_credentials_verify():
             details={"reason": "JSON形式が不正です"},
             status_code=400,
         )
-    target_provider = data.get("ai_provider") or data.get("target_provider")
+    raw_provider = (
+        data["ai_provider"]
+        if "ai_provider" in data and data["ai_provider"] is not None
+        else data.get("target_provider")
+    )
+    if raw_provider is not None and not isinstance(raw_provider, str):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={"reason": "ai_provider must be a string", "fields": ["ai_provider"]},
+            status_code=400,
+        )
+    target_provider = raw_provider.strip().lower() if isinstance(raw_provider, str) else ""
+    if target_provider and target_provider not in ("mistral", "openai_compatible"):
+        return error_response(
+            ErrorCode.INVALID_INPUT,
+            details={
+                "reason": "ai_provider は mistral または openai_compatible を指定してください",
+                "fields": ["ai_provider"],
+            },
+            status_code=400,
+        )
     if not target_provider:
         from credential_manager import get_ai_provider
 

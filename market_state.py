@@ -55,11 +55,13 @@ class CircuitState:
         timeout_streak: int = 0,
         open_until: float = 0.0,
         probing: bool = False,
+        probing_since: float = 0.0,
     ):
         self.status = status
         self.timeout_streak = timeout_streak
         self.open_until = open_until
         self.probing = probing
+        self.probing_since = probing_since
 
     # Dict-style access for backward compatibility
     def __getitem__(self, key: str):
@@ -199,6 +201,37 @@ class MarketDataState:
         self.invalid_symbol_lock = threading.RLock()
         self.first_sync_attempted: bool = False
         self.first_sync_completed_at: float = 0.0
+        self.removed_watchlist_symbols: set[tuple[str, str]] = set()
+
+    @staticmethod
+    def _watchlist_aliases(symbol: str, market: str) -> list[tuple[str, str]]:
+        norm_market = str(market or "").strip().lower()
+        upper = str(symbol or "").strip().upper()
+        if not upper or not norm_market:
+            return []
+        aliases = [(upper, norm_market)]
+        if norm_market == "jp":
+            if upper.endswith(".T"):
+                aliases.append((upper[:-2], norm_market))
+            else:
+                aliases.append((f"{upper}.T", norm_market))
+        return aliases
+
+    def mark_watchlist_removed(self, symbol: str, market: str) -> None:
+        """Record a user/auto-removed watchlist symbol so an overlapping sync cannot resurrect it."""
+        for key in self._watchlist_aliases(symbol, market):
+            self.removed_watchlist_symbols.add(key)
+
+    def clear_watchlist_removed(self, symbol: str, market: str) -> None:
+        """Clear a removed-watchlist marker when the symbol is explicitly added/restored."""
+        for key in self._watchlist_aliases(symbol, market):
+            self.removed_watchlist_symbols.discard(key)
+
+    def is_watchlist_removed(self, symbol: str, market: str) -> bool:
+        """Return True if *(symbol, market)* was removed and not yet re-added."""
+        if not self.removed_watchlist_symbols:
+            return False
+        return any(key in self.removed_watchlist_symbols for key in self._watchlist_aliases(symbol, market))
 
     INVALID_SYMBOL_REMOVAL_THRESHOLD: int = 3
 
@@ -289,12 +322,14 @@ class MarketDataState:
                 target["timeout_streak"] = 0
                 target["open_until"] = 0.0
                 target["probing"] = False
+                target["probing_since"] = 0.0
             else:
                 if target.get("status") == "HALF_OPEN":
                     target["status"] = "OPEN"
                     target["open_until"] = now + open_sec
                     target["timeout_streak"] = 0
                     target["probing"] = False
+                    target["probing_since"] = 0.0
                 else:
                     target["timeout_streak"] = (target.get("timeout_streak") or 0) + 1
                     if target["timeout_streak"] >= threshold:
@@ -302,6 +337,7 @@ class MarketDataState:
                         target["open_until"] = now + open_sec
                         target["timeout_streak"] = 0
                         target["probing"] = False
+                        target["probing_since"] = 0.0
 
     def is_circuit_open(self, service: str, symbol: str | None = None) -> bool:
         now = time.time()
@@ -317,6 +353,8 @@ class MarketDataState:
             if status == "OPEN":
                 if now >= (target.get("open_until") or 0.0):
                     target["status"] = "HALF_OPEN"
+                    target["probing"] = False
+                    target["probing_since"] = 0.0
                     return False  # Allow probe; route layer claims probing
                 return True
             elif status == "HALF_OPEN":
@@ -338,12 +376,22 @@ class MarketDataState:
                 return now < (target.get("open_until") or 0.0)
             return False
 
-    def try_claim_circuit_probe(self, service: str, symbol: str | None = None) -> bool:
+    _CIRCUIT_PROBE_TTL_SEC: float = 300.0
+
+    def try_claim_circuit_probe(
+        self,
+        service: str,
+        symbol: str | None = None,
+        probe_ttl_sec: float = _CIRCUIT_PROBE_TTL_SEC,
+    ) -> bool:
         """Atomically claim the HALF_OPEN probe slot.
 
         Returns True if the caller owns the probe (and should execute the
-        backing call), False if another thread already claimed it.
+        backing call), False if another thread already claimed a live probe.
+        Reclaims a probe whose TTL expired without completion so crashed or
+        stalled probes cannot permanently wedge HALF_OPEN.
         """
+        now_mono = time.monotonic()
         with self.circuit_lock:
             target: CircuitState | None = (
                 self.history_circuit_states.get(symbol)
@@ -353,9 +401,55 @@ class MarketDataState:
             if not target or target.get("status") != "HALF_OPEN":
                 return False
             if target.get("probing"):
-                return False
+                since = float(target.get("probing_since") or 0.0)
+                if since <= 0.0 or (now_mono - since) < probe_ttl_sec:
+                    return False
             target["probing"] = True
+            target["probing_since"] = now_mono
             return True
+
+    def enter_circuit_call(
+        self, service: str, symbol: str | None = None
+    ) -> tuple[bool, bool, str]:
+        """Evaluate circuit state and claim a HALF_OPEN probe if required.
+
+        Returns ``(allowed, probe_claimed, deny_reason)`` where ``deny_reason``
+        is ``""`` when allowed, ``"open"`` when OPEN, or ``"busy"`` when a
+        HALF_OPEN probe is actively in flight. Re-checks post-claim state so a
+        concurrent probe resolving ``HALF_OPEN -> CLOSED`` does not trigger a
+        false busy rejection.
+        """
+        if symbol is None:
+            is_open = self.is_circuit_open(service)
+        else:
+            is_open = self.is_circuit_open(service, symbol=symbol)
+        if is_open:
+            return False, False, "open"
+        circuit_state = (
+            self.get_circuit_state(service)
+            if symbol is None
+            else self.get_circuit_state(service, symbol=symbol)
+        )
+        if circuit_state.get("status") == "HALF_OPEN":
+            claimed = (
+                self.try_claim_circuit_probe(service)
+                if symbol is None
+                else self.try_claim_circuit_probe(service, symbol=symbol)
+            )
+            if claimed:
+                return True, True, ""
+            post_state = (
+                self.get_circuit_state(service)
+                if symbol is None
+                else self.get_circuit_state(service, symbol=symbol)
+            )
+            post_status = post_state.get("status")
+            if post_status == "CLOSED":
+                return True, False, ""
+            if post_status == "OPEN":
+                return False, False, "open"
+            return False, False, "busy"
+        return True, False, ""
 
     def release_circuit_probe(self, service: str, symbol: str | None = None) -> None:
         """Release a HALF_OPEN probe claim without changing circuit health.
@@ -380,6 +474,7 @@ class MarketDataState:
             )
             if target and target.get("probing"):
                 target["probing"] = False
+                target["probing_since"] = 0.0
 
     # --- Syncing ---
 

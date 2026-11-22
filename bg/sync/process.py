@@ -140,13 +140,15 @@ def _warm_payload_cache_from_disk() -> None:
         # R17-13: prune mtimes for symbols no longer in the watchlist across all
         # markets and bound the dict so churn cannot grow it unboundedly.
         if expected_keys:
-            _state._last_loaded_mtimes = {
+            pruned_mtimes = {
                 k: v
                 for k, v in list(_state._last_loaded_mtimes.items())[
                     -_state._LAST_LOADED_MTIMES_MAX :
                 ]
                 if k in expected_keys
             }
+            _state._last_loaded_mtimes.clear()
+            _state._last_loaded_mtimes.update(pruned_mtimes)
         if warmed_indices or warmed > 0:
             inval_fn = _get_app_bg_attr(
                 "_invalidate_sse_payload_cache", _invalidate_sse_payload_cache
@@ -343,16 +345,32 @@ def _process_fetched_stocks(
             else []
         )
 
-        def merge_cache(prev_list: list[Any], res_list: list[Any]) -> list[Any]:
+        is_removed_fn = getattr(app_state.market, "is_watchlist_removed", None)
+
+        def merge_cache(prev_list: list[Any], res_list: list[Any], mkt: str) -> list[Any]:
             if not res_list:
-                return prev_list
-            res_dict = {item["symbol"]: item for item in res_list if item and "symbol" in item}
+                return [
+                    item
+                    for item in prev_list
+                    if item
+                    and "symbol" in item
+                    and not (callable(is_removed_fn) and is_removed_fn(item["symbol"], mkt))
+                ]
+            res_dict = {
+                item["symbol"]: item
+                for item in res_list
+                if item
+                and "symbol" in item
+                and not (callable(is_removed_fn) and is_removed_fn(item["symbol"], mkt))
+            }
             merged = []
             seen = set()
             for item in prev_list:
                 if not item or "symbol" not in item:
                     continue
                 sym = item["symbol"]
+                if callable(is_removed_fn) and is_removed_fn(sym, mkt):
+                    continue
                 if sym in res_dict:
                     merged.append(res_dict[sym])
                     seen.add(sym)
@@ -362,13 +380,15 @@ def _process_fetched_stocks(
                 if not item or "symbol" not in item:
                     continue
                 sym = item["symbol"]
+                if callable(is_removed_fn) and is_removed_fn(sym, mkt):
+                    continue
                 if sym not in seen:
                     merged.append(item)
             return merged
 
-        new_us = merge_cache(prev_us, us_res)
-        new_jp = merge_cache(prev_jp, jp_res)
-        new_idx = merge_cache(prev_idx, idx_res)
+        new_us = merge_cache(prev_us, us_res, "us")
+        new_jp = merge_cache(prev_jp, jp_res, "jp")
+        new_idx = merge_cache(prev_idx, idx_res, "idx")
 
         app_state.market.target_stocks_cache = {"us": new_us, "jp": new_jp, "idx": new_idx}
 

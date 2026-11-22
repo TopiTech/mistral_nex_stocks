@@ -31,9 +31,11 @@ def schedule_news_warmup():
 
     try:
         langsearch_api_key = app.get_langsearch_api_key() or ""
-        tavily_api_key = app.get_tavily_api_key() or ""
     except (KeyringError, RuntimeError, ValueError):
         langsearch_api_key = ""
+    try:
+        tavily_api_key = app.get_tavily_api_key() or ""
+    except (KeyringError, RuntimeError, ValueError):
         tavily_api_key = ""
 
     strategy = _determine_search_strategy(tavily_api_key, langsearch_api_key)
@@ -53,7 +55,15 @@ def schedule_news_warmup():
                 NEGATIVE_CACHE_TTL,
                 True,
             )
-        except (OSError, RuntimeError, RequestException, ValueError, json.JSONDecodeError) as exc:
+        except (
+            OSError,
+            RuntimeError,
+            RequestException,
+            ValueError,
+            TypeError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
             logger.warning("News warmup (us context) failed: %s", exc)
             results["us_context"] = None
 
@@ -69,7 +79,15 @@ def schedule_news_warmup():
                 NEGATIVE_CACHE_TTL,
                 True,
             )
-        except (OSError, RuntimeError, RequestException, ValueError, json.JSONDecodeError) as exc:
+        except (
+            OSError,
+            RuntimeError,
+            RequestException,
+            ValueError,
+            TypeError,
+            KeyError,
+            json.JSONDecodeError,
+        ) as exc:
             logger.warning("News warmup (jp context) failed: %s", exc)
             results["jp_context"] = None
 
@@ -77,7 +95,7 @@ def schedule_news_warmup():
             results["us_trends"] = collect_market_trending_titles(
                 "us", 8, langsearch_api_key, tavily_api_key
             )
-        except (OSError, RuntimeError, RequestException, ValueError) as exc:
+        except (OSError, RuntimeError, RequestException, ValueError, TypeError, KeyError) as exc:
             logger.warning("News warmup (us trends) failed: %s", exc)
             results["us_trends"] = None
 
@@ -85,11 +103,11 @@ def schedule_news_warmup():
             results["jp_trends"] = collect_market_trending_titles(
                 "jp", 8, langsearch_api_key, tavily_api_key
             )
-        except (OSError, RuntimeError, RequestException, ValueError) as exc:
+        except (OSError, RuntimeError, RequestException, ValueError, TypeError, KeyError) as exc:
             logger.warning("News warmup (jp trends) failed: %s", exc)
             results["jp_trends"] = None
 
-        success_count = sum(1 for v in results.values() if v is not None)
+        success_count = sum(1 for v in results.values() if bool(v))
         total_count = len(results)
         if success_count < total_count:
             logger.info(

@@ -1297,14 +1297,7 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     fsErrorHost.querySelectorAll(".chart-error").forEach((el) => el.remove());
   }
 
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    _safeDestroyChart(canvas);
-    return;
-  }
-  if (!data || data.length < 2) {
-    // 描画不能データでは旧チャートを(新しい期間のチャートとして)残さず、
-    // 破棄してから情報表示を出す(空データで旧チャートが残るのを防ぐ)。
+  const showNoHistoryState = () => {
     _safeDestroyChart(canvas);
     if (options.targetCanvas && fsErrorHost) {
       fsErrorHost.appendChild(
@@ -1313,6 +1306,17 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
     } else if (wrapper && !options.targetCanvas) {
       showChartError(wrapper, NO_HISTORY_MSG, "info");
     }
+  };
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    _safeDestroyChart(canvas);
+    return;
+  }
+  if (!data || data.length < 2) {
+    // 描画不能データでは旧チャートを(新しい期間のチャートとして)残さず、
+    // 破棄してから情報表示を出す(空データで旧チャートが残るのを防ぐ)。
+    showNoHistoryState();
     return;
   }
 
@@ -1417,9 +1421,7 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   // 正規化後に有効点が不足する場合(タイムスタンプ欠損等)、空データの
   // チャートを黙って描かず情報表示を出して中断する。
   if (normalizedOhlc.length < 2) {
-    if (wrapper && !options.targetCanvas) {
-      showChartError(wrapper, NO_HISTORY_MSG, "info");
-    }
+    showNoHistoryState();
     return;
   }
 
@@ -2258,9 +2260,24 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
 }
 
 function renderDetailExtras(wrapper, detailData) {
+  const stockKey = wrapper?.dataset?.stockKey;
+  const drawerEl =
+    typeof document !== "undefined"
+      ? document.getElementById("stock-detail-drawer")
+      : null;
+  const isDrawerActiveForWrapper =
+    (typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === wrapper) ||
+    Boolean(
+      drawerEl?.classList.contains("open") &&
+      stockKey &&
+      drawerEl.dataset.stockKey === stockKey,
+    );
   const findEl = (sel) =>
     wrapper.querySelector(sel) ||
-    document.querySelector(`#stock-detail-drawer ${sel}`);
+    (isDrawerActiveForWrapper
+      ? document.querySelector(`#stock-detail-drawer ${sel}`)
+      : null);
   const sectorEl = findEl(".detail-sector");
   const industryEl = findEl(".detail-industry");
   const mcapEl = findEl(".detail-mcap");

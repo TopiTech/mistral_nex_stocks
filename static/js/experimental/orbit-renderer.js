@@ -94,15 +94,23 @@
       if (!this._frameLoop) {
         this._frameLoop = (now) => {
           this.animId = null;
-          this.render(now);
-          if (!this._isRunning) return;
-          if (typeof document !== "undefined" && document.hidden) return;
-          if (this._shouldPauseLoop()) {
-            this._isIdleSleeping = true;
-            return;
+          try {
+            this.render(now);
+          } catch (err) {
+            console.error("[OrbitRenderer] Frame render error:", err);
+          } finally {
+            if (
+              this._isRunning &&
+              !(typeof document !== "undefined" && document.hidden)
+            ) {
+              if (this._shouldPauseLoop()) {
+                this._isIdleSleeping = true;
+              } else {
+                this._isIdleSleeping = false;
+                this.animId = requestAnimationFrame(this._frameLoop);
+              }
+            }
           }
-          this._isIdleSleeping = false;
-          this.animId = requestAnimationFrame(this._frameLoop);
         };
       }
       return this._frameLoop;
@@ -577,7 +585,7 @@
         ctx.stroke();
 
         // Subtle tier label on orbit ring
-        ctx.fillStyle = tier.color.replace("0.", "0.4");
+        ctx.fillStyle = tier.color.replace(/[\d.]+\)$/, "0.4)");
         ctx.font = "9px 'Inter', sans-serif";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";

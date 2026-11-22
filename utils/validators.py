@@ -141,6 +141,10 @@ class StockPayloadDict(TypedDict, total=False):
     price_to_sales: float | str | None
     enterprise_to_ebitda: float | str | None
     profit_margins: float | str | None
+    return_on_equity: float | str | None
+    debt_to_equity: float | str | None
+    free_cashflow: float | str | None
+    operating_cashflow: float | str | None
 
 
 class ScreenerFilterSchema(ScreenerQueryRequest):
@@ -358,6 +362,19 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                     or getattr(message, "reasoning", None)
                     or getattr(message, "thinking", None)
                 )
+                if not reasoning_alt:
+                    obj_rd = getattr(message, "reasoning_details", None)
+                    if isinstance(obj_rd, list):
+                        parts = []
+                        for rd in obj_rd:
+                            if isinstance(rd, dict) and "text" in rd:
+                                parts.append(str(rd["text"]))
+                            elif hasattr(rd, "text") and getattr(rd, "text", None) is not None:
+                                parts.append(str(rd.text))
+                            elif isinstance(rd, str):
+                                parts.append(rd)
+                        if parts:
+                            reasoning_alt = "".join(parts)
                 if reasoning_alt:
                     content = reasoning_alt
         else:
@@ -378,7 +395,7 @@ def extract_chat_content(response, preserve_for_history: bool = False):
 
         # Case 1: content is a string (most common)
         if isinstance(content, str):
-            if content:
+            if content.strip():
                 cleaned = _clean_reasoning_tags(content.strip(), preserve_for_history)
                 return cleaned if (cleaned or preserve_for_history) else "(思考プロセスのみの応答でした)"
             logger.warning("extract_chat_content: empty string content")

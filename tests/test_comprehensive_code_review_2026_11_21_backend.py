@@ -142,7 +142,11 @@ def test_get_stock_info_cached_skips_24h_disk_cache_for_fast_only_info(
     monkeypatch.setattr(
         app_state.stock_provider,
         "get_fast_info",
-        lambda sym: {"regularMarketPrice": 185.0},
+        lambda sym: {
+            "regularMarketPrice": 185.0,
+            "marketCap": 3_000_000_000_000,
+            "fiftyTwoWeekHigh": 200.0,
+        },
     )
     info_calls = 0
 

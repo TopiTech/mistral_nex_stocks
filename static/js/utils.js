@@ -1049,13 +1049,13 @@ function refreshCsrfToken() {
 }
 
 /**
- * Schedule periodic CSRF token refreshes well before the 1h expiry.
+ * Schedule periodic CSRF token refreshes well before the 30m expiry.
  * No-op when the page has no CSRF meta tag or a timer already runs.
  */
 function startCsrfAutoRefresh() {
   if (window.__mnsCsrfRefreshTimer) return;
   if (!document.querySelector('meta[name="csrf-token"]')) return;
-  const REFRESH_INTERVAL_MS = 25 * 60 * 1000; // 25 min < 60 min token TTL
+  const REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 min < 30 min token TTL (WTF_CSRF_TIME_LIMIT=1800)
   window.__mnsCsrfRefreshTimer = setInterval(
     refreshCsrfToken,
     REFRESH_INTERVAL_MS,

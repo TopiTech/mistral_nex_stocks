@@ -361,7 +361,9 @@ def init_logging(app) -> None:
         except Exception:
             log_dir = BASE_DIR
     try:
-        log_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(log_dir, 0o700)
     except OSError:
         pass
     log_file = log_dir / "backend.log"

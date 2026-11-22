@@ -316,7 +316,6 @@ class SQLiteChatHistoryStore:
         self.max_sessions = max_sessions
         self.max_msgs_per_session = max_msgs_per_session
         self._local = threading.local()
-        self._schema_lock = threading.Lock()
         self._active_conns: set[sqlite3.Connection] = set()
         self._conns_lock = threading.Lock()
         self._conn_epoch: int = 0
@@ -571,10 +570,8 @@ class SQLiteChatHistoryStore:
         write phases when the lock is released.
 
         The method enforces ``max_msgs_per_session`` by deleting the oldest
-        non-system message(s) after insertion.  Session-count eviction is NOT
-        performed here because ``__setitem__`` (the full-sync path) already
-        enforces ``max_sessions`` via ``_enforce_session_limit``, and this
-        append-only path is designed to be lightweight.
+        non-system message(s) after insertion, and enforces ``max_sessions``
+        via ``_enforce_session_limit``.
 
         Args:
             session_id: The chat session identifier (e.g. "us:AAPL").
@@ -860,7 +857,10 @@ class SQLiteChatHistoryStore:
                 cursor.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (session_id,))
                 if cursor.fetchone() is None:
                     return False
-            elif norm(_decrypt_content(last[1])) == message.get("content"):
+            elif (
+                last[0] == message.get("role")
+                and norm(_decrypt_content(last[1])) == message.get("content")
+            ):
                 return False
             self._append_message_row(cursor, session_id, message)
             return True

@@ -902,7 +902,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   };
 
-  if (sender?.id !== chrome.runtime.id) {
+  if (sender?.id !== chrome.runtime.id || sender?.tab) {
     safeSendResponse({ ok: false, error: "Unauthorized sender" });
     return true;
   }

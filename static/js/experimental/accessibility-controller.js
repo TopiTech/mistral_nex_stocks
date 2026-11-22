@@ -13,6 +13,7 @@
       this.state = state;
       this.els = elements || {};
       this._modalReturnFocusTarget = null;
+      this._modalReturnFocusTargets = new WeakMap();
       this._unsubState = null;
 
       this.bindEvents();
@@ -26,29 +27,33 @@
 
       // Motion toggle button
       if (this.els.motionBtn) {
-        this.els.motionBtn.addEventListener("click", () => {
+        this._onMotionClick = () => {
           this.state.toggleReducedMotion();
-        });
+        };
+        this.els.motionBtn.addEventListener("click", this._onMotionClick);
       }
 
       // Pause toggle button
       if (this.els.pauseBtn) {
-        this.els.pauseBtn.addEventListener("click", () => {
+        this._onPauseClick = () => {
           this.state.togglePause();
-        });
+        };
+        this.els.pauseBtn.addEventListener("click", this._onPauseClick);
       }
 
       // Help modal toggle button
       if (this.els.helpBtn) {
-        this.els.helpBtn.addEventListener("click", () => {
+        this._onHelpClick = () => {
           this.openHelpModal();
-        });
+        };
+        this.els.helpBtn.addEventListener("click", this._onHelpClick);
       }
 
       if (this.els.helpCloseBtn) {
-        this.els.helpCloseBtn.addEventListener("click", () => {
+        this._onHelpCloseClick = () => {
           this.closeHelpModal();
-        });
+        };
+        this.els.helpCloseBtn.addEventListener("click", this._onHelpCloseClick);
       }
 
       // Listen for system prefers-reduced-motion changes
@@ -100,6 +105,25 @@
         this._unsubState = null;
       }
       window.removeEventListener("keydown", this._keydownHandler);
+      if (this.els.motionBtn && this._onMotionClick) {
+        this.els.motionBtn.removeEventListener("click", this._onMotionClick);
+        this._onMotionClick = null;
+      }
+      if (this.els.pauseBtn && this._onPauseClick) {
+        this.els.pauseBtn.removeEventListener("click", this._onPauseClick);
+        this._onPauseClick = null;
+      }
+      if (this.els.helpBtn && this._onHelpClick) {
+        this.els.helpBtn.removeEventListener("click", this._onHelpClick);
+        this._onHelpClick = null;
+      }
+      if (this.els.helpCloseBtn && this._onHelpCloseClick) {
+        this.els.helpCloseBtn.removeEventListener(
+          "click",
+          this._onHelpCloseClick,
+        );
+        this._onHelpCloseClick = null;
+      }
       if (this._motionMediaQuery && this._motionListener) {
         try {
           this._motionMediaQuery.removeEventListener(
@@ -150,7 +174,7 @@
       if (activeEl && typeof activeEl.closest === "function") {
         if (
           activeEl.closest(
-            'button, a[href], input, textarea, select, canvas, [role="application"], [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="searchbox"], [role="listbox"], [role="option"], [contenteditable="true"]',
+            'button, a[href], input, textarea, select, canvas, summary, [role="application"], [role="button"], [role="link"], [role="tab"], [role="combobox"], [role="searchbox"], [role="listbox"], [role="option"], [contenteditable="true"]',
           )
         ) {
           // Single-character shortcuts (Space/Enter/arrows/d/c/m/h//) must not
@@ -372,13 +396,26 @@
 
     captureModalReturnFocus(modal) {
       if (modal && !modal.contains(document.activeElement)) {
-        this._modalReturnFocusTarget = document.activeElement;
+        const target = document.activeElement;
+        if (this._modalReturnFocusTargets) {
+          this._modalReturnFocusTargets.set(modal, target);
+        }
+        this._modalReturnFocusTarget = target;
       }
     }
 
-    restoreModalFocus() {
-      const returnFocusTarget = this._modalReturnFocusTarget;
-      this._modalReturnFocusTarget = null;
+    restoreModalFocus(modal = null) {
+      const perModalTarget =
+        modal && this._modalReturnFocusTargets
+          ? this._modalReturnFocusTargets.get(modal)
+          : null;
+      const returnFocusTarget = perModalTarget || this._modalReturnFocusTarget;
+      if (modal && this._modalReturnFocusTargets) {
+        this._modalReturnFocusTargets.delete(modal);
+      }
+      if (!modal || returnFocusTarget === this._modalReturnFocusTarget) {
+        this._modalReturnFocusTarget = null;
+      }
       if (returnFocusTarget && document.contains(returnFocusTarget)) {
         returnFocusTarget.focus();
       }
@@ -528,7 +565,7 @@
       this.els.helpModal.classList.add("hidden");
       this.els.helpModal.setAttribute("aria-hidden", "true");
       this.els.helpModal.setAttribute("inert", "");
-      this.restoreModalFocus();
+      this.restoreModalFocus(this.els.helpModal);
     }
 
     openSearchModal() {
@@ -558,7 +595,7 @@
         this.els.searchInput.setAttribute("aria-expanded", "false");
         this.els.searchInput.removeAttribute("aria-activedescendant");
       }
-      this.restoreModalFocus();
+      this.restoreModalFocus(this.els.searchModal);
     }
   }
 

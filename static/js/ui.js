@@ -114,29 +114,45 @@ function updateIntervalControlsVisibility(parentEl, stockKey, currentPeriod) {
   }
 
   intervalGroups.forEach((group) => {
+    let focusedAutoBtn = null;
     group.querySelectorAll("[data-interval]").forEach((btn) => {
       const inv = btn.dataset.interval;
       const isSupported = supported.includes(inv);
-      btn.style.display = isSupported ? "" : "none";
       const isCurrentInterval = inv === currentInterval;
+      if (
+        !isSupported &&
+        typeof document !== "undefined" &&
+        document.activeElement === btn
+      ) {
+        focusedAutoBtn = group.querySelector(
+          `[data-interval="${currentInterval}"]`,
+        );
+      }
+      btn.style.display = isSupported ? "" : "none";
+      btn.hidden = !isSupported;
       btn.classList.toggle("active", isCurrentInterval);
       btn.setAttribute("aria-pressed", String(isCurrentInterval));
     });
+    if (focusedAutoBtn && typeof focusedAutoBtn.focus === "function") {
+      focusedAutoBtn.focus();
+    }
   });
 }
 
-// Cleanup all observers on page unload to prevent memory leaks
+// Cleanup all observers on page unload to prevent memory leaks.
+// Guard timer/controller branches in try/catch because those `let` bindings are
+// declared later alongside their feature sections (and may be in TDZ if evaluation
+// aborted early, or absent in isolated unit-test slices).
 if (
   typeof window !== "undefined" &&
   typeof window.addEventListener === "function"
 ) {
-  window.addEventListener(
-    "beforeunload",
-    function cleanupIntersectionObserver() {
-      if (cardIntersectionObserver) {
-        cardIntersectionObserver.disconnect();
-        cardIntersectionObserver = null;
-      }
+  function cleanupIntersectionObserver() {
+    if (cardIntersectionObserver) {
+      cardIntersectionObserver.disconnect();
+      cardIntersectionObserver = null;
+    }
+    try {
       if (
         typeof stockDetailDrawerRefreshTimer !== "undefined" &&
         stockDetailDrawerRefreshTimer !== null
@@ -144,6 +160,10 @@ if (
         clearTimeout(stockDetailDrawerRefreshTimer);
         stockDetailDrawerRefreshTimer = null;
       }
+    } catch (_e) {
+      // ignore TDZ ReferenceError if evaluated before declaration
+    }
+    try {
       if (
         typeof aiDrawerAbortController !== "undefined" &&
         aiDrawerAbortController
@@ -151,8 +171,12 @@ if (
         aiDrawerAbortController.abort();
         aiDrawerAbortController = null;
       }
-    },
-  );
+    } catch (_e) {
+      // ignore TDZ ReferenceError if evaluated before declaration
+    }
+  }
+  window.addEventListener("beforeunload", cleanupIntersectionObserver);
+  window.addEventListener("pagehide", cleanupIntersectionObserver);
 }
 
 // #region Detail Panel Management
@@ -182,14 +206,24 @@ async function ensureStockDetails(wrapper) {
   const isCurrentRequest = () =>
     wrapper.__detailsReqController === requestController;
 
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerActiveForWrapper = () =>
+    currentDrawerActiveWrapper === wrapper ||
+    Boolean(
+      drawerEl?.classList.contains("open") &&
+      drawerEl.dataset.stockKey === stockKey,
+    );
+
   // (L16, 2026-11-07 review) ドロワーがこの銘柄で開いている間は .detail-info
   // が #stock-detail-drawer 配下へ移動済みのため、ラッパー直下の問い合わせは
   // null を返し、ローディング/失敗プレースホルダとエラーバナーが不可視の
-  // インラインパネルにしか出なかった。renderDetailExtras(chart.js) と同じ
-  // 「ラッパー → 開いているドロワー」フォールバック契約に揃える。
+  // インラインパネルにしか出なかった。当該銘柄がドロワーで開いている場合のみ
+  // ドロワー要素を参照し、他銘柄のドロワーへ書き込まない。
   const findDetailEl = (sel) =>
     wrapper.querySelector(sel) ||
-    document.querySelector(`#stock-detail-drawer ${sel}`);
+    (isDrawerActiveForWrapper()
+      ? document.querySelector(`#stock-detail-drawer ${sel}`)
+      : null);
 
   const detailInner = wrapper.querySelector(".detail-inner");
   const sectorEl = findDetailEl(".detail-sector");
@@ -197,10 +231,18 @@ async function ensureStockDetails(wrapper) {
   const mcapEl = findDetailEl(".detail-mcap");
   const peEl = findDetailEl(".detail-pe");
 
-  // Remove existing error banner if any (both locations, in case the drawer
-  // moved between renders and a stale banner survived in the inline panel).
-  const staleBanners = document.querySelectorAll(".detail-error-banner");
-  staleBanners.forEach((el) => el.remove());
+  // Remove existing error banner only for this stock (its inline panel and,
+  // when active in the drawer, #drawerTabChartContent) so other cards' retry
+  // banners stay intact.
+  wrapper
+    .querySelectorAll?.(".detail-error-banner")
+    .forEach((el) => el.remove());
+  if (isDrawerActiveForWrapper()) {
+    document
+      .getElementById("drawerTabChartContent")
+      ?.querySelectorAll?.(".detail-error-banner")
+      .forEach((el) => el.remove());
+  }
 
   // Show loading state visual feedback
   if (sectorEl) sectorEl.textContent = "取得中...";
@@ -1395,6 +1437,7 @@ function createStockCard(stock, marketContext) {
 
   // Events setup
   compact.addEventListener("click", (e) => {
+    if (typeof e.target?.closest !== "function") return;
     if (
       e.target.closest(".favorite-star") ||
       e.target.closest(".card-fs-btn") ||
@@ -1704,17 +1747,26 @@ function toggleDetail(wrapper) {
     const onOpenTransitionEnd = (event) => {
       if (event.target !== detail || !isCurrentOpen()) return;
       if (event.propertyName !== "max-height") return;
-      clearTimeout(openFallbackTimer);
-      detail.removeEventListener("transitionend", onOpenTransitionEnd);
+      cleanupOpenTransition();
       syncOpenLayout();
     };
 
-    detail.addEventListener("transitionend", onOpenTransitionEnd);
     const openFallbackTimer = setTimeout(() => {
       if (!isCurrentOpen()) return;
-      detail.removeEventListener("transitionend", onOpenTransitionEnd);
+      cleanupOpenTransition();
       syncOpenLayout();
     }, getTransitionFallbackMs(detail));
+
+    const cleanupOpenTransition = () => {
+      clearTimeout(openFallbackTimer);
+      detail.removeEventListener("transitionend", onOpenTransitionEnd);
+      if (detail.__detailTransitionCleanup === cleanupOpenTransition) {
+        detail.__detailTransitionCleanup = null;
+      }
+    };
+
+    detail.addEventListener("transitionend", onOpenTransitionEnd);
+    detail.__detailTransitionCleanup = cleanupOpenTransition;
 
     if (stock) {
       const { period, interval } = resolveCardChartParams(wrapper);
@@ -1762,24 +1814,33 @@ function closeDetailPanel(detail) {
   const onTransitionEnd = (event) => {
     if (event.target !== detail || !isCurrentClose()) return;
     if (event.propertyName !== "max-height") return;
-    clearTimeout(fallbackTimer);
-    detail.removeEventListener("transitionend", onTransitionEnd);
+    cleanupCloseTransition();
     finalize();
     if (!detail.classList.contains("open")) {
       compactStockCardLayout(listContainer);
     }
   };
 
-  // Ensure and register listener
-  detail.addEventListener("transitionend", onTransitionEnd);
   const fallbackTimer = setTimeout(() => {
     if (!isCurrentClose()) return;
-    detail.removeEventListener("transitionend", onTransitionEnd);
+    cleanupCloseTransition();
     finalize();
     if (!detail.classList.contains("open")) {
       compactStockCardLayout(listContainer);
     }
   }, fallbackMs);
+
+  const cleanupCloseTransition = () => {
+    clearTimeout(fallbackTimer);
+    detail.removeEventListener("transitionend", onTransitionEnd);
+    if (detail.__detailTransitionCleanup === cleanupCloseTransition) {
+      detail.__detailTransitionCleanup = null;
+    }
+  };
+
+  // Ensure and register listener
+  detail.addEventListener("transitionend", onTransitionEnd);
+  detail.__detailTransitionCleanup = cleanupCloseTransition;
 }
 // #endregion Detail Panel Management
 
@@ -2644,6 +2705,9 @@ function destroyChart(el) {
 
 function cancelScheduledDestroy(root) {
   if (!root) return;
+  if (typeof root.__detailTransitionCleanup === "function") {
+    root.__detailTransitionCleanup();
+  }
   root.querySelectorAll("canvas").forEach((canvas) => {
     if (canvas.__destroyTimer) {
       clearTimeout(canvas.__destroyTimer);
@@ -3784,8 +3848,14 @@ function closeStockDetailDrawer() {
           if (el) detailInner.appendChild(el);
         });
       };
-      if (chartContent) appendScoped(chartContent, ownedChartSelectors);
-      if (aiContent) appendScoped(aiContent, ownedAiSelectors);
+      if (chartContent) {
+        appendScoped(chartContent, ownedChartSelectors);
+        chartContent.replaceChildren?.();
+      }
+      if (aiContent) {
+        appendScoped(aiContent, ownedAiSelectors);
+        aiContent.replaceChildren?.();
+      }
       // TASK-13: buildDetailPanelでの標準順序を完全復元
       // [expandButton, pfBlock, info, actions, chartControls, chartContainer, pnlContainer, analyzeBtn, aiSection, chatToggleBtn, chatSection]
       const orderedSelectors = [
@@ -4300,6 +4370,9 @@ function openFullscreenChart(wrapper) {
   const priceEl = document.getElementById("fs-stock-price");
   const toolbar = document.getElementById("fs-chart-toolbar");
   const canvas = document.getElementById("fs-chart-canvas");
+  if (typeof hideAiTechnicalLoading === "function") {
+    hideAiTechnicalLoading(document.getElementById("fs-chart-canvas-wrapper"));
+  }
 
   if (symbolEl) symbolEl.textContent = stock.symbol;
   if (nameEl) nameEl.textContent = stock.name || stock.companyName || "";
@@ -4411,6 +4484,9 @@ function openFullscreenChart(wrapper) {
     });
     toolbar.appendChild(intervalGroup);
     updateIntervalControlsVisibility(toolbar, stockKey, currentPeriod);
+    if (typeof syncWrapperChartControls === "function") {
+      syncWrapperChartControls(targetWrapper, stockKey);
+    }
 
     const aiTechBtn = createEl("button", aiBtnCls, aiBtnText);
     aiTechBtn.type = "button";
@@ -4702,6 +4778,9 @@ function closeFsChartModal() {
     delete modal.dataset.stockKey;
     modal._activeWrapper = null;
     const fsCanvasWrapper = document.getElementById("fs-chart-canvas-wrapper");
+    if (typeof hideAiTechnicalLoading === "function") {
+      hideAiTechnicalLoading(fsCanvasWrapper);
+    }
     fsCanvasWrapper
       ?.querySelectorAll(".chart-error")
       .forEach((el) => el.remove());
@@ -4723,6 +4802,7 @@ function closeFsChartModal() {
 
 // Global Event Delegation for Fullscreen Chart and AI Technical Lines
 document.addEventListener("click", (e) => {
+  if (typeof e.target?.closest !== "function") return;
   const fsBtn = e.target.closest(".fs-chart-btn");
   if (fsBtn) {
     e.stopPropagation();

@@ -284,6 +284,7 @@ class StockDiskCache:
         # Cleanup is triggered by operations that already hold this lock.
         self._lock = threading.RLock()
         self._last_cleanup_ts: float = 0.0
+        self._last_cleanup_mono: float = 0.0
         self._enable_cleanup = enable_cleanup
         self._initialized = False
         self._process_lock_path = self._cache_dir / ".cache.lock"
@@ -403,7 +404,10 @@ class StockDiskCache:
                 try:
                     yield
                 finally:
-                    fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_UN)
+                    try:
+                        fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_UN)
+                    except OSError:
+                        pass
 
     def _entry_path(self, key: str) -> Path:
         """Map *key* to a filesystem-safe filename."""
@@ -504,17 +508,23 @@ class StockDiskCache:
             pass
         return removed
 
-    def _maybe_run_cleanup(self, force: bool = False) -> None:
+    def _maybe_run_cleanup(self, force: bool = False) -> bool:
         """Run stale entry cleanup if enough time has passed since last run."""
         if not force and not self._enable_cleanup:
-            return
-        now = time.time()
-        if not force and (now - self._last_cleanup_ts < _STALE_CLEANUP_INTERVAL):
-            return
-        self._last_cleanup_ts = now
+            return False
+        now_mono = time.monotonic()
+        if (
+            not force
+            and self._last_cleanup_mono > 0.0
+            and (now_mono - self._last_cleanup_mono < _STALE_CLEANUP_INTERVAL)
+        ):
+            return False
+        self._last_cleanup_mono = now_mono
+        self._last_cleanup_ts = time.time()
         with self._lock:
             self._remove_stale_entries()
             self._evict_if_needed()
+        return True
 
     # ------------------------------------------------------------------
     # Public API
@@ -535,7 +545,7 @@ class StockDiskCache:
         path = self._entry_path(key)
 
         try:
-            with self._process_lock(), self._lock:
+            with self._lock, self._process_lock():
                 if not ignore_ttl:
                     self._maybe_run_cleanup()
                 if not path.exists():
@@ -629,7 +639,7 @@ class StockDiskCache:
         effective_ttl = ttl if ttl is not None else self._default_ttl
         path = self._entry_path(key)
         try:
-            with self._process_lock(), self._lock:
+            with self._lock, self._process_lock():
                 if not path.exists():
                     return False
                 try:
@@ -661,7 +671,7 @@ class StockDiskCache:
         # (threading.get_ident() IDs can be recycled by the OS).
         tmp_path = path.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
         try:
-            with self._process_lock(), self._lock:
+            with self._lock, self._process_lock():
                 try:
                     # Ensure cache directory exists before writing
                     self._cache_dir.mkdir(parents=True, exist_ok=True)
@@ -675,6 +685,7 @@ class StockDiskCache:
                             fh,
                             ensure_ascii=False,
                             separators=(",", ":"),
+                            allow_nan=False,
                         )
                         fh.flush()
                         try:
@@ -700,6 +711,11 @@ class StockDiskCache:
                                 os.close(dir_fd)
                         except OSError:
                             pass
+                except ValueError as exc:
+                    if "circular" in str(exc).lower():
+                        raise
+                    logger.debug("Disk cache write error for %s: %s", key, exc)
+                    return
                 except (OSError, TypeError) as exc:
                     logger.debug("Disk cache write error for %s: %s", key, exc)
                     return
@@ -715,8 +731,8 @@ class StockDiskCache:
                         except OSError:
                             pass
 
-                self._evict_if_needed()
-                self._maybe_run_cleanup()
+                if not self._maybe_run_cleanup():
+                    self._evict_if_needed()
         except DiskCacheLockTimeout as exc:
             _note_lock_timeout()
             logger.warning(
@@ -739,7 +755,7 @@ class StockDiskCache:
         """
         path = self._entry_path(key)
         try:
-            with self._process_lock(), self._lock:
+            with self._lock, self._process_lock():
                 if path.exists():
                     try:
                         path.unlink()
@@ -776,8 +792,12 @@ class StockDiskCache:
         safe_prefix = safe_prefix[:120]
         removed = 0
         try:
-            with self._process_lock(), self._lock:
-                for entry in self._cache_dir.glob("*.json"):
+            with self._lock, self._process_lock():
+                try:
+                    candidates = list(self._cache_dir.glob("*.json"))
+                except OSError:
+                    candidates = []
+                for entry in candidates:
                     # ``entry.stem`` is always ``<safe_key>_<digest>``, so an
                     # equality check against the bare prefix can never match.
                     stem_match = (
@@ -827,8 +847,12 @@ class StockDiskCache:
         acquired within ``_PROCESS_LOCK_TIMEOUT_SEC``.
         """
         try:
-            with self._process_lock(), self._lock:
-                for entry in self._cache_dir.glob("*.json"):
+            with self._lock, self._process_lock():
+                try:
+                    candidates = list(self._cache_dir.glob("*.json"))
+                except OSError:
+                    candidates = []
+                for entry in candidates:
                     try:
                         entry.unlink()
                     except OSError:
@@ -867,7 +891,7 @@ class StockDiskCache:
         for idx, entry in enumerate(entries):
             tmp_path = entry.with_suffix(f".{uuid.uuid4().hex[:12]}.tmp")
             try:
-                with self._process_lock(), self._lock:
+                with self._lock, self._process_lock():
                     try:
                         with entry.open("r", encoding="utf-8") as handle:
                             payload = json.load(handle)
@@ -887,6 +911,7 @@ class StockDiskCache:
                                 handle,
                                 ensure_ascii=False,
                                 separators=(",", ":"),
+                                allow_nan=False,
                             )
                             handle.flush()
                             try:
@@ -948,11 +973,17 @@ class StockDiskCache:
         """
         removed = 0
         try:
-            with self._process_lock(), self._lock:
+            with self._lock, self._process_lock():
                 removed += self._remove_stale_entries()
-                before = len(list(self._cache_dir.glob("*.json")))
+                try:
+                    before = len(list(self._cache_dir.glob("*.json")))
+                except OSError:
+                    before = 0
                 self._evict_if_needed()
-                after = len(list(self._cache_dir.glob("*.json")))
+                try:
+                    after = len(list(self._cache_dir.glob("*.json")))
+                except OSError:
+                    after = 0
                 removed += max(0, before - after)
         except DiskCacheLockTimeout as exc:
             _note_lock_timeout()
@@ -963,6 +994,7 @@ class StockDiskCache:
             )
             return 0
         self._last_cleanup_ts = time.time()
+        self._last_cleanup_mono = time.monotonic()
         return removed
 
     def stats(self) -> dict:
@@ -983,7 +1015,7 @@ class StockDiskCache:
             "disk_cache_last_cleanup_ts": self._last_cleanup_ts,
         }
         try:
-            with self._process_lock(), self._lock:
+            with self._lock, self._process_lock():
                 try:
                     entries = list(self._cache_dir.glob("*.json"))
                     total_size = sum(e.stat().st_size for e in entries)

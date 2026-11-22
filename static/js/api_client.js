@@ -107,13 +107,12 @@ class APIClient {
     }
   }
   /**
-   * Arm (or re-arm) the deferred visibility pause.
+   * Arm the deferred visibility pause if not already running.
    *
-   * The timer must survive reconnect churn: ``_teardownSSE()`` clears it, and a
-   * transport error while the tab is hidden would otherwise cancel the pause
-   * permanently (``visibilitychange`` does not fire again until the tab becomes
-   * visible), leaving a live EventSource running in a background tab — the very
-   * resource use the deferred pause exists to prevent.
+   * Reconnect churn must NOT clear and reset an already-running timer: if
+   * errors recur faster than ``visibilityTimeout``, resetting the countdown on
+   * each retry would keep an EventSource reconnecting forever in a background
+   * tab instead of pausing once the initial hidden window elapses.
    */
   _armVisibilityPause() {
     if (this.isVisibilityPaused) return;
@@ -125,8 +124,8 @@ class APIClient {
     ) {
       return;
     }
+    if (this._visibilityTimeout) return;
     _log.info("Page hidden: Setting deferred pause timer for SSE");
-    if (this._visibilityTimeout) clearTimeout(this._visibilityTimeout);
     this._visibilityTimeout = setTimeout(() => {
       this._visibilityTimeout = null;
       if (document.hidden) {
@@ -138,7 +137,7 @@ class APIClient {
   }
   _resumeSSE(force = false) {
     if (!this._lastSSEParams) return;
-    this._teardownSSE();
+    this._teardownSSE(true);
     if (force) this.sseReconnectAttempt = 0;
     this._openWithResolvedUrl(this._lastSSEParams);
   }
@@ -277,7 +276,7 @@ class APIClient {
     }
     this._reconnecting = true;
     try {
-      this._teardownSSE();
+      this._teardownSSE(true);
       if (!this._lastSSEParams) {
         this._reconnecting = false;
         return;
@@ -342,8 +341,8 @@ class APIClient {
         // consumed/expired ticket can never stall the stream.
         this._openWithResolvedUrl(this._lastSSEParams);
       }, delayMs);
-      // _teardownSSE() above cleared any pending pause; re-arm it so a
-      // reconnect while the tab stays hidden still ends in a pause.
+      // Ensure a deferred visibility pause is armed if the tab became hidden
+      // while waiting, without resetting an already-active countdown.
       this._armVisibilityPause();
     } catch (error) {
       _log.error("SSE: Error during reconnect", error);
@@ -613,12 +612,12 @@ class APIClient {
       this._offlineHandler = null;
     }
   }
-  _teardownSSE() {
+  _teardownSSE(preserveVisibilityPause = false) {
     this._reconnecting = false;
     this.isConnecting = false;
     this._openChainToken = null;
     this._stopSleepWatchdog();
-    if (this._visibilityTimeout) {
+    if (!preserveVisibilityPause && this._visibilityTimeout) {
       clearTimeout(this._visibilityTimeout);
       this._visibilityTimeout = null;
     }

@@ -7,11 +7,12 @@ import atexit
 import logging
 import math
 import os
+import queue
 import random
 import threading
 import time
 from collections.abc import Iterable
-from concurrent.futures import wait
+from concurrent.futures import Future, wait
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 from urllib.parse import quote_plus
@@ -60,8 +61,16 @@ REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 
 # グローバルな executor（各ソースを並列取得）
 # マージ元: _TRENDING_EXECUTOR(max_workers=4) + _SYMBOL_RESEARCH_EXECUTOR(max_workers=6)
-_EXECUTOR = DaemonThreadPoolExecutor(max_workers=6)
+_EXECUTOR = DaemonThreadPoolExecutor(max_workers=6, max_queue_size=24)
 atexit.register(lambda: _EXECUTOR.shutdown(wait=False, cancel_futures=True))
+
+
+def _submit_trend_task(tasks: list[Future[Any]], fn: Any, *args: Any) -> None:
+    """Submit a trend collection task cleanly, skipping cleanly if the queue is saturated."""
+    try:
+        tasks.append(_EXECUTOR.submit(fn, *args))
+    except queue.Full:
+        logger.debug("Trend executor queue full; skipping task %s", getattr(fn, "__name__", fn))
 
 # Google Trends global rate limiter
 _GOOGLE_TRENDS_LOCK = threading.Lock()
@@ -128,6 +137,7 @@ def _google_trends_client(market: str):
         # at TREND_SOURCE_RESULT_TIMEOUT_SEC (12s), a 2-attempt budget with a
         # short backoff lets an abandoned task exit within the window instead
         # of minutes.
+        timeout=(int(TREND_REQUEST_TIMEOUT[0]), int(TREND_REQUEST_TIMEOUT[1])),
         retries=2,
         backoff_factor=0.5,
         browser_config=browser_cfg,
@@ -370,7 +380,7 @@ def _request_json(
         response = _get_trend_session().get(
             url,
             params=params,
-            timeout=TREND_REQUEST_TIMEOUT,
+            timeout=(int(TREND_REQUEST_TIMEOUT[0]), int(TREND_REQUEST_TIMEOUT[1])),
             headers=req_headers,
         )
         response.raise_for_status()
@@ -388,7 +398,7 @@ def _fetch_rss_feed(rss_url: str):
     try:
         response = _get_trend_session().get(
             rss_url,
-            timeout=TREND_REQUEST_TIMEOUT,
+            timeout=(int(TREND_REQUEST_TIMEOUT[0]), int(TREND_REQUEST_TIMEOUT[1])),
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
@@ -951,25 +961,23 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
     market_key = _market_key(market)
     queries = market_queries(market_key)[:4]
     items: list[dict] = []
-    tasks = []
+    tasks: list[Future[Any]] = []
 
     try:
-        tasks.append(_EXECUTOR.submit(collect_google_trends_rss_items, market_key, count))
-        tasks.append(
-            _EXECUTOR.submit(
-                collect_reddit_hot_items,
-                market_key,
-                max(2, count // 3 or 1),
-            )
+        _submit_trend_task(tasks, collect_google_trends_rss_items, market_key, count)
+        _submit_trend_task(
+            tasks,
+            collect_reddit_hot_items,
+            market_key,
+            max(2, count // 3 or 1),
         )
-        tasks.append(
-            _EXECUTOR.submit(
-                collect_wikipedia_top_items,
-                market_key,
-                max(2, count // 2 or 1),
-            )
+        _submit_trend_task(
+            tasks,
+            collect_wikipedia_top_items,
+            market_key,
+            max(2, count // 2 or 1),
         )
-        tasks.append(_EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2))
+        _submit_trend_task(tasks, collect_gdelt_items, queries, market_key, 2)
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
         for fut in not_done:
@@ -1024,21 +1032,23 @@ def collect_symbol_research_items(symbol: str, name: str, market: str = "us") ->
     market_key = _market_key(market)
     queries = symbol_queries(symbol, name, market_key)[:TREND_SYMBOL_QUERY_LIMIT]
     items: list[dict] = []
-    tasks = []
+    tasks: list[Future[Any]] = []
     try:
-        tasks.append(_EXECUTOR.submit(collect_google_trends_keyword_items, name, market_key, 5))
+        _submit_trend_task(tasks, collect_google_trends_keyword_items, name, market_key, 5)
         if symbol and symbol != name:
-            tasks.append(
-                _EXECUTOR.submit(collect_google_trends_keyword_items, symbol, market_key, 3)
+            _submit_trend_task(
+                tasks, collect_google_trends_keyword_items, symbol, market_key, 3
             )
 
-        tasks.append(_EXECUTOR.submit(collect_reddit_search_items, queries, market_key, 2))
-        tasks.append(
-            _EXECUTOR.submit(collect_wikipedia_search_items, [name, symbol], market_key, 2)
+        _submit_trend_task(tasks, collect_reddit_search_items, queries, market_key, 2)
+        _submit_trend_task(
+            tasks, collect_wikipedia_search_items, [name, symbol], market_key, 2
         )
-        tasks.append(_EXECUTOR.submit(collect_gdelt_items, queries, market_key, 2))
+        _submit_trend_task(tasks, collect_gdelt_items, queries, market_key, 2)
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
+        for future in not_done:
+            future.cancel()
         for future in done:
             try:
                 items.extend(future.result() or [])

@@ -523,8 +523,27 @@ def delete_custom_ai_portfolio(portfolio_id: str) -> bool:
         # I/O failure (OSError, AV-induced Windows lock) reported the id as
         # missing. Storage failures re-raise as the typed error so the route's
         # existing 503 branch reports them honestly.
-        logger.error("Failed to delete custom AI portfolio (%s): %s", portfolio_id, e)
+        logger.error("Failed to delete custom AI portfolio (%s): %s", _safe_log_theme(portfolio_id), e)
         raise PortfolioStorageError(f"Failed to delete portfolio {portfolio_id}: {e}") from e
+
+
+def _theme_matches_keywords(
+    theme_lower: str,
+    ja_keywords: tuple[str, ...],
+    ascii_keywords: tuple[str, ...],
+) -> bool:
+    """Match theme text with substring rules for CJK keywords and word boundaries for ASCII."""
+    if any(k in theme_lower for k in ja_keywords):
+        return True
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])", theme_lower)
+        for k in ascii_keywords
+    )
+
+
+def _safe_log_theme(value: str) -> str:
+    """Sanitize theme/preset identifiers before writing to logs."""
+    return re.sub(r"[\r\n\x00-\x1f\x7f]+", " ", str(value or "")).strip()[:80]
 
 
 def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None) -> dict[str, Any]:
@@ -532,7 +551,7 @@ def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None
     clean_theme = theme.strip()
     theme_lower = clean_theme.lower()
 
-    if preset_id == "tech" or any(k in theme_lower for k in ["半導体", "tech", "テック", "ai"]):
+    if preset_id == "tech" or _theme_matches_keywords(theme_lower, ("半導体", "テック"), ("tech", "ai")):
         items = [
             {
                 "symbol": "NVDA",
@@ -582,8 +601,8 @@ def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None
         risk = "高リスク・ハイリターン"
         ret = "15-25%"
         commentary = "生成AI需要拡大に伴う半導体・クラウドインフラの成長を取り込む戦略です。"
-    elif preset_id == "dividend" or any(
-        k in theme_lower for k in ["高配当", "dividend", "ディフェンシブ", "増配"]
+    elif preset_id == "dividend" or _theme_matches_keywords(
+        theme_lower, ("高配当", "ディフェンシブ", "増配"), ("dividend",)
     ):
         items = [
             {
@@ -642,8 +661,8 @@ def _generate_fallback_custom_portfolio(theme: str, preset_id: str | None = None
         commentary = (
             "株価下落局面でも堅牢なディフェンシブ銘柄を中心に配分しインカムゲインを確保します。"
         )
-    elif preset_id == "balanced" or any(
-        k in theme_lower for k in ["バランス", "balanced", "インデックス"]
+    elif preset_id == "balanced" or _theme_matches_keywords(
+        theme_lower, ("バランス", "インデックス"), ("balanced",)
     ):
         items = [
             {
@@ -834,16 +853,36 @@ def generate_ai_portfolio_by_theme(
     )
     key = existing_custom_id or preset_id or search_theme
 
+    def _fallback_or_preserve_existing(warning_message: str) -> dict[str, Any]:
+        if existing_saved is not None:
+            warned = dict(existing_saved)
+            warned["fallback_warning"] = warning_message
+            return sanitize_ai_portfolio(warned)
+        fallback_target_id = (
+            preset_id
+            or (clean_id if clean_id.startswith("custom-") else None)
+            or existing_custom_id
+        )
+        fallback = _generate_fallback_custom_portfolio(search_theme, preset_id=fallback_target_id)
+        if preset_config:
+            fallback["id"] = preset_config["id"]
+            fallback["title"] = preset_config["title"]
+            fallback["description"] = preset_config["description"]
+        canonical_fallback = sanitize_ai_portfolio(fallback)
+        _persist_generated_ai_portfolio(canonical_fallback)
+        return canonical_fallback
+
     # Check if portfolio is already saved in JSON database (and not forcing rebalance)
+    safe_log_id = _safe_log_theme(clean_id)
     if not force_rebalance and existing_saved is not None:
-        logger.info("Loaded AI portfolio from JSON database for theme/id: %s", clean_id)
+        logger.info("Loaded AI portfolio from JSON database for theme/id: %s", safe_log_id)
         return existing_saved
 
     # Serialize concurrent generations for the same theme: if another request
     # is already generating it, wait for that request to finish and reuse the
     # portfolio it persisted instead of starting a second generation.
     if not _acquire_ai_generation_slot(key):
-        logger.info("AI portfolio generation in progress for theme/id: %s; waiting", clean_id)
+        logger.info("AI portfolio generation in progress for theme/id: %s; waiting", safe_log_id)
         # A third request can win the slot between our event wake-up and the
         # re-acquisition. Re-check the saved result and retry that handoff a
         # bounded number of times instead of turning that one race into a 503.
@@ -857,7 +896,7 @@ def generate_ai_portfolio_by_theme(
             saved = _find_saved_ai_portfolio(clean_id, search_theme)
             if saved is not None:
                 logger.info(
-                    "Reusing AI portfolio generated concurrently for theme/id: %s", clean_id
+                    "Reusing AI portfolio generated concurrently for theme/id: %s", safe_log_id
                 )
                 return saved
             if _acquire_ai_generation_slot(key):
@@ -871,7 +910,7 @@ def generate_ai_portfolio_by_theme(
         if not acquired_after_wait:
             logger.warning(
                 "Could not acquire generation slot for theme/id: %s after concurrent failure",
-                clean_id,
+                safe_log_id,
             )
             raise PortfolioStorageError(
                 "Concurrent generation failed to persist portfolio and retry slot could not be acquired",
@@ -915,17 +954,12 @@ def generate_ai_portfolio_by_theme(
 
         if not api_key or is_preview_api_key(api_key):
             logger.info(
-                "AI API key not configured or in preview mode; generating fallback portfolio for theme: %s",
-                search_theme,
+                "AI API key not configured or in preview mode; returning fallback or preserved portfolio for theme: %s",
+                _safe_log_theme(search_theme),
             )
-            portfolio = _generate_fallback_custom_portfolio(search_theme, preset_id=preset_id)
-            if preset_config:
-                portfolio["id"] = preset_config["id"]
-                portfolio["title"] = preset_config["title"]
-                portfolio["description"] = preset_config["description"]
-            canonical_portfolio = sanitize_ai_portfolio(portfolio)
-            _persist_generated_ai_portfolio(canonical_portfolio)
-            return canonical_portfolio
+            return _fallback_or_preserve_existing(
+                "APIキーが未設定またはプレビューモードのため、以前保存したポートフォリオを表示しています。"
+            )
 
         # Sanitize the user-supplied theme before interpolating it into the LLM
         # prompt: strip control/XML metacharacters and cap its length so a
@@ -995,7 +1029,7 @@ def generate_ai_portfolio_by_theme(
                 err_detail = resp.get("error", {}) if isinstance(resp, dict) else {}
                 logger.error(
                     "AI portfolio LLM call failed for theme %s: %s",
-                    search_theme,
+                    _safe_log_theme(search_theme),
                     err_detail,
                 )
             else:
@@ -1009,7 +1043,7 @@ def generate_ai_portfolio_by_theme(
                 if finish_reason == "length":
                     logger.warning(
                         "AI portfolio response truncated by max_tokens limit (finish_reason=length) for theme: %s",
-                        search_theme,
+                        _safe_log_theme(search_theme),
                     )
 
                 # D-3: 共通パースヘルパーで dict/parsed/文字列JSON を正規化
@@ -1060,7 +1094,7 @@ def generate_ai_portfolio_by_theme(
                 logger.warning(
                     "AI portfolio response contained no usable items after sanitization; "
                     "keeping the existing portfolio or using the fallback for theme=%s",
-                    search_theme,
+                    _safe_log_theme(search_theme),
                 )
 
         except PortfolioStorageError:
@@ -1076,24 +1110,8 @@ def generate_ai_portfolio_by_theme(
         # replaces the user's data (items, rationale, target prices) with a
         # generic template when the LLM call fails. Reuse the saved portfolio
         # and only attach a warning instead.
-        if existing_saved is not None:
-            warned = dict(existing_saved)
-            warned["fallback_warning"] = (
-                "AIの再生成に失敗したため、以前保存したポートフォリオを表示しています。"
-            )
-            return sanitize_ai_portfolio(warned)
-        fallback_target_id = (
-            preset_id
-            or (clean_id if clean_id.startswith("custom-") else None)
-            or existing_custom_id
+        return _fallback_or_preserve_existing(
+            "AIの再生成に失敗したため、以前保存したポートフォリオを表示しています。"
         )
-        fallback = _generate_fallback_custom_portfolio(search_theme, preset_id=fallback_target_id)
-        if preset_config:
-            fallback["id"] = preset_config["id"]
-            fallback["title"] = preset_config["title"]
-            fallback["description"] = preset_config["description"]
-        canonical_fallback = sanitize_ai_portfolio(fallback)
-        _persist_generated_ai_portfolio(canonical_fallback)
-        return canonical_fallback
     finally:
         _release_ai_generation_slot(key)

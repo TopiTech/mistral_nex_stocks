@@ -151,9 +151,9 @@ def _initial_snapshot_for_mode(sse_mode: int) -> str:
     # resolved stock/index generation is checked under the lock so a payload is
     # only reused for the exact data generation it was built from.
     snapshot_us_open, snapshot_jp_open = _initial_snapshot_market_flags()
+    snapshot_yf = bool(app_state.market.is_yf_rate_limited())
     with app_state.cache.sse_data_lock:
         snapshot_gen = _sse_data_generation()
-        snapshot_yf = bool(app_state.market.is_yf_rate_limited())
         with _initial_snapshot_lock:
             cached_snapshot = _initial_snapshot_cache.get(sse_mode)
         if cached_snapshot is not None and cached_snapshot[:4] == (

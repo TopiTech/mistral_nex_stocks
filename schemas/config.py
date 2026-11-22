@@ -12,6 +12,7 @@ from constants import (
     AGENT_ID_RE,
     LANGSEARCH_API_KEY_MIN_LENGTH,
     MISTRAL_API_KEY_MIN_LENGTH,
+    SSE_HEARTBEAT_INTERVAL,
     TAVILY_API_KEY_MIN_LENGTH,
 )
 from utils.networking import inspect_outbound_base_url
@@ -247,9 +248,9 @@ class TemplateConfigSchema(BaseModel):
     is_ai_technical_lines_eligible: bool
     is_free_tier_model: bool = False
     model_tier: str = "Medium"
-    mistral_api_key_min_length: int = 32
-    langsearch_api_key_min_length: int = 20
-    tavily_api_key_min_length: int = 5
+    mistral_api_key_min_length: int = MISTRAL_API_KEY_MIN_LENGTH
+    langsearch_api_key_min_length: int = LANGSEARCH_API_KEY_MIN_LENGTH
+    tavily_api_key_min_length: int = TAVILY_API_KEY_MIN_LENGTH
     credentials_ephemeral: bool = False
     credentials_ephemeral_keys: list[str] = Field(default_factory=list)
     credentials_ephemeral_warning: str | None = None
@@ -258,4 +259,4 @@ class TemplateConfigSchema(BaseModel):
     # timeout from this so a slow-heartbeat deployment cannot trip the fixed
     # 45s client timeout. Non-secret runtime constant; default matches
     # constants.SSE_HEARTBEAT_INTERVAL.
-    sse_heartbeat_interval: int = 15
+    sse_heartbeat_interval: int = SSE_HEARTBEAT_INTERVAL

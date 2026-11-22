@@ -70,23 +70,26 @@
 
     bindEvents() {
       if (this.els.closeBtn) {
-        this.els.closeBtn.addEventListener("click", () => {
+        this._onCloseClick = () => {
           this.state.closeAiDive();
-        });
+        };
+        this.els.closeBtn.addEventListener("click", this._onCloseClick);
       }
 
       if (this.els.overlay) {
-        this.els.overlay.addEventListener("click", (e) => {
+        this._onOverlayClick = (e) => {
           if (e.target === this.els.overlay) {
             this.state.closeAiDive();
           }
-        });
+        };
+        this.els.overlay.addEventListener("click", this._onOverlayClick);
       }
 
       if (this.els.startAiBtn) {
-        this.els.startAiBtn.addEventListener("click", () => {
+        this._onStartAiClick = () => {
           this.runDeepAiAnalysis();
-        });
+        };
+        this.els.startAiBtn.addEventListener("click", this._onStartAiClick);
       }
     }
 
@@ -132,6 +135,18 @@
         this._unsubState();
         this._unsubState = null;
       }
+      if (this.els.closeBtn && this._onCloseClick) {
+        this.els.closeBtn.removeEventListener("click", this._onCloseClick);
+        this._onCloseClick = null;
+      }
+      if (this.els.overlay && this._onOverlayClick) {
+        this.els.overlay.removeEventListener("click", this._onOverlayClick);
+        this._onOverlayClick = null;
+      }
+      if (this.els.startAiBtn && this._onStartAiClick) {
+        this.els.startAiBtn.removeEventListener("click", this._onStartAiClick);
+        this._onStartAiClick = null;
+      }
       if (this._abortController) {
         this._abortController.abort();
       }
@@ -155,7 +170,11 @@
         this.els.closeBtn || modal.querySelector("#ai-dive-close-btn");
       if (closeBtn) closeBtn.focus();
 
-      const stock = data.stocks.get(symbol) || {
+      const foundStock =
+        data.stocks && typeof data.stocks.get === "function"
+          ? data.stocks.get(symbol)
+          : null;
+      const stock = foundStock || {
         symbol,
         name: symbol,
         price: 0,
@@ -533,7 +552,11 @@
 
     async runDeepAiAnalysis() {
       const symbol = this.state.state.aiDiveSymbol;
-      const stock = this.state.state.stocks.get(symbol);
+      const stocksMap = this.state.state.stocks;
+      const stock =
+        stocksMap && typeof stocksMap.get === "function"
+          ? stocksMap.get(symbol)
+          : null;
       if (!symbol || !stock) return;
 
       const container = this.els.tier4Container;

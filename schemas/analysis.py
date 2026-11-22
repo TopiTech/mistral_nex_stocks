@@ -407,7 +407,7 @@ class AIAnalyzeChartImageRequest(BaseModel):
             if not b64part.strip() or not _BASE64_CHARSET_RE.fullmatch(b64part):
                 raise ValueError("image_bad_b64")
         else:
-            if image_text.startswith(("http://", "https://")):
+            if image_text.lower().startswith(("http://", "https://")):
                 raise ValueError("image_url")
             if image_text.lower().startswith("data:"):
                 raise ValueError("image_bad_scheme")

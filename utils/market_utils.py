@@ -467,7 +467,8 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         app_state.market.update_market_status(market_type, "REGULAR" if is_open else "CLOSED")
         return is_open
 
-    return True
+    logger.debug("Unknown market_type=%r passed to is_market_open; failing closed", market_type)
+    return False
 
 
 def acquire_yfinance_slot() -> bool:

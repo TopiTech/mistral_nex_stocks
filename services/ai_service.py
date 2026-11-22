@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from app_state import app_state
 from constants import (
     ANALYSIS_MAX_TOKENS_FALLBACK,
+    MAX_TOOL_ITERATIONS,
     MISTRAL_API_TIMEOUT_SEC,
     MISTRAL_JITTER_FACTOR,
     MISTRAL_MAX_TOKENS_CEIL,
@@ -1189,6 +1190,7 @@ def call_mistral_chat(
     temperature: float | None = None,
     _model_override: str | None = None,
     _is_fallback: bool = False,
+    _skip_semaphore: bool = False,
 ):
     """Mistral公式SDKを使用した Chat Completions 呼び出し (SDK v2 chat.parse 対応版)
 
@@ -1312,38 +1314,34 @@ def call_mistral_chat(
                 }
             }
 
-        sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_call_semaphore
+        sem_ctx = nullcontext() if _skip_semaphore else app_state.ai.mistral_call_semaphore
         with sem_ctx:
-            if app_state.market.is_circuit_open("mistral"):
-                logger.warning("Mistral circuit is OPEN. Skipping API call.")
+            allowed, circuit_probe_claimed, deny_reason = app_state.market.enter_circuit_call(
+                "mistral"
+            )
+            if not allowed:
                 # SVC-02 completion (M6, 2026-11-07 review): the pacing slot
                 # was reserved above but no request is issued; roll it back so
                 # gated traffic does not accumulate phantom min-interval
                 # delays and surface a misleading 429 on the next attempt.
                 _release_mistral_call_slot(reserved_ts)
+                if deny_reason == "busy":
+                    logger.warning(
+                        "Mistral circuit recovery probe already in progress. Skipping API call."
+                    )
+                    deny_msg = (
+                        "AI service is temporarily unavailable "
+                        "(circuit recovery probe in progress)"
+                    )
+                else:
+                    logger.warning("Mistral circuit is OPEN. Skipping API call.")
+                    deny_msg = "AI service is temporarily unavailable (circuit open)"
                 return {
                     "error": {
-                        "message": "AI service is temporarily unavailable (circuit open)",
+                        "message": deny_msg,
                         "status_code": 503,
                     }
                 }
-
-            circuit_probe_claimed = False
-            if not _is_fallback:
-                circuit_state = app_state.market.get_circuit_state("mistral")
-                if circuit_state.get("status") == "HALF_OPEN":
-                    if not app_state.market.try_claim_circuit_probe("mistral"):
-                        logger.warning(
-                            "Mistral circuit recovery probe already in progress. Skipping API call."
-                        )
-                        _release_mistral_call_slot(reserved_ts)
-                        return {
-                            "error": {
-                                "message": "AI service is temporarily unavailable (circuit recovery probe in progress)",
-                                "status_code": 503,
-                            }
-                        }
-                    circuit_probe_claimed = True
 
             req_id = "-"
             try:
@@ -1660,6 +1658,7 @@ def call_mistral_chat(
                 temperature=temperature,
                 _model_override=model,
                 _is_fallback=True,
+                _skip_semaphore=True,
             )
 
         # Tier制限エラーの自動フォールバック処理 (Free TierでLargeモデル選択時など)
@@ -1690,6 +1689,7 @@ def call_mistral_chat(
                 temperature=temperature,
                 _model_override="mistral-small-2603",
                 _is_fallback=True,
+                _skip_semaphore=True,
             )
             if isinstance(fallback_res, dict) and not fallback_res.get("error"):
                 fallback_res["fallback_applied"] = True
@@ -1792,7 +1792,7 @@ def call_mistral_chat_with_tools(
         normalized_iterations = int(max_tool_iterations)
     except (TypeError, ValueError):
         normalized_iterations = 5
-    safe_tool_iterations: int = max(1, min(normalized_iterations, 10))
+    safe_tool_iterations: int = max(1, min(normalized_iterations, MAX_TOOL_ITERATIONS))
 
     if is_openai_provider():
         from services.openai_service import call_openai_chat_with_tools
@@ -1951,7 +1951,9 @@ def call_mistral_chat_with_tools(
                 else:
                     invalid = True
                 raw_args = raw_fn.get("arguments")
-                if isinstance(raw_args, (dict, str)):
+                if raw_args is None:
+                    fn_args = "{}"
+                elif isinstance(raw_args, (dict, str)):
                     fn_args = raw_args
                 else:
                     invalid = True
@@ -2137,7 +2139,7 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
     テクニカル描画線データを動的に検出・生成する。
     """
     circuit_name = "openai_compatible" if is_openai_provider() else "mistral"
-    if app_state.market.is_circuit_open(circuit_name):
+    if not is_preview_api_key(api_key) and app_state.market.is_circuit_open(circuit_name):
         provider_name = "OpenAI Compatible" if is_openai_provider() else "Mistral"
         return {"error": f"{provider_name} API の呼び出し制限中（サーキットブレーカー発動中）です。"}
 
@@ -2362,7 +2364,7 @@ def analyze_chart_image_with_mistral(
             custom_prompt=custom_prompt,
         )
 
-    if app_state.market.is_circuit_open("mistral"):
+    if not is_preview_api_key(api_key) and app_state.market.is_circuit_open("mistral"):
         return {"error": "Mistral API の呼び出し制限中（サーキットブレーカー発動中）です。"}
 
     if not api_key:
@@ -2676,6 +2678,7 @@ def stream_mistral_chat(
     include_thinking: bool = False,
     _model_override: str | None = None,
     _is_fallback: bool = False,
+    _skip_semaphore: bool = False,
 ):
     """Stream a Mistral chat completion, yielding event dicts (C-2).
 
@@ -2777,34 +2780,27 @@ def stream_mistral_chat(
     # 3 parallel streams, temporarily block analysis/news/portfolio calls. This
     # is an accepted trade-off for a local-first app (the alternative — releasing
     # the slot mid-stream — would let burst traffic bypass global pacing).
-    sem_ctx = nullcontext() if _is_fallback else app_state.ai.mistral_stream_semaphore
+    sem_ctx = nullcontext() if _skip_semaphore else app_state.ai.mistral_stream_semaphore
     with sem_ctx:
-        if not _is_fallback:
-            if app_state.market.is_circuit_open("mistral"):
-                _release_mistral_call_slot(reserved_ts)
+        allowed, circuit_probe_claimed, deny_reason = app_state.market.enter_circuit_call(
+            "mistral"
+        )
+        if not allowed:
+            _release_mistral_call_slot(reserved_ts)
+            if deny_reason == "busy":
+                logger.warning(
+                    "Mistral circuit recovery probe already in progress. Skipping stream call."
+                )
+                deny_msg = "AIサービスは一時的に利用できません（復旧プローブ実行中）"
+            else:
                 logger.warning("Mistral circuit opened while waiting for stream semaphore.")
-                yield {
-                    "type": "error",
-                    "message": "AIサービスは一時的に利用できません（サーキットブレーカー発動中）",
-                    "status_code": 503,
-                }
-                return
-            # M7 (2026-11-07 review): claim the HALF_OPEN probe only after the
-            # stream slot is held (see the note above the semaphore).
-            circuit_state = app_state.market.get_circuit_state("mistral")
-            if circuit_state.get("status") == "HALF_OPEN":
-                if not app_state.market.try_claim_circuit_probe("mistral"):
-                    _release_mistral_call_slot(reserved_ts)
-                    logger.warning(
-                        "Mistral circuit recovery probe already in progress. Skipping stream call."
-                    )
-                    yield {
-                        "type": "error",
-                        "message": "AIサービスは一時的に利用できません（復旧プローブ実行中）",
-                        "status_code": 503,
-                    }
-                    return
-                circuit_probe_claimed = True
+                deny_msg = "AIサービスは一時的に利用できません（サーキットブレーカー発動中）"
+            yield {
+                "type": "error",
+                "message": deny_msg,
+                "status_code": 503,
+            }
+            return
         kwargs: dict[str, Any] = {
             "messages": messages,
             "max_tokens": token_limit,
@@ -2832,6 +2828,9 @@ def stream_mistral_chat(
         # the API (unlike the polling path). Accepted trade-off (B-1/4 review).
         full_parts: list[str] = []
         sdk_stream = None
+        saw_upstream_chunk = False
+        stream_failed = False
+        client_disconnected = False
         try:
             last_usage: dict[str, Any] | None = None
             if use_sdk_agents:
@@ -2908,10 +2907,7 @@ def stream_mistral_chat(
                         if isinstance(e, (KeyboardInterrupt, SystemExit)):
                             raise
                     finally:
-                        try:
-                            event_queue.put_nowait(stop_sentinel)
-                        except queue.Full:
-                            pass
+                        _enqueue_unlocked(stop_sentinel)
                         try:
                             pending = asyncio.all_tasks(new_loop)
                             for t in pending:
@@ -2966,6 +2962,7 @@ def stream_mistral_chat(
                         try:
                             item = event_queue.get(timeout=MISTRAL_API_TIMEOUT_SEC)
                         except queue.Empty:
+                            stream_failed = True
                             logger.warning("Agent SDK stream timed out waiting for events")
                             _report_agent_stream_failure(timed_out=True)
                             yield {
@@ -2979,11 +2976,13 @@ def stream_mistral_chat(
                         if isinstance(item, dict):
                             item_type = item.get("type")
                             if item_type == "delta":
+                                saw_upstream_chunk = True
                                 d_text = item.get("text", "")
                                 if d_text:
                                     full_parts.append(d_text)
                                     yield {"type": "delta", "text": d_text}
                             elif item_type == "error":
+                                stream_failed = True
                                 err_obj = item.get("exception")
                                 agent_err_status = _exception_status_code(err_obj) or 500
                                 safe_err_text = _sanitize_error_message(
@@ -3017,12 +3016,9 @@ def stream_mistral_chat(
                                 }
                                 return
                             elif item_type == "done":
+                                saw_upstream_chunk = True
                                 res = item.get("result")
-                                raw_agent_usage = (
-                                    item.get("usage")
-                                    if isinstance(item, dict) and item.get("usage") is not None
-                                    else getattr(res, "usage", None)
-                                )
+                                raw_agent_usage = getattr(res, "usage", None)
                                 extracted_usage = _extract_mistral_usage_dict(raw_agent_usage)
                                 if extracted_usage:
                                     last_usage = extracted_usage
@@ -3031,6 +3027,7 @@ def stream_mistral_chat(
                                     if res_text:
                                         full_parts.append(res_text)
                                         yield {"type": "delta", "text": res_text}
+                                break
                 finally:
                     # Consumer exit (normal end, error, or Flask closing the
                     # generator on client disconnect): cooperatively abort the
@@ -3065,6 +3062,7 @@ def stream_mistral_chat(
             else:
                 sdk_stream = client.chat.stream(**kwargs)
             for chunk in sdk_stream:
+                saw_upstream_chunk = True
                 delta_text = _extract_stream_delta(chunk, include_thinking=include_thinking)
                 if delta_text:
                     if include_thinking:
@@ -3106,7 +3104,11 @@ def stream_mistral_chat(
             if last_usage:
                 app_state.ai.record_mistral_usage(last_usage, model=model)
             yield {"type": "done", "text": "".join(full_parts)}
+        except GeneratorExit:
+            client_disconnected = True
+            raise
         except _MISTRAL_COMMUNICATION_ERRORS as exc:  # pylint: disable=catching-non-exception
+            stream_failed = True
             status_code = _extract_mistral_error_status(exc)
 
             logger.warning(
@@ -3157,6 +3159,7 @@ def stream_mistral_chat(
                     include_thinking=include_thinking,
                     _model_override=model,
                     _is_fallback=True,
+                    _skip_semaphore=True,
                 )
                 return
 
@@ -3190,6 +3193,7 @@ def stream_mistral_chat(
                     include_thinking=include_thinking,
                     _model_override="mistral-small-2603",
                     _is_fallback=True,
+                    _skip_semaphore=True,
                 )
                 return
 
@@ -3211,7 +3215,11 @@ def stream_mistral_chat(
             yield {"type": "error", "message": err_msg, "status_code": status_code}
         finally:
             if circuit_probe_claimed:
-                app_state.market.release_circuit_probe("mistral")
+                if client_disconnected and saw_upstream_chunk and not stream_failed:
+                    app_state.market.report_circuit_result("mistral", success=True)
+                    app_state.ai.reset_mistral_streak()
+                else:
+                    app_state.market.release_circuit_probe("mistral")
                 circuit_probe_claimed = False
             # Flask closes this generator when the SSE client disconnects.  The
             # SDK stream must be closed here as well so its HTTP response does

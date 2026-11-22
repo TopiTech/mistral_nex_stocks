@@ -12,7 +12,10 @@ permissions:
 jobs:
   sync-requirements:
     name: Sync requirements-locked.txt
-    if: github.actor == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/uv')
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      startsWith(github.head_ref, 'dependabot/uv') &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Checkout PR branch

@@ -31,7 +31,7 @@ from services.stock.errors import (
     _is_yfinance_invalid_symbol_error,
     _is_yfinance_rate_limit_error,
 )
-from services.stock.retry import with_yfinance_retry
+from services.stock.retry import suppress_yfinance_retry_reset, with_yfinance_retry
 from services.stock.sanitize import _finite_float, sanitize_fundamental_dict
 from session_manager import register_auth_reset_listener
 from utils.caching import (
@@ -243,6 +243,7 @@ class YFinanceProvider(BaseStockProvider):
                     period,
                     interval,
                 )
+                suppress_yfinance_retry_reset()
                 if isinstance(cached_hist, pd.DataFrame):
                     return cached_hist.copy()
                 return cached_hist
@@ -251,12 +252,14 @@ class YFinanceProvider(BaseStockProvider):
 
         if m_state.is_circuit_open("yfinance_history", symbol=circuit_key):
             logger.info("stock-history circuit open symbol=%s", circuit_key)
+            suppress_yfinance_retry_reset()
             disk_hist = self._load_history_disk_fallback(symbol, period, interval)
             if disk_hist is not None and not disk_hist.empty:
                 return disk_hist
             return pd.DataFrame()
         if m_state.is_yf_rate_limited():
             logger.info("yfinance is rate-limited; skipping history fetch symbol=%s", symbol)
+            suppress_yfinance_retry_reset()
             disk_hist = self._load_history_disk_fallback(symbol, period, interval)
             if disk_hist is not None and not disk_hist.empty:
                 return disk_hist
@@ -264,6 +267,7 @@ class YFinanceProvider(BaseStockProvider):
 
         t = self.get_ticker(symbol)
         if not t:
+            suppress_yfinance_retry_reset()
             disk_hist = self._load_history_disk_fallback(symbol, period, interval)
             if disk_hist is not None and not disk_hist.empty:
                 return disk_hist
@@ -1002,9 +1006,11 @@ class YFinanceProvider(BaseStockProvider):
                 "quoteType": _fast_get(["quote_type", "quoteType"]),
                 "symbol": symbol,
             }
-            cleaned = {k: v for k, v in mapped_info.items() if v is not None}
+            cleaned = sanitize_fundamental_dict(
+                {k: v for k, v in mapped_info.items() if v is not None}
+            )
             if cached_fast:
-                cleaned = {**cached_fast, **cleaned}
+                cleaned = sanitize_fundamental_dict({**cached_fast, **cleaned})
             if cleaned:
                 try:
                     with m_state.yfinance_short_cache_lock:
@@ -1331,11 +1337,16 @@ class YFinanceProvider(BaseStockProvider):
                     if isinstance(click, dict)
                     else ""
                 )
+                raw_title = content.get("title")
+                raw_summary = content.get("summary")
+                raw_pub_date = content.get("pubDate") or content.get("displayTime")
                 results.append(
                     {
-                        "title": content.get("title", ""),
-                        "summary": (content.get("summary") or "")[:200],
-                        "pubDate": content.get("pubDate") or content.get("displayTime", ""),
+                        "title": raw_title if isinstance(raw_title, str) else "",
+                        "summary": (raw_summary.strip() if isinstance(raw_summary, str) else "")[
+                            :200
+                        ],
+                        "pubDate": raw_pub_date if isinstance(raw_pub_date, str) else "",
                         "provider": provider.get("displayName", "")
                         if isinstance(provider, dict)
                         else "",

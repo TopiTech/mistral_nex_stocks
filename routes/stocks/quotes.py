@@ -71,12 +71,15 @@ _HISTORY_ENVELOPE_RESERVED_KEYS = frozenset(
 quotes_bp = Blueprint("quotes", __name__)
 
 
-def _submit_async_info_fetch(symbol: str) -> None:
-    """Offload a stock-info fetch to data_executor (see H-2)."""
+def _submit_async_info_fetch(symbol: str) -> str:
+    """Offload a stock-info fetch to data_executor (see H-2).
+
+    Returns ``"submitted"``, ``"inflight"``, or ``"failed"``.
+    """
     info_key = f"info_{symbol}"
     with app_state.info_fetch_lock:
         if info_key in app_state.info_fetch_inflight:
-            return
+            return "inflight"
         app_state.info_fetch_inflight.add(info_key)
     try:
         future = app_state.execution.data_executor.submit(_run_async_info_fetch, symbol)
@@ -90,10 +93,12 @@ def _submit_async_info_fetch(symbol: str) -> None:
                 app_state.info_fetch_inflight.discard(info_key)
 
         future.add_done_callback(_handle_cancelled_info_fetch)
+        return "submitted"
     except Exception as exc:
         current_app.logger.warning("Failed to submit info fetch symbol=%s: %s", symbol, exc)
         with app_state.info_fetch_lock:
             app_state.info_fetch_inflight.discard(info_key)
+        return "failed"
 
 
 def _run_async_info_fetch(symbol: str) -> None:
@@ -113,6 +118,8 @@ def _submit_async_history_fetch(
     log_label: str = "",
     interval: str = "auto",
     probe: bool = False,
+    *,
+    raise_on_error: bool = False,
 ) -> bool:
     """バックグラウンドexecutorに履歴データ非同期フェッチを送信する共通ヘルパー。"""
     with app_state.history_fetch_lock:
@@ -168,6 +175,8 @@ def _submit_async_history_fetch(
             symbol,
             exc,
         )
+        if raise_on_error:
+            raise
         return False
 
 
@@ -299,7 +308,17 @@ def api_stock_details() -> Any:
             return resp
         info = cached_short
     else:
-        _submit_async_info_fetch(symbol)
+        submit_status = _submit_async_info_fetch(symbol)
+        if submit_status == "failed":
+            submit_err_resp, submit_err_status = error_response(
+                ErrorCode.API_SERVICE_ERROR,
+                details={
+                    "reason": "銘柄詳細の取得を開始できませんでした。しばらくしてから再試行してください。"
+                },
+                status_code=503,
+            )
+            submit_err_resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return submit_err_resp, submit_err_status
         resp = ok_response(
             {
                 "symbol": symbol,
@@ -448,6 +467,8 @@ def api_stock_history() -> Any:
                 "stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", circuit_key
             )
             if not is_probing:
+                submit_failed = False
+                submit_queue_full = False
                 try:
                     submitted = _submit_async_history_fetch(
                         cache_key,
@@ -458,31 +479,29 @@ def api_stock_history() -> Any:
                         "HALF_OPEN",
                         interval=interval,
                         probe=True,
+                        raise_on_error=True,
+                    )
+                except queue.Full as exc:
+                    submitted = False
+                    submit_failed = True
+                    submit_queue_full = True
+                    logger.warning(
+                        "History fetch queue full during HALF_OPEN symbol=%s: %s",
+                        circuit_key,
+                        exc,
                     )
                 except Exception as exc:
                     submitted = False
+                    submit_failed = True
                     logger.warning(
                         "History fetch submission failed during HALF_OPEN symbol=%s: %s",
                         circuit_key,
                         exc,
                     )
                 if not submitted:
-                    # A duplicate inflight job is not necessarily a probe: the
-                    # circuit key is per symbol while the inflight key is per
-                    # period/interval, so a slow non-probe fetch for this key
-                    # can already be running. That job never reports a circuit
-                    # result (its task only reports when ``probe=True``), so
-                    # leaving our just-claimed probe set would keep the circuit
-                    # in HALF_OPEN/probing forever and every later request would
-                    # return the fetching placeholder. Release the claim; the
-                    # next request can probe once the non-probe job finishes.
-                    with app_state.history_fetch_lock:
-                        still_inflight = cache_key in app_state.history_fetch_inflight
-                    if still_inflight:
-                        app_state.market.release_circuit_probe(
-                            "yfinance_history", symbol=circuit_key
-                        )
-                    else:
+                    if submit_queue_full:
+                        # Pinned contract: queue.Full during HALF_OPEN trips OPEN (probing=False)
+                        # and returns 200 fetching payload; non-queue submit errors still fail 503.
                         app_state.market.report_circuit_result(
                             "yfinance_history",
                             success=False,
@@ -490,6 +509,21 @@ def api_stock_history() -> Any:
                             threshold=HISTORY_CIRCUIT_BREAKER_THRESHOLD,
                             open_sec=HISTORY_CIRCUIT_BREAKER_OPEN_SEC,
                         )
+                    else:
+                        # Neither duplicate inflight jobs nor local executor submission
+                        # failures reflect Yahoo Finance health. Release the HALF_OPEN
+                        # probe claim instead of tripping the upstream breaker OPEN.
+                        app_state.market.release_circuit_probe(
+                            "yfinance_history", symbol=circuit_key
+                        )
+                        if submit_failed:
+                            return error_response(
+                                ErrorCode.API_SERVICE_ERROR,
+                                details={
+                                    "reason": "履歴データの取得を開始できませんでした。しばらくしてから再試行してください。"
+                                },
+                                status_code=503,
+                            )
             return make_history_response(FETCHING_RESPONSE, is_cacheable=False)
 
     cached_present, cached_data = _get_cached_value_if_present(cache_key, duration)
@@ -524,7 +558,14 @@ def api_stock_history() -> Any:
 
     try:
         submitted = _submit_async_history_fetch(
-            cache_key, symbol, market, period, duration, "cache_miss", interval=interval
+            cache_key,
+            symbol,
+            market,
+            period,
+            duration,
+            "cache_miss",
+            interval=interval,
+            raise_on_error=True,
         )
     except queue.Full:
         current_app.logger.warning("History fetch queue is full symbol=%s", symbol)
@@ -532,6 +573,14 @@ def api_stock_history() -> Any:
             ErrorCode.TOO_MANY_REQUESTS,
             details={
                 "reason": "履歴取得の処理容量を超えました。しばらくしてから再試行してください。"
+            },
+            status_code=503,
+        )
+    except Exception:
+        return error_response(
+            ErrorCode.API_SERVICE_ERROR,
+            details={
+                "reason": "履歴データの取得を開始できませんでした。しばらくしてから再試行してください。"
             },
             status_code=503,
         )

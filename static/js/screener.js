@@ -259,6 +259,7 @@
   function renderActiveChips() {
     const chipsContainer = document.getElementById("screenerActiveChips");
     if (!chipsContainer) return;
+    let pendingChipFocusIdx = null;
     chipsContainer.textContent = "";
 
     const chips = [];
@@ -290,7 +291,7 @@
     }
 
     chipsContainer.classList.remove("hidden");
-    chips.forEach((c) => {
+    chips.forEach((c, chipIdx) => {
       const chipEl = document.createElement("span");
       chipEl.className = "screener-chip";
       chipEl.textContent = `${c.label} ×`;
@@ -301,6 +302,7 @@
         if (e.isComposing || e.keyCode === 229) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          pendingChipFocusIdx = chipIdx;
           chipEl.click();
         }
       });
@@ -335,6 +337,18 @@
           if (input) input.value = "";
         }
         triggerFetch();
+        if (pendingChipFocusIdx !== null) {
+          const remainingChips =
+            chipsContainer.querySelectorAll(".screener-chip");
+          if (remainingChips.length > 0) {
+            remainingChips[
+              Math.min(pendingChipFocusIdx, remainingChips.length - 1)
+            ].focus();
+          } else {
+            document.getElementById("screenerSearch")?.focus();
+          }
+          pendingChipFocusIdx = null;
+        }
       });
       chipsContainer.appendChild(chipEl);
     });
@@ -420,13 +434,27 @@
       }
       renderTableRows(data.stocks || [], requestGeneration);
     } catch (err) {
-      if (
-        requestGeneration !== screenerRequestGeneration ||
-        err?.name === "AbortError"
-      ) {
+      if (requestGeneration !== screenerRequestGeneration) {
+        return;
+      }
+      if (err?.name === "AbortError") {
+        if (tbody && tbody.querySelector(".loading-cell")) {
+          tbody.replaceChildren();
+          const trAborted = document.createElement("tr");
+          const tdAborted = document.createElement("td");
+          tdAborted.colSpan = getVisibleColSpan();
+          tdAborted.className = "text-center empty-cell";
+          tdAborted.textContent =
+            "読み込みが中断されました。再試行してください。";
+          trAborted.appendChild(tdAborted);
+          tbody.appendChild(trAborted);
+        }
         return;
       }
       console.error("Screener fetch error:", err);
+      if (countEl) {
+        countEl.textContent = "0";
+      }
       if (tbody) {
         tbody.replaceChildren();
         const trError = document.createElement("tr");
@@ -478,7 +506,11 @@
     const tbody = document.getElementById("screenerTableBody");
     if (!tbody || requestGeneration !== screenerRequestGeneration) return;
 
-    if (stocks.length === 0) {
+    const safeStocks = Array.isArray(stocks)
+      ? stocks.filter((s) => s && typeof s === "object")
+      : [];
+
+    if (safeStocks.length === 0) {
       tbody.replaceChildren();
       const trEmpty = document.createElement("tr");
       const tdEmpty = document.createElement("td");
@@ -491,7 +523,7 @@
     }
 
     const fragment = document.createDocumentFragment();
-    stocks.forEach((stock, idx) => {
+    safeStocks.forEach((stock, idx) => {
       const tr = document.createElement("tr");
       tr.setAttribute("tabindex", idx === 0 ? "0" : "-1");
       tr.setAttribute("role", "row");
@@ -763,5 +795,10 @@
     };
     window.addEventListener("beforeunload", cleanupScreenerResources);
     window.addEventListener("pagehide", cleanupScreenerResources);
+    window.addEventListener("pageshow", (event) => {
+      if (!event?.persisted) return;
+      syncStaticColspanPlaceholders();
+      fetchScreenerResults();
+    });
   }
 })();

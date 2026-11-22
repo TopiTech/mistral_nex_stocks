@@ -303,8 +303,10 @@ class StateManager {
     if (!Array.isArray(list)) return false;
     const idx = list.findIndex((s) => s && s.symbol === symbol);
     if (idx === -1) return false;
+    const prevStocks = this._stocks;
     list[idx] = updated;
     _invalidateStockKeyIndex();
+    this._notify("stocks", this._stocks, prevStocks);
     return true;
   }
 
@@ -922,4 +924,5 @@ if (typeof window !== "undefined") {
   window._hasAiAccess = _hasAiAccess;
   window.getWrapperRegistryVersion = () => _wrapperRegistryVersion;
   window.purgeStockKeyCaches = purgeStockKeyCaches;
+  window.debouncedRenderPortfolio = debouncedRenderPortfolio;
 }

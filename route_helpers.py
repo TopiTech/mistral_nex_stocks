@@ -1178,6 +1178,18 @@ def _screener_query_error_from_validation(exc: ValidationError) -> tuple[Respons
                 status_code=400,
             )
         if (
+            field_name in ("min_change", "max_change")
+            and err.get("type", "") in ("greater_than_equal", "less_than_equal")
+        ):
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "reason": f"{field_name} は -100〜10000 の範囲で指定してください",
+                    "fields": [field_name],
+                },
+                status_code=400,
+            )
+        if (
             "bool_type_not_allowed" in msg
             or "must_be_number" in msg
             or "float_parsing" in err.get("type", "")
@@ -2335,6 +2347,9 @@ def ensure_stock_placeholder_in_caches(
             # snapshot/interpolation writers checking list identity never
             # overwrite newly added placeholders or updated holdings.
             cache[norm_market] = target_list
+        clear_fn = getattr(app_state.market, "clear_watchlist_removed", None)
+        if callable(clear_fn):
+            clear_fn(symbol, norm_market)
 
 
 def remove_stock_from_caches(symbol, market):
@@ -2348,6 +2363,9 @@ def remove_stock_from_caches(symbol, market):
             if norm_market not in cache:
                 cache[norm_market] = []
             cache[norm_market] = [s for s in cache[norm_market] if s.get("symbol") != symbol]
+        mark_fn = getattr(app_state.market, "mark_watchlist_removed", None)
+        if callable(mark_fn):
+            mark_fn(symbol, norm_market)
     _invalidate_symbol_caches_internal(symbol)
     try:
         app_state.payload_disk_cache.delete(f"payload_{symbol}_{norm_market}")
@@ -2474,8 +2492,14 @@ def _submit_in_app_context(executor, job_fn, app=None):
 
     work_queue = getattr(executor, "_work_queue", None)
     if work_queue is not None:
+        raw_cap = getattr(executor, "_max_queue_size", None)
+        queue_cap = (
+            raw_cap
+            if isinstance(raw_cap, int) and not isinstance(raw_cap, bool) and raw_cap > 0
+            else MAX_EXECUTOR_QUEUE_SIZE
+        )
         try:
-            if work_queue.qsize() >= MAX_EXECUTOR_QUEUE_SIZE:
+            if work_queue.qsize() >= queue_cap:
                 logger.warning("Executor work queue saturated (qsize=%d)", work_queue.qsize())
                 import queue
 

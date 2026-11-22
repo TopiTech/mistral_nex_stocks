@@ -637,7 +637,7 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
 
     try:
         from app_state import app_state
-        from constants import HISTORY_SEMAPHORE_TIMEOUT
+        from constants import HISTORY_SEMAPHORE_TIMEOUT, YFINANCE_TIMEOUT_SINGLE
         from utils.market_utils import safe_get_ticker
 
         if app_state.market.is_yf_rate_limited():
@@ -654,7 +654,7 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             return {"symbol": symbol, "status": "データ取得失敗"}
 
         try:
-            history_df = ticker.history(period=period)
+            history_df = ticker.history(period=period, timeout=YFINANCE_TIMEOUT_SINGLE)
         finally:
             app_state.market.yfinance_history_semaphore.release()
 

@@ -287,6 +287,16 @@ function initVisibilityHandler() {
       ["us", "jp", "idx"].forEach((market) => {
         renderStocks(market, state.stocks[market]);
       });
+      if (typeof updateTabCounts === "function") {
+        updateTabCounts();
+      }
+      if (
+        typeof document.querySelector === "function" &&
+        document.querySelector(".tab.active")?.id === "tab-portfolio" &&
+        typeof renderPortfolio === "function"
+      ) {
+        renderPortfolio();
+      }
       if (
         state.indices &&
         Object.keys(state.indices).length > 0 &&
@@ -430,7 +440,9 @@ async function loadPortfolioSnapshot() {
     );
     if (!data?.stocks) return;
     state.updateStocks(
-      mergeStocksWithExistingHistory(data.stocks, state.stocks),
+      mergeStocksWithExistingHistory(data.stocks, state.stocks, false, {
+        preserveLiveQuotes: true,
+      }),
     );
     if (document.querySelector(".tab.active")?.id === "tab-portfolio") {
       renderPortfolio();
@@ -582,7 +594,12 @@ async function fetchInitialStocks(force = false) {
     };
     // GET /api/stocks strips portfolio fields (H-3 security).
     // Merge with existing state to preserve portfolio data received via SSE.
-    const stocks = mergeStocksWithExistingHistory(incomingData, state.stocks);
+    const stocks = mergeStocksWithExistingHistory(
+      incomingData,
+      state.stocks,
+      false,
+      { preserveLiveQuotes: !force },
+    );
     state.updateStocks(stocks);
 
     if (data.indices) {
@@ -948,6 +965,12 @@ function openPortfolioModal(stockKey) {
             if (typeof renderStocks === "function") {
               renderStocks(market, state.stocks[market]);
             }
+            if (
+              document.querySelector(".tab.active")?.id === "tab-portfolio" &&
+              typeof renderPortfolio === "function"
+            ) {
+              renderPortfolio();
+            }
           }
         }
         // Force refresh data
@@ -983,16 +1006,56 @@ document
 // Alerts Logic
 // -----------------------------------------------------
 function getAlertsConfig() {
+  const cloneMap = (source) => {
+    const copy = {};
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      return copy;
+    }
+    for (const [k, v] of Object.entries(source)) {
+      copy[k] = v && typeof v === "object" && !Array.isArray(v) ? { ...v } : v;
+    }
+    return copy;
+  };
+  let rawStr;
   try {
-    const raw = JSON.parse(localStorage.getItem("userAlerts") || "{}");
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    rawStr = localStorage.getItem("userAlerts") || "{}";
   } catch {
     return {};
   }
+  const cache =
+    getAlertsConfig._alertsCache ||
+    (getAlertsConfig._alertsCache = { raw: null, obj: null });
+  if (cache.obj === null || rawStr !== cache.raw) {
+    try {
+      const parsed = JSON.parse(rawStr);
+      cache.obj =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed
+          : {};
+    } catch {
+      cache.obj = {};
+    }
+    cache.raw = rawStr;
+  }
+  return cloneMap(cache.obj);
+}
+function normalizeAlertsConfig(cfg) {
+  const normalized = {};
+  if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
+    for (const [k, v] of Object.entries(cfg)) {
+      normalized[k] =
+        v && typeof v === "object" && !Array.isArray(v) ? { ...v } : v;
+    }
+  }
+  const serialized = JSON.stringify(normalized);
+  if (typeof getAlertsConfig === "function") {
+    getAlertsConfig._alertsCache = { raw: serialized, obj: normalized };
+  }
+  return serialized;
 }
 function saveAlertsConfig(cfg) {
   try {
-    localStorage.setItem("userAlerts", JSON.stringify(cfg));
+    localStorage.setItem("userAlerts", normalizeAlertsConfig(cfg));
   } catch (_e) {
     // storage full or blocked — degrade gracefully
   }

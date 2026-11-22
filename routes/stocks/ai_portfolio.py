@@ -678,7 +678,7 @@ def api_save_ai_portfolio() -> Any:
             details={"reason": "無効なポートフォリオデータです（タイトルがありません）"},
             status_code=400,
         )
-    if portfolio.get("items") is not None and not canonical_portfolio.get("items"):
+    if not canonical_portfolio.get("items"):
         return error_response(
             ErrorCode.MALFORMED_INPUT,
             details={"reason": "有効な銘柄データがありません"},

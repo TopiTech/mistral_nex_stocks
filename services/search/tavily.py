@@ -199,9 +199,16 @@ def tavily_search(
     circuit_probe_claimed = False
     if _is_tavily_circuit_half_open():
         if not _try_claim_tavily_probe():
-            logger.info("Tavily circuit recovery probe already in progress; skipping search request")
-            return []
-        circuit_probe_claimed = True
+            if _is_tavily_circuit_half_open():
+                logger.info(
+                    "Tavily circuit recovery probe already in progress; skipping search request"
+                )
+                return []
+            if _is_tavily_circuit_open():
+                logger.info("Tavily circuit opened while acquiring probe; skipping search request")
+                return []
+        else:
+            circuit_probe_claimed = True
 
     time_range_map = {
         "d": "day",

@@ -383,14 +383,9 @@
           );
           const surrounding = text.slice(contextStart, contextEnd);
 
-          const afterChar =
-            match.index + match[0].length < text.length
-              ? text[match.index + match[0].length]
-              : "";
-          const isParenthesized =
-            (beforeChar === "(" && afterChar === ")") ||
-            (beforeChar === "（" && afterChar === "）") ||
-            new RegExp(`[（(]\\s*${code}(?:\\.T)?\\s*[)）]`).test(surrounding);
+          const isParenthesized = new RegExp(
+            `[（(]\\s*${code}(?:\\.T)?\\s*[)）]`,
+          ).test(surrounding);
 
           const hasStockContext =
             isParenthesized ||
@@ -471,7 +466,7 @@
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 同一拡張機能コンテキスト以外からの要求は無視する(ディフェンスイン
     // ディープ。バックグラウンド側の sender チェックの鏡像)。
-    if (sender && sender.id !== chrome.runtime.id) {
+    if (sender?.id !== chrome.runtime.id) {
       return false;
     }
     if (request && request.action === "detectTickers") {

@@ -631,10 +631,12 @@ if (
   typeof window !== "undefined" &&
   typeof window.addEventListener === "function"
 ) {
-  window.addEventListener("beforeunload", () => {
+  const cleanupSetupResources = () => {
     if (setupAbortController) {
       setupAbortController.abort();
       setupAbortController = null;
     }
-  });
+  };
+  window.addEventListener("beforeunload", cleanupSetupResources);
+  window.addEventListener("pagehide", cleanupSetupResources);
 }

@@ -41,7 +41,7 @@
         draggedSymbol: null,
         dragPos: null,
         isOverCenterDrop: false,
-        timeCursor: 0, // 0 = latest/live, negative integer = historical steps back
+        timeCursor: 0, // 0 = latest/live, positive integer = historical steps back
         timeGranularity: "3mo", // 1d, 5d, 1mo, 3mo, 1y
         isConnectMode: false,
         connectedSymbols: [], // Max 3 symbols
@@ -61,8 +61,6 @@
       };
 
       this._listeners = new Set();
-      this._historyAbortControllers = new Map();
-      this._aiAbortController = null;
     }
 
     get state() {
@@ -188,9 +186,13 @@
       const valid = ["1d", "5d", "1mo", "3mo", "1y"];
       if (!valid.includes(granularity)) return;
       if (this.data.timeGranularity === granularity) return;
+      const prevCursor = this.data.timeCursor;
       this.data.timeGranularity = granularity;
       this.data.timeCursor = 0;
       this.notify("timeGranularity", granularity);
+      if (prevCursor !== 0) {
+        this.notify("timeCursor", 0);
+      }
     }
 
     toggleConnectMode(forceState) {
@@ -248,10 +250,6 @@
     }
 
     closeAiDive() {
-      if (this._aiAbortController) {
-        this._aiAbortController.abort();
-        this._aiAbortController = null;
-      }
       this.data.aiDiveOpen = false;
       this.data.aiDiveSymbol = null;
       this.data.aiAnalysisStatus = "idle";

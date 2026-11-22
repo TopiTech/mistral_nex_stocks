@@ -18,7 +18,7 @@ skips = [
 [tool.coverage.run]
 # Coverage threshold: 75% line coverage is enforced by CI (see .github/workflows/ci.yml
 # `--cov-fail-under=75`). This threshold was raised from the original 68% baseline as
-# the suite grew to 2100+ tests; keep it in sync with the CI flag. The synchronous
+# the suite grew to 4700+ tests; keep it in sync with the CI flag. The synchronous
 # executor test pattern (SynchronousExecutor in conftest.py) means concurrency and
 # executor-queue scenarios are not reflected in this metric.
 omit = ["tests/*", ".mimocode/*"]

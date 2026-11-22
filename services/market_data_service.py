@@ -85,6 +85,16 @@ def _first_not_none(*values: Any) -> Any:
     return None
 
 
+def _first_nonempty_str(*values: object) -> str | None:
+    """Return the first stripped non-empty string among candidates."""
+    for val in values:
+        if isinstance(val, str):
+            stripped = val.strip()
+            if stripped:
+                return stripped
+    return None
+
+
 def _finite_non_negative(value: float) -> float:
     """Clamp a derived metric to a finite, non-negative JSON-safe value.
 
@@ -145,7 +155,11 @@ def _build_market_row(
     )
     low = low_val if low_val is not None else price
 
-    sector = source.get("sector") or PREDEFINED_SECTORS.get(symbol, "Other")
+    sector = _first_nonempty_str(source.get("sector")) or PREDEFINED_SECTORS.get(symbol, "Other")
+    name = (
+        _first_nonempty_str(source.get("name"), source.get("shortName"), source.get("longName"))
+        or PREDEFINED_NAMES.get(symbol, fallback_name)
+    )
     pe_ratio = _first_not_none(
         normalize_optional_number(source.get("pe_ratio"), allow_zero=True),
         normalize_optional_number(source.get("trailingPE"), allow_zero=True),
@@ -154,10 +168,7 @@ def _build_market_row(
     )
     return {
         "symbol": symbol,
-        "name": source.get("name")
-        or source.get("shortName")
-        or source.get("longName")
-        or PREDEFINED_NAMES.get(symbol, fallback_name),
+        "name": name,
         "market": market,
         "price": price,
         "change_percent": _extract_change_pct(source),
@@ -189,7 +200,7 @@ def build_heatmap_payload(
     results: list[dict[str, Any]] = []
 
     for item in fetched:
-        if not item:
+        if not isinstance(item, dict) or not item:
             continue
 
         price_val = _first_not_none(
@@ -219,14 +230,14 @@ def build_heatmap_payload(
             continue
 
         sym = item.get("symbol")
-        if not sym:
+        if not isinstance(sym, str) or not sym.strip():
             continue
+        sym = sym.strip()
         name = (
-            item.get("name")
-            or item.get("shortName")
-            or item.get("longName")
+            _first_nonempty_str(item.get("name"), item.get("shortName"), item.get("longName"))
             or PREDEFINED_NAMES.get(sym, sym)
         )
+        sector = _first_nonempty_str(item.get("sector")) or PREDEFINED_SECTORS.get(sym, "Other")
 
         results.append(
             {
@@ -235,7 +246,7 @@ def build_heatmap_payload(
                 "price": price,
                 "change_percent": _extract_change_pct(item),
                 "market_cap": market_cap,
-                "sector": item.get("sector") or PREDEFINED_SECTORS.get(sym, "Other"),
+                "sector": sector,
             }
         )
 
@@ -294,9 +305,11 @@ def build_screener_enrichment(
                         {
                             **info,
                             "name": (
-                                info.get("shortName")
-                                or info.get("longName")
-                                or info.get("displayName")
+                                _first_nonempty_str(
+                                    info.get("shortName"),
+                                    info.get("longName"),
+                                    info.get("displayName"),
+                                )
                                 or PREDEFINED_NAMES.get(sym)
                                 or fallback_name
                             ),

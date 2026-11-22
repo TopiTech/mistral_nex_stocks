@@ -485,21 +485,25 @@ _allowed_origins_lock = threading.Lock()
 
 
 def _load_allowed_manifest_origins():
-    """ホストマニフェストから許可された拡張機能IDのセットを取得（mtime キャッシュ付き）"""
+    """ホストマニフェストから許可された拡張機能IDのセットを取得（stat キャッシュ付き）"""
     manifest_path = ROOT / "native_host" / "com.mistral_nex_stocks.host.json"
     try:
-        mtime = manifest_path.stat().st_mtime if manifest_path.exists() else None
+        if manifest_path.exists():
+            st = manifest_path.stat()
+            cache_sig = (st.st_mtime_ns, st.st_size)
+        else:
+            cache_sig = None
     except OSError:
-        mtime = None
+        cache_sig = None
     with _allowed_origins_lock:
         if (
             _allowed_origins_cache["origins"] is not None
-            and _allowed_origins_cache["mtime"] == mtime
+            and _allowed_origins_cache["mtime"] == cache_sig
         ):
             return _allowed_origins_cache["origins"]
         origins = _parse_allowed_manifest_origins(manifest_path)
         _allowed_origins_cache["origins"] = origins
-        _allowed_origins_cache["mtime"] = mtime
+        _allowed_origins_cache["mtime"] = cache_sig
         return origins
 
 
@@ -647,13 +651,15 @@ def _get_posix_ancestor_process_names(
     max_depth: int = 5,
     proc_dir: Path | str = "/proc",
     start_pid: int | None = None,
+    enforce_path_trust: bool | None = None,
 ) -> list[str]:
     """Return lower-case executable basenames of ancestor processes on POSIX systems."""
     ancestors: list[str] = []
     proc_path = Path(proc_dir)
     # Path trust only makes sense for the real procfs. Tests/mock proc trees
     # use synthetic paths that do not exist on the host filesystem.
-    enforce_path_trust = proc_path == Path("/proc")
+    if enforce_path_trust is None:
+        enforce_path_trust = proc_path == Path("/proc")
     try:
         # Check the procfs mount once: on platforms without procfs (macOS,
         # Windows) every status lookup would fail anyway, and the psutil
@@ -679,17 +685,20 @@ def _get_posix_ancestor_process_names(
                 if ppid is None or ppid <= 1 or ppid == curr_pid:
                     break
                 resolved_name = ""
+                exe_resolved_untrusted = False
                 exe_link = proc_path / str(ppid) / "exe"
                 try:
                     target = os.readlink(exe_link)
                     target = target.removesuffix(" (deleted)")
                     if not enforce_path_trust or _posix_executable_path_is_trusted(target):
                         resolved_name = Path(target).name.lower()
+                    else:
+                        exe_resolved_untrusted = True
                 except OSError:
                     resolved_name = ""
                 if resolved_name:
                     ancestors.append(resolved_name)
-                else:
+                elif not exe_resolved_untrusted:
                     cmdline_file = proc_path / str(ppid) / "cmdline"
                     if cmdline_file.exists():
                         try:

@@ -381,6 +381,34 @@ def get_ticker_exchange(ticker: str) -> str | None:
         return _TICKER_EXCHANGE_CACHE.get(clean_ticker)
 
 
+_CRYPTO_EXCHANGE_BY_QUOTE: dict[str, str] = {
+    "USD": "COINBASE",
+    "EUR": "COINBASE",
+    "GBP": "COINBASE",
+    "USDC": "COINBASE",
+    "JPY": "BITFLYER",
+    "USDT": "BINANCE",
+    "BTC": "BINANCE",
+    "ETH": "BINANCE",
+}
+
+
+def _resolve_crypto_pair_symbol(ticker_clean: str) -> tuple[str, str] | None:
+    """Resolve Yahoo Finance crypto pairs like ``BTC-USD`` or ``ETH-JPY``."""
+    if "-" not in ticker_clean:
+        return None
+    base, quote = ticker_clean.rsplit("-", 1)
+    if len(base) < 2 or not base.isalnum() or quote not in _CRYPTO_EXCHANGE_BY_QUOTE:
+        return None
+    compact = f"{base}{quote}"
+    if compact in INDEX_MAP:
+        pro_name = INDEX_MAP[compact]["proName"]
+        prefix = pro_name.split(":", 1)[0] if ":" in pro_name else "INDEX"
+        return (pro_name, prefix)
+    prefix = _CRYPTO_EXCHANGE_BY_QUOTE[quote]
+    return (f"{prefix}:{compact}", prefix)
+
+
 def _resolve_ticker_exchange_dynamically(ticker: str) -> str | None:
     """Attempt dynamic lookup of exchange code for a given ticker via cache or symbol heuristics.
 
@@ -436,9 +464,12 @@ def get_tradingview_symbol_meta(
         prefix_part, _ = ticker_clean.split(":", 1)
         return (ticker_clean, False, prefix_part)
 
-    # 1. Check Index Map
+    # 1. Check Index Map (and hyphenated crypto pairs before US share-class heuristics)
     if ticker_clean in INDEX_MAP:
         return (INDEX_MAP[ticker_clean]["proName"], False, "INDEX")
+    crypto_pair = _resolve_crypto_pair_symbol(ticker_clean)
+    if crypto_pair is not None:
+        return (crypto_pair[0], False, crypto_pair[1])
 
     # 2. Check Japanese Stock (.T suffix or 4-character code)
     if ticker_clean.endswith(".T"):

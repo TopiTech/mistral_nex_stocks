@@ -139,6 +139,8 @@ def _reset_market_state(app_state: object) -> None:
                 market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
                 market.current_indices_cache = {}
                 market.target_indices_cache = {}
+                if hasattr(market, "removed_watchlist_symbols"):
+                    market.removed_watchlist_symbols.clear()
         except (AttributeError, RuntimeError):
             pass
 

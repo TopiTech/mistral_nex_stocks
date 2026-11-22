@@ -80,6 +80,7 @@ _CONFIG_CACHE: dict = {"data": None, "key": None}
 # 意図しない設定上書きを防止する。テストでリセットが必要な場合は _reset_legacy_merge_flag() を使用。
 _LEGACY_MERGE_DONE: bool = False
 _CONFIG_CORRUPTED: bool = False
+_CONFIG_TRANSIENT_READ_FAILED: bool = False
 
 
 DEFAULT_CONFIG = {

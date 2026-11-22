@@ -54,8 +54,8 @@ try {
     process.exitCode = 1;
   } else {
     console.log(`${trackedPath} matches the TypeScript output.`);
+    verifySseReconnectGuard();
   }
-  verifySseReconnectGuard();
 } finally {
   rmSync(tempDirectory, { recursive: true, force: true });
 }

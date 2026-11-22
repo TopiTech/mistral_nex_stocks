@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from app_state import app_state
 from constants import (
+    MAX_TOOL_ITERATIONS,
     MISTRAL_API_TIMEOUT_SEC,
     OPENAI_MAX_TOKENS_CEIL,
     OPENAI_MAX_TOKENS_DEFAULT,
@@ -327,7 +328,8 @@ def verify_openai_connection(
                         auth_data = auth_resp.json()
                         msg = auth_data.get("error", {}).get("message")
                         if msg:
-                            auth_err = f"OpenRouter認証エラー: {msg} (HTTP 401)"
+                            safe_msg = _sanitize_error_message(str(msg))
+                            auth_err = f"OpenRouter認証エラー: {safe_msg} (HTTP 401)"
                     except Exception:
                         pass
                     if not api_key.strip().startswith("sk-or-"):
@@ -654,11 +656,12 @@ def call_openai_chat(
         else None
     )
 
+    norm_temp = _normalize_openai_temperature(temperature)
     cache_key = _build_openai_cache_key(
         model,
         messages,
         token_limit,
-        temperature,
+        norm_temp,
         response_format,
         tools,
         tool_choice=tool_choice,
@@ -740,7 +743,6 @@ def call_openai_chat(
         "messages": effective_messages,
         token_param_key: token_limit,
     }
-    norm_temp = _normalize_openai_temperature(temperature)
     if norm_temp is not None:
         payload["temperature"] = norm_temp
     if (
@@ -780,34 +782,31 @@ def call_openai_chat(
     client: Any = None
     try:
         with app_state.ai.openai_call_semaphore:
-            if app_state.market.is_circuit_open("openai_compatible"):
-                logger.warning("OpenAI-compatible circuit opened while waiting for semaphore.")
+            allowed, circuit_probe_claimed, deny_reason = app_state.market.enter_circuit_call(
+                "openai_compatible"
+            )
+            if not allowed:
+                if deny_reason == "busy":
+                    logger.warning(
+                        "OpenAI-compatible circuit recovery probe already in progress. Skipping API call."
+                    )
+                    deny_msg = (
+                        "AIサービス（OpenAI互換）は一時的に利用できません"
+                        "（サーキット回復プローブ実行中）"
+                    )
+                else:
+                    logger.warning("OpenAI-compatible circuit opened while waiting for semaphore.")
+                    deny_msg = (
+                        "AIサービス（OpenAI互換）は一時的に利用できません"
+                        "（サーキットブレーカー発動中）"
+                    )
                 return {
                     "error": {
-                        "message": "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+                        "message": deny_msg,
                         "status_code": 503,
                         "provider": "openai_compatible",
                     }
                 }
-            # M7: probe claimed only after the call slot is held (see note at
-            # the claim site removal above).
-            circuit_state = app_state.market.get_circuit_state("openai_compatible")
-            if circuit_state.get("status") == "HALF_OPEN":
-                if not app_state.market.try_claim_circuit_probe("openai_compatible"):
-                    logger.warning(
-                        "OpenAI-compatible circuit recovery probe already in progress. Skipping API call."
-                    )
-                    return {
-                        "error": {
-                            "message": (
-                                "AIサービス（OpenAI互換）は一時的に利用できません"
-                                "（サーキット回復プローブ実行中）"
-                            ),
-                            "status_code": 503,
-                            "provider": "openai_compatible",
-                        }
-                    }
-                circuit_probe_claimed = True
             client = _get_openai_client(base_url, api_key)
             payload_modified = False
             resp = client.post(endpoint, json=payload, headers=headers)
@@ -884,23 +883,13 @@ def call_openai_chat(
                     any(kw in resp_text_lower for kw in rf_reject_keywords)
                     and "response_format" in payload
                 ):
-                    current_rf = payload.get("response_format")
-                    if isinstance(current_rf, dict) and current_rf.get("type") == "json_schema":
-                        logger.info(
-                            "OpenAI model %s rejected json_schema (HTTP %d). Retrying with json_object.",
-                            model,
-                            resp.status_code,
-                        )
-                        payload["response_format"] = {"type": "json_object"}
-                        payload_modified = True
-                    else:
-                        logger.info(
-                            "OpenAI model %s rejected response_format (HTTP %d). Retrying without response_format.",
-                            model,
-                            resp.status_code,
-                        )
-                        payload.pop("response_format", None)
-                        payload_modified = True
+                    logger.info(
+                        "OpenAI model %s rejected response_format (HTTP %d). Retrying without response_format.",
+                        model,
+                        resp.status_code,
+                    )
+                    payload.pop("response_format", None)
+                    payload_modified = True
 
                 if payload_modified:
                     resp = client.post(endpoint, json=payload, headers=headers)
@@ -1203,21 +1192,16 @@ def stream_openai_chat(
     )
 
     client: Any = None
+    saw_upstream_chunk = False
+    stream_errored = False
+    client_disconnected = False
     try:
         with app_state.ai.openai_stream_semaphore:
-            if app_state.market.is_circuit_open("openai_compatible"):
-                logger.warning(
-                    "OpenAI-compatible circuit opened while waiting for stream semaphore."
-                )
-                yield _stream_error_event(
-                    "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
-                    503,
-                )
-                return
-            # M7: probe claimed only after the stream slot is held.
-            circuit_state = app_state.market.get_circuit_state("openai_compatible")
-            if circuit_state.get("status") == "HALF_OPEN":
-                if not app_state.market.try_claim_circuit_probe("openai_compatible"):
+            allowed, circuit_probe_claimed, deny_reason = app_state.market.enter_circuit_call(
+                "openai_compatible"
+            )
+            if not allowed:
+                if deny_reason == "busy":
                     logger.warning(
                         "OpenAI-compatible circuit recovery probe already in progress. Skipping stream call."
                     )
@@ -1225,8 +1209,15 @@ def stream_openai_chat(
                         "AIサービス（OpenAI互換）は一時的に利用できません（サーキット回復プローブ実行中）",
                         503,
                     )
-                    return
-                circuit_probe_claimed = True
+                else:
+                    logger.warning(
+                        "OpenAI-compatible circuit opened while waiting for stream semaphore."
+                    )
+                    yield _stream_error_event(
+                        "AIサービス（OpenAI互換）は一時的に利用できません（サーキットブレーカー発動中）",
+                        503,
+                    )
+                return
             client = _get_openai_client(base_url, api_key)
 
             def _open_stream(p: dict[str, Any]):
@@ -1284,6 +1275,7 @@ def stream_openai_chat(
                         stream = stream_cm.__enter__()
 
                 if stream.status_code >= 400:
+                    stream_errored = True
                     stream.read()
                     err_detail = stream.text[:500]
                     try:
@@ -1330,6 +1322,7 @@ def stream_openai_chat(
                             chunk = json.loads(data_part)
                             if not isinstance(chunk, dict):
                                 continue
+                            saw_upstream_chunk = True
                             chunk_usage = chunk.get("usage")
                             if isinstance(chunk_usage, dict) and chunk_usage:
                                 last_usage = chunk_usage
@@ -1375,7 +1368,11 @@ def stream_openai_chat(
 
         yield {"type": "done", "text": "".join(full_parts)}
 
+    except GeneratorExit:
+        client_disconnected = True
+        raise
     except Exception as exc:
+        stream_errored = True
         raw_status = getattr(getattr(exc, "response", None), "status_code", None)
         resp_status = (
             raw_status if isinstance(raw_status, int) and not isinstance(raw_status, bool) else None
@@ -1410,7 +1407,10 @@ def stream_openai_chat(
     finally:
         _close_call_owned_openai_client(client)
         if circuit_probe_claimed:
-            app_state.market.release_circuit_probe("openai_compatible")
+            if client_disconnected and saw_upstream_chunk and not stream_errored:
+                app_state.market.report_circuit_result("openai_compatible", success=True)
+            else:
+                app_state.market.release_circuit_probe("openai_compatible")
             circuit_probe_claimed = False
 
 
@@ -1481,7 +1481,7 @@ def call_openai_chat_with_tools(
         normalized_iterations = int(max_tool_iterations)
     except (TypeError, ValueError):
         normalized_iterations = 5
-    max_tool_iterations = max(1, min(normalized_iterations, 8))
+    max_tool_iterations = max(1, min(normalized_iterations, MAX_TOOL_ITERATIONS))
 
     for iteration in range(max_tool_iterations):
         use_cache = iteration == 0 and not active_tools
@@ -1783,10 +1783,18 @@ def analyze_chart_image_with_openai(
             err_msg = str(err_obj)
             err_status = None
         # Detect vision unsupported errors from provider
+        err_lower = err_msg.lower()
         if (
-            "image" in err_msg.lower()
-            or "multimodal" in err_msg.lower()
-            or err_status == 400
+            "image" in err_lower
+            or "multimodal" in err_lower
+            or "vision" in err_lower
+            or (
+                err_status == 400
+                and "url" not in err_lower
+                and "openai_base_url" not in err_lower
+                and "api key" not in err_lower
+                and "apiキー" not in err_msg
+            )
         ):
             return {
                 "error": {
@@ -1861,144 +1869,161 @@ def get_openai_embeddings_batch(
     except (TypeError, ValueError):
         parsed_batch_size = 32
     effective_batch_size = max(1, parsed_batch_size)
-    circuit_probe_claimed = False
-    circuit_state = app_state.market.get_circuit_state("openai_compatible")
-    if circuit_state.get("status") == "HALF_OPEN":
-        if not app_state.market.try_claim_circuit_probe("openai_compatible"):
-            logger.warning(
-                "OpenAI-compatible circuit recovery probe already in progress. "
-                "Skipping embeddings call."
-            )
-            return results
-        circuit_probe_claimed = True
 
-    try:
-        for i in range(0, len(valid_items), effective_batch_size):
-            chunk = valid_items[i : i + effective_batch_size]
-            chunk_texts = [text for _, text in chunk]
-            payload = {
-                "model": target_model,
-                "input": chunk_texts,
-            }
-            client: Any = None
-            try:
+    for i in range(0, len(valid_items), effective_batch_size):
+        chunk = valid_items[i : i + effective_batch_size]
+        chunk_texts = [text for _, text in chunk]
+        payload = {
+            "model": target_model,
+            "input": chunk_texts,
+        }
+        client: Any = None
+        circuit_probe_claimed = False
+        try:
+            with app_state.ai.openai_call_semaphore:
+                allowed, circuit_probe_claimed, deny_reason = app_state.market.enter_circuit_call(
+                    "openai_compatible"
+                )
+                if not allowed:
+                    logger.warning(
+                        "OpenAI embeddings skipped (%s); remaining batches fall back to None.",
+                        deny_reason or "unavailable",
+                    )
+                    break
                 client = _get_openai_client(base_url, api_key)
                 resp = client.post(endpoint, json=payload, headers=headers)
-                if resp.status_code == 200:
-                    app_state.market.report_circuit_result("openai_compatible", success=True)
-                    circuit_probe_claimed = False
+            if resp.status_code == 200:
+                try:
                     data = resp.json()
-                    # N20-01: account embedding token usage like the chat path
-                    # (call_openai_chat records usage; the embeddings path never
-                    # did, so OpenAI embedding spend stayed at zero). Usage is
-                    # best-effort: ignore missing/malformed bodies.
-                    usage = data.get("usage") if isinstance(data, dict) else None
-                    if isinstance(usage, dict):
-                        app_state.ai.record_openai_usage(usage, model=target_model)
-                    raw_data = data.get("data", []) if isinstance(data, dict) else []
-                    for fallback_idx, item in enumerate(raw_data):
-                        if not isinstance(item, dict):
-                            continue
-                        pos = item.get("index")
-                        # bool is a subclass of int: ``index: true`` must not be
-                        # accepted as position 1 and map an embedding to the wrong
-                        # input text.
-                        if (
-                            isinstance(pos, bool)
-                            or not isinstance(pos, int)
-                            or pos < 0
-                            or pos >= len(chunk)
-                        ):
-                            pos = fallback_idx
-                        if 0 <= pos < len(chunk):
-                            orig_idx = chunk[pos][0]
-                            emb = item.get("embedding")
-                            if isinstance(emb, list) and orig_idx < len(results):
-                                results[orig_idx] = emb
-                else:
-                    if resp.status_code >= 500:
-                        app_state.market.report_circuit_result("openai_compatible", success=False)
-                        circuit_probe_claimed = False
-                    elif circuit_probe_claimed:
+                except ValueError as json_err:
+                    if circuit_probe_claimed:
                         app_state.market.release_circuit_probe("openai_compatible")
                         circuit_probe_claimed = False
                     logger.debug(
-                        "OpenAI embeddings returned HTTP %d: %s (graceful fallback)",
-                        resp.status_code,
-                        _sanitize_error_message(resp.text[:200]),
+                        "OpenAI embeddings returned invalid JSON (graceful fallback): %s",
+                        json_err,
                     )
-                    if resp.status_code >= 500 and app_state.market.is_circuit_open(
-                        "openai_compatible"
+                    break
+                if not isinstance(data, dict):
+                    if circuit_probe_claimed:
+                        app_state.market.release_circuit_probe("openai_compatible")
+                        circuit_probe_claimed = False
+                    logger.debug(
+                        "OpenAI embeddings returned non-object JSON payload (graceful fallback)"
+                    )
+                    break
+                app_state.market.report_circuit_result("openai_compatible", success=True)
+                circuit_probe_claimed = False
+                # N20-01: account embedding token usage like the chat path
+                # (call_openai_chat records usage; the embeddings path never
+                # did, so OpenAI embedding spend stayed at zero). Usage is
+                # best-effort: ignore missing/malformed bodies.
+                usage = data.get("usage")
+                if isinstance(usage, dict):
+                    app_state.ai.record_openai_usage(usage, model=target_model)
+                raw_data = data.get("data", [])
+                for fallback_idx, item in enumerate(raw_data):
+                    if not isinstance(item, dict):
+                        continue
+                    pos = item.get("index")
+                    # bool is a subclass of int: ``index: true`` must not be
+                    # accepted as position 1 and map an embedding to the wrong
+                    # input text.
+                    if (
+                        isinstance(pos, bool)
+                        or not isinstance(pos, int)
+                        or pos < 0
+                        or pos >= len(chunk)
                     ):
-                        logger.warning(
-                            "OpenAI embeddings aborted after server error (HTTP %d); "
-                            "circuit breaker open, remaining batches fall back to None",
-                            resp.status_code,
-                        )
-                        break
-                    # M8 (2026-11-07 review): permanent client errors (auth
-                    # failure, unknown model, malformed request) and explicit
-                    # 429 rate-limit responses cannot succeed on immediately
-                    # following batches; stop instead of flooding the provider.
-                    if resp.status_code == 429:
-                        logger.warning(
-                            "OpenAI embeddings aborted after rate limit (HTTP 429); "
-                            "remaining batches fall back to None",
-                        )
-                        break
-                    if 400 <= resp.status_code < 500:
-                        logger.warning(
-                            "OpenAI embeddings aborted after client error (HTTP %d); "
-                            "remaining batches fall back to None",
-                            resp.status_code,
-                        )
-                        break
-            except Exception as exc:
-                raw_status = getattr(getattr(exc, "response", None), "status_code", None)
-                if raw_status is None:
-                    raw_status = getattr(exc, "status_code", None)
-                resp_status = (
-                    raw_status
-                    if isinstance(raw_status, int) and not isinstance(raw_status, bool)
-                    else None
-                )
-                is_provider_failure = isinstance(
-                    exc, (httpx.TransportError, ConnectionError, OSError)
-                ) or (resp_status is not None and resp_status >= 500)
-                if is_provider_failure:
+                        pos = fallback_idx
+                    if 0 <= pos < len(chunk):
+                        orig_idx = chunk[pos][0]
+                        emb = item.get("embedding")
+                        if isinstance(emb, list) and orig_idx < len(results):
+                            results[orig_idx] = emb
+            else:
+                if resp.status_code >= 500:
                     app_state.market.report_circuit_result("openai_compatible", success=False)
                     circuit_probe_claimed = False
                 elif circuit_probe_claimed:
                     app_state.market.release_circuit_probe("openai_compatible")
                     circuit_probe_claimed = False
                 logger.debug(
-                    "OpenAI embeddings call failed (fallback to None): %s",
-                    _sanitize_error_message(str(exc)),
+                    "OpenAI embeddings returned HTTP %d: %s (graceful fallback)",
+                    resp.status_code,
+                    _sanitize_error_message(resp.text[:200]),
                 )
-                if resp_status == 429:
+                if resp.status_code >= 500 and app_state.market.is_circuit_open(
+                    "openai_compatible"
+                ):
                     logger.warning(
-                        "OpenAI embeddings aborted after rate limit exception (HTTP 429); "
-                        "remaining batches fall back to None",
-                    )
-                    break
-                if resp_status is not None and 400 <= resp_status < 500:
-                    logger.warning(
-                        "OpenAI embeddings aborted after client error exception (HTTP %d); "
-                        "remaining batches fall back to None",
-                        resp_status,
-                    )
-                    break
-                if is_provider_failure and app_state.market.is_circuit_open("openai_compatible"):
-                    logger.warning(
-                        "OpenAI embeddings aborted after provider failure; "
+                        "OpenAI embeddings aborted after server error (HTTP %d); "
                         "circuit breaker open, remaining batches fall back to None",
+                        resp.status_code,
                     )
                     break
-            finally:
-                _close_call_owned_openai_client(client)
-    finally:
-        if circuit_probe_claimed:
-            app_state.market.release_circuit_probe("openai_compatible")
-            circuit_probe_claimed = False
+                # M8 (2026-11-07 review): permanent client errors (auth
+                # failure, unknown model, malformed request) and explicit
+                # 429 rate-limit responses cannot succeed on immediately
+                # following batches; stop instead of flooding the provider.
+                if resp.status_code == 429:
+                    logger.warning(
+                        "OpenAI embeddings aborted after rate limit (HTTP 429); "
+                        "remaining batches fall back to None",
+                    )
+                    break
+                if 400 <= resp.status_code < 500:
+                    logger.warning(
+                        "OpenAI embeddings aborted after client error (HTTP %d); "
+                        "remaining batches fall back to None",
+                        resp.status_code,
+                    )
+                    break
+        except Exception as exc:
+            raw_status = getattr(getattr(exc, "response", None), "status_code", None)
+            if raw_status is None:
+                raw_status = getattr(exc, "status_code", None)
+            resp_status = (
+                raw_status
+                if isinstance(raw_status, int) and not isinstance(raw_status, bool)
+                else None
+            )
+            is_provider_failure = isinstance(
+                exc, (httpx.TransportError, ConnectionError, OSError)
+            ) or (resp_status is not None and resp_status >= 500)
+            if is_provider_failure:
+                app_state.market.report_circuit_result("openai_compatible", success=False)
+                circuit_probe_claimed = False
+            elif circuit_probe_claimed:
+                app_state.market.release_circuit_probe("openai_compatible")
+                circuit_probe_claimed = False
+            logger.debug(
+                "OpenAI embeddings call failed (fallback to None): %s",
+                _sanitize_error_message(str(exc)),
+            )
+            if resp_status == 429:
+                logger.warning(
+                    "OpenAI embeddings aborted after rate limit exception (HTTP 429); "
+                    "remaining batches fall back to None",
+                )
+                break
+            if resp_status is not None and 400 <= resp_status < 500:
+                logger.warning(
+                    "OpenAI embeddings aborted after client error exception (HTTP %d); "
+                    "remaining batches fall back to None",
+                    resp_status,
+                )
+                break
+            if is_provider_failure and app_state.market.is_circuit_open("openai_compatible"):
+                logger.warning(
+                    "OpenAI embeddings aborted after provider failure; "
+                    "circuit breaker open, remaining batches fall back to None",
+                )
+                break
+        finally:
+            if circuit_probe_claimed:
+                app_state.market.release_circuit_probe("openai_compatible")
+                circuit_probe_claimed = False
+            _close_call_owned_openai_client(client)
 
     return results

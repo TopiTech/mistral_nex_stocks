@@ -100,6 +100,13 @@ document.addEventListener("DOMContentLoaded", () => {
     renderer,
   );
 
+  let observatoryUnloadHandlers = [];
+  const addManagedListener = (target, type, fn, opts) => {
+    if (!target || typeof target.addEventListener !== "function") return;
+    target.addEventListener(type, fn, opts);
+    observatoryUnloadHandlers.push([target, type, fn, opts]);
+  };
+
   // Canvas keyboard operation: arrows cycle the reference stock, Enter
   // confirms it as the center, and D/C/M/H mirror the global shortcuts. This
   // gives the focused canvas itself a direct keyboard path independent of the
@@ -225,14 +232,17 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   if (elements.centerAiDiveBtn) {
-    elements.centerAiDiveBtn.addEventListener("click", () => {
+    addManagedListener(elements.centerAiDiveBtn, "click", () => {
       state.openAiDive(state.state.selectedSymbol);
     });
   }
 
   function updateCenterCard(data) {
     const symbol = data.selectedSymbol;
-    const stock = data.stocks.get(symbol);
+    const stock =
+      data.stocks && typeof data.stocks.get === "function"
+        ? data.stocks.get(symbol)
+        : null;
     if (!stock) return;
 
     if (elements.centerSymbol) elements.centerSymbol.textContent = stock.symbol;
@@ -284,19 +294,19 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (elements.searchBtn) {
-    elements.searchBtn.addEventListener("click", () => {
+    addManagedListener(elements.searchBtn, "click", () => {
       accessibilityController.openSearchModal();
     });
   }
 
   if (elements.searchCloseBtn) {
-    elements.searchCloseBtn.addEventListener("click", () => {
+    addManagedListener(elements.searchCloseBtn, "click", () => {
       accessibilityController.closeSearchModal();
     });
   }
 
   if (elements.searchModal) {
-    elements.searchModal.addEventListener("click", (e) => {
+    addManagedListener(elements.searchModal, "click", (e) => {
       if (e.target === elements.searchModal) {
         accessibilityController.closeSearchModal();
       }
@@ -304,7 +314,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (elements.helpModal) {
-    elements.helpModal.addEventListener("click", (e) => {
+    addManagedListener(elements.helpModal, "click", (e) => {
       if (e.target === elements.helpModal) {
         accessibilityController.closeHelpModal();
       }
@@ -312,11 +322,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (elements.searchInput) {
-    elements.searchInput.addEventListener("input", (e) => {
+    addManagedListener(elements.searchInput, "input", (e) => {
       renderSearchResults(e.target.value);
     });
 
-    elements.searchInput.addEventListener("keydown", (e) => {
+    addManagedListener(elements.searchInput, "keydown", (e) => {
       if (e.isComposing || e.keyCode === 229) return;
       const container = elements.searchResults;
       if (!container) return;
@@ -489,8 +499,8 @@ document.addEventListener("DOMContentLoaded", () => {
     item.btn.classList.toggle("active", isCurrent);
     item.btn.setAttribute("aria-pressed", String(isCurrent));
     item.btn.setAttribute("tabindex", isCurrent ? "0" : "-1");
-    item.btn.addEventListener("click", () => switchMarket(item.key));
-    item.btn.addEventListener("keydown", (event) => {
+    addManagedListener(item.btn, "click", () => switchMarket(item.key));
+    addManagedListener(item.btn, "keydown", (event) => {
       if (event.isComposing || event.keyCode === 229) return;
       if (
         [
@@ -523,6 +533,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 10. Data Fetching
   let loadAbortController = null;
+  let loadIsSilent = false;
   let loadRetryTimeout = null;
   let loadGeneration = 0;
 
@@ -542,6 +553,16 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    // Do not let a periodic/visibility silent refresh abort a foreground
+    // initial/user-triggered load (which owns the visible loading overlay).
+    if (
+      silent &&
+      !loadIsSilent &&
+      (loadAbortController !== null || loadRetryTimeout !== null)
+    ) {
+      return;
+    }
+
     const requestGeneration =
       expectedGeneration === null ? loadGeneration + 1 : loadGeneration;
     if (expectedGeneration === null) {
@@ -554,6 +575,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const controller = new AbortController();
     loadAbortController = controller;
+    loadIsSilent = Boolean(silent);
 
     const market = state.state.market;
     const isCurrentRequest = () =>
@@ -567,6 +589,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!silent) setLoading(true);
     if (!silent) hideError();
 
+    let retryingAsync = false;
     try {
       // First try /api/stocks to get rich portfolio & tracked stocks
       const stocksReqInit = { signal: controller.signal };
@@ -594,6 +617,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (data && data.fetching && retryCount < 8) {
         // Data is being fetched in background, poll after 2 seconds
+        retryingAsync = true;
         const retryTimeout = setTimeout(() => {
           if (loadRetryTimeout !== retryTimeout || !isCurrentRequest()) return;
           loadRetryTimeout = null;
@@ -696,6 +720,13 @@ document.addEventListener("DOMContentLoaded", () => {
           showError(`市場データの取得に失敗しました（${reason}）`);
         }
       }
+    } finally {
+      if (!retryingAsync && loadAbortController === controller) {
+        loadAbortController = null;
+      }
+      if (!retryingAsync && loadGeneration === requestGeneration) {
+        setLoading(false);
+      }
     }
   }
 
@@ -741,7 +772,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (elements.retryBtn) {
-    elements.retryBtn.addEventListener("click", () => {
+    addManagedListener(elements.retryBtn, "click", () => {
       loadObservatoryData();
     });
   }
@@ -755,7 +786,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // ガードを再利用して)サイレント再取得する。 hidden 中は何もしない。
   const OBSERVATORY_REFRESH_INTERVAL_MS = 60000;
   let observatoryRefreshTimer = null;
-  let observatoryUnloadHandlers = [];
 
   startObservatoryRefresh();
 
@@ -768,18 +798,30 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function startObservatoryRefresh() {
-    if (typeof document.addEventListener === "function") {
-      observatoryUnloadHandlers.push([
-        document,
-        "visibilitychange",
-        observatoryVisibilityRefresh,
-      ]);
+    if (
+      typeof document.addEventListener === "function" &&
+      !observatoryUnloadHandlers.some(
+        ([t, type, fn]) =>
+          t === document &&
+          type === "visibilitychange" &&
+          fn === observatoryVisibilityRefresh,
+      )
+    ) {
       document.addEventListener(
         "visibilitychange",
         observatoryVisibilityRefresh,
       );
+      observatoryUnloadHandlers.push([
+        document,
+        "visibilitychange",
+        observatoryVisibilityRefresh,
+        undefined,
+      ]);
     }
-    if (typeof window.setInterval === "function") {
+    if (
+      observatoryRefreshTimer === null &&
+      typeof window.setInterval === "function"
+    ) {
       observatoryRefreshTimer = window.setInterval(
         observatoryIntervalRefresh,
         OBSERVATORY_REFRESH_INTERVAL_MS,
@@ -795,16 +837,34 @@ document.addEventListener("DOMContentLoaded", () => {
     observatoryRefreshHandler();
   }
 
-  // Cleanup on unload
-  window.addEventListener("beforeunload", () => {
+  const cleanupObservatoryResources = () => {
     loadGeneration += 1;
     cancelObservatoryLoadRetry();
     if (observatoryRefreshTimer !== null) {
       window.clearInterval(observatoryRefreshTimer);
       observatoryRefreshTimer = null;
     }
-    observatoryUnloadHandlers.forEach(([target, type, fn]) => {
-      target.removeEventListener(type, fn);
+    if (loadAbortController) {
+      loadAbortController.abort();
+      loadAbortController = null;
+    }
+    setLoading(false);
+    renderer.stop?.();
+  };
+
+  // Cleanup on unload
+  window.addEventListener("beforeunload", () => {
+    if (observatoryRefreshTimer !== null) {
+      window.clearInterval(observatoryRefreshTimer);
+      observatoryRefreshTimer = null;
+    }
+    cleanupObservatoryResources();
+    observatoryUnloadHandlers.forEach(([target, type, fn, opts]) => {
+      if (opts !== undefined) {
+        target.removeEventListener(type, fn, opts);
+      } else {
+        target.removeEventListener(type, fn);
+      }
     });
     observatoryUnloadHandlers = [];
     renderer.destroy();
@@ -813,8 +873,14 @@ document.addEventListener("DOMContentLoaded", () => {
     constellationController.destroy();
     aiDiveController.destroy();
     accessibilityController.destroy();
-    if (loadAbortController) {
-      loadAbortController.abort();
-    }
+  });
+
+  window.addEventListener("pagehide", cleanupObservatoryResources);
+  window.addEventListener("pageshow", (event) => {
+    if (!event?.persisted) return;
+    startObservatoryRefresh();
+    renderer.start?.();
+    const hasExisting = (state.state.stockList || []).length > 0;
+    loadObservatoryData(0, null, { silent: hasExisting });
   });
 });

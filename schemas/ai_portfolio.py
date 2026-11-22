@@ -298,8 +298,14 @@ class AIPortfolioCopyToMyRequest(BaseModel):
             if item_dict is None:
                 raise ValueError(f"copy_item_not_object|{idx}")
             raw = item_dict
-            market = str(raw.get("market") or "us").strip().lower()
-            symbol = normalize_symbol_for_market(raw.get("symbol"), market)
+            raw_market = raw.get("market")
+            raw_symbol = raw.get("symbol")
+            if (raw_market is not None and not isinstance(raw_market, str)) or not isinstance(
+                raw_symbol, str
+            ):
+                raise ValueError(f"copy_bad_symbol_market|{idx}")
+            market = (raw_market or "us").strip().lower() or "us"
+            symbol = normalize_symbol_for_market(raw_symbol, market)
             if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
                 raise ValueError(f"copy_bad_symbol_market|{idx}")
             mismatch = market_symbol_mismatch(symbol, market)

@@ -17,6 +17,7 @@ from constants import (
 )
 from error_codes import ErrorCode, get_error_message
 from route_helpers import cleanup_history_circuit_state
+from services.stock.retry import suppress_yfinance_retry_reset
 from services.stock_provider import is_yfinance_rate_limit_error, with_yfinance_retry
 from utils.caching import (
     _set_cached_value,
@@ -92,14 +93,17 @@ def _history_with_timeout(period_value, interval_value, symbol, market=None):
     with app_state.yfinance_short_cache_lock:
         cached_short = app_state.yfinance_short_cache.get(short_cache_key)
     if isinstance(cached_short, pd.DataFrame):
+        suppress_yfinance_retry_reset()
         return cached_short.copy()
 
     if app_state.market.is_yf_rate_limited():
         logger.info("yfinance is currently rate-limited; skipping history fetch symbol=%s", symbol)
+        suppress_yfinance_retry_reset()
         return pd.DataFrame()
 
     if app_state.market.is_circuit_open("yfinance_history", symbol=circuit_key):
         logger.info("stock-history circuit open symbol=%s", circuit_key)
+        suppress_yfinance_retry_reset()
         return pd.DataFrame()
 
     # Acquire semaphore with timeout to protect Web threads from blocking
@@ -117,6 +121,7 @@ def _history_with_timeout(period_value, interval_value, symbol, market=None):
     try:
         t = safe_get_ticker(symbol)
         if not t:
+            suppress_yfinance_retry_reset()
             return pd.DataFrame()
         hist = t.history(
             period=period_value,

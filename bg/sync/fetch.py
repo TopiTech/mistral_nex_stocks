@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import math
 import queue
 from typing import Any
 
@@ -107,11 +108,13 @@ def fetch_stock(
     try:
         period = "3mo" if is_market_open(market) else "1mo"
         hist = pd.DataFrame()
+        hist = None
         try:
             hist = app_state.stock_provider.get_history(symbol, period=period)
         except (
             RequestException,
             ValueError,
+            TypeError,
             KeyError,
             IndexError,
             OSError,
@@ -124,7 +127,7 @@ def fetch_stock(
             if invalid is not None:
                 return invalid
 
-        if hist.empty or "Close" not in hist.columns or len(hist) < 1:
+        if hist is None or hist.empty or "Close" not in hist.columns or len(hist) < 1:
             logger.warning(
                 "No valid history data found for %s after period %s",
                 symbol,
@@ -281,6 +284,7 @@ def fetch_stocks_batch(
             TypeError,
             KeyError,
             OSError,
+            YFTickerMissingError,
             YFRateLimitError,
         ) as exc:
             _handle_yfinance_error(exc, "batch_fetch")
@@ -295,7 +299,7 @@ def fetch_stocks_batch(
                 "yfinance is currently rate-limited. Sourcing cached/stale data for batch fetch."
             )
 
-    if downloaded is None or downloaded.empty:
+    if downloaded is None or getattr(downloaded, "empty", True):
         logger.warning("Batch fetch completely failed or empty. Preserving previous state.")
         return [None] * len(items)
 
@@ -387,6 +391,8 @@ def fetch_stocks_batch(
                 RequestException,
                 ValueError,
                 TypeError,
+                OSError,
+                AttributeError,
                 RuntimeError,
                 YFRateLimitError,
             ) as exc:
@@ -399,6 +405,8 @@ def fetch_stocks_batch(
             results_map[sym_key] = None
 
             def _log_late_failure(f: Any, _sym: str = sym_key[0]) -> None:
+                if f.cancelled():
+                    return
                 try:
                     exc = f.exception()
                 except Exception as log_exc:
@@ -425,22 +433,28 @@ def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None
     try:
         hist = app_state.stock_provider.get_history(symbol, period="1mo")
 
-        if len(hist) < 2:
+        if hist is None or len(hist) < 2:
             return None
 
         last_row = hist.iloc[-1]
         prev_close = hist["Close"].iloc[-2]
 
         price = float(last_row["Close"])
-        change = price - float(prev_close)
-        pct = (change / float(prev_close) * 100) if prev_close else 0.0
+        prev_close_val = float(prev_close)
+        if not math.isfinite(price) or price <= 0 or not math.isfinite(prev_close_val):
+            return None
+        change = price - prev_close_val
+        pct = (change / prev_close_val * 100) if prev_close_val else 0.0
+        price_fmt = _fmt(price)
+        if price_fmt is None or price_fmt <= 0:
+            return None
 
         market_type = "jp" if key == "N225" else "us"
         is_open = is_market_open(market_type)
         market_state = "REGULAR" if is_open else "CLOSED"
 
         return key, {
-            "price": _fmt(price),
+            "price": price_fmt,
             "change": _fmt(change),
             "percent": _fmt(pct),
             "high": _fmt(last_row.get("High")),

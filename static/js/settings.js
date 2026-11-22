@@ -930,9 +930,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (modelStatus) {
           modelStatus.textContent = "✓ モデル設定を保存しました";
-          setTimeout(() => {
-            modelStatus.textContent = "";
-          }, 3000);
+          _scheduleStatusClear(modelStatus);
         }
         const headerBadge = document.querySelector(".model-badge");
         if (headerBadge && data.model_badge) {
@@ -1314,6 +1312,10 @@ document.addEventListener("DOMContentLoaded", () => {
           });
         }
       } catch (err) {
+        if (openaiDiscoveredModels) {
+          openaiDiscoveredModels.textContent = "";
+          openaiDiscoveredModels.style.display = "none";
+        }
         openaiVerifyStatus.className = "verify-status-msg error";
         openaiVerifyStatus.textContent = `✗ ${err.message}`;
         showToast(`接続テスト失敗: ${err.message}`, "#ff7d7d");
@@ -1353,7 +1355,7 @@ document.addEventListener("DOMContentLoaded", () => {
       .then(({ data }) => {
         if (data && data.ok) {
           _currentCredentialsData = data;
-          if (data.custom_ai_prompt) {
+          if (data.custom_ai_prompt && !promptInput.value) {
             promptInput.value = data.custom_ai_prompt;
             updatePromptCounter();
           }
@@ -1438,9 +1440,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (promptStatus) {
           promptStatus.textContent = "✓ 保存しました";
-          setTimeout(() => {
-            promptStatus.textContent = "";
-          }, 3000);
+          _scheduleStatusClear(promptStatus);
         }
       } catch (err) {
         logger.error("Save prompt error:", err);
@@ -1588,9 +1588,7 @@ document.addEventListener("DOMContentLoaded", () => {
             oaKeyInput.placeholder = "設定済み (変更する場合のみ入力)";
           }
         }
-        setTimeout(() => {
-          if (alphaStatus) alphaStatus.textContent = "";
-        }, 3000);
+        if (alphaStatus) _scheduleStatusClear(alphaStatus);
         showToast("設定・APIキーを保存しました", "#10b981");
       } catch (err) {
         logger.error("Save credentials error:", err);
@@ -1711,12 +1709,29 @@ function initSettingsTabs() {
 
 // showToastはutils.jsで定義済み（全ページ共通）
 
-// Cleanup pending timers and in-flight fetch requests on page unload
+const _settingsStatusClearTimers = new Map();
+
+function _scheduleStatusClear(el, delayMs = 3000) {
+  if (!el) return;
+  const prevTimer = _settingsStatusClearTimers.get(el);
+  if (prevTimer) {
+    clearTimeout(prevTimer);
+  }
+  const timerId = setTimeout(() => {
+    if (_settingsStatusClearTimers.get(el) === timerId) {
+      _settingsStatusClearTimers.delete(el);
+    }
+    el.textContent = "";
+  }, delayMs);
+  _settingsStatusClearTimers.set(el, timerId);
+}
+
+// Cleanup pending timers and in-flight fetch requests on page unload/pagehide
 if (
   typeof window !== "undefined" &&
   typeof window.addEventListener === "function"
 ) {
-  window.addEventListener("beforeunload", () => {
+  const cleanupSettingsResources = () => {
     if (stocksLoadRetryTimer) {
       clearTimeout(stocksLoadRetryTimer);
       stocksLoadRetryTimer = null;
@@ -1724,6 +1739,17 @@ if (
     if (stocksLoadAbortController) {
       stocksLoadAbortController.abort();
       stocksLoadAbortController = null;
+    }
+    for (const timerId of _settingsStatusClearTimers.values()) {
+      clearTimeout(timerId);
+    }
+    _settingsStatusClearTimers.clear();
+  };
+  window.addEventListener("beforeunload", cleanupSettingsResources);
+  window.addEventListener("pagehide", cleanupSettingsResources);
+  window.addEventListener("pageshow", (event) => {
+    if (event?.persisted && typeof loadStocks === "function") {
+      void loadStocks();
     }
   });
 }

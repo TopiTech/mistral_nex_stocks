@@ -315,6 +315,7 @@
         );
         if (sItem) {
           sItem.pts_price = ptsPrice;
+          sItem.__live_update = true;
         }
       });
     }
@@ -468,13 +469,17 @@
                   data.previous_close = yfPrevClose;
                 }
 
-                if (validPrice !== null) sItem.price = validPrice;
+                if (validPrice !== null) {
+                  sItem.price = validPrice;
+                  sItem.__live_update = true;
+                }
                 if (
                   data.change != null &&
                   typeof data.change === "number" &&
                   Number.isFinite(data.change)
                 ) {
                   sItem.change = data.change;
+                  sItem.__live_update = true;
                 }
                 if (
                   data.change_percent != null &&
@@ -482,6 +487,7 @@
                   Number.isFinite(data.change_percent)
                 ) {
                   sItem.change_percent = data.change_percent;
+                  sItem.__live_update = true;
                 }
                 if (
                   data.volume != null &&
@@ -490,6 +496,7 @@
                   Number(data.volume) > 0
                 ) {
                   sItem.volume = Number(data.volume);
+                  sItem.__live_update = true;
                 }
               }
             }

@@ -58,7 +58,6 @@ def api_health():
         "is_yfinance_rate_limited": yf_limited,
         "yfinance_rate_limit_until": yf_until,
         "extension_manifest_ok": manifest_ok,
-        "extension_manifest_error": manifest_error,
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -67,6 +66,7 @@ def api_health():
     if not allow_remote and routes.api_system._is_local_request(request):
         origin = request.headers.get("Origin")
         if not origin or is_allowed_trusted_origin(request):
+            health_data["extension_manifest_error"] = manifest_error
             health_data.update(routes.api_system.get_api_credential_state())
 
     return ok_response(health_data)

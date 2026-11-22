@@ -310,19 +310,21 @@ class ScreenerQueryRequest(BaseModel):
     @field_validator("market", mode="before")
     @classmethod
     def _normalize_screener_market(cls, v: Any) -> Any:
-        if v is None or v == "":
+        if v is None:
             return "all"
         if isinstance(v, str):
-            return v.strip().lower()
+            stripped = v.strip().lower()
+            return stripped or "all"
         return v
 
     @field_validator("sector", mode="before")
     @classmethod
     def _normalize_screener_sector(cls, v: Any) -> Any:
-        if v is None or v == "":
+        if v is None:
             return "all"
         if isinstance(v, str):
-            return v.strip()
+            stripped = v.strip()
+            return stripped or "all"
         return v
 
     @field_validator("q", mode="before")
@@ -337,27 +339,32 @@ class ScreenerQueryRequest(BaseModel):
     @field_validator("sort_by", mode="before")
     @classmethod
     def _normalize_screener_sort_by(cls, v: Any) -> Any:
-        if v is None or v == "":
+        if v is None:
             return DEFAULT_SCREENER_SORT_BY
         if isinstance(v, str):
-            return v.strip().lower()
+            stripped = v.strip().lower()
+            return stripped or DEFAULT_SCREENER_SORT_BY
         return v
 
     @field_validator("sort_order", mode="before")
     @classmethod
     def _normalize_screener_sort_order(cls, v: Any) -> Any:
-        if v is None or v == "":
+        if v is None:
             return "desc"
         if isinstance(v, str):
-            return v.strip().lower()
+            stripped = v.strip().lower()
+            return stripped or "desc"
         return v
 
     @field_validator("limit", mode="before")
     @classmethod
     def _normalize_screener_limit(cls, v: Any) -> Any:
-        if v is None or v == "":
+        if v is None:
             return 150
         if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return 150
             try:
                 return int(v.strip())
             except (ValueError, TypeError) as exc:

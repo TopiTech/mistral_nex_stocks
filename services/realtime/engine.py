@@ -814,6 +814,23 @@ class RealtimeMarketEngine:
                         > PTS_CACHE_STALE_SECONDS
                     )
                     if active or cached_payload is None or is_stale:
+                        store_lock = getattr(self, "store_lock", None)
+                        pts_registration = None
+                        if store_lock is not None:
+                            with store_lock:
+                                reg_tokens = getattr(self, "_registration_tokens", None)
+                                reg_token = (
+                                    reg_tokens.get(("jp", sym))
+                                    if isinstance(reg_tokens, dict)
+                                    else None
+                                )
+                                if reg_token is not None:
+                                    pts_registration = (
+                                        "jp",
+                                        sym,
+                                        reg_token,
+                                        getattr(self, "_engine_epoch", 0),
+                                    )
                         fetch_tracker = self._pts_fetch_tracker()
                         if fetch_tracker is not None:
                             fetch_tracker.clear()
@@ -829,7 +846,18 @@ class RealtimeMarketEngine:
                             and self._is_pts_worker_current(my_epoch)
                             and self.yahoojp_scraper._is_symbol_current(sym)
                         ):
-                            self._handle_pts_update(payload)
+                            if pts_registration is not None:
+                                try:
+                                    self._handle_pts_update(
+                                        payload, registration=pts_registration
+                                    )
+                                except TypeError as exc:
+                                    if "registration" not in str(exc):
+                                        raise
+                                    if self._registration_is_current(pts_registration):
+                                        self._handle_pts_update(payload)
+                            else:
+                                self._handle_pts_update(payload)
                         from constants import SCRAPER_REQUEST_STAGGER_SEC
 
                         # Interruptible: a plain sleep keeps stop()/restart()
@@ -1015,15 +1043,15 @@ class RealtimeMarketEngine:
                 if self.pts_thread is not None and not self.pts_thread.is_alive():
                     self.pts_thread = None
                 pts_stopped = self.pts_thread is None
+            try:
+                if bg_executor is not None:
+                    bg_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as exc:
+                logger.debug("Failed shutting down realtime bg executor: %s", exc)
             self.tv_client.stop()
             self.yahoojp_scraper.stop()
             self.yahoojp_scraper.close()
             self.sbi_scraper.close()
             self.nikkei225jp_scraper.close()
             self.minkabu_scraper.close()
-            try:
-                if bg_executor is not None:
-                    bg_executor.shutdown(wait=False, cancel_futures=True)
-            except Exception as exc:
-                logger.debug("Failed shutting down realtime bg executor: %s", exc)
             return pts_stopped

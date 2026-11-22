@@ -503,23 +503,58 @@ _NEXT_DATA_SCRIPT_RE = re.compile(
 )
 
 
+_MAX_PTS_PRICE_DATA_CHARS = 16_384
+
+
 def _extract_pts_price_data(html: str) -> str | None:
     """Extract the balanced JSON object region of ``ptsPriceData`` from a Yahoo JP page."""
     if not html:
         return None
     try:
-        for marker in _PTS_PRICE_DATA_MARKERS:
+        html_len = len(html)
+        for marker_idx, marker in enumerate(_PTS_PRICE_DATA_MARKERS):
+            is_escaped_marker = marker_idx == 0
             for m in marker.finditer(html):
                 start = m.end() - 1
-                depth = 0
-                for i in range(start, len(html)):
+                end_limit = min(html_len, start + _MAX_PTS_PRICE_DATA_CHARS)
+                depth = 1
+                in_string = False
+                i = start + 1
+                while i < end_limit:
                     ch = html[i]
-                    if ch == "{":
-                        depth += 1
-                    elif ch == "}":
-                        depth -= 1
-                        if depth == 0:
-                            return html[start : i + 1]
+                    if is_escaped_marker:
+                        if ch == "\\":
+                            if i + 1 < end_limit:
+                                nxt = html[i + 1]
+                                if nxt == '"':
+                                    in_string = not in_string
+                                i += 2
+                                continue
+                            break
+                        if ch == '"':
+                            # Unescaped quote terminates the enclosing JS string literal.
+                            break
+                    else:
+                        if in_string:
+                            if ch == "\\":
+                                i += 2
+                                continue
+                            if ch == '"':
+                                in_string = False
+                            i += 1
+                            continue
+                        if ch == '"':
+                            in_string = True
+                            i += 1
+                            continue
+                    if not in_string:
+                        if ch == "{":
+                            depth += 1
+                        elif ch == "}":
+                            depth -= 1
+                            if depth == 0:
+                                return html[start : i + 1]
+                    i += 1
     except Exception as exc:
         logger.warning("[Yahoo JP Scraper] Failed extracting ptsPriceData: %s", exc)
     return None

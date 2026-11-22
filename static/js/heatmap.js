@@ -1418,9 +1418,19 @@ document.addEventListener("DOMContentLoaded", () => {
       state.three.renderer.dispose();
       state.three.renderer = null;
     }
+    state.three.isInit = false;
   };
   window.addEventListener("beforeunload", cleanupHeatmapResources);
   window.addEventListener("pagehide", cleanupHeatmapResources);
+  window.addEventListener("pageshow", (event) => {
+    if (!event?.persisted) return;
+    window.addEventListener("resize", _resizeHandler);
+    if (state.viewMode === "3d") {
+      switchViewMode("3d");
+    } else {
+      loadHeatmap();
+    }
+  });
 
   loadHeatmap();
 });

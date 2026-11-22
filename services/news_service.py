@@ -457,21 +457,27 @@ class NewsService:
         jp_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("jp") or "")
         trends_text = NewsFormatter._normalize_mistral_news_lines(news_bundle.get("trends") or "")
 
+        section_texts = {"us": us_text, "jp": jp_text, "trends": trends_text}
+        for sec, txt in list(section_texts.items()):
+            if "解析中..." in txt or "解析エラー" in txt:
+                retrieve_status[sec] = "error"
+                section_texts[sec] = ""
+
         now_iso = datetime.now(UTC).isoformat()
 
         return {
             "us": {
-                "content": us_text,
+                "content": section_texts["us"],
                 "timestamp": now_iso,
                 "status": retrieve_status.get("us", "unknown"),
             },
             "jp": {
-                "content": jp_text,
+                "content": section_texts["jp"],
                 "timestamp": now_iso,
                 "status": retrieve_status.get("jp", "unknown"),
             },
             "trends": {
-                "content": trends_text,
+                "content": section_texts["trends"],
                 "timestamp": now_iso,
                 "status": retrieve_status.get("trends", "unknown"),
             },

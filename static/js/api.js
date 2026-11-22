@@ -610,11 +610,31 @@ function updateIndicesBar(indices) {
   }
 }
 
+const LIVE_QUOTE_FIELDS = [
+  "price",
+  "change",
+  "change_percent",
+  "volume",
+  "previous_close",
+  "pts_price",
+  "pts_change",
+  "pts_change_percent",
+  "pts_time",
+  "high",
+  "low",
+  "open",
+  "is_realtime",
+  "__live_update",
+  "snapshot_ts_ms",
+];
+
 function mergeStocksWithExistingHistory(
   nextData,
   existingData,
   isDiff = false,
+  options = {},
 ) {
+  const preserveLiveQuotes = Boolean(options?.preserveLiveQuotes);
   const chooseHistorySeries = (incomingSeries, prevSeries) => {
     const incoming = Array.isArray(incomingSeries) ? incomingSeries : [];
     const prev = Array.isArray(prevSeries) ? prevSeries : [];
@@ -644,13 +664,21 @@ function mergeStocksWithExistingHistory(
       const prev = prevMap.get(s.symbol) || {};
       const chartData = chooseHistorySeries(s.chart_data, prev.chart_data);
       const ohlcData = chooseHistorySeries(s.ohlc_data, prev.ohlc_data);
-      rowMap.set(s.symbol, {
+      const mergedEntry = {
         ...prev,
         ...s,
         market,
         chart_data: Array.isArray(chartData) ? chartData : [],
         ohlc_data: Array.isArray(ohlcData) ? ohlcData : [],
-      });
+      };
+      if (preserveLiveQuotes && prev.__live_update && !s.__live_update) {
+        for (const field of LIVE_QUOTE_FIELDS) {
+          if (field in prev && prev[field] !== undefined) {
+            mergedEntry[field] = prev[field];
+          }
+        }
+      }
+      rowMap.set(s.symbol, mergedEntry);
     });
     merged[market] = [...rowMap.values()];
   });
@@ -850,7 +878,12 @@ function connectSSE(overrideMode) {
       typeof sseApiClient !== "undefined" && sseApiClient
         ? sseApiClient.sseReconnectAttempt
         : 0;
-    if (sseState.reconnectAttempts > 0 || clientAttempt > 0) {
+    if (
+      sseState.reconnectAttempts > 0 ||
+      clientAttempt > 0 ||
+      sseState.disconnectedSince > 0 ||
+      sseState.fallbackPolling
+    ) {
       sseState.reconnectAttempts = 0;
       if (typeof sseApiClient !== "undefined" && sseApiClient) {
         sseApiClient.sseReconnectAttempt = 0;
@@ -1332,7 +1365,9 @@ async function loadIndicesLoop() {
       // tick. Only the newest request may publish, otherwise an older index
       // payload (and its FX rate) regresses the bar.
       if (generation !== _indicesFetchGeneration) return;
-      updateIndicesBar(data);
+      if (data && !data.fetching) {
+        updateIndicesBar(data);
+      }
     } catch (e) {
       if (generation === _indicesFetchGeneration) {
         $logger.warn("Index fetch error:", e);
@@ -1351,59 +1386,80 @@ function stopLoadIndicesLoop() {
   }
 }
 
+// Declare shared AbortControllers before lifecycle listeners so handlers never
+// hit a temporal dead zone during early unload/pagehide events.
+let activeSearchController = null;
+let bulkAnalyzeAbortController = null;
 let activeNewsRequestController = null;
 let activeAnalyzeAbortController = null;
+const activeSendChatControllers = new Set();
+
+const cleanupApiLifecycleResources = () => {
+  stopLoadIndicesLoop();
+  stopSseFallbackPolling();
+  if (typeof sseState !== "undefined" && sseState) {
+    if (sseState.ticketAbortController) {
+      sseState.ticketAbortController.abort();
+      sseState.ticketAbortController = null;
+    }
+    if (sseState.reconnectTimer) {
+      clearTimeout(sseState.reconnectTimer);
+      sseState.reconnectTimer = null;
+    }
+    sseState.stockEventSource = null;
+  }
+  if (
+    typeof sseApiClient !== "undefined" &&
+    sseApiClient &&
+    typeof sseApiClient.closeSSE === "function"
+  ) {
+    sseApiClient.closeSSE();
+  }
+  if (
+    typeof pollingManager !== "undefined" &&
+    pollingManager &&
+    typeof pollingManager.clearAll === "function"
+  ) {
+    pollingManager.clearAll();
+  }
+  if (activeSearchController) {
+    activeSearchController.abort();
+    activeSearchController = null;
+  }
+  if (activeNewsRequestController) {
+    activeNewsRequestController.abort();
+    activeNewsRequestController = null;
+  }
+  if (activeAnalyzeAbortController) {
+    activeAnalyzeAbortController.abort();
+    activeAnalyzeAbortController = null;
+  }
+  if (bulkAnalyzeAbortController) {
+    bulkAnalyzeAbortController.abort();
+    bulkAnalyzeAbortController = null;
+  }
+  for (const controller of activeSendChatControllers) {
+    controller.abort();
+  }
+  activeSendChatControllers.clear();
+};
 
 if (
   typeof window !== "undefined" &&
   typeof window.addEventListener === "function"
 ) {
-  window.addEventListener("beforeunload", () => {
-    stopLoadIndicesLoop();
-    stopSseFallbackPolling();
-    if (typeof sseState !== "undefined" && sseState) {
-      if (sseState.ticketAbortController) {
-        sseState.ticketAbortController.abort();
-        sseState.ticketAbortController = null;
-      }
-      if (sseState.reconnectTimer) {
-        clearTimeout(sseState.reconnectTimer);
-        sseState.reconnectTimer = null;
-      }
-      sseState.stockEventSource = null;
+  window.addEventListener("beforeunload", cleanupApiLifecycleResources);
+  window.addEventListener("pagehide", cleanupApiLifecycleResources);
+  window.addEventListener("pageshow", (event) => {
+    if (!event?.persisted) return;
+    if (typeof loadIndicesLoop === "function") {
+      loadIndicesLoop();
     }
-    if (
-      typeof sseApiClient !== "undefined" &&
-      sseApiClient &&
-      typeof sseApiClient.closeSSE === "function"
-    ) {
-      sseApiClient.closeSSE();
+    if (typeof fetchInitialStocks === "function") {
+      void fetchInitialStocks();
     }
-    if (
-      typeof pollingManager !== "undefined" &&
-      pollingManager &&
-      typeof pollingManager.clearAll === "function"
-    ) {
-      pollingManager.clearAll();
-    }
-    if (activeSearchController) {
-      activeSearchController.abort();
-      activeSearchController = null;
-    }
-    if (activeNewsRequestController) {
-      activeNewsRequestController.abort();
-      activeNewsRequestController = null;
-    }
-    if (activeAnalyzeAbortController) {
-      activeAnalyzeAbortController.abort();
-      activeAnalyzeAbortController = null;
-    }
-    if (
-      typeof bulkAnalyzeAbortController !== "undefined" &&
-      bulkAnalyzeAbortController
-    ) {
-      bulkAnalyzeAbortController.abort();
-      bulkAnalyzeAbortController = null;
+    if (typeof connectSSE === "function") {
+      connectSSE();
     }
   });
 }
@@ -1970,8 +2026,6 @@ async function loadNews(forceRefresh = false) {
 const forceRefreshNews = async () => {
   if (!state.isLoadingNews) await loadNews(true);
 };
-
-let activeSearchController = null;
 
 async function searchStocks() {
   const input = document.getElementById("searchInput");
@@ -2595,7 +2649,20 @@ async function sendChat(wrapper, inputEl = null) {
     resolvedMarket = isJp ? "jp" : "us";
   }
 
+  let chatController = null;
   try {
+    chatController =
+      typeof AbortController === "function" ? new AbortController() : null;
+    if (
+      chatController &&
+      typeof activeSendChatControllers !== "undefined" &&
+      activeSendChatControllers
+    ) {
+      activeSendChatControllers.add(chatController);
+    }
+    const signalOptions = chatController
+      ? { signal: chatController.signal }
+      : {};
     // Build the payload inside the try: createRequestToken() deliberately
     // throws when Web Crypto is unavailable, and doing it before the
     // try/finally left the input and send button permanently disabled.
@@ -2608,22 +2675,37 @@ async function sendChat(wrapper, inputEl = null) {
     // C-2: ストリーミングを試み、失敗/非対応時は従来のポーリングへフォールバック。
     let reply;
     try {
-      reply = await streamChatReply(payload, (partial) => {
-        aiDiv.textContent = partial;
-        log.scrollTop = log.scrollHeight;
-      });
+      reply = await streamChatReply(
+        payload,
+        (partial) => {
+          aiDiv.textContent = partial;
+          log.scrollTop = log.scrollHeight;
+        },
+        signalOptions,
+      );
     } catch (streamErr) {
       if (!streamErr || !streamErr.isStreamFallback) {
         // サーバーからの明示的なHTTP/APIエラーや中断：ポーリングによる二重POSTを行わない。
         throw streamErr;
       }
-      reply = await chatPollingReply(payload);
+      reply = await chatPollingReply(payload, signalOptions);
     }
     aiDiv.textContent = reply || "応答を取得できませんでした";
   } catch (e) {
-    aiDiv.textContent = "通信エラーが発生しました";
-    showToast("❌ チャット通信エラー: " + e.message, "#ff7d7d");
+    if (e?.name === "AbortError") {
+      aiDiv.textContent = "送信を中断しました";
+    } else {
+      aiDiv.textContent = "通信エラーが発生しました";
+      showToast("❌ チャット通信エラー: " + e.message, "#ff7d7d");
+    }
   } finally {
+    if (
+      chatController &&
+      typeof activeSendChatControllers !== "undefined" &&
+      activeSendChatControllers
+    ) {
+      activeSendChatControllers.delete(chatController);
+    }
     if (input) {
       input.disabled = false;
       const canRestoreFocus =
@@ -3102,7 +3184,6 @@ async function analyzeStock(btnEl, wrapper) {
 }
 
 let bulkAnalyzeCancelled = false;
-let bulkAnalyzeAbortController = null;
 
 async function bulkAnalyzeFavorites() {
   if (state.isAnalyzing || !HAS_MISTRAL_API_KEY) {

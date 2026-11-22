@@ -163,9 +163,13 @@ def get_or_create_master_key() -> str:
         config_store._CONFIG_CACHE["data"] = None
         config_store._CONFIG_CACHE["key"] = None
         cfg = config_store.load_config()
-        if config_store.is_config_corrupted():
+        if (
+            config_store.is_config_corrupted()
+            or getattr(config_store, "_CONFIG_TRANSIENT_READ_FAILED", False)
+            or getattr(type(cfg), "__name__", "") == "_TransientDefaultConfig"
+        ):
             raise RuntimeError(
-                "Refusing to access or generate mns_master_key while configuration is corrupted."
+                "Refusing to access or generate mns_master_key while configuration is corrupted or unreadable."
             )
         if not isinstance(cfg, dict):
             cfg = {}

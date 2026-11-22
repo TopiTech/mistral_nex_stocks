@@ -110,7 +110,13 @@ function verifyRenderHashMatchesRenderedFields() {
 }
 
 function verifyUnchangedFrameIsSuppressed() {
-  const { stockUpdateSignature } = loadSignatureHelpers();
+  const { stockRenderHash, stockUpdateSignature } = loadSignatureHelpers();
+  const uiSource = readFileSync(UI_PATH, "utf8");
+  const updateStockUiSource = extractFunction(
+    uiSource,
+    "updateStockUI",
+    UI_PATH,
+  );
   const frame = {
     price: 100,
     change: 1,
@@ -128,6 +134,52 @@ function verifyUnchangedFrameIsSuppressed() {
     stockUpdateSignature({ ...frame }),
     stockUpdateSignature({ ...frame }),
     "identical frames must share a signature",
+  );
+
+  // Verify the actual UI gate skips DOM lookups/writes on an unchanged frame.
+  let queryCalls = 0;
+  let realtimeStampCalls = 0;
+  let enteredDomUpdate = false;
+  const fakeWrapper = {
+    __stockData: { ...frame },
+    dataset: {
+      stockKey: "us:AAPL",
+      marketContext: "us",
+      lastDataHash: stockRenderHash(frame),
+    },
+    querySelector() {
+      queryCalls += 1;
+      return null;
+    },
+  };
+  const uiSandbox = {
+    stockRenderHash,
+    hasFreshSparklineData() {
+      enteredDomUpdate = true;
+      return false;
+    },
+    stockRealtimeUpdateAt: {
+      set() {
+        realtimeStampCalls += 1;
+      },
+    },
+  };
+  vm.createContext(uiSandbox);
+  vm.runInContext(
+    `${updateStockUiSource}\nglobalThis.__updateStockUI = updateStockUI;`,
+    uiSandbox,
+  );
+  uiSandbox.__updateStockUI(fakeWrapper, { ...frame });
+  assertEqual(queryCalls, 0, "unchanged frame must suppress DOM queries");
+  assertEqual(
+    realtimeStampCalls,
+    0,
+    "unchanged frame must suppress realtime timestamp mutations",
+  );
+  assertEqual(
+    enteredDomUpdate,
+    false,
+    "unchanged frame must return before DOM update work",
   );
 }
 

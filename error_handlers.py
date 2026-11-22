@@ -9,9 +9,11 @@ Usage:
     raise AppError("Invalid input", status_code=400, error_code="INVALID_INPUT")
 """
 
+import re
 from typing import Any
 
 from flask import Flask, current_app
+from flask_wtf.csrf import CSRFError
 from werkzeug.exceptions import HTTPException
 
 
@@ -64,6 +66,25 @@ def register_error_handlers(app: Flask) -> None:
             status_code=error.status_code,
             error_code=error.error_code,
             details=error.details,
+        )
+
+    @app.errorhandler(CSRFError)
+    def csrf_error(error: CSRFError):
+        # Preserve the CSRF failure phrase so frontend auto-refresh
+        # (isCsrfRejection in static/js/utils.js) can distinguish CSRF
+        # rejections from generic 400 BadRequest validation errors.
+        desc = str(getattr(error, "description", "") or "").strip()
+        if desc and re.search(r"csrf token", desc, re.IGNORECASE):
+            reason = desc
+        elif desc:
+            reason = f"CSRF token validation failed: {desc}"
+        else:
+            reason = "The CSRF token is missing or invalid."
+        return _build_error_response(
+            message="Bad Request",
+            status_code=400,
+            error_code=ErrorCode.BAD_REQUEST,
+            details={"reason": reason},
         )
 
     @app.errorhandler(400)

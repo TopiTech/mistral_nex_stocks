@@ -21,23 +21,42 @@
 
     bindEvents() {
       if (this.els.toggleBtn) {
-        this.els.toggleBtn.addEventListener("click", () => {
+        this._onToggleClick = () => {
           this.state.toggleConnectMode();
-        });
+        };
+        this.els.toggleBtn.addEventListener("click", this._onToggleClick);
       }
 
       if (this.els.closeBtn) {
-        this.els.closeBtn.addEventListener("click", () => {
+        this._onCloseClick = () => {
           this.clearAiComparisonResult();
           this.state.clearConnectedSymbols();
           this.state.toggleConnectMode(false);
-        });
+        };
+        this.els.closeBtn.addEventListener("click", this._onCloseClick);
       }
 
       if (this.els.aiCompareBtn) {
-        this.els.aiCompareBtn.addEventListener("click", () => {
+        this._onAiCompareClick = () => {
           this.runAiComparison();
-        });
+        };
+        this.els.aiCompareBtn.addEventListener("click", this._onAiCompareClick);
+      }
+    }
+
+    _hideComparisonChart() {
+      const wrapper =
+        this.els.chartWrapper ||
+        document.getElementById("constellation-chart-wrapper");
+      const canvas =
+        this.els.chartCanvas ||
+        document.getElementById("constellation-chart-canvas");
+      if (wrapper) {
+        wrapper.classList.add("hidden");
+      }
+      if (canvas && typeof canvas.getContext === "function") {
+        const ctx = canvas.getContext("2d");
+        ctx?.clearRect(0, 0, canvas.width, canvas.height);
       }
     }
 
@@ -77,6 +96,21 @@
         this._unsubState();
         this._unsubState = null;
       }
+      if (this.els.toggleBtn && this._onToggleClick) {
+        this.els.toggleBtn.removeEventListener("click", this._onToggleClick);
+        this._onToggleClick = null;
+      }
+      if (this.els.closeBtn && this._onCloseClick) {
+        this.els.closeBtn.removeEventListener("click", this._onCloseClick);
+        this._onCloseClick = null;
+      }
+      if (this.els.aiCompareBtn && this._onAiCompareClick) {
+        this.els.aiCompareBtn.removeEventListener(
+          "click",
+          this._onAiCompareClick,
+        );
+        this._onAiCompareClick = null;
+      }
       if (this._abortController) {
         this._abortController.abort();
         this._abortController = null;
@@ -98,6 +132,7 @@
 
       if (!isConnect && symbols.length === 0) {
         this.clearAiComparisonResult();
+        this._hideComparisonChart();
         if (drawer.contains(document.activeElement)) {
           if (toggleBtn && typeof toggleBtn.focus === "function") {
             toggleBtn.focus();
@@ -126,6 +161,7 @@
       listContainer.textContent = "";
 
       if (symbols.length === 0) {
+        this._hideComparisonChart();
         const hint = document.createElement("div");
         hint.className = "constellation-hint";
         hint.textContent =
@@ -149,10 +185,13 @@
       thMetric.textContent = "指標";
       headRow.appendChild(thMetric);
 
-      const stockObjs = symbols.map(
-        (sym) =>
-          data.stocks.get(sym) || { symbol: sym, price: 0, changePercent: 0 },
-      );
+      const stockObjs = symbols.map((sym) => {
+        const found =
+          data.stocks && typeof data.stocks.get === "function"
+            ? data.stocks.get(sym)
+            : null;
+        return found || { symbol: sym, price: 0, changePercent: 0 };
+      });
 
       for (const st of stockObjs) {
         const th = document.createElement("th");
@@ -236,11 +275,17 @@
       if (!wrapper || !canvas) return;
 
       if (!symbols || symbols.length < 2) {
-        wrapper.classList.add("hidden");
+        this._hideComparisonChart();
         return;
       }
 
-      const stockObjs = symbols.map((s) => data.stocks.get(s)).filter(Boolean);
+      const stockObjs = symbols
+        .map((s) =>
+          data.stocks && typeof data.stocks.get === "function"
+            ? data.stocks.get(s)
+            : null,
+        )
+        .filter(Boolean);
       const chartColors = ["#6366f1", "#38bdf8", "#f59e0b"];
 
       const ctx = canvas.getContext("2d");

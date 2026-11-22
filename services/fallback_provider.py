@@ -819,6 +819,12 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
             except (ValueError, TypeError, OverflowError):
                 return default
 
+        def _derive_prev_close(cur_price: float, cur_change: float) -> float | None:
+            if not math.isfinite(cur_change):
+                return None
+            candidate = cur_price - cur_change
+            return candidate if math.isfinite(candidate) and candidate > 0 else None
+
         # 1. Index / Forex mapping
         if symbol.startswith("^") or "=" in symbol or symbol in self.INDEX_MAP:
             code = self.INDEX_MAP.get(symbol)
@@ -840,7 +846,7 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
             return {
                 "symbol": symbol,
                 "regularMarketPrice": price,
-                "regularMarketPreviousClose": price - change,
+                "regularMarketPreviousClose": _derive_prev_close(price, change),
                 "regularMarketVolume": 0,
                 "regularMarketOpen": None,
                 "regularMarketDayHigh": None,
@@ -888,7 +894,7 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
         return {
             "symbol": symbol,
             "regularMarketPrice": price,
-            "regularMarketPreviousClose": price - change,
+            "regularMarketPreviousClose": _derive_prev_close(price, change),
             "regularMarketVolume": 0,
             "regularMarketOpen": None,
             "regularMarketDayHigh": None,

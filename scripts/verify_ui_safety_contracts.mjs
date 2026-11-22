@@ -123,6 +123,26 @@ for (const file of listFiles("templates")) {
   }
 }
 
+function stripJsComments(code) {
+  return code
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, "$1");
+}
+
+function extractBalancedFromOffset(source, openBraceOffset) {
+  if (openBraceOffset < 0 || source[openBraceOffset] !== "{") return "";
+  let depth = 0;
+  for (let i = openBraceOffset; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(openBraceOffset, i + 1);
+    }
+  }
+  return "";
+}
+
 // ---------------------------------------------------------------------------
 // 3. `message` listeners validate event.origin.
 // ---------------------------------------------------------------------------
@@ -136,20 +156,28 @@ for (const file of jsFiles) {
     if (!match) return;
     checks += 1;
     const handler = match[1].trim();
-    // Inline handlers are checked in place; a registered function is checked
-    // wherever it is defined (the origin guard lives in its body).
-    let body = lines.slice(index, index + 60).join("\n");
+    let body = "";
     if (/^[A-Za-z_$][\w$]*$/.test(handler)) {
-      const definition = source.match(
-        new RegExp(
-          `(?:const|let|var|function)\\s+${handler}\\b[\\s\\S]{0,2000}`,
-        ),
+      const defMatch = source.match(
+        new RegExp(`(?:const|let|var|function)\\s+${handler}\\b`),
       );
-      body = definition ? definition[0] : body;
+      if (defMatch && defMatch.index !== undefined) {
+        const braceIdx = source.indexOf("{", defMatch.index);
+        body = extractBalancedFromOffset(source, braceIdx);
+      }
+    } else {
+      const lineOffset = lines.slice(0, index).join("\n").length;
+      const braceIdx = source.indexOf("{", lineOffset);
+      body = extractBalancedFromOffset(source, braceIdx);
     }
-    if (!/\borigin\b/.test(body)) {
+    const cleanBody = stripJsComments(body || "");
+    const checksOrigin =
+      /\borigin\b/.test(cleanBody) &&
+      (/(?:!==?|===?)/.test(cleanBody) ||
+        /\.(?:has|includes)\([^)]*\.origin\b/.test(cleanBody));
+    if (!checksOrigin) {
       fail(
-        `${file}:${index + 1}: message listener ${handler} without an origin check`,
+        `${file}:${index + 1}: message listener ${handler} without a verified origin comparison`,
       );
     }
   });
@@ -159,21 +187,27 @@ for (const file of jsFiles) {
 // 4. Extension onMessage handlers reject foreign senders.
 // ---------------------------------------------------------------------------
 for (const file of jsFiles.filter((f) => f.startsWith("chrome_extension/"))) {
-  const lines = read(file).split(/\r?\n/);
+  const source = read(file);
+  const lines = source.split(/\r?\n/);
   lines.forEach((line, index) => {
     if (!/onMessage\.addListener/.test(line)) return;
     checks += 1;
-    const window = lines.slice(index, index + 40).join("\n");
+    const lineOffset = lines.slice(0, index).join("\n").length;
+    const braceIdx = source.indexOf("{", lineOffset);
+    const extracted =
+      extractBalancedFromOffset(source, braceIdx) ||
+      lines.slice(index, index + 60).join("\n");
+    const cleanWindow = stripJsComments(extracted);
     // Require an actual rejection guard, not merely mentions of `sender` and
     // `runtime.id`: a handler that logs sender.id but continues would pass a
     // proximity-only check.
     const comparesSenderId =
       /sender\s*(?:&&\s*sender\s*)?\??\.\s*id\s*!==?\s*chrome\.runtime\.id/.test(
-        window,
+        cleanWindow,
       );
     const rejectsForeignSender =
       /if\s*\([^)]*sender[^)]*\)\s*\{[\s\S]{0,500}?(?:return|sendResponse|safeSendResponse)/.test(
-        window,
+        cleanWindow,
       );
     if (!comparesSenderId || !rejectsForeignSender) {
       fail(

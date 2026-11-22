@@ -208,14 +208,15 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
         logger.debug("Disk cache get failed for %s: %s", symbol, exc)
 
     # Fundamentals keys whose presence marks a "full" (fast+quoteSummary) result.
+    # Exclude keys emitted by YFinanceProvider.get_fast_info() (such as
+    # marketCap) so quote-only fast_info fallbacks cannot satisfy the gate,
+    # poison the 24h disk cache, or suppress subsequent get_info() enrichment.
     _FUNDAMENTAL_KEYS = (
         "trailingPE",
         "dividendYield",
         "sector",
         "industry",
         "targetMeanPrice",
-        "marketCap",
-        "fiftyTwoWeekHigh",
     )
 
     def _is_complete_info(payload: Any) -> bool:
@@ -547,8 +548,12 @@ def _compute_price_metrics(hist, symbol, info=None):
     # Return the RAW previous close (4th element) so callers can surface the
     # true previous close instead of deriving it from rounded price/change
     # (which injects up to 0.005 of rounding error into displayed/realtime
-    # change values).
-    return _fmt(price), _fmt(change), _fmt(pct), prev
+    # change values). Preserve 4 decimals for positive sub-half-cent quotes
+    # so they do not collapse to 0.0.
+    rounded_price = _fmt(price)
+    if rounded_price == 0.0:
+        rounded_price = round(price, 4)
+    return rounded_price, _fmt(change), _fmt(pct), prev
 
 
 def _finite_or_none(value, *, allow_negative=True, decimals=None):

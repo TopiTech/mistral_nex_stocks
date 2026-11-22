@@ -1156,7 +1156,12 @@ def _stream_chat_response(
                         sanitize_upstream_log_message(raw_message) or "Unknown stream error"
                     )
                     with stream_state_lock:
-                        stream_error = RuntimeError(safe_log_message)
+                        if status_code and status_code != 500:
+                            stream_error = ProviderAPIError(
+                                safe_log_message, status_code=status_code
+                            )
+                        else:
+                            stream_error = RuntimeError(safe_log_message)
                     # The provider event is deliberately message+status only;
                     # the HTTP layer never reads or forwards a raw body field.
                     app_logger.warning(
@@ -1393,16 +1398,21 @@ def _chat_error_response(
 
 def _is_cacheable_news_bundle(bundle: Any) -> bool:
     """Return True only if the bundle contains valid (non-error/non-placeholder) news content."""
-    if not isinstance(bundle, dict) or not bundle.get("retrieve_status"):
+    if not isinstance(bundle, dict):
+        return False
+    # Explicitly falsy retrieve_status indicates a failed bundle; omit check when callers omit the key.
+    if "retrieve_status" in bundle and not bundle.get("retrieve_status"):
         return False
     has_valid_content = False
     for market in ("us", "jp", "trends"):
         section = bundle.get(market)
         if isinstance(section, dict):
+            status = str(section.get("status") or "").strip().lower()
             content = str(section.get("content") or "").strip()
-            if content and "解析エラー" not in content and "解析中..." not in content:
+            if "解析エラー" in content or "解析中..." in content:
+                return False
+            if status != "error" and content:
                 has_valid_content = True
-                break
     return has_valid_content
 
 
@@ -1662,14 +1672,13 @@ def api_news():
                 )
                 result_holder["error"] = exc
                 result_holder["step"] = "error"
-                result_holder["message"] = _sanitized_service_error_message(
-                    "ニュース要約の取得に失敗しました", exc
-                )
+                result_holder["message"] = "ニュース要約の取得に失敗しました"
             finally:
                 with news_fetch_lock:
+                    raw_result = result_holder.get("result")
                     cached_payload = (
-                        copy.deepcopy(result_holder.get("result"))
-                        if isinstance(result_holder.get("result"), dict)
+                        copy.deepcopy(raw_result)
+                        if isinstance(raw_result, dict) and _is_cacheable_news_bundle(raw_result)
                         else None
                     )
                     cached_exc = result_holder.get("error")
@@ -2397,7 +2406,10 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
         )
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
-            details={"reason": f"AIサービス通信エラー: {err_msg}", "error_type": err_type},
+            details={
+                "reason": "AIサービスとの通信に失敗しました。ネットワーク環境や接続先設定を確認して再試行してください。",
+                "error_type": err_type,
+            },
             status_code=503,
         )
 
@@ -2406,7 +2418,10 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     )
     return error_response(
         ErrorCode.INTERNAL_SERVER_ERROR,
-        details={"reason": f"AI分析内部エラー: {err_msg}", "error_type": err_type},
+        details={
+            "reason": "AI分析の内部処理中にエラーが発生しました。しばらくしてから再試行してください。",
+            "error_type": err_type,
+        },
         status_code=500,
     )
 

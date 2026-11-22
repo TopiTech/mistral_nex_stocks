@@ -78,6 +78,13 @@ def _sync_legacy_preferences_into_runtime(action: str) -> None:
             logger.debug("Could not remove legacy config after %s: %s", action, rm_exc)
 
 
+class _TransientDefaultConfig(dict):
+    """Sentinel dict subclass marking defaults returned after a transient read failure."""
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _TransientDefaultConfig:
+        return _TransientDefaultConfig({k: copy.deepcopy(v, memo) for k, v in self.items()})
+
+
 def load_config() -> dict[str, Any]:
     """設定ファイルを読み込む。存在しない場合は初期化。
 
@@ -88,11 +95,17 @@ def load_config() -> dict[str, Any]:
     """
     needs_legacy_sync = False
     with config_store._CONFIG_LOCK:
+        if config_store._LEGACY_MERGE_DONE:
+            cached = config_store._CONFIG_CACHE["data"]
+            cache_key = _config_cache_key()
+            if cached is not None and config_store._CONFIG_CACHE["key"] == cache_key:
+                config_store._CONFIG_TRANSIENT_READ_FAILED = False
+                return copy.deepcopy(cached)
         _ensure_runtime_dir()
         # N21-02: crash-killed atomic writes leak their uuid tmp files
         # (config.json.{uuid}.tmp, .bak.{uuid}.tmp, .corrupt.{uuid}.tmp);
         # in-process error paths unlink, so only a hard kill can leak one.
-        # Best-effort sweep here mirrors user_stocks/disk-cache sweepers.
+        # Best-effort sweep runs on cache misses / startup rather than hot cache hits.
         _sweep_stale_tmp_files(config_store.CONFIG_FILE.parent, "config.json.*.tmp")
 
         # One-time, process-lifetime legacy config merge. Performed at most once
@@ -167,9 +180,10 @@ def load_config() -> dict[str, Any]:
                             ):
                                 _sync_legacy_preferences_into_runtime("sync")
                             else:
-                                _remove_stale_legacy_config(
+                                if not _remove_stale_legacy_config(
                                     config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE
-                                )
+                                ):
+                                    sync_done = False
                         except Exception as exc:
                             logger.warning("Failed to sync newer legacy config: %s", exc)
                             sync_done = False
@@ -195,7 +209,7 @@ def load_config() -> dict[str, Any]:
             "create a defaults-only runtime config.",
             config_store.LEGACY_CONFIG_FILE,
         )
-        return copy.deepcopy(config_store.DEFAULT_CONFIG)
+        return _TransientDefaultConfig(copy.deepcopy(config_store.DEFAULT_CONFIG))
 
     # First-run initialization must be serialized with the cross-process
     # update lock, not only the process-local _CONFIG_LOCK. A credential or
@@ -215,15 +229,15 @@ def load_config() -> dict[str, Any]:
                 config_store._CONFIG_CACHE["key"] = (
                     written_key if written_key is not None else _config_cache_key()
                 )
+                config_store._CONFIG_TRANSIENT_READ_FAILED = False
                 return copy.deepcopy(config_store._CONFIG_CACHE["data"])
 
     with config_store._CONFIG_LOCK:
-        _ensure_runtime_dir()
-
         # ファイルのmtime+sizeでキャッシュキーを作り、変更があれば再読込する
         cached = config_store._CONFIG_CACHE["data"]
         cache_key = _config_cache_key()
         if cached is not None and config_store._CONFIG_CACHE["key"] == cache_key:
+            config_store._CONFIG_TRANSIENT_READ_FAILED = False
             return copy.deepcopy(cached)
 
         if config_store.CONFIG_FILE.exists():
@@ -239,6 +253,7 @@ def load_config() -> dict[str, Any]:
             # between that check and this read; do not write DEFAULT_CONFIG
             # here (we hold only _CONFIG_LOCK, not the cross-process update
             # lock). Return the defaults and let the next save recreate it.
+            config_store._CONFIG_TRANSIENT_READ_FAILED = False
             return copy.deepcopy(config_store.DEFAULT_CONFIG)
 
         # Acquire a shared process-level lock before reading the JSON file.
@@ -399,6 +414,8 @@ def load_config() -> dict[str, Any]:
                 read_key = _config_cache_key()
             config_store._CONFIG_CACHE["key"] = read_key
             config_store._CONFIG_CORRUPTED = False
+            config_store._CONFIG_TRANSIENT_READ_FAILED = False
+            config_store._CONFIG_TRANSIENT_READ_FAILED = False
             return copy.deepcopy(cfg)
         except OSError as e:
             # A transient read failure (AV/backup tool holding the file,
@@ -406,13 +423,14 @@ def load_config() -> dict[str, Any]:
             # set the corruption flag, do not create a corrupt backup, and do
             # not negative-cache defaults under the file's stat: any later
             # save could then persist those defaults and drop every secret.
-            # Return defaults for this call only; the next load retries.
+            # Return tagged defaults for this call only; the next load retries.
+            config_store._CONFIG_TRANSIENT_READ_FAILED = True
             logger.warning(
                 "Transient failure reading config %s: %s. Using defaults for this call only.",
                 config_store.CONFIG_FILE,
                 e,
             )
-            return copy.deepcopy(config_store.DEFAULT_CONFIG)
+            return _TransientDefaultConfig(copy.deepcopy(config_store.DEFAULT_CONFIG))
         except (json.JSONDecodeError, TypeError, ValueError, RecursionError) as e:
             # RecursionError: json.load parses arbitrarily deep structures, but
             # the deepcopy of the parsed value (and later sanitize dumps) recurs
@@ -491,7 +509,8 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
         # 保存直前にプロセス内キャッシュを無効化し、次回 load_config で最新を読む
         config_store._CONFIG_CACHE["data"] = None
         config_store._CONFIG_CACHE["key"] = None
-        data = cfg.copy()
+        transient_fallback = isinstance(cfg, _TransientDefaultConfig)
+        data = dict(cfg)
         for k, v in config_store.DEFAULT_CONFIG.items():
             data.setdefault(k, copy.deepcopy(v))
         if not isinstance(data.get("api_credentials"), dict):
@@ -510,8 +529,10 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 "extension_api_token",
                 "extension_api_token_created",
             )
-            missing_protected = any(k not in data for k in protected_keys) or (
-                "api_credentials" not in cfg
+            missing_protected = (
+                transient_fallback
+                or any(k not in data for k in protected_keys)
+                or ("api_credentials" not in cfg)
             )
             last_read_exc: OSError | None = None
             for attempt in range(3):
@@ -571,22 +592,42 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 )
 
             if isinstance(existing_data, dict):
-                for protected_key in protected_keys:
-                    if protected_key not in data and protected_key in existing_data:
-                        data[protected_key] = copy.deepcopy(existing_data[protected_key])
-                # ``DEFAULT_CONFIG`` supplies an empty api_credentials dict,
-                # so a caller that saves only preferences (without loading
-                # first) would otherwise overwrite every stored API key with
-                # {}. Preserve the existing credentials only when the
-                # caller OMITS the key; an explicit {} still clears them
-                # (clear_api_credentials relies on that contract).
-                existing_credentials = existing_data.get("api_credentials")
-                if (
-                    "api_credentials" not in cfg
-                    and isinstance(existing_credentials, dict)
-                    and existing_credentials
-                ):
-                    data["api_credentials"] = copy.deepcopy(existing_credentials)
+                if transient_fallback:
+                    merged_data = copy.deepcopy(existing_data)
+                    for k, v in data.items():
+                        if k in protected_keys:
+                            continue
+                        if k == "api_credentials":
+                            existing_creds = existing_data.get("api_credentials")
+                            if isinstance(v, dict) and v:
+                                merged_creds = (
+                                    copy.deepcopy(existing_creds)
+                                    if isinstance(existing_creds, dict)
+                                    else {}
+                                )
+                                merged_creds.update(copy.deepcopy(v))
+                                merged_data["api_credentials"] = merged_creds
+                            continue
+                        if v != config_store.DEFAULT_CONFIG.get(k):
+                            merged_data[k] = copy.deepcopy(v)
+                    data = merged_data
+                else:
+                    for protected_key in protected_keys:
+                        if protected_key not in data and protected_key in existing_data:
+                            data[protected_key] = copy.deepcopy(existing_data[protected_key])
+                    # ``DEFAULT_CONFIG`` supplies an empty api_credentials dict,
+                    # so a caller that saves only preferences (without loading
+                    # first) would otherwise overwrite every stored API key with
+                    # {}. Preserve the existing credentials only when the
+                    # caller OMITS the key; an explicit {} still clears them
+                    # (clear_api_credentials relies on that contract).
+                    existing_credentials = existing_data.get("api_credentials")
+                    if (
+                        "api_credentials" not in cfg
+                        and isinstance(existing_credentials, dict)
+                        and existing_credentials
+                    ):
+                        data["api_credentials"] = copy.deepcopy(existing_credentials)
 
         # 既存の設定があれば、秘密情報を除いたバックアップを作成 (.bak)
         if create_backup and isinstance(existing_data, dict):
@@ -704,12 +745,10 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                         raise
                     break  # 成功
                 except (OSError, TypeError, RuntimeError) as exc:
-                    if isinstance(exc, RuntimeError):
-                        # Fail-fast contract (see _write_and_replace_with_msvcrt_lock):
-                        # RuntimeError means the update lock could not be
-                        # acquired after its own bounded retry budget —
-                        # re-spinning here would hold config_update_lock for
-                        # another ~30s and block every config transaction.
+                    if isinstance(exc, (RuntimeError, TypeError)):
+                        # Fail-fast contract: RuntimeError means the update lock
+                        # could not be acquired; TypeError means the payload is
+                        # deterministically non-JSON-serializable.
                         raise
                     logger.warning(
                         "Error during config save (attempt %d/%d): %s. Retrying...",
@@ -734,6 +773,7 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 except Exception as exc:
                     logger.warning("Failed to set config file permissions: %s", exc)
             config_store._CONFIG_CORRUPTED = False
+            config_store._CONFIG_TRANSIENT_READ_FAILED = False
         finally:
             if tmp_file.exists():
                 try:

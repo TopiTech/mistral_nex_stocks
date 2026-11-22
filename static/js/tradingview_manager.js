@@ -618,18 +618,20 @@
      * @param {string|HTMLElement} container
      */
     clearContainer(container) {
-      _tickerTapeGeneration++;
       const el =
         typeof container === "string"
           ? document.getElementById(container)
           : container;
-      // チャート用コンテナのクリア時に進行中の非同期ウィジェット生成も無効化する。
-      if (
+      const isChartContainer = Boolean(
         el &&
         (el === activeMessageHandlerOwner ||
-          (typeof el.id === "string" && el.id.includes("chart")))
-      ) {
+          (typeof el.id === "string" && el.id.includes("chart"))),
+      );
+      if (isChartContainer) {
+        // チャート用コンテナのクリア時に進行中の非同期ウィジェット生成も無効化する。
         _chartGeneration++;
+      } else {
+        _tickerTapeGeneration++;
       }
       // メッセージハンドラは「チャート用コンテナ」の所有物。テープ用
       // コンテナのクリアではチャートのハンドラを解除しない(所有コンテナと
@@ -904,7 +906,7 @@
           if (!trustedOrigins.has(event.origin)) return;
           const widgetFrame = container?.querySelector("iframe");
           if (
-            widgetFrame?.contentWindow &&
+            !widgetFrame?.contentWindow ||
             event.source !== widgetFrame.contentWindow
           ) {
             return;

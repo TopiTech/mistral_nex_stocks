@@ -147,8 +147,6 @@ def create_app(config_override: dict | None = None, skip_bootstrap: bool = False
     # -- Static file cache buster --
     _configure_static_cache_buster(app)
 
-    # -- Python version check --
-
     # -- Logging --
     init_logging(app)
 

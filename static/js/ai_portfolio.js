@@ -1058,11 +1058,26 @@
         // GET /api/stocks intentionally omits portfolio fields. Refresh the
         // regular market list first, then restore holdings from the protected
         // snapshot endpoint so the active portfolio tab updates immediately.
-        if (typeof fetchInitialStocks === "function") {
-          await fetchInitialStocks();
-        }
-        if (typeof loadPortfolioSnapshot === "function") {
-          await loadPortfolioSnapshot();
+        // Keep refresh failures separate so a completed server save does not
+        // display a misleading "reflect failed" failure state.
+        try {
+          if (typeof fetchInitialStocks === "function") {
+            await fetchInitialStocks();
+          }
+          if (typeof loadPortfolioSnapshot === "function") {
+            await loadPortfolioSnapshot();
+          }
+        } catch (refreshErr) {
+          console.warn(
+            "copyAiPortfolioToMy post-save refresh failed:",
+            refreshErr,
+          );
+          if (typeof showToast === "function") {
+            showToast(
+              "⚠️ 反映は完了しましたが、一覧の再読み込みに失敗しました",
+              "#ffd166",
+            );
+          }
         }
       } else {
         throw new Error(

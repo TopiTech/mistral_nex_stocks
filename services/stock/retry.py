@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from collections.abc import Callable
 from functools import wraps
@@ -35,6 +36,17 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 _cached_app_state: Any = None
 _cached_backoff_base: Any = None
+_RETRY_RESET_STATE = threading.local()
+
+
+def suppress_yfinance_retry_reset() -> None:
+    """Mark the current retry attempt as a non-network/skipped return.
+
+    Cache hits, circuit-open skips, rate-limit skips, and missing tickers do
+    not reach Yahoo Finance, so returning early must not clear active 401/429
+    cooldown state inside ``@with_yfinance_retry``.
+    """
+    _RETRY_RESET_STATE.suppressed = True
 
 
 def _get_app_state_cached():
@@ -155,6 +167,7 @@ def with_yfinance_retry(
             rate_limit_recorded = False
             for attempt in range(max_retries + 1):
                 try:
+                    _RETRY_RESET_STATE.suppressed = False
                     already_rate_limited = initial_rate_limited
                     if not m_state and self_obj and hasattr(self_obj, "_get_market_state"):
                         try:
@@ -167,6 +180,8 @@ def with_yfinance_retry(
                             m_state = getattr(app_state_ref, "market", None)
 
                     res = f(*args, **kwargs)
+                    if getattr(_RETRY_RESET_STATE, "suppressed", False):
+                        return res
                     # Reset rate limit state on successful yfinance request only if not currently rate-limited
                     is_currently_rate_limited = False
                     if m_state:

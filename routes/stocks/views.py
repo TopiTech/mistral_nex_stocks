@@ -651,6 +651,23 @@ def api_reset_stocks() -> Any:
         app_state.market.target_stocks_cache = {"us": [], "jp": [], "idx": []}
         app_state.market.current_indices_cache = {}
         app_state.market.target_indices_cache = {}
+        mark_fn = getattr(app_state.market, "mark_watchlist_removed", None)
+        clear_fn = getattr(app_state.market, "clear_watchlist_removed", None)
+        for market, previous in (
+            ("us", previous_us),
+            ("jp", previous_jp),
+            ("idx", previous_idx),
+        ):
+            defaults = _common._default_stock_names(market)
+            if callable(mark_fn):
+                for symbol in previous:
+                    if not any(
+                        alias in defaults for alias in _stored_symbol_aliases(symbol, market)
+                    ):
+                        mark_fn(symbol, market)
+            if callable(clear_fn):
+                for default_sym in defaults:
+                    clear_fn(default_sym, market)
     for market, previous in (
         ("us", previous_us),
         ("jp", previous_jp),
@@ -737,6 +754,14 @@ def api_heatmap() -> Any:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
                 app_state.heatmap_fetch_start_times.pop(cache_key, None)
             logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
+            if not disk_cached:
+                return error_response(
+                    ErrorCode.API_SERVICE_ERROR,
+                    details={
+                        "reason": "ヒートマップ取得の開始に失敗しました。しばらくしてから再試行してください。"
+                    },
+                    status_code=503,
+                )
 
     if disk_cached and isinstance(disk_cached, dict) and disk_cached.get("stocks"):
         return ok_response(disk_cached)

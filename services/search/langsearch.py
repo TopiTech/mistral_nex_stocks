@@ -207,6 +207,10 @@ class _StopBeforeSharedLangSearchDeadline(stop_base):
 _STOP_BEFORE_SHARED_LANGSEARCH_DEADLINE = _StopBeforeSharedLangSearchDeadline()
 
 
+class _LangSearchCircuitOpenError(requests.HTTPError):
+    """Sentinel HTTPError when the LangSearch circuit opens mid-retry."""
+
+
 @retry(
     retry=retry_if_exception(_langsearch_request_retryable),
     # Bound one logical HTTP operation, not just each requests timeout. This
@@ -225,7 +229,7 @@ def _langsearch_post_json_attempt(endpoint, payload, headers, deadline: float):
     """One retryable LangSearch attempt within a bounded operation deadline."""
     if app_state.market.is_circuit_open("langsearch"):
         logger.warning("LangSearch circuit is OPEN. Skipping API call.")
-        raise requests.HTTPError("LangSearch circuit is OPEN", response=None)
+        raise _LangSearchCircuitOpenError("LangSearch circuit is OPEN", response=None)
 
     try:
         _langsearch_acquire_slot(deadline)
@@ -254,33 +258,22 @@ def _langsearch_post_json_attempt(endpoint, payload, headers, deadline: float):
             # header source); the helper accepts either shape.
             retry_after = parse_retry_after(exc)
             _langsearch_mark_retry_after_429(retry_after)
-        elif status_code is None or status_code >= 500:
-            app_state.market.report_circuit_result(
-                "langsearch", success=False, threshold=3, open_sec=60
-            )
 
-        raise
-    except (requests.Timeout, requests.ConnectionError):
-        app_state.market.report_circuit_result(
-            "langsearch", success=False, threshold=3, open_sec=60
-        )
         raise
 
 
 def _langsearch_post_json(endpoint, payload, headers):
     """Run a bounded LangSearch operation with retry and circuit protection."""
-    if app_state.market.is_circuit_open("langsearch"):
-        logger.warning("LangSearch circuit is OPEN. Skipping API call.")
-        raise requests.HTTPError("LangSearch circuit is OPEN", response=None)
-
-    circuit_probe_claimed = False
-    circuit_state = app_state.market.get_circuit_state("langsearch")
-    if circuit_state.get("status") == "HALF_OPEN":
-        if not app_state.market.try_claim_circuit_probe("langsearch"):
+    allowed, circuit_probe_claimed, deny_reason = app_state.market.enter_circuit_call(
+        "langsearch"
+    )
+    if not allowed:
+        if deny_reason == "busy":
             # A HALF_OPEN circuit already has a live recovery probe. Do not
             # send concurrent probes; callers degrade to their next provider.
             raise RuntimeError("LangSearch circuit recovery probe already in progress")
-        circuit_probe_claimed = True
+        logger.warning("LangSearch circuit is OPEN. Skipping API call.")
+        raise requests.HTTPError("LangSearch circuit is OPEN", response=None)
 
     deadline = _LANGSEARCH_SHARED_DEADLINE.get()
     deadline_token = None
@@ -290,7 +283,27 @@ def _langsearch_post_json(endpoint, payload, headers):
     try:
         if deadline <= time.monotonic():
             raise RuntimeError("LangSearch operation deadline exceeded")
-        return _langsearch_post_json_attempt(endpoint, payload, headers, deadline)
+        try:
+            result = _langsearch_post_json_attempt(endpoint, payload, headers, deadline)
+            circuit_probe_claimed = False
+            return result
+        except _LangSearchCircuitOpenError:
+            raise
+        except requests.HTTPError as exc:
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+            if status_code is None or status_code >= 500:
+                app_state.market.report_circuit_result(
+                    "langsearch", success=False, threshold=3, open_sec=60
+                )
+                circuit_probe_claimed = False
+            raise
+        except (requests.Timeout, requests.ConnectionError):
+            app_state.market.report_circuit_result(
+                "langsearch", success=False, threshold=3, open_sec=60
+            )
+            circuit_probe_claimed = False
+            raise
     finally:
         if deadline_token is not None:
             _LANGSEARCH_SHARED_DEADLINE.reset(deadline_token)

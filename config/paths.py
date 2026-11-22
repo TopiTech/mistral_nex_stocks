@@ -11,26 +11,30 @@ import config_store
 logger = logging.getLogger("config_store")
 
 
-def _get_runtime_data_dir() -> Path:
+def _get_runtime_data_dir(is_windows: bool | None = None) -> Path:
     """Return the per-user runtime data directory.
 
     Runtime state should live outside the source tree so that config and stock
     data are not accidentally copied, committed, or bundled with the repo.
     """
-    override = os.environ.get("MNS_DATA_DIR") or os.environ.get("MNS_APP_DATA_DIR")
+    override = os.environ.get("MNS_DATA_DIR", "").strip() or os.environ.get("MNS_APP_DATA_DIR", "").strip()
     if override:
         return Path(override).expanduser()
 
-    if os.name == "nt":
-        root = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    win = os.name == "nt" if is_windows is None else bool(is_windows)
+    if win:
+        root = os.environ.get("LOCALAPPDATA", "").strip() or os.environ.get("APPDATA", "").strip()
         if root:
             return Path(root) / "MistralNeXStocks"
         return Path(__file__).resolve().parent.parent / ".data"
 
-    xdg_data = os.environ.get("XDG_DATA_HOME")
+    xdg_data = os.environ.get("XDG_DATA_HOME", "").strip()
     if xdg_data:
         return Path(xdg_data).expanduser() / "mistral_nex_stocks"
-    return Path.home() / ".local" / "share" / "mistral_nex_stocks"
+    try:
+        return Path.home() / ".local" / "share" / "mistral_nex_stocks"
+    except RuntimeError:
+        return Path(__file__).resolve().parent.parent / ".data"
 
 
 def _ensure_runtime_dir() -> None:
@@ -45,7 +49,7 @@ def _ensure_runtime_dir() -> None:
     # tightened explicitly; otherwise a fresh install keeps the process umask
     # (typically 0o755).
     config_store.APP_DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if os.name != "nt":
+    if not config_store._is_windows():
         try:
             os.chmod(config_store.APP_DATA_DIR, 0o700)
         except OSError as exc:

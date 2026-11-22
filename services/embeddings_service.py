@@ -55,6 +55,8 @@ def get_mistral_embeddings_batch(
     )
     from schemas.config import normalize_openai_base_url_for_compare
 
+    if not isinstance(texts, (list, tuple)):
+        return []
     if (
         not texts
         or not api_key
@@ -90,7 +92,7 @@ def get_mistral_embeddings_batch(
             clean = raw_text.strip()[:4000]
             chash = _compute_text_hash(clean, namespace=emb_namespace)
             if chash in _EMBEDDINGS_CACHE:
-                results[idx] = _EMBEDDINGS_CACHE[chash]
+                results[idx] = list(_EMBEDDINGS_CACHE[chash])
             else:
                 uncached_indices.append(idx)
                 uncached_texts.append(clean)
@@ -129,8 +131,9 @@ def get_mistral_embeddings_batch(
                 if emb and isinstance(emb, list) and data_idx < len(uncached_indices):
                     target_orig_idx = uncached_indices[data_idx]
                     target_hash = uncached_hashes[data_idx]
-                    results[target_orig_idx] = emb
-                    _EMBEDDINGS_CACHE[target_hash] = emb
+                    emb_copy = list(emb)
+                    results[target_orig_idx] = list(emb_copy)
+                    _EMBEDDINGS_CACHE[target_hash] = emb_copy
         return results
 
     circuit_st = app_state.market.get_circuit_state("mistral")
@@ -205,8 +208,9 @@ def get_mistral_embeddings_batch(
                         if emb and isinstance(emb, list):
                             target_orig_idx = chunk_indices[resolved_idx]
                             target_hash = chunk_hashes[resolved_idx]
-                            results[target_orig_idx] = emb
-                            _EMBEDDINGS_CACHE[target_hash] = emb
+                            emb_copy = list(emb)
+                            results[target_orig_idx] = list(emb_copy)
+                            _EMBEDDINGS_CACHE[target_hash] = emb_copy
 
             usage = _extract_mistral_usage_dict(getattr(resp, "usage", None))
             if usage:
@@ -240,7 +244,9 @@ def get_mistral_embeddings_batch(
                 break
             elif (
                 status_code >= 500
+                or isinstance(exc, TimeoutError)
                 or "timeout" in str(exc).lower()
+                or "timed out" in str(exc).lower()
                 or "connection" in str(exc).lower()
             ):
                 app_state.market.report_circuit_result(

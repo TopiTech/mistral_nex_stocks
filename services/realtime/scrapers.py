@@ -865,6 +865,17 @@ class YahooJPRealtimeScraper:
             self._last_dispatch_price[symbol] = price_f
         return prev is None or prev != price_f
 
+    @staticmethod
+    def _parse_positive_kabuka(raw_text: str) -> float:
+        price_clean = re.sub(r"[^\d.]", "", raw_text or "")
+        if not price_clean:
+            return 0.0
+        try:
+            val = float(price_clean)
+        except ValueError:
+            return 0.0
+        return val if math.isfinite(val) and val > 0 else 0.0
+
     def _fetch_kabutan_symbol(self, symbol: str) -> TickerPayload | None:
         if _is_scraper_blocked():
             return None
@@ -881,8 +892,7 @@ class YahooJPRealtimeScraper:
                     soup = BeautifulSoup(decode_http_response_text(resp), "html.parser")
                     price_el = soup.select_one(".si_i1_2 span.kabuka") or soup.select_one("span.kabuka")
                     if price_el:
-                        price_clean = re.sub(r"[^\d.]", "", price_el.text)
-                        price = float(price_clean) if price_clean else 0.0
+                        price = self._parse_positive_kabuka(price_el.text)
                         if price > 0:
                             change = 0.0
                             pct = 0.0
@@ -958,25 +968,23 @@ class YahooJPRealtimeScraper:
                     if pts_box:
                         pts_val_el = pts_box.select_one(".kabuka2")
                         if pts_val_el:
-                            pts_clean = re.sub(r"[^\d.]", "", pts_val_el.text)
-                            if pts_clean:
-                                price = float(pts_clean)
-                                if price > 0:
-                                    pts_time_el = pts_box.select_one(".kabuka3")
-                                    pts_time = pts_time_el.text.strip() if pts_time_el else ""
-                                    res_payload: TickerPayload = {
-                                        "symbol": f"{clean_code}.T",
-                                        "price": price,
-                                        "change": 0.0,
-                                        "change_percent": 0.0,
-                                        "source": "kabutan_pts",
-                                        "pts": True,
-                                        "pts_trading": True,
-                                        "pts_time": pts_time,
-                                        "updated_at": time.time(),
-                                    }
-                                    self._record_fetch_success(symbol, kind="pts")
-                                    return res_payload
+                            price = self._parse_positive_kabuka(pts_val_el.text)
+                            if price > 0:
+                                pts_time_el = pts_box.select_one(".kabuka3")
+                                pts_time = pts_time_el.text.strip() if pts_time_el else ""
+                                res_payload: TickerPayload = {
+                                    "symbol": f"{clean_code}.T",
+                                    "price": price,
+                                    "change": 0.0,
+                                    "change_percent": 0.0,
+                                    "source": "kabutan_pts",
+                                    "pts": True,
+                                    "pts_trading": True,
+                                    "pts_time": pts_time,
+                                    "updated_at": time.time(),
+                                }
+                                self._record_fetch_success(symbol, kind="pts")
+                                return res_payload
                 except Exception as exc:
                     logger.warning("[Kabutan PTS Scraper] HTML parsing error for %s: %s", symbol, exc)
         except Exception as e:

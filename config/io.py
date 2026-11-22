@@ -415,7 +415,6 @@ def load_config() -> dict[str, Any]:
             config_store._CONFIG_CACHE["key"] = read_key
             config_store._CONFIG_CORRUPTED = False
             config_store._CONFIG_TRANSIENT_READ_FAILED = False
-            config_store._CONFIG_TRANSIENT_READ_FAILED = False
             return copy.deepcopy(cfg)
         except OSError as e:
             # A transient read failure (AV/backup tool holding the file,

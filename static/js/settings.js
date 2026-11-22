@@ -1310,6 +1310,9 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             openaiDiscoveredModels.appendChild(chip);
           });
+        } else if (openaiDiscoveredModels) {
+          openaiDiscoveredModels.textContent = "";
+          openaiDiscoveredModels.style.display = "none";
         }
       } catch (err) {
         if (openaiDiscoveredModels) {

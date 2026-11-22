@@ -41,6 +41,48 @@ def _get_nth_weekday_of_month(year: int, month: int, weekday: int, n: int) -> in
     return 1 + offset + (n - 1) * 7
 
 
+def _is_us_dst(utc_dt: datetime) -> bool:
+    """Check whether a UTC datetime falls within US Daylight Saving Time (EDT).
+
+    Under US rules since 2007:
+    - Starts: second Sunday in March at 02:00 local (07:00 UTC)
+    - Ends: first Sunday in November at 02:00 local (06:00 UTC)
+    """
+    year = utc_dt.year
+    start_day = _get_nth_weekday_of_month(year, 3, 6, 2)  # weekday 6 = Sunday
+    end_day = _get_nth_weekday_of_month(year, 11, 6, 1)
+    dst_start = datetime(year, 3, start_day, 7, 0, tzinfo=UTC)
+    dst_end = datetime(year, 11, end_day, 6, 0, tzinfo=UTC)
+    return dst_start <= utc_dt < dst_end
+
+
+def _to_ny_datetime(dt: datetime | None = None) -> datetime:
+    """Convert datetime to New York time with accurate DST fallback."""
+    if dt is None:
+        dt = datetime.now(UTC)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    try:
+        return dt.astimezone(ZoneInfo("America/New_York"))
+    except Exception:
+        dt_utc = dt.astimezone(UTC)
+        offset_hours = -4 if _is_us_dst(dt_utc) else -5
+        return (dt_utc + timedelta(hours=offset_hours)).replace(tzinfo=None)
+
+
+def _to_jst_datetime(dt: datetime | None = None) -> datetime:
+    """Convert datetime to Japan Standard Time with fallback."""
+    if dt is None:
+        dt = datetime.now(UTC)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    try:
+        return dt.astimezone(ZoneInfo("Asia/Tokyo"))
+    except Exception:
+        dt_utc = dt.astimezone(UTC)
+        return (dt_utc + timedelta(hours=9)).replace(tzinfo=None)
+
+
 def is_jp_market_holiday(target_date: Any = None) -> bool:
     """Determine whether the specified date is a Japanese stock exchange holiday (JPX).
 
@@ -50,15 +92,9 @@ def is_jp_market_holiday(target_date: Any = None) -> bool:
     - Citizen's Holidays (国民の休日)
     """
     if target_date is None:
-        try:
-            target_date = datetime.now(ZoneInfo("Asia/Tokyo")).date()
-        except Exception:
-            target_date = (datetime.now(UTC) + timedelta(hours=9)).date()
+        target_date = _to_jst_datetime().date()
     elif hasattr(target_date, "astimezone"):
-        try:
-            target_date = target_date.astimezone(ZoneInfo("Asia/Tokyo")).date()
-        except Exception:
-            target_date = target_date.date()
+        target_date = _to_jst_datetime(target_date).date()
     elif hasattr(target_date, "date") and callable(target_date.date):
         target_date = target_date.date()
 
@@ -175,15 +211,9 @@ def is_us_market_holiday(target_date: Any = None) -> bool:
     ``is_market_open``.
     """
     if target_date is None:
-        try:
-            target_date = datetime.now(ZoneInfo("America/New_York")).date()
-        except Exception:
-            target_date = (datetime.now(UTC) - timedelta(hours=5)).date()
+        target_date = _to_ny_datetime().date()
     elif hasattr(target_date, "astimezone"):
-        try:
-            target_date = target_date.astimezone(ZoneInfo("America/New_York")).date()
-        except Exception:
-            target_date = target_date.date()
+        target_date = _to_ny_datetime(target_date).date()
     elif hasattr(target_date, "date") and callable(target_date.date):
         target_date = target_date.date()
 
@@ -363,18 +393,12 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
     # 1. Weekend check (optimization to skip live queries when market is 100% closed)
     if not ignore_weekend:
         if market_type == "jp":
-            try:
-                jst = now_utc.astimezone(ZoneInfo("Asia/Tokyo"))
-            except (ImportError, ValueError, KeyError):
-                jst = (now_utc + timedelta(hours=9)).replace(tzinfo=None)
+            jst = _to_jst_datetime(now_utc)
             if jst.weekday() >= 5:
                 app_state.market.update_market_status(market_type, "CLOSED")
                 return False
         elif market_type in ("us", "idx"):
-            try:
-                ny = now_utc.astimezone(ZoneInfo("America/New_York"))
-            except Exception:
-                ny = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
+            ny = _to_ny_datetime(now_utc)
             if ny.weekday() >= 5:
                 app_state.market.update_market_status(market_type, "CLOSED")
                 return False
@@ -419,10 +443,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         and live_state == "REGULAR"
         and market_type in ("us", "idx")
     ):
-        try:
-            ny_live = now_utc.astimezone(ZoneInfo("America/New_York"))
-        except Exception:
-            ny_live = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
+        ny_live = _to_ny_datetime(now_utc)
         if _us_early_close_date(ny_live.date()) and ny_live.time() >= dt_time(13, 0):
             live_state = "CLOSED"
 
@@ -432,10 +453,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
 
     # 3. Fallback: time-based weekday session check
     if market_type == "jp":
-        try:
-            jst = now_utc.astimezone(ZoneInfo("Asia/Tokyo"))
-        except (ImportError, ValueError, KeyError):
-            jst = (now_utc + timedelta(hours=9)).replace(tzinfo=None)
+        jst = _to_jst_datetime(now_utc)
         if is_jp_market_holiday(jst.date()):
             app_state.market.update_market_status(market_type, "CLOSED")
             return False
@@ -450,10 +468,7 @@ def is_market_open(market_type, bypass_cache=False, ignore_weekend=False):
         return is_open
 
     if market_type in ("us", "idx"):
-        try:
-            ny = now_utc.astimezone(ZoneInfo("America/New_York"))
-        except Exception:
-            ny = (now_utc + timedelta(hours=-5)).replace(tzinfo=None)
+        ny = _to_ny_datetime(now_utc)
         # Mirrors the JP holiday check: when Yahoo's live market metadata is
         # unavailable, NYSE holidays must still be reported CLOSED instead of
         # being treated as a regular weekday session.

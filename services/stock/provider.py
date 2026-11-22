@@ -1344,7 +1344,7 @@ class YFinanceProvider(BaseStockProvider):
                     {
                         "title": raw_title if isinstance(raw_title, str) else "",
                         "summary": (raw_summary.strip() if isinstance(raw_summary, str) else "")[
-                            :200
+                            :2000
                         ],
                         "pubDate": raw_pub_date if isinstance(raw_pub_date, str) else "",
                         "provider": provider.get("displayName", "")

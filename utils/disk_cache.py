@@ -269,6 +269,9 @@ class StockDiskCache:
         Default time-to-live in seconds for ``get`` calls.
     enable_cleanup : bool
         If True, runs periodic cleanup of stale entries every ~10 minutes.
+    max_ttl : int | None
+        Upper-bound time-to-live in seconds for background cleanup retention.
+        If None, defaults to max(default_ttl, 86400).
     """
 
     def __init__(
@@ -277,10 +280,12 @@ class StockDiskCache:
         max_entries: int = 500,
         default_ttl: int = 7200,
         enable_cleanup: bool = True,
+        max_ttl: int | None = None,
     ):
         self._cache_dir = cache_dir
         self._max_entries = max_entries
         self._default_ttl = default_ttl
+        self._max_ttl = max(default_ttl, max_ttl if max_ttl is not None else 86400)
         # Cleanup is triggered by operations that already hold this lock.
         self._lock = threading.RLock()
         self._last_cleanup_ts: float = 0.0
@@ -464,10 +469,10 @@ class StockDiskCache:
         """
         removed = 0
         now = time.time()
-        # 2026-07 Refactor: Use the maximum potential TTL (86400 seconds / 24h for stock details)
+        # Use the configured maximum potential TTL (defaulting to max(default_ttl, 86400))
         # to ensure that files with custom TTLs longer than default_ttl (7200s) are not
         # prematurely unlinked by the background cleanup task.
-        max_ttl = max(self._default_ttl, 86400)
+        max_ttl = self._max_ttl
         try:
             for entry in self._cache_dir.glob("*.json"):
                 try:

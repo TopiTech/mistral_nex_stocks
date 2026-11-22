@@ -10,7 +10,7 @@ import os
 import queue
 import threading
 import weakref
-from collections.abc import Iterator
+from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures.thread import _worker
 from contextlib import contextmanager
@@ -25,7 +25,7 @@ PROCESS_UMASK_LOCK = threading.RLock()
 
 
 @contextmanager
-def restrictive_umask_lock() -> Iterator[None]:
+def restrictive_umask_lock() -> Generator[None, None, None]:
     """Serialize process-global ``os.umask`` mutations across threads."""
     with PROCESS_UMASK_LOCK:
         yield

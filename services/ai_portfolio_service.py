@@ -1035,8 +1035,13 @@ def generate_ai_portfolio_by_theme(
             else:
                 # Detect token truncation if the model hit max_tokens limit
                 finish_reason = None
-                if isinstance(resp, dict) and resp.get("choices"):
-                    finish_reason = resp["choices"][0].get("finish_reason")
+                choices_list = resp.get("choices") if isinstance(resp, dict) else None
+                if (
+                    isinstance(choices_list, list)
+                    and len(choices_list) > 0
+                    and isinstance(choices_list[0], dict)
+                ):
+                    finish_reason = choices_list[0].get("finish_reason")
                 elif hasattr(resp, "choices") and resp.choices:
                     finish_reason = getattr(resp.choices[0], "finish_reason", None)
 
@@ -1048,8 +1053,14 @@ def generate_ai_portfolio_by_theme(
 
                 # D-3: 共通パースヘルパーで dict/parsed/文字列JSON を正規化
                 payload = normalize_chat_parse_payload(resp)
-                if payload is None and isinstance(resp, dict) and resp.get("choices"):
-                    content = resp["choices"][0].get("message", {}).get("content")
+                if (
+                    payload is None
+                    and isinstance(choices_list, list)
+                    and len(choices_list) > 0
+                    and isinstance(choices_list[0], dict)
+                ):
+                    raw_msg = choices_list[0].get("message")
+                    content = raw_msg.get("content") if isinstance(raw_msg, dict) else None
                     if isinstance(content, str):
                         try:
                             extracted = extract_json_payload(content)

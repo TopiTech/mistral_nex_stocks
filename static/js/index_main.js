@@ -354,13 +354,19 @@ function handleUrlSearchParam() {
   const openRequestedCard = () => {
     if (handleUrlSearchParam._generation !== deepLinkGeneration) return;
     attempts += 1;
+    const normalizedQ = qParam.trim().toUpperCase();
+    const resolveForMarket = (market) => {
+      const sym =
+        typeof normalizeSymbolForMarketClient === "function"
+          ? normalizeSymbolForMarketClient(normalizedQ, market)
+          : market === "jp" && /^\d{3}[0-9A-Z]$/.test(normalizedQ)
+            ? `${normalizedQ}.T`
+            : normalizedQ;
+      return getStockByKey(makeStockKey(market, sym));
+    };
     const stock = marketParam
-      ? getStockByKey(makeStockKey(marketParam, qParam.toUpperCase()))
-      : ["us", "jp", "idx"]
-          .map((market) =>
-            getStockByKey(makeStockKey(market, qParam.toUpperCase())),
-          )
-          .find(Boolean);
+      ? resolveForMarket(marketParam)
+      : ["us", "jp", "idx"].map(resolveForMarket).find(Boolean);
     if (stock) {
       const key = makeStockKey(stock.market, stock.symbol);
       const wrapper = findWrapperByStockKey(key);

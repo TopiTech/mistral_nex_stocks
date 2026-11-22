@@ -439,7 +439,6 @@ class YFinanceProvider(BaseStockProvider):
             RuntimeError,
             AttributeError,
             OSError,
-            TimeoutError,
         ) as exc:
             # @with_yfinance_retry owns rate-limit recording; re-marking here
             # would add a second strike for the same upstream 429.
@@ -847,7 +846,6 @@ class YFinanceProvider(BaseStockProvider):
                                 RuntimeError,
                                 AttributeError,
                                 OSError,
-                                TimeoutError,
                             ) as e:
                                 logger.warning(
                                     "Failed to fetch single history in batch for %s: %s", sym, e

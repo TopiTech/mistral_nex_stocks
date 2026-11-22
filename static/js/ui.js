@@ -208,8 +208,10 @@ async function ensureStockDetails(wrapper) {
 
   const drawerEl = document.getElementById("stock-detail-drawer");
   const isDrawerActiveForWrapper = () =>
-    currentDrawerActiveWrapper === wrapper ||
+    (typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === wrapper) ||
     Boolean(
+      stockKey &&
       drawerEl?.classList.contains("open") &&
       drawerEl.dataset.stockKey === stockKey,
     );
@@ -270,14 +272,7 @@ async function ensureStockDetails(wrapper) {
     // (L16) バナーは「今見えている側」のコンテナへ出す: ドロワーがこの銘柄で
     // 開いていれば #drawerTabChartContent(可視)、閉じていれば元の
     // .detail-inner に入れる。detailInner はドロワー移動後は不可視のため。
-    const drawerEl = document.getElementById("stock-detail-drawer");
-    const isDrawerActive =
-      currentDrawerActiveWrapper === wrapper ||
-      Boolean(
-        drawerEl?.classList.contains("open") &&
-        drawerEl.dataset.stockKey === stockKey,
-      );
-    const bannerHost = isDrawerActive
+    const bannerHost = isDrawerActiveForWrapper()
       ? document.getElementById("drawerTabChartContent")
       : detailInner;
     if (!bannerHost) return;
@@ -677,6 +672,7 @@ function updateStockUI(wrapper, stock) {
     (typeof currentDrawerActiveWrapper !== "undefined" &&
       currentDrawerActiveWrapper === wrapper) ||
     Boolean(
+      stockKey &&
       drawerEl?.classList.contains("open") &&
       drawerEl.dataset.stockKey === stockKey,
     );
@@ -2498,9 +2494,25 @@ function isBlankDetailValue(value, field) {
 }
 
 function setDetailItemVisibility(wrapper, field, visible) {
+  const stockKey = wrapper?.dataset?.stockKey;
+  const drawerEl =
+    typeof document !== "undefined"
+      ? document.getElementById("stock-detail-drawer")
+      : null;
+  const isDrawerActiveForWrapper =
+    wrapper &&
+    ((typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === wrapper) ||
+      Boolean(
+        stockKey &&
+        drawerEl?.classList?.contains("open") &&
+        drawerEl.dataset?.stockKey === stockKey,
+      ));
   const row =
     wrapper?.querySelector?.(`.detail-item-${field}`) ||
-    document.querySelector(`#stock-detail-drawer .detail-item-${field}`);
+    (isDrawerActiveForWrapper && typeof document !== "undefined"
+      ? document.querySelector(`#stock-detail-drawer .detail-item-${field}`)
+      : null);
   if (!row) return;
   row.classList.toggle("detail-item-hidden", !visible);
   row.style.display = visible ? "" : "none";
@@ -2842,7 +2854,10 @@ const drawSparkline = (wrapper, data) => {
   const stockKey = wrapper.dataset.stockKey;
   if (stockKey) {
     const signature = getSparklineSignature(data);
-    if (signature) sparklineSignatureMap.set(stockKey, signature);
+    const sparkCtxKey = wrapper?.dataset?.marketContext
+      ? `${stockKey}|${wrapper.dataset.marketContext}`
+      : stockKey;
+    if (signature) sparklineSignatureMap.set(sparkCtxKey, signature);
   }
 
   // Clean up any legacy Chart.js instance on this canvas
@@ -4141,8 +4156,10 @@ function renderAiTechnicalLinesSummary(wrapper, data) {
   const stockKey = wrapper.dataset?.stockKey;
   const drawerEl = document.getElementById("stock-detail-drawer");
   const isDrawerActive =
-    currentDrawerActiveWrapper === wrapper ||
+    (typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === wrapper) ||
     Boolean(
+      stockKey &&
       drawerEl?.classList.contains("open") &&
       drawerEl.dataset.stockKey === stockKey,
     );

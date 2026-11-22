@@ -5,7 +5,6 @@ config_utils.py から抽出した DPAPI/Fernet 暗号化関連の関数群
 # pylint: disable=missing-function-docstring,too-many-branches
 
 import base64
-import binascii
 import ctypes
 import logging
 import os
@@ -475,7 +474,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
                                     type(exc).__name__,
                                 )
                         return val
-            except (ValueError, TypeError, binascii.Error, OSError, RuntimeError) as exc:
+            except (ValueError, TypeError, OSError, RuntimeError) as exc:
                 logger.warning("DPAPI fallback decryption failed for '%s': %s", key_name, exc)
 
         return ""
@@ -494,7 +493,7 @@ def _decode_secret(entry, key_name: str = "default") -> str:
 
     try:
         payload = base64.b64decode(encoded.encode("ascii"))
-    except (ValueError, TypeError, binascii.Error):
+    except (ValueError, TypeError):
         return ""
 
     if scheme == "dpapi":

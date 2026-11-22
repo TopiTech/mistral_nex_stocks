@@ -104,7 +104,7 @@ def _load_allowed_extension_origins():
                     origins.add(origin)
     except FileNotFoundError:
         logger.debug("Extension manifest not found, skipping")
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         # R5: narrowed from bare ``Exception``. A malformed/unreadable manifest
         # must be recorded as a degraded status rather than silently swallowed,
         # because it directly determines the CORS origin allow-list. Unexpected

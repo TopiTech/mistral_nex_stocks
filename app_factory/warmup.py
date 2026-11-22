@@ -6,12 +6,9 @@ APIキー取得はテストで `patch(\"app.get_langsearch_api_key\")` 等され
 
 from __future__ import annotations
 
-import json
 import logging
 import queue
 from typing import Any
-
-from requests.exceptions import RequestException
 
 from app_state import KeyringError, app_state
 from constants import CACHE_DURATION_NEWS, NEGATIVE_CACHE_TTL
@@ -58,11 +55,9 @@ def schedule_news_warmup():
         except (
             OSError,
             RuntimeError,
-            RequestException,
             ValueError,
             TypeError,
             KeyError,
-            json.JSONDecodeError,
         ) as exc:
             logger.warning("News warmup (us context) failed: %s", exc)
             results["us_context"] = None
@@ -82,11 +77,9 @@ def schedule_news_warmup():
         except (
             OSError,
             RuntimeError,
-            RequestException,
             ValueError,
             TypeError,
             KeyError,
-            json.JSONDecodeError,
         ) as exc:
             logger.warning("News warmup (jp context) failed: %s", exc)
             results["jp_context"] = None
@@ -95,7 +88,7 @@ def schedule_news_warmup():
             results["us_trends"] = collect_market_trending_titles(
                 "us", 8, langsearch_api_key, tavily_api_key
             )
-        except (OSError, RuntimeError, RequestException, ValueError, TypeError, KeyError) as exc:
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
             logger.warning("News warmup (us trends) failed: %s", exc)
             results["us_trends"] = None
 
@@ -103,7 +96,7 @@ def schedule_news_warmup():
             results["jp_trends"] = collect_market_trending_titles(
                 "jp", 8, langsearch_api_key, tavily_api_key
             )
-        except (OSError, RuntimeError, RequestException, ValueError, TypeError, KeyError) as exc:
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
             logger.warning("News warmup (jp trends) failed: %s", exc)
             results["jp_trends"] = None
 

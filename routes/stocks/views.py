@@ -116,7 +116,11 @@ def api_screener() -> Any:
             return None
 
     stocks_data = resolve_stocks_for_response(include_portfolio=False)
-    all_stocks = build_screener_base_rows_dispatch(stocks_data, market_filter)
+    all_stocks = [
+        dict(row)
+        for row in build_screener_base_rows_dispatch(stocks_data, market_filter)
+        if isinstance(row, dict)
+    ]
     seen_symbols = {item["symbol"] for item in all_stocks}
 
     pop_us = POPULAR_US
@@ -170,8 +174,8 @@ def api_screener() -> Any:
             ]
         for sym, _fallback_name, _mkt in pop_unseen_items:
             row = enriched.get(sym)
-            if row is not None:
-                all_stocks.append(row)
+            if isinstance(row, dict):
+                all_stocks.append(dict(row))
 
     # ``market=all`` mixes USD and JPY rows. ``market_cap`` is denominated in
     # the listing currency, so comparing/sorting the raw values ranked Toyota
@@ -719,10 +723,10 @@ def api_heatmap() -> Any:
         logger.debug("Failed to read heatmap disk cache: %s", exc)
 
     with app_state.heatmap_fetch_lock:
-        now = time.time()
+        now = time.monotonic()
         if cache_key in app_state.heatmap_fetch_inflight:
-            start_time = app_state.heatmap_fetch_start_times.get(cache_key, 0.0)
-            if now - start_time > 30.0:
+            start_time = app_state.heatmap_fetch_start_times.get(cache_key)
+            if start_time is None or now - start_time > 30.0:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
                 app_state.heatmap_fetch_start_times.pop(cache_key, None)
 

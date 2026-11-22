@@ -986,9 +986,13 @@ def call_openai_chat(
 
             # Structured output & fallback post-processing
             choices = data.get("choices") or []
-            if choices and isinstance(choices, list) and isinstance(choices[0], dict):
-                raw_message = choices[0].get("message")
-                msg = raw_message if isinstance(raw_message, dict) else {}
+            if (
+                choices
+                and isinstance(choices, list)
+                and isinstance(choices[0], dict)
+                and isinstance(choices[0].get("message"), dict)
+            ):
+                msg = choices[0]["message"]
                 raw_content = (
                     msg.get("content")
                     or msg.get("reasoning")
@@ -1001,10 +1005,10 @@ def call_openai_chat(
                         raw_content, pydantic_cls=pydantic_cls
                     )
                     if parsed_dict is not None:
-                        data["choices"][0]["message"]["parsed"] = parsed_dict
-                        data["choices"][0]["message"]["content"] = parsed_dict
+                        msg["parsed"] = parsed_dict
+                        msg["content"] = parsed_dict
                     elif orig_content and not msg.get("content"):
-                        data["choices"][0]["message"]["content"] = orig_content
+                        msg["content"] = orig_content
                 elif isinstance(response_format, dict) and response_format.get("type") in (
                     "json_object",
                     "json_schema",
@@ -1013,9 +1017,9 @@ def call_openai_chat(
                         raw_content, pydantic_cls=None
                     )
                     if parsed_dict is not None:
-                        data["choices"][0]["message"]["parsed"] = parsed_dict
+                        msg["parsed"] = parsed_dict
                     if orig_content and not msg.get("content"):
-                        data["choices"][0]["message"]["content"] = orig_content
+                        msg["content"] = orig_content
                 elif not msg.get("content"):
                     reasoning_fallback = (
                         msg.get("reasoning")
@@ -1023,7 +1027,7 @@ def call_openai_chat(
                         or msg.get("thinking")
                     )
                     if reasoning_fallback:
-                        data["choices"][0]["message"]["content"] = reasoning_fallback
+                        msg["content"] = reasoning_fallback
 
             # AI-03: the 400/422 retry handler mutates ``payload`` (drops
             # tools/temperature/response_format, swaps the token field). The
@@ -1327,8 +1331,13 @@ def stream_openai_chat(
                             if isinstance(chunk_usage, dict) and chunk_usage:
                                 last_usage = chunk_usage
                             choices = chunk.get("choices") or []
-                            if choices and isinstance(choices, list):
-                                delta = choices[0].get("delta") or {}
+                            if (
+                                choices
+                                and isinstance(choices, list)
+                                and isinstance(choices[0], dict)
+                            ):
+                                raw_delta = choices[0].get("delta")
+                                delta = raw_delta if isinstance(raw_delta, dict) else {}
                                 delta_text = delta.get("content")
                                 # Capture reasoning deltas separately
                                 r_val = (

@@ -60,6 +60,33 @@ def _get_logger() -> Any:
     return _get_facade_attr("logger", logger)
 
 
+def _get_or_create_weak_session(
+    thread_local: threading.local,
+    sessions_lock: threading.Lock,
+    all_sessions: weakref.WeakSet[Any],
+) -> Any:
+    """Return a tracked thread-local HTTP session, safely handling non-weakref doubles."""
+    session = getattr(thread_local, "session", None)
+    with sessions_lock:
+        if session is not None:
+            try:
+                still_active = session in all_sessions
+            except TypeError:
+                still_active = False
+            if not still_active:
+                session = None
+                thread_local.session = None
+    if session is None:
+        session = _create_cffi_session()
+        with sessions_lock:
+            thread_local.session = session
+            try:
+                all_sessions.add(session)
+            except TypeError:
+                pass
+    return session
+
+
 class _BaseFallbackScraper:
     """Shared failure-tracking / cooldown / session plumbing for fallback scrapers."""
 
@@ -90,17 +117,9 @@ class _BaseFallbackScraper:
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
-        session = getattr(self._thread_local, "session", None)
-        with self._sessions_lock:
-            if session is not None and session not in self._all_sessions:
-                session = None
-                self._thread_local.session = None
-        if session is None:
-            session = _create_cffi_session()
-            self._thread_local.session = session
-            with self._sessions_lock:
-                self._all_sessions.add(session)
-        return session
+        return _get_or_create_weak_session(
+            self._thread_local, self._sessions_lock, self._all_sessions
+        )
 
     @property
     def session(self) -> Any:
@@ -737,17 +756,9 @@ class YahooJPRealtimeScraper:
 
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
-        session = getattr(self._thread_local, "session", None)
-        with self._sessions_lock:
-            if session is not None and session not in self._all_sessions:
-                session = None
-                self._thread_local.session = None
-        if session is None:
-            session = _create_cffi_session()
-            self._thread_local.session = session
-            with self._sessions_lock:
-                self._all_sessions.add(session)
-        return session
+        return _get_or_create_weak_session(
+            self._thread_local, self._sessions_lock, self._all_sessions
+        )
 
     @property
     def session(self) -> Any:

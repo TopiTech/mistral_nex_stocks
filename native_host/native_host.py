@@ -2,7 +2,6 @@
 """Native host wrapper for Chrome native messaging and backend startup."""
 
 import importlib
-import io
 import json
 import logging
 import math
@@ -34,7 +33,7 @@ if os.name == "nt":  # pragma: no cover
     try:
         msvcrt_mod.setmode(RAW_STDIN.fileno(), 0x8000)  # _O_BINARY
         msvcrt_mod.setmode(RAW_STDOUT.fileno(), 0x8000)  # _O_BINARY
-    except (OSError, ValueError, AttributeError, io.UnsupportedOperation):
+    except (OSError, ValueError, AttributeError):
         pass
 
 

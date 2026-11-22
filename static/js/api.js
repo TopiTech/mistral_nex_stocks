@@ -2559,16 +2559,35 @@ async function sendChat(wrapper, inputEl = null) {
       : null);
   if (!targetWrapper && !inputEl) return;
 
+  const targetWrapperKey =
+    targetWrapper?.dataset?.stockKey ||
+    (targetWrapper?.__stockData?.symbol
+      ? makeStockKey(
+          targetWrapper.__stockData.market || "us",
+          targetWrapper.__stockData.symbol,
+        )
+      : "");
+  const drawerEl = document.getElementById("stock-detail-drawer");
+  const isDrawerOwnedByTarget =
+    !targetWrapper ||
+    (typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === targetWrapper) ||
+    Boolean(
+      drawerEl?.classList?.contains("open") &&
+      targetWrapperKey &&
+      drawerEl.dataset?.stockKey === targetWrapperKey,
+    );
+
   let input = inputEl;
   if (!input) {
     if (targetWrapper && typeof targetWrapper.querySelector === "function") {
       input = targetWrapper.querySelector(".chat-input");
     }
-    if (!input) {
+    if (!input && isDrawerOwnedByTarget) {
       const drawerAi = document.getElementById("drawerTabAiContent");
       input = drawerAi?.querySelector(".chat-input");
     }
-    if (!input) {
+    if (!input && isDrawerOwnedByTarget) {
       input = document.querySelector("#stock-detail-drawer .chat-input");
     }
   }
@@ -2582,12 +2601,9 @@ async function sendChat(wrapper, inputEl = null) {
   const log =
     chatSection?.querySelector(".chat-log") ||
     targetWrapper?.querySelector?.(".chat-log");
-  const drawerEl = document.getElementById("stock-detail-drawer");
   const stockKey =
-    targetWrapper?.dataset?.stockKey ||
-    targetWrapper?.__stockData?.symbol ||
-    drawerEl?.dataset?.stockKey ||
-    "";
+    targetWrapperKey ||
+    (isDrawerOwnedByTarget ? drawerEl?.dataset?.stockKey || "" : "");
 
   if (input.disabled || sendBtn?.disabled) return;
 
@@ -2733,6 +2749,7 @@ function applyAnalysisResult(wrapper, stock, data) {
   const stockKey = wrapper.dataset.stockKey;
   const drawerEl = document.getElementById("stock-detail-drawer");
   const isDrawerActiveForStock = Boolean(
+    stockKey &&
     drawerEl?.classList.contains("open") &&
     drawerEl.dataset.stockKey === stockKey,
   );
@@ -2936,6 +2953,7 @@ function clearAnalysisError(wrapper) {
   const stockKey = wrapper?.dataset?.stockKey;
   const drawerEl = document.getElementById("stock-detail-drawer");
   const isDrawerActiveForStock = Boolean(
+    stockKey &&
     drawerEl?.classList.contains("open") &&
     drawerEl.dataset.stockKey === stockKey,
   );
@@ -2959,6 +2977,7 @@ function applyAnalysisError(wrapper, message) {
   const stockKey = wrapper?.dataset?.stockKey;
   const drawerEl = document.getElementById("stock-detail-drawer");
   const isDrawerActiveForStock = Boolean(
+    stockKey &&
     drawerEl?.classList.contains("open") &&
     drawerEl.dataset.stockKey === stockKey,
   );
@@ -3306,6 +3325,7 @@ async function bulkAnalyzeFavorites() {
 
         const drawerEl = document.getElementById("stock-detail-drawer");
         const isDrawerActiveForStock = Boolean(
+          stockKey &&
           drawerEl?.classList.contains("open") &&
           drawerEl.dataset?.stockKey === stockKey,
         );

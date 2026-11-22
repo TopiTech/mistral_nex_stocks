@@ -584,3 +584,178 @@ def test_realtime_utils_string_aware_scan_kabutan_nan_prev_close_and_pts_reg() -
         registration=reg,
     )
     assert "7203.T" not in engine.pts_store
+
+
+# ---------------------------------------------------------------------------
+# Non-weakrefable sessions, malformed AI choice/message/delta payloads,
+# and fetch_index_data rate-limit recording (2026-11-23 review)
+# ---------------------------------------------------------------------------
+
+
+def test_session_pools_tolerate_non_weakrefable_session_doubles() -> None:
+    from services.fallback_provider import _CurlCffiSessionProvider
+    from services.realtime import scrapers
+
+    class _SlottedSession:
+        __slots__ = ()
+
+        def close(self) -> None:
+            pass
+
+    provider = _CurlCffiSessionProvider()
+    provider.requests = SimpleNamespace(Session=lambda **_kw: _SlottedSession())
+    client, pooled = provider._get_client()
+    assert isinstance(client, _SlottedSession)
+    assert pooled is True
+
+    base_scraper = scrapers._BaseFallbackScraper()
+    jp_scraper = scrapers.YahooJPRealtimeScraper()
+    with patch.object(scrapers, "_create_cffi_session", side_effect=lambda: _SlottedSession()):
+        assert isinstance(base_scraper._get_session(), _SlottedSession)
+        assert isinstance(jp_scraper._get_session(), _SlottedSession)
+
+
+def test_openai_service_tolerates_none_message_and_malformed_stream_choices() -> None:
+    from services import openai_service as os_mod
+
+    fake_resp = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "choices": [{"message": None, "finish_reason": "stop"}],
+        },
+    )
+    fake_client = SimpleNamespace(post=lambda *_a, **_kw: fake_resp, close=lambda: None)
+    _reset_market_circuit("openai_compatible")
+    try:
+        with (
+            patch.object(os_mod, "get_openai_base_url", return_value="https://api.example.com/v1"),
+            patch.object(os_mod, "validate_outbound_base_url", return_value=(True, "")),
+            patch.object(os_mod, "get_openai_model", return_value="gpt-4o-mini"),
+            patch.object(os_mod, "_get_openai_client", return_value=fake_client),
+        ):
+            res = os_mod.call_openai_chat(
+                "sk-real-test-key-1234",
+                [{"role": "user", "content": "hi"}],
+                use_cache=False,
+                response_format={"type": "json_object"},
+            )
+        assert isinstance(res, dict)
+        assert res["choices"][0]["message"] is None
+
+        class _FakeStreamCM:
+            status_code = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def iter_lines(self):
+                return [
+                    b'data: {"choices": [null]}',
+                    b'data: {"choices": [{"delta": null}]}',
+                    b'data: {"choices": [{"delta": {"content": "ok"}}]}',
+                    b"data: [DONE]",
+                ]
+
+        stream_client = SimpleNamespace(stream=lambda *_a, **_kw: _FakeStreamCM(), close=lambda: None)
+        with (
+            patch.object(os_mod, "get_openai_base_url", return_value="https://api.example.com/v1"),
+            patch.object(os_mod, "validate_outbound_base_url", return_value=(True, "")),
+            patch.object(os_mod, "get_openai_model", return_value="gpt-4o-mini"),
+            patch.object(os_mod, "_get_openai_client", return_value=stream_client),
+        ):
+            events = list(
+                os_mod.stream_openai_chat(
+                    "sk-real-test-key-1234", [{"role": "user", "content": "hi"}]
+                )
+            )
+        assert {"type": "delta", "text": "ok"} in events
+        assert events[-1] == {"type": "done", "text": "ok"}
+    finally:
+        _reset_market_circuit("openai_compatible")
+
+
+def test_ai_services_tolerate_malformed_choice_and_message_envelopes() -> None:
+    from pydantic import BaseModel
+
+    from services import ai_portfolio_service as aps
+    from services import ai_service as ai_svc
+
+    class _DummyModel(BaseModel):
+        value: str
+
+    sdk_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(parsed=_DummyModel(value="x")))],
+        model_dump=lambda: {"choices": [{"message": None}], "usage": {}},
+    )
+    fake_mistral_client = SimpleNamespace(
+        chat=SimpleNamespace(complete=lambda **_kw: sdk_resp)
+    )
+    _reset_market_circuit("mistral")
+    try:
+        with (
+            patch.object(ai_svc, "is_openai_provider", return_value=False),
+            patch.object(ai_svc, "_get_mistral_client", return_value=fake_mistral_client),
+            patch.object(ai_svc, "_resolve_agents_target", return_value=(False, "")),
+        ):
+            out = ai_svc.call_mistral_chat(
+                "mistral-real-key-123",
+                [{"role": "user", "content": "test"}],
+                use_cache=False,
+                response_format=_DummyModel,
+            )
+        assert isinstance(out["choices"][0]["message"], dict)
+        assert out["choices"][0]["message"]["parsed"] == {"value": "x"}
+
+        for malformed_resp in ({"choices": [None]}, {"choices": [{"message": None}]}):
+            with (
+                patch.object(ai_svc, "is_openai_provider", return_value=False),
+                patch.object(ai_svc, "call_mistral_chat", return_value=malformed_resp),
+            ):
+                tl = ai_svc.generate_ai_technical_lines(
+                    "mistral-real-key-123",
+                    "AAPL",
+                    "us",
+                    "1mo",
+                    [{"date": "2026-01-01", "open": 100, "high": 102, "low": 99, "close": 101}],
+                )
+            assert isinstance(tl, dict)
+            assert tl.get("lines") == []
+
+        with (
+            patch("credential_manager.is_openai_provider", return_value=False),
+            patch("services.ai_service.call_mistral_chat", return_value={"choices": [{"message": None}]}),
+            patch.object(aps, "_load_saved_ai_portfolios_strict", return_value=[]),
+        ):
+            pf = aps.generate_ai_portfolio_by_theme(
+                "tech", force_rebalance=True, api_key="mistral-real-key-123"
+            )
+        assert isinstance(pf, dict) and pf.get("items")
+
+        # Non-dict / non-list stream delta payloads must not raise AttributeError.
+        assert ai_svc._extract_stream_delta({"choices": [{"delta": "bad"}]}) is None
+        assert ai_svc._extract_stream_delta({"choices": "bad"}) is None
+        assert ai_svc._extract_thinking_delta({"choices": [{"delta": "bad"}]}) is None
+        assert ai_svc._extract_thinking_delta({"choices": "bad"}) is None
+    finally:
+        _reset_market_circuit("mistral")
+
+
+def test_fetch_index_data_records_yfinance_error() -> None:
+    from bg.sync import fetch as sync_fetch
+    from services.stock_provider import YFRateLimitError
+
+    with (
+        patch("bg.sync_worker.acquire_yfinance_slot", return_value=True),
+        patch.object(
+            app_state.stock_provider,
+            "get_history",
+            side_effect=YFRateLimitError(),
+        ),
+        patch("bg.sync.fetch._handle_yfinance_error") as mock_err,
+    ):
+        assert sync_fetch.fetch_index_data("SP500", "^GSPC") is None
+    mock_err.assert_called_once()
+    assert mock_err.call_args.args[1] == "SP500"

@@ -175,7 +175,7 @@ class WarningDeduplicationFilter(logging.Filter):
         if len(msg) > 2000:
             msg = msg[:2000]
 
-        now = time.time()
+        now = time.monotonic()
 
         with self._lock:
             entry = self._recent_messages.get(msg)
@@ -278,7 +278,15 @@ class YFinanceNoFundamentalsFilter(logging.Filter):
         "Failed to retrieve the news",
     )
 
-    def filter(self, record):
+    def __init__(self, *, require_yfinance_logger: bool = False) -> None:
+        super().__init__()
+        self._require_yfinance_logger = require_yfinance_logger
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if self._require_yfinance_logger and not (
+            record.name == "yfinance" or record.name.startswith("yfinance.")
+        ):
+            return True
         msg = record.getMessage()
         # Suppress yfinance batch download list headers and individual ticker lists
         if "Failed download" in msg:
@@ -394,6 +402,7 @@ def init_logging(app) -> None:
     rotating_handler.addFilter(URLMaskingFilter())
     rotating_handler.addFilter(BackendLogFilter(log_level=LOG_LEVEL))
     rotating_handler.addFilter(WarningDeduplicationFilter())
+    rotating_handler.addFilter(YFinanceNoFundamentalsFilter(require_yfinance_logger=True))
     rotating_handler.setFormatter(_log_formatter)
     cast(Any, rotating_handler)._mns_logging_initialized = True
     logging.getLogger().addHandler(rotating_handler)
@@ -402,6 +411,7 @@ def init_logging(app) -> None:
     if error_handler is not None:
         error_handler.setLevel(logging.ERROR)
         error_handler.addFilter(URLMaskingFilter())
+        error_handler.addFilter(YFinanceNoFundamentalsFilter(require_yfinance_logger=True))
         error_handler.setFormatter(_log_formatter)
         logging.getLogger().addHandler(error_handler)
 
@@ -430,7 +440,7 @@ def init_logging(app) -> None:
     yf_logger.setLevel(max(yf_logger.level or 0, logging.WARNING))
     # Apply the same suppression for all yfinance sub-loggers
     for name in list(logging.Logger.manager.loggerDict.keys()):
-        if name.startswith("yfinance"):
+        if name == "yfinance" or name.startswith("yfinance."):
             sub_logger = logging.getLogger(name)
             sub_logger.addFilter(yf_filter)
             sub_logger.setLevel(max(sub_logger.level or 0, logging.WARNING))

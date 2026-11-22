@@ -187,7 +187,10 @@ class _CurlCffiSessionProvider(BaseFallbackProvider):
                     if self._session_epoch != current_epoch:
                         close_orphan = True
                     else:
-                        self._all_sessions.add(created_sess)
+                        try:
+                            self._all_sessions.add(created_sess)
+                        except TypeError:
+                            pass
                         self._local.session = created_sess
                         self._local.session_epoch = current_epoch
                         local_sess = created_sess

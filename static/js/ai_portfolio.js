@@ -1411,7 +1411,10 @@
       );
       const weightFill = document.createElement("span");
       weightFill.className = "ai-weight-bar-fill";
-      weightFill.style.width = `${Math.min(100, weightPct)}%`;
+      const safeWeightPct = Number.isFinite(weightPct)
+        ? Math.max(0, Math.min(100, weightPct))
+        : 0;
+      weightFill.style.width = `${safeWeightPct}%`;
       weightBar.appendChild(weightFill);
 
       // --- body ---
@@ -1473,7 +1476,17 @@
       favBtn.className = "ai-card-btn fav-btn";
       favBtn.textContent = "★ お気に入り";
       favBtn.setAttribute("data-symbol", item.symbol);
-      const favKey = `${(item.market || "us").toLowerCase()}:${item.symbol}`;
+      const favMarket = String(item.market || "us").toLowerCase();
+      const favSymbol =
+        typeof normalizeSymbolForMarketClient === "function"
+          ? normalizeSymbolForMarketClient(item.symbol, favMarket)
+          : favMarket === "jp" &&
+              /^\d{3}[0-9A-Z]$/i.test(String(item.symbol || "").trim())
+            ? `${String(item.symbol).trim().toUpperCase()}.T`
+            : String(item.symbol || "")
+                .trim()
+                .toUpperCase();
+      const favKey = `${favMarket}:${favSymbol}`;
       if (
         typeof state !== "undefined" &&
         typeof state.isFavorite === "function" &&

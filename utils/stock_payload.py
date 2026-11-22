@@ -991,7 +991,6 @@ def build_stock_payload(
         AttributeError,
         TypeError,
         ValueError,
-        pd.errors.EmptyDataError,
     ) as exc:
         logger.error("Stock payload build failed (%s): %s", symbol, exc)
         return None

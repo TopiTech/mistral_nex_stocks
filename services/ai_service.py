@@ -1556,14 +1556,29 @@ def call_mistral_chat(
                     choice = raw_choices[0] if raw_choices else None
                     msg_obj = getattr(choice, "message", None) if choice else None
                     parsed_obj = getattr(msg_obj, "parsed", None) if msg_obj else None
-                    if isinstance(parsed_obj, BaseModel):
-                        data["choices"][0]["message"]["parsed"] = parsed_obj.model_dump()
-                        data["choices"][0]["message"]["content"] = parsed_obj.model_dump()
-                    elif (
-                        data.get("choices")
-                        and isinstance(data["choices"], list)
-                        and len(data["choices"]) > 0
-                    ):
+
+                    data_choices = data.get("choices")
+                    first_choice = (
+                        data_choices[0]
+                        if isinstance(data_choices, list)
+                        and len(data_choices) > 0
+                        and isinstance(data_choices[0], dict)
+                        else None
+                    )
+                    msg_dict: dict[str, Any] | None = None
+                    if first_choice is not None:
+                        raw_msg = first_choice.get("message")
+                        if isinstance(raw_msg, dict):
+                            msg_dict = raw_msg
+                        else:
+                            msg_dict = {}
+                            first_choice["message"] = msg_dict
+
+                    if isinstance(parsed_obj, BaseModel) and msg_dict is not None:
+                        dumped = parsed_obj.model_dump()
+                        msg_dict["parsed"] = dumped
+                        msg_dict["content"] = dumped
+                    elif first_choice is not None and msg_dict is not None:
                         from utils.validators import extract_chat_content, extract_json_payload
 
                         extracted = extract_chat_content(data, preserve_for_history=False)
@@ -1573,14 +1588,15 @@ def call_mistral_chat(
                                 parsed_model = response_format.model_validate_json(
                                     json_str or extracted
                                 )
-                                data["choices"][0]["message"]["parsed"] = parsed_model.model_dump()
-                                data["choices"][0]["message"]["content"] = parsed_model.model_dump()
+                                dumped = parsed_model.model_dump()
+                                msg_dict["parsed"] = dumped
+                                msg_dict["content"] = dumped
                             except Exception:
                                 try:
                                     raw_dict = json.loads(json_str or extracted)
                                     if isinstance(raw_dict, dict):
-                                        data["choices"][0]["message"]["parsed"] = raw_dict
-                                        data["choices"][0]["message"]["content"] = raw_dict
+                                        msg_dict["parsed"] = raw_dict
+                                        msg_dict["content"] = raw_dict
                                 except Exception:
                                     pass
                 except Exception as parse_exc:
@@ -2228,9 +2244,9 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
         parsed_obj = None
         # Check if chat.parse populated parsed dict
         choices = response.get("choices") if isinstance(response, dict) else None
-        if choices and isinstance(choices, list) and len(choices) > 0:
-            first_msg = choices[0].get("message") or {}
-            parsed_data = first_msg.get("parsed")
+        if isinstance(choices, list) and len(choices) > 0 and isinstance(choices[0], dict):
+            first_msg = choices[0].get("message")
+            parsed_data = first_msg.get("parsed") if isinstance(first_msg, dict) else None
             if isinstance(parsed_data, dict) and "lines" in parsed_data:
                 parsed_obj = parsed_data
         # Some integrations/tests provide the already-parsed structured object
@@ -2517,8 +2533,9 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
 
     if isinstance(chunk, dict):
         choices = chunk.get("choices") or []
-        if choices and isinstance(choices[0], dict):
-            delta = choices[0].get("delta") or {}
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            raw_delta = choices[0].get("delta")
+            delta = raw_delta if isinstance(raw_delta, dict) else {}
             txt = _text_from_val(delta.get("content"))
             if txt:
                 return txt
@@ -2593,8 +2610,9 @@ def _extract_thinking_delta(chunk: Any) -> str | None:
     parts: list[str] = []
     if isinstance(chunk, dict):
         choices = chunk.get("choices") or []
-        if choices and isinstance(choices[0], dict):
-            delta = choices[0].get("delta") or {}
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            raw_delta = choices[0].get("delta")
+            delta = raw_delta if isinstance(raw_delta, dict) else {}
             content_th = _thinking_from_content(delta.get("content"))
             if content_th:
                 parts.append(content_th)

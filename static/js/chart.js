@@ -1283,10 +1283,25 @@ function drawChart(wrapper, data, ohlcData, options = {}) {
   // ``=== false`` keeps non-DOM test harnesses (undefined) working.
   if (wrapper && wrapper.isConnected === false && !options.targetCanvas) return;
   const animate = getChartAnimationEnabled(options.animate);
+  const wrapperStockKey = wrapper?.dataset?.stockKey || options.stockKey || "";
+  const drawerEl =
+    typeof document !== "undefined"
+      ? document.getElementById("stock-detail-drawer")
+      : null;
+  const isDrawerActiveForWrapper = Boolean(
+    wrapper &&
+    ((typeof currentDrawerActiveWrapper !== "undefined" &&
+      currentDrawerActiveWrapper === wrapper) ||
+      (drawerEl?.classList?.contains("open") &&
+        wrapperStockKey &&
+        drawerEl.dataset?.stockKey === wrapperStockKey)),
+  );
   const canvas =
     options.targetCanvas ||
     (wrapper ? wrapper.querySelector(".chart-canvas") : null) ||
-    document.querySelector("#stock-detail-drawer .chart-canvas");
+    (isDrawerActiveForWrapper && typeof document !== "undefined"
+      ? document.querySelector("#stock-detail-drawer .chart-canvas")
+      : null);
   if (!canvas) return;
 
   const fsErrorHost = options.targetCanvas
@@ -2044,9 +2059,25 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
     `cf_${(globalThis.__chartFetchSeq = (globalThis.__chartFetchSeq || 0) + 1)}`;
   wrapper.dataset.chartFetchId = currentFetchId;
 
+  const isDrawerOwnedByWrapper = () => {
+    const detailDrawer =
+      typeof document !== "undefined"
+        ? document.getElementById("stock-detail-drawer")
+        : null;
+    return Boolean(
+      (typeof currentDrawerActiveWrapper !== "undefined" &&
+        currentDrawerActiveWrapper === wrapper) ||
+      (detailDrawer?.classList?.contains("open") &&
+        stockKey &&
+        detailDrawer.dataset?.stockKey === stockKey),
+    );
+  };
+
   if (typeof window.updateIntervalControlsVisibility === "function") {
     window.updateIntervalControlsVisibility(wrapper, stockKey, targetPeriod);
-    const detailDrawer = document.getElementById("stock-detail-drawer");
+    const detailDrawer = isDrawerOwnedByWrapper()
+      ? document.getElementById("stock-detail-drawer")
+      : null;
     if (detailDrawer)
       window.updateIntervalControlsVisibility(
         detailDrawer,
@@ -2088,7 +2119,9 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
     } else {
       const pnlCanvas =
         wrapper.querySelector(".chart-canvas-pnl") ||
-        document.querySelector("#stock-detail-drawer .chart-canvas-pnl");
+        (isDrawerOwnedByWrapper()
+          ? document.querySelector("#stock-detail-drawer .chart-canvas-pnl")
+          : null);
       if (pnlCanvas)
         drawPnLChart(pnlCanvas, formattedData, stock.avg_price, {
           animate: true,
@@ -2100,7 +2133,9 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
 
   const container =
     wrapper.querySelector(".chart-container") ||
-    document.querySelector("#stock-detail-drawer .chart-container");
+    (isDrawerOwnedByWrapper()
+      ? document.querySelector("#stock-detail-drawer .chart-container")
+      : null);
   container?.classList?.add("loading");
 
   const chartAbortController = new AbortController();
@@ -2214,7 +2249,9 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
     } else {
       const pnlCanvas =
         wrapper.querySelector(".chart-canvas-pnl") ||
-        document.querySelector("#stock-detail-drawer .chart-canvas-pnl");
+        (isDrawerOwnedByWrapper()
+          ? document.querySelector("#stock-detail-drawer .chart-canvas-pnl")
+          : null);
       if (pnlCanvas)
         drawPnLChart(pnlCanvas, formattedData, stock.avg_price, {
           animate: true,

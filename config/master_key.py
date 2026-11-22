@@ -37,7 +37,7 @@ def _validate_master_key(key: str) -> str:
 
     try:
         Fernet(key.encode("ascii"))
-    except (ValueError, TypeError, UnicodeEncodeError) as exc:
+    except (ValueError, TypeError) as exc:
         raise RuntimeError(
             "FATAL: the configured master key is not a valid Fernet key. "
             "Set MNS_MASTER_KEY (or restore the stored mns_master_key) to the "

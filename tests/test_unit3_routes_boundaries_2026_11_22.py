@@ -346,3 +346,74 @@ def test_schemas_and_executor_cap_fixes(client) -> None:
     )
     _submit_in_app_context(ex_large, lambda: None, app=app)
     assert ex_large.submit.call_count == 1
+
+
+def test_screener_does_not_mutate_cached_enrichment_and_heatmap_uses_monotonic(client) -> None:
+    from app_state import app_state
+    from routes.stocks import views as views_mod
+
+    shared_enriched = {
+        "NVDA": {
+            "symbol": "NVDA",
+            "market": "us",
+            "name": "NVIDIA",
+            "price": 120.0,
+            "change_percent": 1.5,
+            "market_cap": 3_000_000_000_000,
+            "sector": "Technology",
+        }
+    }
+    with (
+        patch.object(views_mod, "require_trusted_or_admin", return_value=(True, None)),
+        patch.object(views_mod, "resolve_stocks_for_response", return_value=[]),
+        patch.object(views_mod, "build_screener_base_rows_dispatch", return_value=[]),
+        patch.object(
+            views_mod,
+            "build_popular_symbol_items_dispatch",
+            return_value=[("NVDA", "NVIDIA", "us")],
+        ),
+        patch.object(views_mod, "get_cached_dispatch", return_value=shared_enriched),
+        patch.object(views_mod, "get_current_usdjpy_rate", return_value=(150.0, False)),
+    ):
+        r_scr = client.get("/api/screener?market=all")
+    assert r_scr.status_code == 200
+    assert "market_cap_jpy" not in shared_enriched["NVDA"]
+
+    # Heatmap inflight timeout uses time.monotonic(), resilient to time.time() jumps
+    # and recovering cleanly when start_time is absent even below 30s uptime.
+    with app_state.heatmap_fetch_lock:
+        app_state.heatmap_fetch_inflight.discard("heatmap_us")
+        app_state.heatmap_fetch_start_times.pop("heatmap_us", None)
+        app_state.heatmap_fetch_inflight.add("heatmap_us")
+        app_state.heatmap_fetch_start_times["heatmap_us"] = 995.0
+    try:
+        with (
+            patch.object(views_mod, "require_trusted_or_admin", return_value=(True, None)),
+            patch.object(views_mod, "_get_cached_value_if_present", return_value=(False, None)),
+            patch.object(app_state.payload_disk_cache, "get", return_value=None),
+            patch.object(views_mod, "time", SimpleNamespace(monotonic=lambda: 1000.0)),
+            patch.object(app_state.execution.data_executor, "submit") as mock_submit,
+        ):
+            r_active = client.get("/api/heatmap?market=us")
+        assert r_active.status_code == 200
+        mock_submit.assert_not_called()
+
+        # Orphan entry without start_time recovers even if monotonic() < 30s
+        with app_state.heatmap_fetch_lock:
+            app_state.heatmap_fetch_inflight.add("heatmap_us")
+            app_state.heatmap_fetch_start_times.pop("heatmap_us", None)
+        with (
+            patch.object(views_mod, "require_trusted_or_admin", return_value=(True, None)),
+            patch.object(views_mod, "_get_cached_value_if_present", return_value=(False, None)),
+            patch.object(app_state.payload_disk_cache, "get", return_value=None),
+            patch.object(views_mod, "time", SimpleNamespace(monotonic=lambda: 5.0)),
+            patch.object(app_state.execution.data_executor, "submit") as mock_submit,
+        ):
+            r_orphan = client.get("/api/heatmap?market=us")
+        assert r_orphan.status_code == 200
+        mock_submit.assert_called_once()
+        assert app_state.heatmap_fetch_start_times.get("heatmap_us") == 5.0
+    finally:
+        with app_state.heatmap_fetch_lock:
+            app_state.heatmap_fetch_inflight.discard("heatmap_us")
+            app_state.heatmap_fetch_start_times.pop("heatmap_us", None)

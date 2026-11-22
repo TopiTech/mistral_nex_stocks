@@ -174,7 +174,7 @@ def execute_mistral_tool_call(tool_name: str, arguments: dict[str, Any] | str) -
     if isinstance(arguments, str):
         try:
             args = json.loads(arguments)
-        except (TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError):
             args = {}
     elif isinstance(arguments, dict):
         args = arguments

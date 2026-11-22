@@ -1,4 +1,3 @@
-import json
 import logging
 import math
 import os
@@ -84,7 +83,7 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     try:
         try:
             parsed = response.json()
-        except (ValueError, TypeError, json.JSONDecodeError):
+        except (ValueError, TypeError):
             pass
 
         if not response.ok:

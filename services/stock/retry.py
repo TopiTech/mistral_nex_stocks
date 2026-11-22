@@ -16,7 +16,6 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar
 
-from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError as RequestsHTTPError
 
 from constants import CurlRequestsTimeout, RequestsTimeout
@@ -266,7 +265,7 @@ def with_yfinance_retry(
                         self_obj,
                         is_testing,
                     )
-                except (ConnectionError, OSError, RequestsConnectionError) as exc:
+                except OSError as exc:
                     if _is_yfinance_rate_limit_error(exc):
                         last_exception = exc
                         m_state, rate_limit_recorded = _handle_rate_limit_in_retry(

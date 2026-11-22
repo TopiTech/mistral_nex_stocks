@@ -76,3 +76,48 @@ def test_announce_counts_dropped_listeners():
     # announced to any surviving target.
     assert stats["announced"] == 0
     assert stats["listeners"] == 0
+
+
+def test_announce_mid_broadcast_race_with_unlisten_does_not_count_dropped():
+    """Concurrent unlisten before mid-broadcast queue.Full must not inflate dropped_count."""
+    ann = MessageAnnouncer()
+    q = ann.listen(maxsize=1)
+    orig_put_nowait = q.put_nowait
+
+    def _race_put_nowait(item):
+        # Restore real put_nowait, fill the queue, and concurrently unlisten
+        # before raising queue.Full to reproduce the mid-broadcast race.
+        q.put_nowait = orig_put_nowait  # type: ignore[method-assign]
+        orig_put_nowait("existing")
+        ann.unlisten(q)
+        raise queue.Full
+
+    q.put_nowait = _race_put_nowait  # type: ignore[method-assign]
+    ann.announce("new")
+
+    stats = ann.stats()
+    assert stats["dropped"] == 0
+    assert stats["listeners"] == 0
+    assert q.get_nowait() == "existing"
+    assert q.empty()
+
+
+def test_announce_mid_broadcast_queue_full_drops_once_and_sends_sentinel():
+    """Real mid-broadcast queue.Full drops active listener once and enqueues None sentinel."""
+    ann = MessageAnnouncer()
+    q = ann.listen(maxsize=1)
+    orig_put_nowait = q.put_nowait
+
+    def _fill_mid_broadcast(item):
+        q.put_nowait = orig_put_nowait  # type: ignore[method-assign]
+        orig_put_nowait("concurrent_msg")
+        raise queue.Full
+
+    q.put_nowait = _fill_mid_broadcast  # type: ignore[method-assign]
+    ann.announce("new")
+
+    stats = ann.stats()
+    assert stats["dropped"] == 1
+    assert stats["listeners"] == 0
+    assert q.get_nowait() is None
+    assert q.empty()

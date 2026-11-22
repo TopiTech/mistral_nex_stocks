@@ -107,8 +107,7 @@ def fetch_stock(
 
     try:
         period = "3mo" if is_market_open(market) else "1mo"
-        hist = pd.DataFrame()
-        hist = None
+        hist: pd.DataFrame | None = None
         try:
             hist = app_state.stock_provider.get_history(symbol, period=period)
         except (
@@ -471,6 +470,7 @@ def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None
         IndexError,
         OSError,
         YFRateLimitError,
-    ):
+    ) as exc:
+        _handle_yfinance_error(exc, key)
         logger.exception("Index fetch failed for %s", key)
         return None

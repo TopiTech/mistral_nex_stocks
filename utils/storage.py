@@ -441,7 +441,7 @@ def _migrate_legacy_user_stocks() -> bool:
         except FileExistsError:
             # Another thread/process atomically won O_EXCL creation; leave it intact.
             return True
-        except (OSError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
+        except (OSError, TypeError, ValueError, RuntimeError) as exc:
             if tmp_target is not None:
                 try:
                     tmp_target.unlink(missing_ok=True)

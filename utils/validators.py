@@ -972,7 +972,7 @@ def extract_json_payload(content, required_fields=None):
             if recovered:
                 logger.info("JSON salvaged by partial token/regex field extraction")
                 return json.dumps(recovered, ensure_ascii=False)
-        except (ValueError, TypeError, re.error, json.JSONDecodeError) as exc:
+        except (ValueError, TypeError, re.error) as exc:
             logger.debug("Failed to salvage JSON manually error_type=%s", type(exc).__name__)
 
     raise ValueError("JSONブロックの抽出に失敗しました (構文エラーの可能性あり)")

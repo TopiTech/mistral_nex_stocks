@@ -816,3 +816,340 @@ process.stdout.write("OK");
 """
     )
     assert out == "OK"
+
+
+def test_unit4_css_sparkline_drawer_and_symbol_fixes() -> None:
+    """CSS tokens/pills, multi-context sparkline cache, drawer ownership isolation, JP deep link, AI portfolio clamps."""
+    out = _run_node(
+        r"""
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+// 1. colors.css: :root tokens are not swallowed by a nested comment before `:root`
+const colorsCss = fs.readFileSync("static/css/colors.css", "utf8");
+assert.ok(
+  !/\/\*[^*]*(?:\*(?!\/)[^*]*)*\/\*[^*]*\*\/\s*\n\s*\*[^\n]*\*\/\s*:root\s*\{/.test(colorsCss),
+  "colors.css must not nest a comment inside the breakpoint header before :root",
+);
+const strippedColors = colorsCss.replace(/\/\*[\s\S]*?\*\//g, "");
+assert.ok(!strippedColors.includes("= */"), "colors.css must have balanced CSS comments before :root");
+const allRoots = Array.from(strippedColors.matchAll(/:root\s*\{([\s\S]*?)\}/g))
+  .map((m) => m[1])
+  .join("\n");
+assert.ok(allRoots.includes("--bp-mobile: 640px;"), "--bp-mobile token must be active");
+assert.ok(allRoots.includes("--z-modal: 1300;"), "--z-modal token must be active");
+
+// 2. setup.css: .preset-pill-btn overrides global button width/margin
+const setupCss = fs.readFileSync("static/css/setup.css", "utf8");
+const pillRule = setupCss.match(/\.preset-pill-btn\s*\{([\s\S]*?)\}/);
+assert.ok(pillRule, ".preset-pill-btn rule present");
+assert.ok(/width:\s*auto\s*;/.test(pillRule[1]), ".preset-pill-btn sets width: auto");
+assert.ok(/margin:\s*0\s*;/.test(pillRule[1]), ".preset-pill-btn sets margin: 0");
+
+// 3. state.js + ui.js: sparkline caches isolate watchlist vs portfolio wrappers and purgeStockKeyCaches clears both
+const stateSrc = fs.readFileSync("static/js/state.js", "utf8");
+const uiSrc = fs.readFileSync("static/js/ui.js", "utf8");
+const noop = () => {};
+const stateCtx = {
+  window: {
+    addEventListener: noop,
+    getComputedStyle: () => ({ getPropertyValue: () => "" }),
+    matchMedia: () => ({ matches: false, addEventListener: noop }),
+    location: { href: "" },
+  },
+  document: {
+    documentElement: {},
+    body: { classList: { add: noop, remove: noop, toggle: noop } },
+    addEventListener: noop,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    getElementById: () => null,
+    createElement: () => ({
+      classList: { add: noop, remove: noop, toggle: noop },
+      style: {},
+      appendChild: noop,
+      setAttribute: noop,
+    }),
+  },
+  getComputedStyle: () => ({ getPropertyValue: () => "" }),
+  matchMedia: () => ({ matches: false, addEventListener: noop }),
+  IntersectionObserver: class { observe() {} unobserve() {} disconnect() {} },
+  ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
+  APP_CONFIG: {},
+  DEFAULT_SYMBOLS: { us: [], jp: [], idx: [] },
+  logger: { warn: noop, info: noop, debug: noop, error: noop },
+  localStorage: { removeItem() {} },
+  JSON,
+  Date,
+  Array,
+  Map,
+  Set,
+  WeakMap,
+  Number,
+  String,
+  Boolean,
+  Math,
+  Object,
+  Error,
+};
+stateCtx.globalThis = stateCtx;
+vm.createContext(stateCtx);
+vm.runInContext(
+  stateSrc +
+    "\nthis.__stateProbe = { sparklineSignatureMap, sparklineUpdateAt, shouldUpdateSparkline, purgeStockKeyCaches };",
+  stateCtx,
+);
+const watchWrap = { dataset: { stockKey: "us:AAPL", marketContext: "watchlist", visible: "true" } };
+const portWrap = { dataset: { stockKey: "us:AAPL", marketContext: "portfolio", visible: "true" } };
+const pts = [100, 101, 102];
+assert.strictEqual(stateCtx.__stateProbe.shouldUpdateSparkline(watchWrap, "us:AAPL", pts), true);
+assert.strictEqual(
+  stateCtx.__stateProbe.shouldUpdateSparkline(portWrap, "us:AAPL", pts),
+  true,
+  "portfolio wrapper must not be suppressed by watchlist sparkline signature",
+);
+assert.strictEqual(stateCtx.__stateProbe.shouldUpdateSparkline(watchWrap, "us:AAPL", pts), false);
+assert.strictEqual(stateCtx.__stateProbe.shouldUpdateSparkline(portWrap, "us:AAPL", pts), false);
+stateCtx.__stateProbe.purgeStockKeyCaches("us:AAPL");
+assert.strictEqual(stateCtx.__stateProbe.shouldUpdateSparkline(watchWrap, "us:AAPL", pts), true);
+assert.strictEqual(stateCtx.__stateProbe.shouldUpdateSparkline(portWrap, "us:AAPL", pts), true);
+
+function extractFnBalanced(src, marker) {
+  const start = src.indexOf(marker);
+  assert.notStrictEqual(start, -1, `missing ${marker}`);
+  const parenStart = src.indexOf("(", start);
+  let pDepth = 0;
+  let open = -1;
+  for (let i = parenStart; i < src.length; i += 1) {
+    if (src[i] === "(") pDepth += 1;
+    else if (src[i] === ")") {
+      pDepth -= 1;
+      if (pDepth === 0) {
+        open = src.indexOf("{", i);
+        break;
+      }
+    }
+  }
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const q = ch;
+      i += 1;
+      while (i < src.length && src[i] !== q) {
+        if (src[i] === "\\") i += 1;
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  throw new Error(`unbalanced ${marker}`);
+}
+
+const sparkSigMap = new Map();
+const nullSparkCanvas = { getContext: () => null, getBoundingClientRect: () => ({ width: 100, height: 32 }) };
+const sparkCtx = {
+  Array,
+  Number,
+  Math,
+  Map,
+  window: { devicePixelRatio: 1 },
+  sparklineSignatureMap: sparkSigMap,
+  getSparklineSignature: (d) => `sig:${d.length}`,
+  destroyChart: () => {},
+  setSparklineVisibility: () => {},
+};
+vm.createContext(sparkCtx);
+vm.runInContext(
+  extractFnBalanced(uiSrc, "const drawSparkline = (wrapper, data) =>") + "; this.drawSparkline = drawSparkline;",
+  sparkCtx,
+);
+sparkCtx.drawSparkline({ dataset: { stockKey: "us:NVDA", marketContext: "watchlist" }, querySelector: () => nullSparkCanvas }, pts);
+sparkCtx.drawSparkline({ dataset: { stockKey: "us:NVDA", marketContext: "portfolio" }, querySelector: () => nullSparkCanvas }, pts);
+assert.strictEqual(sparkSigMap.has("us:NVDA|watchlist"), true);
+assert.strictEqual(sparkSigMap.has("us:NVDA|portfolio"), true);
+
+// 4. chart.js: drawChart & refreshStockChart ignore drawer when open for another stock
+const chartSrc = fs.readFileSync("static/js/chart.js", "utf8");
+let drawerCanvasTouched = false;
+let intervalUpdates = [];
+let drawerPnlCalls = 0;
+const drawerCanvasB = { getContext: () => { drawerCanvasTouched = true; return null; } };
+const drawerPnlCanvasB = { id: "drawer-pnl-b" };
+const drawerContainerB = {
+  loadingAdded: false,
+  classList: { add(c) { if (c === "loading") drawerContainerB.loadingAdded = true; }, remove() {} },
+};
+const drawerElB = {
+  dataset: { stockKey: "us:MSFT" },
+  classList: { contains: (c) => c === "open" },
+};
+const wrapperA = {
+  isConnected: true,
+  dataset: { stockKey: "us:AAPL", marketContext: "portfolio" },
+  querySelector: () => null,
+};
+const wrapperB = {
+  isConnected: true,
+  dataset: { stockKey: "us:MSFT", marketContext: "watchlist" },
+};
+const chartGuardCtx = {
+  Array,
+  Number,
+  Math,
+  Date,
+  Promise,
+  setTimeout,
+  clearTimeout,
+  globalThis: { crypto: { randomUUID: () => "uuid-1" } },
+  currentDrawerActiveWrapper: wrapperB,
+  document: {
+    getElementById: (id) => (id === "stock-detail-drawer" ? drawerElB : null),
+    querySelector: (sel) => {
+      if (sel === "#stock-detail-drawer .chart-canvas") return drawerCanvasB;
+      if (sel === "#stock-detail-drawer .chart-canvas-pnl") return drawerPnlCanvasB;
+      if (sel === "#stock-detail-drawer .chart-container") return drawerContainerB;
+      return null;
+    },
+  },
+  window: {
+    updateIntervalControlsVisibility: (target, key) => intervalUpdates.push([target, key]),
+  },
+  logger: { error() {}, warn() {}, info() {}, debug() {} },
+  NO_HISTORY_MSG: "no history",
+  showChartError: () => {},
+  getChartAnimationEnabled: () => false,
+  getStockByKey: () => ({ symbol: "AAPL", market: "us", avg_price: 100 }),
+  getChartPref: (_k, _p, d) => d,
+  getFreshPrefetchedHistory: () => ({ formattedData: [{ x: 1, c: 10 }, { x: 2, c: 11 }], ohlcData: [] }),
+  clearChartError: () => {},
+  applyHistoryToStockAndWrapper: () => {},
+  drawPnLChart: () => { drawerPnlCalls += 1; },
+  drawFullscreenChartIfActive: () => {},
+  fetchStockHistoryPayload: async () => null,
+  AbortController,
+};
+vm.createContext(chartGuardCtx);
+vm.runInContext(
+  extractFnBalanced(chartSrc, "function drawChart(wrapper, data, ohlcData, options = {})") +
+    "\n" +
+    extractFnBalanced(chartSrc, "async function refreshStockChart(wrapper, period, interval, options = {})"),
+  chartGuardCtx,
+);
+chartGuardCtx.drawChart(wrapperA, [{ x: 1, c: 10 }, { x: 2, c: 11 }], [], {});
+assert.strictEqual(drawerCanvasTouched, false, "drawChart for wrapperA must not draw onto drawer open for MSFT");
+(async () => {
+  await chartGuardCtx.refreshStockChart(wrapperA, "1mo", "1d", {});
+  assert.strictEqual(drawerPnlCalls, 0, "refreshStockChart(portfolio) for AAPL must not draw into drawer open for MSFT");
+  assert.strictEqual(
+    intervalUpdates.some(([t]) => t === drawerElB),
+    false,
+    "refreshStockChart for AAPL must not update drawer interval controls belonging to MSFT",
+  );
+  // Test loading container + non-prefetch PnL isolation
+  chartGuardCtx.getFreshPrefetchedHistory = () => null;
+  chartGuardCtx.fetchStockHistoryPayload = async () => ({ formattedData: [{ x: 1, c: 10 }, { x: 2, c: 11 }], ohlcData: [] });
+  await chartGuardCtx.refreshStockChart(wrapperA, "1mo", "1d", {});
+  assert.strictEqual(drawerContainerB.loadingAdded, false, "refreshStockChart for AAPL must not add .loading on MSFT drawer container");
+  assert.strictEqual(drawerPnlCalls, 0, "non-prefetch refreshStockChart(portfolio) for AAPL must not draw into MSFT drawer PnL canvas");
+
+  // 5. api.js: sendChat & clearAnalysisError guard keyless drawer & cross-stock drawer fallback
+  const apiSrc = fs.readFileSync("static/js/api.js", "utf8");
+  const drawerBannerRemoved = { hit: false };
+  const keylessDrawer = {
+    dataset: {},
+    classList: { contains: (c) => c === "open" },
+    querySelector: (s) => (s === ".ai-error-banner" ? { remove() { drawerBannerRemoved.hit = true; } } : null),
+  };
+  let drawerInputRead = false;
+  const drawerChatInput = {
+    get value() { drawerInputRead = true; return "hello"; },
+    disabled: false,
+    closest: () => null,
+  };
+  const apiGuardCtx = {
+    HAS_MISTRAL_API_KEY: false,
+    makeStockKey: (m, s) => `${m}:${s}`,
+    currentDrawerActiveWrapper: wrapperB,
+    showToast: () => {},
+    document: {
+      getElementById: (id) => {
+        if (id === "stock-detail-drawer") return apiGuardCtx.__drawerEl;
+        if (id === "drawerTabAiContent") return null;
+        return null;
+      },
+      querySelector: (sel) => (sel === "#stock-detail-drawer .chat-input" ? drawerChatInput : null),
+    },
+    __drawerEl: keylessDrawer,
+  };
+  vm.createContext(apiGuardCtx);
+  vm.runInContext(
+    extractFnBalanced(apiSrc, "function clearAnalysisError(wrapper)") +
+      "\n" +
+      extractFnBalanced(apiSrc, "async function sendChat(wrapper, inputEl = null)"),
+    apiGuardCtx,
+  );
+  apiGuardCtx.clearAnalysisError({ dataset: {}, querySelector: () => null });
+  assert.strictEqual(drawerBannerRemoved.hit, false, "keyless wrapper must not clear keyless drawer error banner");
+  apiGuardCtx.__drawerEl = drawerElB;
+  await apiGuardCtx.sendChat(wrapperA, null);
+  assert.strictEqual(drawerInputRead, false, "sendChat(wrapperA) must not hijack MSFT drawer chat input");
+
+  // 5b. ui.js: setDetailItemVisibility isolates drawer owned by another stock
+  const drawerPeRowB = {
+    hiddenSet: null,
+    style: {},
+    classList: { toggle() {} },
+    setAttribute(k, v) { if (k === "aria-hidden") this.hiddenSet = v; },
+  };
+  const visCtx = {
+    currentDrawerActiveWrapper: wrapperB,
+    document: {
+      getElementById: (id) => (id === "stock-detail-drawer" ? drawerElB : null),
+      querySelector: (sel) => (sel === "#stock-detail-drawer .detail-item-pe" ? drawerPeRowB : null),
+    },
+  };
+  vm.createContext(visCtx);
+  vm.runInContext(extractFnBalanced(uiSrc, "function setDetailItemVisibility(wrapper, field, visible)"), visCtx);
+  visCtx.setDetailItemVisibility(wrapperA, "pe", false);
+  assert.strictEqual(drawerPeRowB.hiddenSet, null, "setDetailItemVisibility(wrapperA) must not hide MSFT drawer row");
+
+  // 6. index_main.js: JP 4-char deep link (?q=7203&market=jp) normalizes to jp:7203.T
+  const indexMainSrc = fs.readFileSync("static/js/index_main.js", "utf8");
+  let openedKey = null;
+  const scheduledCbs = [];
+  const idxCtx = {
+    URLSearchParams,
+    window: { location: { search: "?q=7203&market=jp" } },
+    DOM: { get: () => null },
+    setTimeout: (fn) => { scheduledCbs.push(fn); return scheduledCbs.length; },
+    makeStockKey: (m, s) => `${m}:${s}`,
+    normalizeSymbolForMarketClient: (s, m) => (m === "jp" && /^\d{3}[0-9A-Z]$/.test(String(s).toUpperCase()) ? `${String(s).toUpperCase()}.T` : String(s).toUpperCase()),
+    getStockByKey: (k) => (k === "jp:7203.T" ? { market: "jp", symbol: "7203.T" } : null),
+    findWrapperByStockKey: (k) => (k === "jp:7203.T" ? { scrollIntoView() {} } : null),
+    getLatestStockForDrawer: (s) => s,
+    openStockDetailDrawer: (s) => { openedKey = `${s.market}:${s.symbol}`; },
+    searchStocks: () => {},
+  };
+  vm.createContext(idxCtx);
+  vm.runInContext(extractFnBalanced(indexMainSrc, "function handleUrlSearchParam()"), idxCtx);
+  idxCtx.handleUrlSearchParam();
+  while (scheduledCbs.length) scheduledCbs.shift()();
+  assert.strictEqual(openedKey, "jp:7203.T", "JP 4-char deep link must resolve jp:7203.T");
+
+  // 7. ai_portfolio.js: verify non-negative clamp + JP favorite key normalization logic
+  const pfSrc = fs.readFileSync("static/js/ai_portfolio.js", "utf8");
+  assert.ok(pfSrc.includes("Math.max(0, Math.min(100, weightPct))"), "ai_portfolio.js clamps weight bar to [0, 100]");
+  assert.ok(pfSrc.includes("normalizeSymbolForMarketClient"), "ai_portfolio.js normalizes JP favKey");
+
+  process.stdout.write("OK");
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+    )
+    assert out == "OK"

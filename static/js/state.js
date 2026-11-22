@@ -731,6 +731,16 @@ function purgeStockKeyCaches(stockKey) {
   stockRealtimeUpdateAt.delete(stockKey);
   sparklineUpdateAt.delete(stockKey);
   sparklineSignatureMap.delete(stockKey);
+  for (const key of Array.from(sparklineUpdateAt.keys())) {
+    if (typeof key === "string" && key.startsWith(`${stockKey}|`)) {
+      sparklineUpdateAt.delete(key);
+    }
+  }
+  for (const key of Array.from(sparklineSignatureMap.keys())) {
+    if (typeof key === "string" && key.startsWith(`${stockKey}|`)) {
+      sparklineSignatureMap.delete(key);
+    }
+  }
   stockDetailsCache.delete(stockKey);
   stockDetailsCacheAt.delete(stockKey);
   historyPrefetchCache.delete(stockKey);
@@ -874,9 +884,12 @@ function shouldUpdateSparkline(wrapper, stockKey, data) {
   if (!isElementInViewport(wrapper)) return false;
   const signature = getSparklineSignature(data);
   if (!signature) return false;
-  if (sparklineSignatureMap.get(stockKey) === signature) return false;
-  sparklineSignatureMap.set(stockKey, signature);
-  sparklineUpdateAt.set(stockKey, Date.now());
+  const sparkCtxKey = wrapper?.dataset?.marketContext
+    ? `${stockKey}|${wrapper.dataset.marketContext}`
+    : stockKey;
+  if (sparklineSignatureMap.get(sparkCtxKey) === signature) return false;
+  sparklineSignatureMap.set(sparkCtxKey, signature);
+  sparklineUpdateAt.set(sparkCtxKey, Date.now());
   return true;
 }
 

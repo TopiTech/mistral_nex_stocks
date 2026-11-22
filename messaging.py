@@ -146,15 +146,14 @@ class MessageAnnouncer:
                 except ValueError:
                     pass
             targets = list(self.listeners)
+            if overloaded:
+                self.dropped_count += len(overloaded)
 
         if overloaded:
             logger.info(
                 "SSE backpressure: dropped %d slow listener(s) due to queue overflow",
                 len(overloaded),
             )
-
-        with self.lock:
-            self.dropped_count += len(overloaded)
 
         delivered = 0
         for q_target in targets:
@@ -169,12 +168,18 @@ class MessageAnnouncer:
                 # reconnects and replays via Last-Event-ID. Quietly evicting
                 # one event here would leave a permanent hole in the stream
                 # (mode-1 consumers never heal without a reconnect).
+                removed_now = False
                 with self.lock:
                     try:
                         self.listeners.remove(q_target)
+                        removed_now = True
+                        self.dropped_count += 1
                     except ValueError:
                         pass
-                    self.dropped_count += 1
+                if not removed_now:
+                    # Listener was already removed by unlisten() or a concurrent
+                    # announce(); skip sentinel injection and dropped_count increment.
+                    continue
                 try:
                     q_target.put_nowait(None)
                 except queue.Full:

@@ -114,9 +114,10 @@ def _build_sse_diff(
             if prev_item is None:
                 diff[market].append(safe_item)
             else:
-                prev_ts = prev_item.get("snapshot_ts_ms") or 0
+                prev_safe_item = _strip_portfolio_fields(prev_item)
+                prev_ts = prev_safe_item.get("snapshot_ts_ms") or 0
                 curr_ts = safe_item.get("snapshot_ts_ms") or 0
-                if curr_ts != prev_ts or safe_item.get("price") != prev_item.get("price"):
+                if curr_ts != prev_ts or safe_item != prev_safe_item:
                     diff[market].append(safe_item)
         for sym in prev_map.get(market, {}):
             if sym not in current_map:

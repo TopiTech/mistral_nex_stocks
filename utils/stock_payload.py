@@ -1545,45 +1545,50 @@ def get_stock_previous_close(symbol: str) -> float | None:
         logger.debug("Failed looking up previous_close cache for %s: %s", symbol, exc)
 
     # 2. Fall back to target_stocks_cache / current_stocks_cache (cache miss only).
+    # Use non-blocking acquire so realtime producer updates never block on sse_data_lock.
     try:
-        with app_state.cache.sse_data_lock:
-            for store in (
-                app_state.market.target_stocks_cache,
-                app_state.market.current_stocks_cache,
-            ):
-                if not isinstance(store, dict):
-                    continue
-                for market in ("us", "jp", "idx"):
-                    rows = store.get(market, [])
-                    if isinstance(rows, list):
-                        for row in rows:
-                            if isinstance(row, dict) and row.get("symbol") in (
-                                symbol,
-                                f"{symbol}.T",
-                                symbol.replace(".T", ""),
-                            ):
-                                prev = row.get("previous_close")
-                                if prev is not None and not is_bool_like(prev):
-                                    try:
-                                        pval = float(prev)
-                                        if math.isfinite(pval) and pval > 0:
-                                            return pval
-                                    except (TypeError, ValueError, OverflowError):
-                                        pass
-                                p = row.get("price")
-                                c = row.get("change")
-                                if (
-                                    p is not None
-                                    and c is not None
-                                    and not is_bool_like(p)
-                                    and not is_bool_like(c)
+        acquired = app_state.cache.sse_data_lock.acquire(blocking=False)
+        if acquired:
+            try:
+                for store in (
+                    app_state.market.target_stocks_cache,
+                    app_state.market.current_stocks_cache,
+                ):
+                    if not isinstance(store, dict):
+                        continue
+                    for market in ("us", "jp", "idx"):
+                        rows = store.get(market, [])
+                        if isinstance(rows, list):
+                            for row in rows:
+                                if isinstance(row, dict) and row.get("symbol") in (
+                                    symbol,
+                                    f"{symbol}.T",
+                                    symbol.replace(".T", ""),
                                 ):
-                                    try:
-                                        pval = float(p) - float(c)
-                                        if math.isfinite(pval) and pval > 0:
-                                            return pval
-                                    except (TypeError, ValueError, OverflowError):
-                                        pass
+                                    prev = row.get("previous_close")
+                                    if prev is not None and not is_bool_like(prev):
+                                        try:
+                                            pval = float(prev)
+                                            if math.isfinite(pval) and pval > 0:
+                                                return pval
+                                        except (TypeError, ValueError, OverflowError):
+                                            pass
+                                    p = row.get("price")
+                                    c = row.get("change")
+                                    if (
+                                        p is not None
+                                        and c is not None
+                                        and not is_bool_like(p)
+                                        and not is_bool_like(c)
+                                    ):
+                                        try:
+                                            pval = float(p) - float(c)
+                                            if math.isfinite(pval) and pval > 0:
+                                                return pval
+                                        except (TypeError, ValueError, OverflowError):
+                                            pass
+            finally:
+                app_state.cache.sse_data_lock.release()
     except Exception as exc:
         logger.debug("Failed looking up previous_close from stocks cache for %s: %s", symbol, exc)
 

@@ -266,6 +266,79 @@ class SseSimulationTests(unittest.TestCase):
             self.assertTrue(payload["is_us_market_open"])
             self.assertFalse(payload["is_jp_market_open"])
 
+    def test_non_price_updates_bump_snapshot_ts_and_emit_sse_diff(self):
+        """Mode 1 interpolator and _build_sse_diff must propagate non-price updates too."""
+        import app_bg
+        from app_bg import _build_sse_diff
+
+        target = [
+            {"symbol": "AAPL", "price": 100.0, "change": 2.0, "currency": "USD", "volume": 1000},
+            {"symbol": "MSFT", "price": 400.0, "change": 4.0, "currency": "USD", "volume": 5500, "sector": "Tech"},
+        ]
+        current = [
+            {
+                "symbol": "AAPL",
+                "price": 100.0,
+                "change": 2.0,
+                "change_percent": 2.04,
+                "currency": "USD",
+                "volume": 1000,
+                "market_state": "REGULAR",
+                "snapshot_ts_ms": 1000,
+            },
+            {
+                "symbol": "MSFT",
+                "price": 400.0,
+                "change": 4.0,
+                "change_percent": 1.01,
+                "currency": "USD",
+                "volume": 5000,
+                "sector": "Tech",
+                "market_state": "REGULAR",
+                "snapshot_ts_ms": 1000,
+            },
+        ]
+        with (
+            patch.object(app_bg, "SIMULATE_FLUCTUATION", False),
+            patch("random.random", return_value=0.9),
+        ):
+            new_current = app_bg._interpolate_and_fluctuate_market(
+                target, current, is_open=True, market="us"
+            )
+
+        by_sym = {item["symbol"]: item for item in new_current}
+        # Unchanged AAPL keeps its old snapshot_ts_ms
+        self.assertEqual(by_sym["AAPL"]["snapshot_ts_ms"], 1000)
+        # MSFT price stayed 400.0, but volume changed -> snapshot_ts_ms must advance
+        self.assertEqual(by_sym["MSFT"]["price"], 400.0)
+        self.assertEqual(by_sym["MSFT"]["volume"], 5500)
+        self.assertNotEqual(by_sym["MSFT"]["snapshot_ts_ms"], 1000)
+
+        prev_map = {"us": {item["symbol"]: item for item in current}, "jp": {}}
+        diff = _build_sse_diff({"us": new_current, "jp": []}, prev_map)
+        self.assertEqual([item.get("symbol") for item in diff["us"]], ["MSFT"])
+
+        # Direct _build_sse_diff check when price & snapshot_ts_ms match (Mode 2/3),
+        # while ignoring portfolio-only fields that _strip_portfolio_fields strips.
+        mode2_prev = {
+            "us": {
+                "AAPL": {"symbol": "AAPL", "price": 100.0, "volume": 1000, "shares": 5, "snapshot_ts_ms": 1000},
+                "MSFT": {"symbol": "MSFT", "price": 400.0, "volume": 5000, "snapshot_ts_ms": 1000},
+            },
+            "jp": {},
+            "idx": {},
+        }
+        mode2_curr = {
+            "us": [
+                {"symbol": "AAPL", "price": 100.0, "volume": 1000, "shares": 99, "snapshot_ts_ms": 1000},
+                {"symbol": "MSFT", "price": 400.0, "volume": 6200, "snapshot_ts_ms": 1000},
+            ],
+            "jp": [],
+            "idx": [],
+        }
+        mode2_diff = _build_sse_diff(mode2_curr, mode2_prev)
+        self.assertEqual([item.get("symbol") for item in mode2_diff["us"]], ["MSFT"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,6 +55,12 @@
   --color-neutral: #f59e0b; /* Amber Warm Yellow */
   --pos-color: var(--color-positive);
   --neg-color: var(--color-negative);
+  --pos-flash-bg: rgba(16, 185, 129, 0.25);
+  --pos-flash-bg-mid: rgba(16, 185, 129, 0.12);
+  --pos-flash-shadow: rgba(16, 185, 129, 0.6);
+  --neg-flash-bg: rgba(244, 63, 94, 0.25);
+  --neg-flash-bg-mid: rgba(244, 63, 94, 0.12);
+  --neg-flash-shadow: rgba(244, 63, 94, 0.6);
 
   /* Accent Colors (Market Data) */
   --accent-green: var(--color-positive);
@@ -186,13 +192,13 @@
 @keyframes flash-green {
   0% {
     color: var(--pos-color, #10b981);
-    background-color: rgba(16, 185, 129, 0.25);
+    background-color: var(--pos-flash-bg, rgba(16, 185, 129, 0.25));
     border-radius: 4px;
-    text-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+    text-shadow: 0 0 8px var(--pos-flash-shadow, rgba(16, 185, 129, 0.6));
   }
   50% {
     color: var(--pos-color, #10b981);
-    background-color: rgba(16, 185, 129, 0.12);
+    background-color: var(--pos-flash-bg-mid, rgba(16, 185, 129, 0.12));
   }
   100% {
     color: inherit;
@@ -204,13 +210,13 @@
 @keyframes flash-red {
   0% {
     color: var(--neg-color, #f43f5e);
-    background-color: rgba(244, 63, 94, 0.25);
+    background-color: var(--neg-flash-bg, rgba(244, 63, 94, 0.25));
     border-radius: 4px;
-    text-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
+    text-shadow: 0 0 8px var(--neg-flash-shadow, rgba(244, 63, 94, 0.6));
   }
   50% {
     color: var(--neg-color, #f43f5e);
-    background-color: rgba(244, 63, 94, 0.12);
+    background-color: var(--neg-flash-bg-mid, rgba(244, 63, 94, 0.12));
   }
   100% {
     color: inherit;
@@ -429,6 +435,12 @@ body.theme-color-jp {
   --accent-red: var(--color-neg-jp);
   --success: var(--color-pos-jp);
   --danger: var(--color-neg-jp);
+  --pos-flash-bg: rgba(244, 63, 94, 0.25);
+  --pos-flash-bg-mid: rgba(244, 63, 94, 0.12);
+  --pos-flash-shadow: rgba(244, 63, 94, 0.6);
+  --neg-flash-bg: rgba(16, 185, 129, 0.25);
+  --neg-flash-bg-mid: rgba(16, 185, 129, 0.12);
+  --neg-flash-shadow: rgba(16, 185, 129, 0.6);
 }
 
 /* =============================================

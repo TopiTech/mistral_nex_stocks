@@ -5348,12 +5348,6 @@ body.theme-color-jp .price-pulse-down {
   margin: 0 auto 12px;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* AI loading skeleton cards */
 .ai-skeleton-card {
   gap: 10px;

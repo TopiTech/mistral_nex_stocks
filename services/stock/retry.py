@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import threading
 import time
@@ -61,15 +62,26 @@ def _get_app_state_cached():
 
 
 def _get_backoff_base_cached():
-    global _cached_backoff_base
-    if _cached_backoff_base is None:
-        try:
-            from constants import YFINANCE_RETRY_BACKOFF_BASE
+    """Return YFINANCE_RETRY_BACKOFF_BASE dynamically at call time.
 
-            _cached_backoff_base = YFINANCE_RETRY_BACKOFF_BASE
-        except (ImportError, AttributeError):
-            pass
-    return _cached_backoff_base
+    Explicitly honors runtime updates to MNS_YFINANCE_RETRY_BACKOFF_BASE or
+    ``constants.YFINANCE_RETRY_BACKOFF_BASE`` without permanently freezing the
+    initial import-time value. If ``_cached_backoff_base`` is explicitly set to
+    a non-None override (e.g. via patching), that value takes precedence.
+    """
+    if _cached_backoff_base is not None:
+        return _cached_backoff_base
+    raw_env = os.environ.get("MNS_YFINANCE_RETRY_BACKOFF_BASE", "")
+    if raw_env != "":
+        from utils.env_helpers import _env_float
+
+        return _env_float("MNS_YFINANCE_RETRY_BACKOFF_BASE", 2.0, 1.0, 30.0)
+    try:
+        from constants import YFINANCE_RETRY_BACKOFF_BASE
+
+        return YFINANCE_RETRY_BACKOFF_BASE
+    except (ImportError, AttributeError):
+        return None
 
 
 def _rate_limit_multiplier(self_obj: Any = None) -> float:

@@ -336,3 +336,57 @@ def test_scraper_graduated_failure_cooldown():
     scraper._record_fetch_success(symbol)
     assert symbol in scraper._active_symbols([symbol])
     assert scraper._consecutive_failures.get(key, 0) == 0
+
+
+def test_get_stock_previous_close_nonblocking_when_sse_data_lock_held():
+    """get_stock_previous_close must not block when sse_data_lock is contended."""
+    import threading
+
+    with app_state.cache.sse_data_lock:
+        orig_target = app_state.market.target_stocks_cache
+    orig_prev_close = dict(app_state.market.previous_close_cache)
+    with app_state.yfinance_short_cache_lock:
+        orig_short = app_state.yfinance_short_cache.pop("info_short_AAPL", None)
+
+    release = threading.Event()
+    holder_acquired = threading.Event()
+    t1 = None
+    try:
+        app_state.market.previous_close_cache.clear()
+        with app_state.cache.sse_data_lock:
+            app_state.market.target_stocks_cache = {
+                "us": [{"symbol": "AAPL", "price": 195.0, "previous_close": 190.0}]
+            }
+
+        def holder():
+            with app_state.cache.sse_data_lock:
+                holder_acquired.set()
+                release.wait(2.0)
+
+        t1 = threading.Thread(target=holder)
+        t1.start()
+        assert holder_acquired.wait(timeout=2.0), "holder thread failed to acquire sse_data_lock"
+
+        start = time.time()
+        contended_result = get_stock_previous_close("AAPL")
+        elapsed = time.time() - start
+
+        assert contended_result is None
+        assert elapsed < 0.2, f"get_stock_previous_close blocked {elapsed:.2f}s on sse_data_lock"
+
+        release.set()
+        t1.join(timeout=2.0)
+
+        # Once uncontended, fallback lookup succeeds cleanly
+        assert get_stock_previous_close("AAPL") == 190.0
+    finally:
+        release.set()
+        if t1 is not None and t1.is_alive():
+            t1.join(timeout=2.0)
+        with app_state.cache.sse_data_lock:
+            app_state.market.target_stocks_cache = orig_target
+        app_state.market.previous_close_cache.clear()
+        app_state.market.previous_close_cache.update(orig_prev_close)
+        if orig_short is not None:
+            with app_state.yfinance_short_cache_lock:
+                app_state.yfinance_short_cache["info_short_AAPL"] = orig_short

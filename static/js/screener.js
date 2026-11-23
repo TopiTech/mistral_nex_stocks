@@ -21,6 +21,15 @@
     });
   }
 
+  function createPlaceholderRowCell(className, text) {
+    const td = document.createElement("td");
+    td.colSpan = getVisibleColSpan();
+    td.setAttribute("data-colspan-full", "8");
+    td.className = className;
+    td.textContent = text;
+    return td;
+  }
+
   function initScreener() {
     function setupButtonGroupKeyboardNav(buttons, onSelect) {
       const validButtons = Array.from(buttons).filter(Boolean);
@@ -385,10 +394,10 @@
 
     tbody.replaceChildren();
     const trLoading = document.createElement("tr");
-    const tdLoading = document.createElement("td");
-    tdLoading.colSpan = getVisibleColSpan();
-    tdLoading.className = "text-center loading-cell";
-    tdLoading.textContent = "データをロード中...";
+    const tdLoading = createPlaceholderRowCell(
+      "text-center loading-cell",
+      "データをロード中...",
+    );
     trLoading.appendChild(tdLoading);
     tbody.appendChild(trLoading);
     const params = new URLSearchParams({
@@ -441,11 +450,10 @@
         if (tbody && tbody.querySelector(".loading-cell")) {
           tbody.replaceChildren();
           const trAborted = document.createElement("tr");
-          const tdAborted = document.createElement("td");
-          tdAborted.colSpan = getVisibleColSpan();
-          tdAborted.className = "text-center empty-cell";
-          tdAborted.textContent =
-            "読み込みが中断されました。再試行してください。";
+          const tdAborted = createPlaceholderRowCell(
+            "text-center empty-cell",
+            "読み込みが中断されました。再試行してください。",
+          );
           trAborted.appendChild(tdAborted);
           tbody.appendChild(trAborted);
         }
@@ -458,10 +466,10 @@
       if (tbody) {
         tbody.replaceChildren();
         const trError = document.createElement("tr");
-        const tdError = document.createElement("td");
-        tdError.colSpan = getVisibleColSpan();
-        tdError.className = "text-center error-cell";
-        tdError.textContent = `エラーが発生しました: ${err.message || String(err)}`;
+        const tdError = createPlaceholderRowCell(
+          "text-center error-cell",
+          `エラーが発生しました: ${err.message || String(err)}`,
+        );
         trError.appendChild(tdError);
         tbody.appendChild(trError);
       }
@@ -513,10 +521,10 @@
     if (safeStocks.length === 0) {
       tbody.replaceChildren();
       const trEmpty = document.createElement("tr");
-      const tdEmpty = document.createElement("td");
-      tdEmpty.colSpan = getVisibleColSpan();
-      tdEmpty.className = "text-center empty-cell";
-      tdEmpty.textContent = "指定した条件に該当する銘柄はありません。";
+      const tdEmpty = createPlaceholderRowCell(
+        "text-center empty-cell",
+        "指定した条件に該当する銘柄はありません。",
+      );
       trEmpty.appendChild(tdEmpty);
       tbody.appendChild(trEmpty);
       return;
@@ -784,6 +792,7 @@
   ) {
     window.addEventListener("resize", syncStaticColspanPlaceholders);
     const cleanupScreenerResources = () => {
+      window.removeEventListener?.("resize", syncStaticColspanPlaceholders);
       if (fetchTimeout) {
         clearTimeout(fetchTimeout);
         fetchTimeout = null;
@@ -797,6 +806,8 @@
     window.addEventListener("pagehide", cleanupScreenerResources);
     window.addEventListener("pageshow", (event) => {
       if (!event?.persisted) return;
+      window.removeEventListener?.("resize", syncStaticColspanPlaceholders);
+      window.addEventListener("resize", syncStaticColspanPlaceholders);
       syncStaticColspanPlaceholders();
       fetchScreenerResults();
     });

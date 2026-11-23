@@ -786,6 +786,57 @@ class SearchAndNewsLimitNormalizationTestCase(unittest.TestCase):
             mock_state.market = fake_market
             self.assertEqual(stock_payload._read_market_usdjpy_snapshot(), (0.0, 0.0))
 
+    def test_backoff_factor_tracks_runtime_env_changes(self):
+        """MNS_YFINANCE_RETRY_BACKOFF_BASE changes after import/first call take effect at call time."""
+        import os
+
+        import constants
+        from services.stock import retry as retry_mod
+
+        with (
+            patch.object(retry_mod, "_cached_backoff_base", None),
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            os.environ.pop("MNS_YFINANCE_RETRY_BACKOFF_BASE", None)
+            self.assertEqual(retry_mod._get_backoff_base_cached(), constants.YFINANCE_RETRY_BACKOFF_BASE)
+
+            @retry_mod.with_yfinance_retry(max_retries=2, base_delay=1.0, backoff_factor=1.0)
+            def flaky_fn(counter: dict[str, int]) -> str:
+                counter["n"] += 1
+                if counter["n"] <= 2:
+                    raise TimeoutError("transient")
+                return "ok"
+
+            with (
+                patch("utils.env_helpers._is_testing", return_value=False),
+                patch("services.stock.retry._rate_limit_multiplier", return_value=1.0),
+                patch("services.stock.retry.time.sleep") as mock_sleep,
+            ):
+                # First call sees default 2.0 (env unset)
+                res1 = flaky_fn({"n": 0})
+                self.assertEqual(res1, "ok")
+                attempt1_sleep_default = mock_sleep.call_args_list[1][0][0]
+                self.assertTrue(1.5 <= attempt1_sleep_default <= 2.5)
+
+                # Update env AFTER initial call: must take effect dynamically without restart
+                mock_sleep.reset_mock()
+                os.environ["MNS_YFINANCE_RETRY_BACKOFF_BASE"] = "6.0"
+                self.assertEqual(retry_mod._get_backoff_base_cached(), 6.0)
+                res2 = flaky_fn({"n": 0})
+                self.assertEqual(res2, "ok")
+                attempt1_sleep_updated = mock_sleep.call_args_list[1][0][0]
+                self.assertTrue(4.5 <= attempt1_sleep_updated <= 7.5)
+
+                # Out-of-range env clamps to [1.0, 30.0]; invalid falls back cleanly; unset reverts
+                os.environ["MNS_YFINANCE_RETRY_BACKOFF_BASE"] = "99.0"
+                self.assertEqual(retry_mod._get_backoff_base_cached(), 30.0)
+                os.environ["MNS_YFINANCE_RETRY_BACKOFF_BASE"] = "not-a-float"
+                self.assertEqual(retry_mod._get_backoff_base_cached(), 2.0)
+                os.environ.pop("MNS_YFINANCE_RETRY_BACKOFF_BASE", None)
+                self.assertEqual(
+                    retry_mod._get_backoff_base_cached(), constants.YFINANCE_RETRY_BACKOFF_BASE
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

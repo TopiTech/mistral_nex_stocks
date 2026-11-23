@@ -1152,3 +1152,94 @@ def test_native_host_powershell_rejects_uppercase_extension_ids():
     assert parsed["good"] is True
     assert parsed["upper"] is False
     assert parsed["originUpper"] is True
+
+
+def test_analyze_v2_tolerates_none_from_get_stock_info_cached():
+    """api_analyze_v2 must guard against get_stock_info_cached returning None."""
+    symbol = "NONEINFO"
+    token = "none-info-token-0001"
+    orig_executor = app_state.execution.executor
+    orig_testing = app.config.get("TESTING")
+    orig_csrf = app.config.get("WTF_CSRF_ENABLED")
+    app.config["TESTING"] = True
+    app.config["WTF_CSRF_ENABLED"] = False
+    real_executor = ThreadPoolExecutor(max_workers=1)
+    app_state.execution.executor = real_executor
+    with ra.analyze_fetch_lock:
+        ra.analyze_fetch_inflight.clear()
+        ra.analyze_result_cache.clear()
+
+    analyze_gate = threading.Event()
+    ok_resp = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "summary": "Safe without stock info",
+                            "sentiment": "neutral",
+                            "bull_points": ["Stable"],
+                            "bear_points": ["Limited fundamentals"],
+                            "key_metrics": {},
+                            "risk_level": "medium",
+                        }
+                    )
+                }
+            }
+        ]
+    }
+
+    def _delayed_ok(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        analyze_gate.wait(timeout=5)
+        return ok_resp
+
+    try:
+        with (
+            patch("routes.api_analysis.extract_api_key", return_value="test-key-32-chars"),
+            patch("routes.api_analysis.get_stock_info_cached", return_value=None),
+            patch(
+                "routes.api_analysis.collect_symbol_research_context",
+                return_value={
+                    "context": "",
+                    "articles": [],
+                    "query_variants": [],
+                    "source_status": {},
+                },
+            ),
+            patch("routes.api_analysis.CHAT_PREPARE_WAIT_SEC", 0.01),
+            patch("routes.api_analysis.call_mistral_chat", side_effect=_delayed_ok),
+            app.test_client() as client,
+        ):
+            resp1 = client.post(
+                "/api/analyze-v2",
+                json={"market": "us", "symbol": symbol, "request_token": token},
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            assert resp1.status_code == 200
+            analyze_gate.set()
+            real_executor.shutdown(wait=True)
+
+            resp2 = client.post(
+                "/api/analyze-v2",
+                json={"market": "us", "symbol": symbol, "request_token": token},
+                environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            )
+            assert resp2.status_code == 200
+            body2 = json.loads(resp2.data)
+            assert body2.get("ok") is True
+            assert body2.get("fetching") is not True
+    finally:
+        analyze_gate.set()
+        real_executor.shutdown(wait=False)
+        app_state.execution.executor = orig_executor
+        with ra.analyze_fetch_lock:
+            ra.analyze_fetch_inflight.clear()
+            ra.analyze_result_cache.clear()
+        if orig_testing is None:
+            app.config.pop("TESTING", None)
+        else:
+            app.config["TESTING"] = orig_testing
+        if orig_csrf is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = orig_csrf

@@ -891,3 +891,106 @@ def test_call_openai_chat_malformed_message_shape_does_not_crash():
 
     assert result["choices"][0]["message"] == "not-an-object"
     assert openai_service._openai_response_has_content(result) is False
+
+
+def test_openai_reasoning_effort_none_uses_max_tokens_and_canonical_cache_key():
+    """reasoning_effort='none' or unsupported values must not force max_completion_tokens on chat models."""
+    from services import openai_service
+
+    captured_chat: list[dict[str, object]] = []
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+
+    client = MagicMock()
+
+    def _capture_post(url, json=None, headers=None, timeout=None):
+        captured_chat.append(dict(json or {}))
+        return mock_resp
+
+    client.post.side_effect = _capture_post
+
+    with patch.object(openai_service, "_get_openai_client", return_value=client):
+        for eff in ("none", "NONE", "", "invalid", None):
+            call_openai_chat(
+                "sk-test",
+                [{"role": "user", "content": "hi"}],
+                _model_override="gpt-4o-mini",
+                use_cache=False,
+                reasoning_effort=eff,
+            )
+
+    assert len(captured_chat) == 5
+    for payload in captured_chat:
+        assert "max_tokens" in payload
+        assert "max_completion_tokens" not in payload
+        assert "reasoning_effort" not in payload
+
+    # Stream path with standard chat model and reasoning_effort='none'
+    captured_stream: list[dict[str, object]] = []
+    mock_stream_resp = MagicMock()
+    mock_stream_resp.status_code = 200
+    mock_stream_resp.iter_lines.return_value = [
+        b'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        b"data: [DONE]",
+    ]
+    mock_stream_resp.__enter__.return_value = mock_stream_resp
+
+    def _capture_stream(*args, **kwargs):
+        captured_stream.append(dict(kwargs.get("json") or {}))
+        return mock_stream_resp
+
+    with patch("httpx.Client.stream", side_effect=_capture_stream):
+        list(
+            stream_openai_chat(
+                api_key="sk-test",
+                messages=[{"role": "user", "content": "hi"}],
+                _model_override="gpt-4o-mini",
+                reasoning_effort="none",
+            )
+        )
+
+    assert len(captured_stream) == 1
+    assert "max_tokens" in captured_stream[0]
+    assert "max_completion_tokens" not in captured_stream[0]
+    assert "reasoning_effort" not in captured_stream[0]
+
+    # True reasoning model still uses max_completion_tokens even when reasoning_effort='none'
+    captured_o3: list[dict[str, object]] = []
+    client.post.side_effect = lambda url, json=None, headers=None, timeout=None: (
+        captured_o3.append(dict(json or {})),
+        mock_resp,
+    )[1]
+    with patch.object(openai_service, "_get_openai_client", return_value=client):
+        call_openai_chat(
+            "sk-test",
+            [{"role": "user", "content": "hi"}],
+            _model_override="o3-mini",
+            use_cache=False,
+            reasoning_effort="none",
+        )
+    assert "max_completion_tokens" in captured_o3[0]
+    assert "max_tokens" not in captured_o3[0]
+    assert "reasoning_effort" not in captured_o3[0]
+
+    # Cache keys normalize disabled/unknown values identically to None, and canonicalize case/whitespace
+    msgs = [{"role": "user", "content": "cache-test"}]
+    base_key = _build_openai_cache_key("gpt-4o-mini", msgs, 256, 0.2, None, None, reasoning_effort=None)
+    assert (
+        _build_openai_cache_key("gpt-4o-mini", msgs, 256, 0.2, None, None, reasoning_effort="none")
+        == base_key
+    )
+    assert (
+        _build_openai_cache_key("gpt-4o-mini", msgs, 256, 0.2, None, None, reasoning_effort="")
+        == base_key
+    )
+    assert (
+        _build_openai_cache_key("gpt-4o-mini", msgs, 256, 0.2, None, None, reasoning_effort="invalid")
+        == base_key
+    )
+    high_key = _build_openai_cache_key("gpt-4o-mini", msgs, 256, 0.2, None, None, reasoning_effort="high")
+    assert (
+        _build_openai_cache_key("gpt-4o-mini", msgs, 256, 0.2, None, None, reasoning_effort=" HIGH ")
+        == high_key
+    )
+    assert high_key != base_key

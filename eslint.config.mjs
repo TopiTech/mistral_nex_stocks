@@ -1,6 +1,15 @@
 import js from "@eslint/js";
 
 export default [
+  {
+    ignores: [
+      ".venv/**",
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      "__pycache__/**",
+    ],
+  },
   // (M36, 2026-11-07 review) the config previously enabled only
   // no-unused-vars and no-undef; the recommended base (no-empty,
   // no-fallthrough, no-redeclare, no-constant-condition, ...) was missing.

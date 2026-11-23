@@ -59,8 +59,10 @@ def _interpolate_and_fluctuate_market(
             continue
 
         sym = t_item["symbol"]
+        non_price_changed = False
         if sym in current_map:
-            c_item = current_map[sym].copy()
+            prev_entry = current_map[sym]
+            c_item = prev_entry.copy()
             for k in (
                 "name",
                 "market",
@@ -74,16 +76,21 @@ def _interpolate_and_fluctuate_market(
                 "ohlc_data",
             ):
                 if k in t_item:
+                    if k not in prev_entry or t_item[k] != prev_entry.get(k):
+                        non_price_changed = True
                     c_item[k] = t_item[k]
             for _pk in ("shares", "avg_price", "portfolio_value", "portfolio_pl", "avg_fx_rate"):
                 c_item.pop(_pk, None)
         else:
             c_item = copy.deepcopy(t_item)
+            non_price_changed = True
             for _pk in ("shares", "avg_price", "portfolio_value", "portfolio_pl", "avg_fx_rate"):
                 c_item.pop(_pk, None)
 
         prev_market_state = c_item.get("market_state")
         prev_price = c_item.get("price")
+        prev_change = c_item.get("change")
+        prev_change_percent = c_item.get("change_percent")
         c_item["market_state"] = "REGULAR" if is_open else "CLOSED"
 
         target_price = normalize_optional_number(t_item.get("price"))
@@ -138,7 +145,13 @@ def _interpolate_and_fluctuate_market(
             except (ValueError, TypeError):
                 pass
 
-        if c_item.get("price") != prev_price or c_item.get("market_state") != prev_market_state:
+        if (
+            non_price_changed
+            or c_item.get("price") != prev_price
+            or c_item.get("market_state") != prev_market_state
+            or c_item.get("change") != prev_change
+            or c_item.get("change_percent") != prev_change_percent
+        ):
             c_item["snapshot_ts_ms"] = now_ms
 
         new_current.append(c_item)

@@ -1971,7 +1971,8 @@ def api_analyze_v2():
                 # the external content before it enters the CDATA block.
                 research_context = _wrap_research_context_cdata(raw_research_context)
 
-                info = get_stock_info_cached(symbol)
+                raw_info = get_stock_info_cached(symbol)
+                info = raw_info if isinstance(raw_info, dict) else {}
                 sector = info.get("sector") or data.get("sector") or ""
                 industry = info.get("industry") or data.get("industry") or ""
                 market_cap = (

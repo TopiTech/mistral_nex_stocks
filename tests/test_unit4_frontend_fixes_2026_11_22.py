@@ -1153,3 +1153,271 @@ assert.strictEqual(drawerCanvasTouched, false, "drawChart for wrapperA must not 
 """
     )
     assert out == "OK"
+
+
+def test_unit4_additional_review_regressions_2026_11_24() -> None:
+    """Verify heatmap 3D bfcache restore, ai_portfolio symbol lookup, screener colspan/resize cleanup, and CSS tokens."""
+    out = _run_node(
+        r"""
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+function extractFn(src, marker) {
+  const start = src.indexOf(marker);
+  assert.notStrictEqual(start, -1, `missing ${marker}`);
+  const parenStart = src.indexOf("(", start);
+  let pDepth = 0;
+  let open = -1;
+  for (let i = parenStart; i < src.length; i += 1) {
+    if (src[i] === "(") pDepth += 1;
+    else if (src[i] === ")") {
+      pDepth -= 1;
+      if (pDepth === 0) {
+        open = src.indexOf("{", i);
+        break;
+      }
+    }
+  }
+  assert.notStrictEqual(open, -1, `missing body for ${marker}`);
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  throw new Error(`unbalanced ${marker}`);
+}
+
+// 1. heatmap.js: bfcache pageshow restores 3D WebGL scene when viewMode==='3d' & isInit===false
+const hmSrc = fs.readFileSync("static/js/heatmap.js", "utf8");
+const cleanupStart = hmSrc.indexOf("const cleanupHeatmapResources = () => {");
+assert.notStrictEqual(cleanupStart, -1, "missing cleanupHeatmapResources");
+const loadTail = hmSrc.lastIndexOf("loadHeatmap();");
+assert.ok(loadTail > cleanupStart, "missing trailing loadHeatmap call");
+const lifecycleBlock = hmSrc.slice(cleanupStart, loadTail);
+
+let initCalls = 0;
+let startAnimCalls = 0;
+let render3dCalls = 0;
+let loadCalls = 0;
+const winListeners = new Map();
+const makeFakeBtn = () => {
+  const classes = new Set();
+  const attrs = new Map();
+  return {
+    classList: {
+      toggle: (cls, force) => {
+        if (force) classes.add(cls);
+        else classes.delete(cls);
+      },
+      add: (cls) => classes.add(cls),
+      remove: (cls) => classes.delete(cls),
+    },
+    setAttribute: (k, v) => attrs.set(k, v),
+    getAttribute: (k) => attrs.get(k),
+  };
+};
+const hmCtx = {
+  THREE: {},
+  _resizeHandler: () => {},
+  state: {
+    viewMode: "3d",
+    rawStocks: [{ symbol: "AAPL", size: 10 }],
+    lastErrorMessage: null,
+    timeoutId: null,
+    controller: null,
+    three: {
+      isInit: true,
+      controls: { dispose() {} },
+      stockMeshes: [],
+      renderer: { dispose() {} },
+      scene: { remove() {} },
+      camera: {},
+      hoveredMesh: null,
+      raycaster: {},
+      mouse: {},
+    },
+  },
+  els: {
+    view2d: makeFakeBtn(),
+    view3d: makeFakeBtn(),
+    canvas: makeFakeBtn(),
+    canvas3d: makeFakeBtn(),
+    controls3d: makeFakeBtn(),
+  },
+  document: {
+    getElementById: () => null,
+  },
+  window: {
+    addEventListener: (ev, fn) => {
+      if (!winListeners.has(ev)) winListeners.set(ev, new Set());
+      winListeners.get(ev).add(fn);
+    },
+    removeEventListener: (ev, fn) => {
+      winListeners.get(ev)?.delete(fn);
+    },
+  },
+  clearTimeout: () => {},
+  clear3DErrorBanner: () => {},
+  stop3DAnimation: () => {},
+  disposeObject: () => {},
+  init3DScene: () => {
+    initCalls += 1;
+    hmCtx.state.three.isInit = true;
+    return true;
+  },
+  sync3DViewportSize: () => {},
+  start3DAnimation: () => {
+    startAnimCalls += 1;
+  },
+  stop3DAnimation: () => {},
+  hasRenderableStocks: () => true,
+  normalizeStock: (s) => s,
+  render3DHeatmap: () => {
+    render3dCalls += 1;
+  },
+  renderHeatmap: () => {},
+  showError: () => {},
+  loadHeatmap: () => {
+    loadCalls += 1;
+  },
+};
+vm.createContext(hmCtx);
+vm.runInContext(
+  extractFn(hmSrc, "function switchViewMode(mode)") + "\n" + lifecycleBlock,
+  hmCtx,
+);
+winListeners.get("pagehide").forEach((fn) => fn());
+assert.strictEqual(hmCtx.state.three.isInit, false, "pagehide must tear down 3D state");
+assert.strictEqual(hmCtx.state.three.renderer, null);
+winListeners.get("pageshow").forEach((fn) => fn({ persisted: true }));
+assert.strictEqual(initCalls, 1, "pageshow in 3D mode must re-initialize 3D scene");
+assert.strictEqual(startAnimCalls, 1, "pageshow in 3D mode must restart animation loop");
+assert.strictEqual(render3dCalls, 1, "pageshow in 3D mode must re-render 3D heatmap");
+assert.strictEqual(loadCalls, 1, "pageshow in 3D mode must also refresh heatmap data");
+
+// 2. ai_portfolio.js: findStockInState normalizes JP 4-char codes & casing
+const pfSrc = fs.readFileSync("static/js/ai_portfolio.js", "utf8");
+const apiSrc = fs.readFileSync("static/js/api.js", "utf8");
+const pfCtx = {
+  state: {
+    stocks: {
+      jp: [{ symbol: "7203.T", price: 2500 }, { symbol: "130A.T", price: 900 }],
+      us: [{ symbol: "AAPL", price: 190 }],
+    },
+  },
+};
+vm.createContext(pfCtx);
+const normDecl = apiSrc.slice(
+  apiSrc.indexOf("const normalizeSymbolForMarketClient"),
+  apiSrc.indexOf("};", apiSrc.indexOf("const normalizeSymbolForMarketClient")) + 2,
+);
+vm.runInContext(
+  normDecl +
+    "\n" +
+    extractFn(pfSrc, "function normalizePortfolioLookupSymbol(") +
+    "\n" +
+    extractFn(pfSrc, "function findStockInState("),
+  pfCtx,
+);
+assert.strictEqual(pfCtx.findStockInState("7203", "jp")?.symbol, "7203.T");
+assert.strictEqual(pfCtx.findStockInState("7203.T", "jp")?.symbol, "7203.T");
+assert.strictEqual(pfCtx.findStockInState("130a", "jp")?.symbol, "130A.T");
+assert.strictEqual(pfCtx.findStockInState(" aapl ", "us")?.symbol, "AAPL");
+assert.strictEqual(pfCtx.findStockInState("", "us"), null);
+assert.strictEqual(pfCtx.findStockInState("9999", "jp"), null);
+
+// 3. screener.js: dynamic placeholders carry data-colspan-full='8' and resize listener cleans up/restores
+const scrSrc = fs.readFileSync("static/js/screener.js", "utf8");
+let visibleColSpan = 8;
+const placeholderCells = [];
+const scrWinListeners = new Map();
+const scrCtx = {
+  fetchTimeout: 123,
+  screenerAbortController: { abort() {} },
+  getVisibleColSpan: () => visibleColSpan,
+  document: {
+    createElement: () => {
+      const attrs = {};
+      return {
+        colSpan: 0,
+        className: "",
+        textContent: "",
+        setAttribute: (k, v) => { attrs[k] = v; },
+        getAttribute: (k) => attrs[k],
+      };
+    },
+    querySelectorAll: (sel) =>
+      sel === 'td[data-colspan-full="8"]'
+        ? placeholderCells.filter((c) => c.getAttribute("data-colspan-full") === "8")
+        : [],
+  },
+  window: {
+    addEventListener: (ev, fn) => {
+      if (!scrWinListeners.has(ev)) scrWinListeners.set(ev, new Set());
+      scrWinListeners.get(ev).add(fn);
+    },
+    removeEventListener: (ev, fn) => {
+      scrWinListeners.get(ev)?.delete(fn);
+    },
+  },
+  clearTimeout: () => {},
+  fetchScreenerResults: () => {},
+};
+vm.createContext(scrCtx);
+const scrLifecycleStart = scrSrc.indexOf('window.addEventListener("resize", syncStaticColspanPlaceholders);');
+const scrIifeEnd = scrSrc.lastIndexOf("})();");
+const scrBlockClose = scrSrc.lastIndexOf("}", scrIifeEnd - 1);
+assert.ok(scrBlockClose > scrLifecycleStart, "missing screener lifecycle closing brace");
+vm.runInContext(
+  extractFn(scrSrc, "function syncStaticColspanPlaceholders(") +
+    "\n" +
+    extractFn(scrSrc, "function createPlaceholderRowCell(") +
+    "\n" +
+    scrSrc.slice(scrLifecycleStart, scrBlockClose),
+  scrCtx,
+);
+const dynCell = scrCtx.createPlaceholderRowCell("text-center empty-cell", "empty");
+placeholderCells.push(dynCell);
+assert.strictEqual(dynCell.colSpan, 8);
+assert.strictEqual(dynCell.getAttribute("data-colspan-full"), "8");
+visibleColSpan = 5;
+scrCtx.syncStaticColspanPlaceholders();
+assert.strictEqual(dynCell.colSpan, 5, "syncStaticColspanPlaceholders must update dynamic placeholders");
+assert.strictEqual(scrWinListeners.get("resize").size, 1);
+scrWinListeners.get("pagehide").forEach((fn) => fn());
+assert.strictEqual(scrWinListeners.get("resize").size, 0, "pagehide must remove resize listener");
+scrWinListeners.get("pageshow").forEach((fn) => fn({ persisted: true }));
+assert.strictEqual(scrWinListeners.get("resize").size, 1, "pageshow must re-attach resize listener once");
+
+// 4. CSS contracts: colors.css theme-aware flash vars & single @keyframes spin definition
+const colorsCss = fs.readFileSync("static/css/colors.css", "utf8");
+const indexCss = fs.readFileSync("static/css/index.css", "utf8");
+assert.ok(colorsCss.includes("--pos-flash-bg:"), "colors.css defines --pos-flash-bg");
+assert.ok(colorsCss.includes("--neg-flash-bg:"), "colors.css defines --neg-flash-bg");
+assert.ok(
+  colorsCss.includes("var(--pos-flash-bg, rgba(16, 185, 129, 0.25))"),
+  "flash-green consumes --pos-flash-bg token",
+);
+assert.ok(
+  colorsCss.includes("var(--neg-flash-bg, rgba(244, 63, 94, 0.25))"),
+  "flash-red consumes --neg-flash-bg token",
+);
+assert.strictEqual(
+  (colorsCss.match(/@keyframes\s+spin\b/g) || []).length,
+  1,
+  "colors.css defines @keyframes spin once",
+);
+assert.strictEqual(
+  (indexCss.match(/@keyframes\s+spin\b/g) || []).length,
+  0,
+  "index.css must not duplicate @keyframes spin",
+);
+
+process.stdout.write("OK");
+"""
+    )
+    assert out == "OK"

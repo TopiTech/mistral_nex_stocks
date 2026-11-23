@@ -173,7 +173,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mode === "2d") {
       clear3DErrorBanner();
     }
-    if (state.viewMode === mode) return;
+    const needs3DRestore = mode === "3d" && !state.three.isInit;
+    if (state.viewMode === mode && !needs3DRestore) return;
 
     if (mode === "3d") {
       clear3DErrorBanner();
@@ -1406,7 +1407,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     state.controller?.abort();
     state.controller = null;
+    state.three.hoveredMesh = null;
     state.three.controls?.dispose?.();
+    state.three.controls = null;
     if (state.three.stockMeshes) {
       state.three.stockMeshes.forEach((mesh) => {
         if (state.three.scene) state.three.scene.remove(mesh);
@@ -1418,18 +1421,22 @@ document.addEventListener("DOMContentLoaded", () => {
       state.three.renderer.dispose();
       state.three.renderer = null;
     }
+    state.three.scene = null;
+    state.three.camera = null;
+    state.three.raycaster = null;
+    state.three.mouse = null;
     state.three.isInit = false;
   };
   window.addEventListener("beforeunload", cleanupHeatmapResources);
   window.addEventListener("pagehide", cleanupHeatmapResources);
   window.addEventListener("pageshow", (event) => {
     if (!event?.persisted) return;
+    window.removeEventListener("resize", _resizeHandler);
     window.addEventListener("resize", _resizeHandler);
     if (state.viewMode === "3d") {
       switchViewMode("3d");
-    } else {
-      loadHeatmap();
     }
+    loadHeatmap();
   });
 
   loadHeatmap();

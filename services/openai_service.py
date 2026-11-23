@@ -530,6 +530,19 @@ def _normalize_openai_messages(messages: list[Any] | None) -> list[Any]:
     return normalized
 
 
+_VALID_OPENAI_REASONING_EFFORTS = frozenset(("low", "medium", "high"))
+
+
+def _normalize_openai_reasoning_effort(reasoning_effort: Any) -> str | None:
+    """Normalize reasoning_effort, returning None for disabled ('none') or unsupported values."""
+    if not isinstance(reasoning_effort, str):
+        return None
+    normalized = reasoning_effort.strip().lower()
+    if normalized in _VALID_OPENAI_REASONING_EFFORTS:
+        return normalized
+    return None
+
+
 def _build_openai_cache_key(
     model: str,
     messages: list[Any],
@@ -582,7 +595,7 @@ def _build_openai_cache_key(
         "response_format": serializable_fmt,
         "tools": serializable_tools,
         "tool_choice": str(tool_choice) if tool_choice else None,
-        "reasoning_effort": str(reasoning_effort) if reasoning_effort else None,
+        "reasoning_effort": _normalize_openai_reasoning_effort(reasoning_effort),
         "cache_key_override": cache_key_override,
         "credential_scope": credential_scope,
     }
@@ -735,7 +748,10 @@ def call_openai_chat(
         effective_messages = new_msgs
 
     # Newer reasoning architectures (o1, o3, etc.) require max_completion_tokens instead of max_tokens
-    use_max_completion_tokens = _is_openai_reasoning_model(model) or bool(reasoning_effort)
+    normalized_reasoning_effort = _normalize_openai_reasoning_effort(reasoning_effort)
+    use_max_completion_tokens = _is_openai_reasoning_model(model) or (
+        normalized_reasoning_effort is not None
+    )
     token_param_key = "max_completion_tokens" if use_max_completion_tokens else "max_tokens"
 
     payload: dict[str, Any] = {
@@ -745,12 +761,8 @@ def call_openai_chat(
     }
     if norm_temp is not None:
         payload["temperature"] = norm_temp
-    if (
-        reasoning_effort
-        and isinstance(reasoning_effort, str)
-        and reasoning_effort.lower() in ("low", "medium", "high")
-    ):
-        payload["reasoning_effort"] = reasoning_effort.lower()
+    if normalized_reasoning_effort is not None:
+        payload["reasoning_effort"] = normalized_reasoning_effort
 
     if requires_pydantic_parse and pydantic_cls is not None:
         payload["response_format"] = {"type": "json_object"}
@@ -1168,7 +1180,10 @@ def stream_openai_chat(
     endpoint = f"{base_url}/chat/completions"
     headers = _build_openai_headers(api_key)
 
-    use_max_completion_tokens = _is_openai_reasoning_model(model) or bool(reasoning_effort)
+    normalized_reasoning_effort = _normalize_openai_reasoning_effort(reasoning_effort)
+    use_max_completion_tokens = _is_openai_reasoning_model(model) or (
+        normalized_reasoning_effort is not None
+    )
     token_param_key = "max_completion_tokens" if use_max_completion_tokens else "max_tokens"
 
     payload: dict[str, Any] = {
@@ -1180,12 +1195,8 @@ def stream_openai_chat(
     norm_temp = _normalize_openai_temperature(temperature)
     if norm_temp is not None:
         payload["temperature"] = norm_temp
-    if (
-        reasoning_effort
-        and isinstance(reasoning_effort, str)
-        and reasoning_effort.lower() in ("low", "medium", "high")
-    ):
-        payload["reasoning_effort"] = reasoning_effort.lower()
+    if normalized_reasoning_effort is not None:
+        payload["reasoning_effort"] = normalized_reasoning_effort
 
     full_parts: list[str] = []
     last_usage: dict[str, Any] | None = None

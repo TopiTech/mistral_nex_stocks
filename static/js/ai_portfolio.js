@@ -1775,10 +1775,29 @@
     }
   }
 
+  function normalizePortfolioLookupSymbol(symbol, market) {
+    if (typeof normalizeSymbolForMarketClient === "function") {
+      return normalizeSymbolForMarketClient(symbol, market);
+    }
+    const s = String(symbol ?? "")
+      .trim()
+      .toUpperCase();
+    if (market === "jp" && /^\d{3}[0-9A-Z]$/.test(s)) return `${s}.T`;
+    return s;
+  }
+
   function findStockInState(symbol, market) {
-    if (typeof state === "undefined" || !state.stocks) return null;
+    if (typeof state === "undefined" || !state.stocks || !symbol) return null;
     const list = state.stocks[market] || [];
-    return list.find((s) => s.symbol === symbol);
+    const target = normalizePortfolioLookupSymbol(symbol, market);
+    if (!target) return null;
+    return (
+      list.find((s) => {
+        if (!s || !s.symbol) return false;
+        if (s.symbol === symbol || s.symbol === target) return true;
+        return normalizePortfolioLookupSymbol(s.symbol, market) === target;
+      }) || null
+    );
   }
 
   function showLoadingState(loading, messageText = null) {

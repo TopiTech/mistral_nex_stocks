@@ -58,6 +58,16 @@ class _RestrictiveRotatingFileHandler(RotatingFileHandler):
     """RotatingFileHandler keeping log files owner-only on POSIX rotations."""
 
     def _open(self):
+        if os.name != "nt":
+            try:
+                fd = os.open(
+                    self.baseFilename,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                os.close(fd)
+            except OSError:
+                pass
         stream = super()._open()
         if os.name != "nt":
             try:
@@ -375,8 +385,8 @@ def _startup_lock():
             yield
         finally:
             if locked:
-                os.lseek(fd, 0, os.SEEK_SET)
                 try:
+                    os.lseek(fd, 0, os.SEEK_SET)
                     msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
                 except OSError:
                     pass

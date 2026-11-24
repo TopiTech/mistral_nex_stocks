@@ -1266,14 +1266,16 @@ function checkAlerts(stock, oldPrice) {
   }
 }
 
-// Cleanup pending initial stocks fetch request on page unload
+// Cleanup pending initial stocks fetch request on page unload/pagehide
 if (
   typeof window !== "undefined" &&
   typeof window.addEventListener === "function"
 ) {
-  window.addEventListener("beforeunload", () => {
+  const cleanupInitialStocksFetch = () => {
     invalidatePendingInitialStocksFetch();
-  });
+  };
+  window.addEventListener("beforeunload", cleanupInitialStocksFetch);
+  window.addEventListener("pagehide", cleanupInitialStocksFetch);
 }
 
 // showToastはutils.jsで定義済み（全ページ共通）

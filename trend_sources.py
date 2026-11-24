@@ -690,6 +690,20 @@ def collect_yahoo_news_rss_items(market: str = "us", count: int = 8) -> list[dic
     return dedupe_items(items)[:count]
 
 
+def _iter_reddit_post_dicts(payload: Any, limit: int) -> list[dict]:
+    """Extract dict entries from Reddit listing JSON, tolerating null/non-dict shapes."""
+    data_obj = payload.get("data") if isinstance(payload, dict) else None
+    children = data_obj.get("children") if isinstance(data_obj, dict) else None
+    if not isinstance(children, list):
+        return []
+    posts: list[dict] = []
+    for child in children[:limit]:
+        data = child.get("data") if isinstance(child, dict) else None
+        if isinstance(data, dict):
+            posts.append(data)
+    return posts
+
+
 def collect_reddit_hot_items(market: str = "us", limit_per_subreddit: int = 5) -> list[dict]:
     """
     Redditの特定サブレディットからHotな投稿を収集します。
@@ -700,8 +714,7 @@ def collect_reddit_hot_items(market: str = "us", limit_per_subreddit: int = 5) -
         url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit_per_subreddit}"
         try:
             payload = _request_json_retry_on_429(url, headers={"User-Agent": REDDIT_USER_AGENT})
-            for child in payload.get("data", {}).get("children", [])[:limit_per_subreddit]:
-                data = child.get("data", {})
+            for data in _iter_reddit_post_dicts(payload, limit_per_subreddit):
                 title = _safe_text(data.get("title"))
                 if not title:
                     continue
@@ -740,8 +753,7 @@ def collect_reddit_search_items(
             )
             try:
                 payload = _request_json_retry_on_429(url, headers={"User-Agent": REDDIT_USER_AGENT})
-                for child in payload.get("data", {}).get("children", [])[:limit_per_query]:
-                    data = child.get("data", {})
+                for data in _iter_reddit_post_dicts(payload, limit_per_query):
                     title = _safe_text(data.get("title"))
                     if not title:
                         continue
@@ -861,7 +873,13 @@ def collect_wikipedia_search_items(
                     "srlimit": limit_per_query,
                 },
             )
-            for entry in search_payload.get("query", {}).get("search", [])[:limit_per_query]:
+            query_data = search_payload.get("query") if isinstance(search_payload, dict) else None
+            search_results = query_data.get("search") if isinstance(query_data, dict) else None
+            if not isinstance(search_results, list):
+                continue
+            for entry in search_results[:limit_per_query]:
+                if not isinstance(entry, dict):
+                    continue
                 title = _safe_text(entry.get("title"))
                 if not title:
                     continue

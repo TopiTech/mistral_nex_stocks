@@ -30,6 +30,16 @@ class _RestrictiveRotatingFileHandler(RotatingFileHandler):
     """
 
     def _open(self):
+        if os.name != "nt":
+            try:
+                fd = os.open(
+                    self.baseFilename,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                os.close(fd)
+            except OSError:
+                pass
         stream = super()._open()
         try:
             os.chmod(self.baseFilename, 0o600)

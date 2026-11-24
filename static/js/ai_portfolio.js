@@ -1896,12 +1896,14 @@
     typeof window !== "undefined" &&
     typeof window.addEventListener === "function"
   ) {
-    window.addEventListener("beforeunload", () => {
+    const cleanupAiPortfolioResources = () => {
       cancelAiPortfolioRequest();
       if (savedAiPortfoliosAbortController) {
         savedAiPortfoliosAbortController.abort();
         savedAiPortfoliosAbortController = null;
       }
-    });
+    };
+    window.addEventListener("beforeunload", cleanupAiPortfolioResources);
+    window.addEventListener("pagehide", cleanupAiPortfolioResources);
   }
 })();

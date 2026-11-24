@@ -300,9 +300,18 @@
       return null;
     }
 
-    _syncStatePtsPrice(symbol, cached, ptsPrice) {
+    _forEachMatchingStateStock(symbol, cached, preferredMarket, callback) {
       if (!window.state || !window.state.stocks) return;
+      const normalized =
+        typeof preferredMarket === "string"
+          ? preferredMarket.trim().toLowerCase()
+          : "";
+      const explicitMarket =
+        normalized === "us" || normalized === "jp" || normalized === "idx"
+          ? normalized
+          : null;
       ["us", "jp", "idx"].forEach((m) => {
+        if (explicitMarket && m !== explicitMarket) return;
         const list = window.state.stocks[m];
         if (!Array.isArray(list)) return;
         const sItem = list.find(
@@ -314,10 +323,21 @@
               st.symbol === cached.cleanCode),
         );
         if (sItem) {
-          sItem.pts_price = ptsPrice;
-          sItem.__live_update = true;
+          callback(sItem, m);
         }
       });
+    }
+
+    _syncStatePtsPrice(symbol, cached, ptsPrice, preferredMarket = null) {
+      this._forEachMatchingStateStock(
+        symbol,
+        cached,
+        preferredMarket,
+        (sItem) => {
+          sItem.pts_price = ptsPrice;
+          sItem.__live_update = true;
+        },
+      );
     }
 
     _applyPtsDeltasNow(deltas) {
@@ -340,7 +360,12 @@
 
         const normalizedPtsPrice = validPtsPrice;
         const cached = this._getElements(symbol);
-        this._syncStatePtsPrice(symbol, cached, normalizedPtsPrice);
+        this._syncStatePtsPrice(
+          symbol,
+          cached,
+          normalizedPtsPrice,
+          rawData.market,
+        );
         const syncedWrappers = new Set(
           Array.isArray(cached.wrappers) ? cached.wrappers : [],
         );
@@ -426,82 +451,73 @@
           yfPrevClose = data.previous_close;
         }
 
-        if (window.state && window.state.stocks) {
-          ["us", "jp", "idx"].forEach((m) => {
-            if (Array.isArray(window.state.stocks[m])) {
-              const sItem = window.state.stocks[m].find(
-                (st) =>
-                  st &&
-                  (st.symbol === symbol ||
-                    st.symbol === cached.bareSymbol ||
-                    st.symbol === `${cached.cleanCode}.T` ||
-                    st.symbol === cached.cleanCode),
-              );
-              if (sItem) {
-                hasStockUpdate = true;
-                foundStock = sItem;
-                foundMarket = sItem.market || m;
-                // Resolve yfinance previous close from stock object
-                if (!yfPrevClose) {
-                  if (
-                    sItem.previous_close != null &&
-                    Number(sItem.previous_close) > 0
-                  ) {
-                    yfPrevClose = Number(sItem.previous_close);
-                  } else if (sItem.price != null && sItem.change != null) {
-                    const p = Number(sItem.price);
-                    const c = Number(sItem.change);
-                    if (Number.isFinite(p) && Number.isFinite(c) && p - c > 0) {
-                      yfPrevClose = p - c;
-                      sItem.previous_close = yfPrevClose;
-                    }
-                  }
-                }
-
-                // Recalculate change and percentage using yfinance previous close
-                if (yfPrevClose && yfPrevClose > 0 && validPrice !== null) {
-                  const diff = validPrice - yfPrevClose;
-                  const itemMarket = sItem.market || m;
-                  const newChange = roundChange(diff, symbol, itemMarket);
-                  const newPct = roundPercent((diff / yfPrevClose) * 100);
-                  data.change = newChange;
-                  data.change_percent = newPct;
-                  data.previous_close = yfPrevClose;
-                }
-
-                if (validPrice !== null) {
-                  sItem.price = validPrice;
-                  sItem.__live_update = true;
-                }
-                if (
-                  data.change != null &&
-                  typeof data.change === "number" &&
-                  Number.isFinite(data.change)
-                ) {
-                  sItem.change = data.change;
-                  sItem.__live_update = true;
-                }
-                if (
-                  data.change_percent != null &&
-                  typeof data.change_percent === "number" &&
-                  Number.isFinite(data.change_percent)
-                ) {
-                  sItem.change_percent = data.change_percent;
-                  sItem.__live_update = true;
-                }
-                if (
-                  data.volume != null &&
-                  typeof data.volume !== "boolean" &&
-                  Number.isFinite(Number(data.volume)) &&
-                  Number(data.volume) > 0
-                ) {
-                  sItem.volume = Number(data.volume);
-                  sItem.__live_update = true;
+        this._forEachMatchingStateStock(
+          symbol,
+          cached,
+          data.market,
+          (sItem, m) => {
+            hasStockUpdate = true;
+            foundStock = sItem;
+            foundMarket = sItem.market || m;
+            // Resolve yfinance previous close from stock object
+            if (!yfPrevClose) {
+              if (
+                sItem.previous_close != null &&
+                Number(sItem.previous_close) > 0
+              ) {
+                yfPrevClose = Number(sItem.previous_close);
+              } else if (sItem.price != null && sItem.change != null) {
+                const p = Number(sItem.price);
+                const c = Number(sItem.change);
+                if (Number.isFinite(p) && Number.isFinite(c) && p - c > 0) {
+                  yfPrevClose = p - c;
+                  sItem.previous_close = yfPrevClose;
                 }
               }
             }
-          });
-        }
+
+            // Recalculate change and percentage using yfinance previous close
+            if (yfPrevClose && yfPrevClose > 0 && validPrice !== null) {
+              const diff = validPrice - yfPrevClose;
+              const itemMarket = sItem.market || m;
+              const newChange = roundChange(diff, symbol, itemMarket);
+              const newPct = roundPercent((diff / yfPrevClose) * 100);
+              data.change = newChange;
+              data.change_percent = newPct;
+              data.previous_close = yfPrevClose;
+            }
+
+            if (validPrice !== null) {
+              sItem.price = validPrice;
+              sItem.__live_update = true;
+            }
+            if (
+              data.change != null &&
+              typeof data.change === "number" &&
+              Number.isFinite(data.change)
+            ) {
+              sItem.change = data.change;
+              sItem.__live_update = true;
+            }
+            if (
+              data.change_percent != null &&
+              typeof data.change_percent === "number" &&
+              Number.isFinite(data.change_percent)
+            ) {
+              sItem.change_percent = data.change_percent;
+              sItem.__live_update = true;
+            }
+            if (
+              data.volume != null &&
+              typeof data.volume !== "boolean" &&
+              Number.isFinite(Number(data.volume)) &&
+              Number(data.volume) > 0
+            ) {
+              sItem.volume = Number(data.volume);
+              sItem.__live_update = true;
+            }
+          },
+        );
 
         const effectiveMarket =
           data.market || (foundStock ? foundStock.market || foundMarket : null);

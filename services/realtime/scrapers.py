@@ -829,8 +829,14 @@ class YahooJPRealtimeScraper:
                 m = res.search(html)
                 if m:
                     return m.group(1)
-            m = re.search(r'"' + field + r'":\s*"?([^",\s{}]+)"?', html)
-            return m.group(1) if m else None
+            m = re.search(
+                r'"' + re.escape(field) + r'":\s*(?:"([^"]*)"|([^",\s{}]+))',
+                html,
+            )
+            if not m:
+                return None
+            val = m.group(1) if m.group(1) is not None else m.group(2)
+            return val if val else None
         except Exception as exc:
             logger.warning("[Yahoo JP Scraper] Failed extracting quote field %s: %s", field, exc)
             return None

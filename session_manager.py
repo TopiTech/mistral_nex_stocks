@@ -518,7 +518,7 @@ class YFinanceSessionManager:
                             self._local.in_closed_session_retry = True
                             try:
                                 fresh_sess = self.get_session()
-                                resp = fresh_sess.request(*args, **kwargs)
+                                return fresh_sess.request(*args, **kwargs)
                             finally:
                                 self._local.in_closed_session_retry = False
                         elif (

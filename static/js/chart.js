@@ -1035,7 +1035,7 @@ if (
   typeof window !== "undefined" &&
   typeof window.addEventListener === "function"
 ) {
-  window.addEventListener("beforeunload", () => {
+  const cleanupChartPersistence = () => {
     if (typeof historyPrefetchTimer !== "undefined" && historyPrefetchTimer) {
       clearTimeout(historyPrefetchTimer);
       historyPrefetchTimer = null;
@@ -1063,7 +1063,9 @@ if (
     }
     _flushChartPrefsToStorage();
     _flushStockColors();
-  });
+  };
+  window.addEventListener("beforeunload", cleanupChartPersistence);
+  window.addEventListener("pagehide", cleanupChartPersistence);
 }
 
 function getStockColor(stockKey) {

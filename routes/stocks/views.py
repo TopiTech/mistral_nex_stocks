@@ -737,9 +737,19 @@ def api_heatmap() -> Any:
 
     if not already_fetching:
         try:
-            app_state.execution.data_executor.submit(
+            future = app_state.execution.data_executor.submit(
                 _fetch_heatmap_cached, cache_key, market, symbols, now
             )
+
+            def _handle_cancelled_heatmap_fetch(done_future: Any) -> None:
+                if not done_future.cancelled():
+                    return
+                with app_state.heatmap_fetch_lock:
+                    app_state.heatmap_fetch_inflight.discard(cache_key)
+                    app_state.heatmap_fetch_start_times.pop(cache_key, None)
+
+            if future is not None and hasattr(future, "add_done_callback"):
+                future.add_done_callback(_handle_cancelled_heatmap_fetch)
         except queue.Full:
             with app_state.heatmap_fetch_lock:
                 app_state.heatmap_fetch_inflight.discard(cache_key)

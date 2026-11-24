@@ -236,11 +236,11 @@ def check_admin_token(presented: str | None) -> bool:
     non-matching input.
     """
     configured = get_configured_admin_token()
-    if not presented or not configured:
+    if not presented or not configured or not isinstance(presented, str):
         return False
     try:
-        return secrets.compare_digest(presented, configured)
-    except Exception:
+        return secrets.compare_digest(presented.encode("utf-8"), configured.encode("utf-8"))
+    except UnicodeEncodeError:
         return False
 
 

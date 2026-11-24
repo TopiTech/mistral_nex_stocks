@@ -202,6 +202,7 @@ class MarketDataState:
         self.first_sync_attempted: bool = False
         self.first_sync_completed_at: float = 0.0
         self.removed_watchlist_symbols: set[tuple[str, str]] = set()
+        self.removed_watchlist_lock = threading.Lock()
 
     @staticmethod
     def _watchlist_aliases(symbol: str, market: str) -> list[tuple[str, str]]:
@@ -219,19 +220,29 @@ class MarketDataState:
 
     def mark_watchlist_removed(self, symbol: str, market: str) -> None:
         """Record a user/auto-removed watchlist symbol so an overlapping sync cannot resurrect it."""
-        for key in self._watchlist_aliases(symbol, market):
-            self.removed_watchlist_symbols.add(key)
+        aliases = self._watchlist_aliases(symbol, market)
+        if not aliases:
+            return
+        with self.removed_watchlist_lock:
+            for key in aliases:
+                self.removed_watchlist_symbols.add(key)
 
     def clear_watchlist_removed(self, symbol: str, market: str) -> None:
         """Clear a removed-watchlist marker when the symbol is explicitly added/restored."""
-        for key in self._watchlist_aliases(symbol, market):
-            self.removed_watchlist_symbols.discard(key)
+        aliases = self._watchlist_aliases(symbol, market)
+        if not aliases:
+            return
+        with self.removed_watchlist_lock:
+            for key in aliases:
+                self.removed_watchlist_symbols.discard(key)
 
     def is_watchlist_removed(self, symbol: str, market: str) -> bool:
         """Return True if *(symbol, market)* was removed and not yet re-added."""
-        if not self.removed_watchlist_symbols:
+        aliases = self._watchlist_aliases(symbol, market)
+        if not aliases:
             return False
-        return any(key in self.removed_watchlist_symbols for key in self._watchlist_aliases(symbol, market))
+        with self.removed_watchlist_lock:
+            return any(key in self.removed_watchlist_symbols for key in aliases)
 
     INVALID_SYMBOL_REMOVAL_THRESHOLD: int = 3
 

@@ -56,6 +56,7 @@ _last_loaded_mtimes: dict[str, float] = {}
 
 
 _sync_execution_lock = threading.Lock()
+_stale_takeover_pending: bool = False
 
 
 _BATCH_INVALID_MARKER = "__INVALID_SYMBOL__"
@@ -186,6 +187,20 @@ def _get_sync_execution_lock() -> Any:
     return _get_app_bg_attr("_sync_execution_lock", _sync_execution_lock)
 
 
+def _set_stale_takeover_pending(pending: bool) -> None:
+    global _stale_takeover_pending
+    _stale_takeover_pending = bool(pending)
+
+
+def _consume_stale_takeover_pending() -> bool:
+    global _stale_takeover_pending
+    with app_state.market.is_syncing_lock:
+        if not _stale_takeover_pending:
+            return False
+        _stale_takeover_pending = False
+        return True
+
+
 def _recover_stale_sync_state_if_needed(
     *, facade_globals: dict[str, Any] | None = None
 ) -> bool:
@@ -224,6 +239,7 @@ def _recover_stale_sync_state_if_needed(
             timeout_sec,
         )
         app_state.market.is_syncing = False
+        _set_stale_takeover_pending(True)
         if facade_globals is not None:
             facade_globals["_sync_start_time"] = 0.0
         _set_sync_start_time(0.0)

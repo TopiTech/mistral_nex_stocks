@@ -371,8 +371,8 @@ class StockDiskCache:
                 yield
             finally:
                 if locked:
-                    os.lseek(fd, 0, os.SEEK_SET)
                     try:
+                        os.lseek(fd, 0, os.SEEK_SET)
                         msvcrt_module.locking(fd, msvcrt_module.LK_UNLCK, 1)
                     except OSError:
                         pass

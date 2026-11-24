@@ -440,18 +440,29 @@ class AIState:
             pool.pop(cache_key, None)
 
         while len(pool) >= maxsize:
+            prev_len = len(pool)
             try:
                 _, old_client = pool.popitem()
+            except Exception as exc:
+                logger.debug(
+                    "Error evicting %s client error_type=%s",
+                    label,
+                    type(exc).__name__,
+                )
+                break
+            try:
                 if not cls._is_client_closed(old_client):
                     # Defer closing an evicted live client so any concurrent
                     # caller that already borrowed it can finish cleanly.
                     retired_queue.append((time.monotonic(), old_client))
-            except (KeyError, Exception) as exc:
+            except Exception as exc:
                 logger.debug(
                     "Error retiring evicted %s client error_type=%s",
                     label,
                     type(exc).__name__,
                 )
+            if len(pool) >= prev_len:
+                break
         return None
 
     def get_or_create_mistral_client(self, api_key: str):

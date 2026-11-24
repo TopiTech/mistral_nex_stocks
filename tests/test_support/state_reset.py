@@ -140,7 +140,8 @@ def _reset_market_state(app_state: object) -> None:
                 market.current_indices_cache = {}
                 market.target_indices_cache = {}
                 if hasattr(market, "removed_watchlist_symbols"):
-                    market.removed_watchlist_symbols.clear()
+                    with getattr(market, "removed_watchlist_lock", nullcontext()):
+                        market.removed_watchlist_symbols.clear()
         except (AttributeError, RuntimeError):
             pass
 
@@ -404,6 +405,13 @@ def _reset_sync_and_leader() -> None:
         _le._set_is_sync_leader(True)
         _sw._set_sync_generation(0)
         _sw._set_sync_start_time(0.0)
+        if hasattr(_sw, "_set_stale_takeover_pending"):
+            _sw._set_stale_takeover_pending(False)
+        with getattr(_sw, "_WEDGED_SYNC_LOCKS_LOCK", nullcontext()):
+            if hasattr(_sw, "_WEDGED_SYNC_LOCKS"):
+                _sw._WEDGED_SYNC_LOCKS.clear()
+            if hasattr(_sw, "_WEDGED_SYNC_LOCKS_STRONG"):
+                _sw._WEDGED_SYNC_LOCKS_STRONG.clear()
         app_bg._sync_start_time = 0.0
 
         _lock_f = _le._get_leader_lock_file()

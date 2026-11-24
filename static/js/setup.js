@@ -380,9 +380,9 @@ async function startPreviewMode() {
     setErrorMessage("");
     window.location.href = "/main";
   } catch (error) {
+    if (btn) btn.disabled = false;
     if (error?.name === "AbortError") return;
     setErrorMessage(error.message || "プレビューモードを開始できませんでした");
-    if (btn) btn.disabled = false;
   }
 }
 
@@ -492,12 +492,12 @@ async function saveKey() {
     setErrorMessage("");
     window.location.href = "/main";
   } catch (error) {
-    if (error?.name === "AbortError") return;
-    setErrorMessage(error.message || "APIキーの保存に失敗しました");
     if (saveBtn) {
       saveBtn.disabled = false;
       saveBtn.textContent = "保存して開始";
     }
+    if (error?.name === "AbortError") return;
+    setErrorMessage(error.message || "APIキーの保存に失敗しました");
   }
 }
 
@@ -639,4 +639,14 @@ if (
   };
   window.addEventListener("beforeunload", cleanupSetupResources);
   window.addEventListener("pagehide", cleanupSetupResources);
+  window.addEventListener("pageshow", (event) => {
+    if (!event?.persisted) return;
+    const previewBtn = getEl("previewBtn");
+    if (previewBtn) previewBtn.disabled = false;
+    const saveBtn = getEl("saveBtn");
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "保存して開始";
+    }
+  });
 }

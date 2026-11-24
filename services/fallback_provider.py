@@ -46,6 +46,16 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _nested_dict(mapping: Any, *keys: str) -> dict[str, Any]:
+    """Traverse nested dict keys safely, returning {} on any non-dict/null step."""
+    cur: Any = mapping
+    for key in keys:
+        if not isinstance(cur, dict):
+            return {}
+        cur = cur.get(key)
+    return cur if isinstance(cur, dict) else {}
+
+
 def _mark_yahoo_block(
     status_code: int | None,
     text_snippet: str = "",
@@ -290,7 +300,7 @@ class AlphaVantageProvider(BaseFallbackProvider):
                 )
                 return None
 
-            quote = data.get("Global Quote", {})
+            quote = _nested_dict(data, "Global Quote")
             if not quote or "05. price" not in quote:
                 return None
 
@@ -460,14 +470,13 @@ class YahooWebScraperProvider(_CurlCffiSessionProvider):
                 return None
 
             # Extract quote fields recursively or from standard store
-            stores = data.get("context", {}).get("dispatcher", {}).get("stores", {})
-            quote_summary = stores.get("QuoteSummaryStore", {})
-            price_data = quote_summary.get("price", {})
+            price_data = _nested_dict(
+                data, "context", "dispatcher", "stores", "QuoteSummaryStore", "price"
+            )
 
-            if not price_data and "props" in data:
+            if not price_data and isinstance(data, dict) and "props" in data:
                 # Try Next.js props structure if applicable
-                page_props = data.get("props", {}).get("pageProps", {})
-                price_data = page_props.get("quoteSummary", {}).get("price", {})
+                price_data = _nested_dict(data, "props", "pageProps", "quoteSummary", "price")
 
             if not price_data:
                 # JSON state exists but carries no quote fields (markup drift):
@@ -541,9 +550,7 @@ def _extract_yahoo_jp_price(soup, raw_text):
             try:
                 js_data = json.loads(next_script.string)
                 # Search for price inside props
-                price_val = (
-                    js_data.get("props", {}).get("pageProps", {}).get("priceData", {}).get("price")
-                )
+                price_val = _nested_dict(js_data, "props", "pageProps", "priceData").get("price")
                 if price_val:
                     return str(price_val)
             except (json.JSONDecodeError, TypeError, AttributeError):

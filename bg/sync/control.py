@@ -36,6 +36,7 @@ from bg.sync.state import (
     _BG_LOOP_MARKER_ATTR,
     SYNC_STALE_LOCK_WAIT_SEC,
     _clear_wedged_sync_lock,
+    _consume_stale_takeover_pending,
     _get_app_bg_attr,
     _get_sync_execution_lock,
     _get_sync_generation,
@@ -45,6 +46,7 @@ from bg.sync.state import (
     _next_sync_generation,
     _recover_stale_sync_state_if_needed,
     _rotate_sync_execution_lock_if_default,
+    _set_stale_takeover_pending,
     _set_sync_start_time,
 )
 from constants import (
@@ -68,7 +70,9 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
 
     lock = _get_sync_execution_lock()
     if not lock.acquire(blocking=False):
-        if not _recover_stale_sync_state_if_needed() and not _is_wedged_sync_lock(lock):
+        recovered_now = _recover_stale_sync_state_if_needed()
+        takeover_pending = _consume_stale_takeover_pending()
+        if not recovered_now and not takeover_pending and not _is_wedged_sync_lock(lock):
             logger.info("Sync already in progress, skipping.")
             with app_state.market.sync_schedule_lock:
                 app_state.market.sync_pending = True
@@ -97,6 +101,8 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
                     app_state.market.sync_forced = True
             return
     _clear_wedged_sync_lock(lock)
+    with app_state.market.is_syncing_lock:
+        _set_stale_takeover_pending(False)
 
     # Bound before the try so the finally block can always reference it (H-1).
     sync_generation = 0

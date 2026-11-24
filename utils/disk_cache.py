@@ -933,7 +933,7 @@ class StockDiskCache:
                                     continue
                                 raise
                         migrated += 1
-                    except (TypeError, json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
+                    except (TypeError, ValueError, RecursionError) as exc:
                         logger.debug("Deleting invalid disk cache entry %s: %s", entry, exc)
                         try:
                             entry.unlink(missing_ok=True)

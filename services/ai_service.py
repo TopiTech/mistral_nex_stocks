@@ -1674,7 +1674,7 @@ def call_mistral_chat(
                 temperature=temperature,
                 _model_override=model,
                 _is_fallback=True,
-                _skip_semaphore=True,
+                _skip_semaphore=_skip_semaphore,
             )
 
         # Tier制限エラーの自動フォールバック処理 (Free TierでLargeモデル選択時など)
@@ -1705,7 +1705,7 @@ def call_mistral_chat(
                 temperature=temperature,
                 _model_override="mistral-small-2603",
                 _is_fallback=True,
-                _skip_semaphore=True,
+                _skip_semaphore=_skip_semaphore,
             )
             if isinstance(fallback_res, dict) and not fallback_res.get("error"):
                 fallback_res["fallback_applied"] = True
@@ -1740,8 +1740,10 @@ def call_mistral_chat(
             app_state.market.report_circuit_result(
                 "mistral", success=False, threshold=3, open_sec=60
             )
+            circuit_probe_claimed = False
         elif circuit_probe_claimed:
             app_state.market.release_circuit_probe("mistral")
+            circuit_probe_claimed = False
 
         if status_code == 429 or _is_mistral_capacity_error(err_payload):
             backoff = app_state.ai.mark_mistral_429(retry_after_sec)

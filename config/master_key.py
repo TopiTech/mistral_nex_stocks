@@ -225,7 +225,14 @@ def get_or_create_master_key() -> str:
         except Exception:
             if saved_new_config:
                 try:
-                    config_store.save_config(previous_cfg)
+                    try:
+                        config_store.save_config(
+                            previous_cfg,
+                            create_backup=False,
+                            preserve_protected=False,
+                        )
+                    except TypeError:
+                        config_store.save_config(previous_cfg)
                 except Exception as rollback_exc:
                     logger.warning(
                         "Failed to roll back config after master key verification error: %s",

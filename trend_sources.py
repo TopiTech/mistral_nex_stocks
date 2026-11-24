@@ -334,6 +334,31 @@ _TREND_SESSION_LOCK = threading.Lock()
 _TREND_SESSION_EPOCH = 0
 
 
+class _ThreadSessionGuard:
+    """Close a thread-local requests.Session when its owning thread exits."""
+
+    def __init__(self, session: requests.Session) -> None:
+        self.session: requests.Session | None = session
+
+    def close(self) -> None:
+        sess = self.session
+        if sess is None:
+            return
+        self.session = None
+        try:
+            with _TREND_SESSION_LOCK:
+                _TREND_SESSIONS.discard(sess)
+        except Exception:
+            pass
+        try:
+            sess.close()
+        except Exception:
+            pass
+
+    def __del__(self) -> None:
+        self.close()
+
+
 def _get_trend_session() -> requests.Session:
     """Return a thread-local HTTP session for trend collection."""
     with _TREND_SESSION_LOCK:
@@ -341,20 +366,25 @@ def _get_trend_session() -> requests.Session:
     session = getattr(_TREND_SESSION_LOCAL, "session", None)
     if session is not None and getattr(_TREND_SESSION_LOCAL, "epoch", -1) == epoch:
         return session
+    prev_guard = getattr(_TREND_SESSION_LOCAL, "guard", None)
+    if prev_guard is not None:
+        prev_guard.close()
     s = requests.Session()
     adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
-    _TREND_SESSION_LOCAL.session = s
-    _TREND_SESSION_LOCAL.epoch = epoch
     with _TREND_SESSION_LOCK:
         _TREND_SESSIONS.add(s)
+    _TREND_SESSION_LOCAL.session = s
+    _TREND_SESSION_LOCAL.epoch = epoch
+    _TREND_SESSION_LOCAL.guard = _ThreadSessionGuard(s)
     return s
 
 
 def _cleanup_trend_session() -> None:
     global _TREND_SESSION_EPOCH
     _TREND_SESSION_LOCAL.session = None
+    _TREND_SESSION_LOCAL.guard = None
     with _TREND_SESSION_LOCK:
         _TREND_SESSION_EPOCH += 1
         sessions = list(_TREND_SESSIONS)

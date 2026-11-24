@@ -384,6 +384,7 @@ def _process_fetched_stocks(
                     continue
                 if sym not in seen:
                     merged.append(item)
+                    seen.add(sym)
             return merged
 
         new_us = merge_cache(prev_us, us_res, "us")

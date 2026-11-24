@@ -30,7 +30,7 @@ function fail(message) {
 }
 
 function read(rel) {
-  return fs.readFileSync(path.join(ROOT, rel), "utf8");
+  return fs.readFileSync(path.join(ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 }
 
 function listFiles(dir) {

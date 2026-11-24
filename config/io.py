@@ -477,7 +477,9 @@ def load_config() -> dict[str, Any]:
             return copy.deepcopy(config_store.DEFAULT_CONFIG)
 
 
-def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
+def save_config(
+    cfg, create_backup: bool = True, preserve_protected: bool = True
+) -> tuple[int, int] | None:
     """設定ファイルに保存。デフォルト値との統合を保証"""
     with config_store._CONFIG_LOCK:
         if is_config_corrupted():
@@ -528,7 +530,7 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                 "extension_api_token",
                 "extension_api_token_created",
             )
-            missing_protected = (
+            missing_protected = preserve_protected and (
                 transient_fallback
                 or any(k not in data for k in protected_keys)
                 or ("api_credentials" not in cfg)
@@ -611,9 +613,10 @@ def save_config(cfg, create_backup=True) -> tuple[int, int] | None:
                             merged_data[k] = copy.deepcopy(v)
                     data = merged_data
                 else:
-                    for protected_key in protected_keys:
-                        if protected_key not in data and protected_key in existing_data:
-                            data[protected_key] = copy.deepcopy(existing_data[protected_key])
+                    if preserve_protected:
+                        for protected_key in protected_keys:
+                            if protected_key not in data and protected_key in existing_data:
+                                data[protected_key] = copy.deepcopy(existing_data[protected_key])
                     # ``DEFAULT_CONFIG`` supplies an empty api_credentials dict,
                     # so a caller that saves only preferences (without loading
                     # first) would otherwise overwrite every stored API key with

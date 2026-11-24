@@ -440,16 +440,17 @@
         const cached = this._getElements(symbol);
 
         // 1. Sync delta with global window.state.stocks & compute change from yfinance previous_close
-        let yfPrevClose = null;
-        let foundStock = null;
-        let foundMarket = null;
-        if (
+        const incomingPrevClose =
           data.previous_close != null &&
           typeof data.previous_close === "number" &&
           data.previous_close > 0
-        ) {
-          yfPrevClose = data.previous_close;
-        }
+            ? data.previous_close
+            : null;
+        let yfPrevClose = incomingPrevClose;
+        let resolvedDeltaChange = data.change;
+        let resolvedDeltaPct = data.change_percent;
+        let foundStock = null;
+        let foundMarket = null;
 
         this._forEachMatchingStateStock(
           symbol,
@@ -459,32 +460,37 @@
             hasStockUpdate = true;
             foundStock = sItem;
             foundMarket = sItem.market || m;
-            // Resolve yfinance previous close from stock object
-            if (!yfPrevClose) {
+            // Resolve yfinance previous close per matched stock item so one
+            // market bucket never leaks into another.
+            let itemPrevClose = incomingPrevClose;
+            if (!itemPrevClose) {
               if (
                 sItem.previous_close != null &&
                 Number(sItem.previous_close) > 0
               ) {
-                yfPrevClose = Number(sItem.previous_close);
+                itemPrevClose = Number(sItem.previous_close);
               } else if (sItem.price != null && sItem.change != null) {
                 const p = Number(sItem.price);
                 const c = Number(sItem.change);
                 if (Number.isFinite(p) && Number.isFinite(c) && p - c > 0) {
-                  yfPrevClose = p - c;
-                  sItem.previous_close = yfPrevClose;
+                  itemPrevClose = p - c;
+                  sItem.previous_close = itemPrevClose;
                 }
               }
             }
 
-            // Recalculate change and percentage using yfinance previous close
-            if (yfPrevClose && yfPrevClose > 0 && validPrice !== null) {
-              const diff = validPrice - yfPrevClose;
+            let effectiveChange = data.change;
+            let effectivePct = data.change_percent;
+            if (itemPrevClose && itemPrevClose > 0 && validPrice !== null) {
+              const diff = validPrice - itemPrevClose;
               const itemMarket = sItem.market || m;
-              const newChange = roundChange(diff, symbol, itemMarket);
-              const newPct = roundPercent((diff / yfPrevClose) * 100);
-              data.change = newChange;
-              data.change_percent = newPct;
-              data.previous_close = yfPrevClose;
+              effectiveChange = roundChange(diff, symbol, itemMarket);
+              effectivePct = roundPercent((diff / itemPrevClose) * 100);
+            }
+            if (!yfPrevClose && itemPrevClose) {
+              yfPrevClose = itemPrevClose;
+              resolvedDeltaChange = effectiveChange;
+              resolvedDeltaPct = effectivePct;
             }
 
             if (validPrice !== null) {
@@ -492,19 +498,19 @@
               sItem.__live_update = true;
             }
             if (
-              data.change != null &&
-              typeof data.change === "number" &&
-              Number.isFinite(data.change)
+              effectiveChange != null &&
+              typeof effectiveChange === "number" &&
+              Number.isFinite(effectiveChange)
             ) {
-              sItem.change = data.change;
+              sItem.change = effectiveChange;
               sItem.__live_update = true;
             }
             if (
-              data.change_percent != null &&
-              typeof data.change_percent === "number" &&
-              Number.isFinite(data.change_percent)
+              effectivePct != null &&
+              typeof effectivePct === "number" &&
+              Number.isFinite(effectivePct)
             ) {
-              sItem.change_percent = data.change_percent;
+              sItem.change_percent = effectivePct;
               sItem.__live_update = true;
             }
             if (
@@ -523,7 +529,13 @@
           data.market || (foundStock ? foundStock.market || foundMarket : null);
 
         // If not resolved from state, check if delta had calculated change/pct
-        if (
+        if (resolvedDeltaChange != null) {
+          data.change = resolvedDeltaChange;
+          data.change_percent = resolvedDeltaPct;
+          if (yfPrevClose) {
+            data.previous_close = yfPrevClose;
+          }
+        } else if (
           data.change == null &&
           yfPrevClose &&
           yfPrevClose > 0 &&

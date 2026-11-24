@@ -962,12 +962,6 @@ class RealtimeMarketEngine:
                     self._bg_executor = DaemonThreadPoolExecutor(
                         max_workers=4, thread_name_prefix="RealtimeBg"
                     )
-                # stop() bumps _engine_epoch, which invalidates every old
-                # registration token. Clear them so the next register_symbols
-                # (load_user_stocks / sync) re-adds symbols and re-submits PTS
-                # fetches instead of being skipped as "already registered".
-                with self.store_lock:
-                    self._registration_tokens.clear()
                 self.tv_client.start()
                 self.yahoojp_scraper.start()
                 self._pts_epoch += 1
@@ -1014,6 +1008,7 @@ class RealtimeMarketEngine:
             with state_lock:
                 with self.store_lock:
                     self._engine_epoch += 1
+                    self._registration_tokens.clear()
                 self.running = False
                 self._pts_epoch += 1
                 thread = self.pts_thread

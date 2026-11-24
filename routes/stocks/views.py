@@ -679,10 +679,10 @@ def api_reset_stocks() -> Any:
     ):
         defaults = _common._default_stock_names(market)
         for symbol in previous:
-            _common._sync_realtime_symbol(symbol, market, register=False)
             if not any(
                 alias in defaults for alias in _stored_symbol_aliases(symbol, market)
             ):
+                _common._sync_realtime_symbol(symbol, market, register=False)
                 invalidate_stock_caches(symbol)
     try:
         app_state.payload_disk_cache.delete("indices_cache")
@@ -745,8 +745,9 @@ def api_heatmap() -> Any:
                 if not done_future.cancelled():
                     return
                 with app_state.heatmap_fetch_lock:
-                    app_state.heatmap_fetch_inflight.discard(cache_key)
-                    app_state.heatmap_fetch_start_times.pop(cache_key, None)
+                    if app_state.heatmap_fetch_start_times.get(cache_key) == now:
+                        app_state.heatmap_fetch_inflight.discard(cache_key)
+                        app_state.heatmap_fetch_start_times.pop(cache_key, None)
 
             if future is not None and hasattr(future, "add_done_callback"):
                 future.add_done_callback(_handle_cancelled_heatmap_fetch)

@@ -1452,6 +1452,13 @@ if (
   window.addEventListener("pagehide", cleanupApiLifecycleResources);
   window.addEventListener("pageshow", (event) => {
     if (!event?.persisted) return;
+    if (
+      typeof state === "undefined" ||
+      typeof document === "undefined" ||
+      !document.getElementById("us-stocks")
+    ) {
+      return;
+    }
     if (typeof loadIndicesLoop === "function") {
       loadIndicesLoop();
     }

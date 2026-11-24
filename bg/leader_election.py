@@ -183,12 +183,22 @@ def _release_leader_lock() -> None:
     with _LEADER_LOCK_MUTEX:
         _detach_inherited_leader_lock_locked()
         _lock_file = _get_leader_lock_file()
+        _lock_mode = _get_leader_lock_mode()
+        _lock_path = _get_leader_lock_path()
         _set_leader_lock_file(None)
         _set_leader_lock_mode(None)
         _set_is_sync_leader(False)
         if _lock_file is not None:
             try:
                 _lock_file.close()
+            except OSError:
+                pass
+        if _lock_mode == "atomic" and _lock_path is not None:
+            try:
+                if _lock_path.exists() and _lock_path.read_text(encoding="utf-8").strip() == str(
+                    os.getpid()
+                ):
+                    _lock_path.unlink(missing_ok=True)
             except OSError:
                 pass
 
@@ -220,9 +230,14 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
         except FileExistsError:
             try:
+                st_before = lock_path.stat()
                 raw = lock_path.read_text(encoding="utf-8").strip()
                 owner_pid = int(raw) if raw.isdigit() else None
+            except FileNotFoundError:
+                continue
             except (OSError, ValueError):
+                st_before = None
+                raw = ""
                 owner_pid = None
             if owner_pid == pid:
                 logger.debug("Atomic leader lock already held by pid=%d", pid)
@@ -232,7 +247,10 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
             try:
                 if owner_pid is not None:
                     stale = not _pid_is_alive(owner_pid)
-                elif time.time() - lock_path.stat().st_mtime > _ATOMIC_LOCK_STALE_SEC:
+                elif (
+                    st_before is not None
+                    and time.time() - st_before.st_mtime > _ATOMIC_LOCK_STALE_SEC
+                ):
                     stale = True
             except OSError:
                 stale = False
@@ -247,7 +265,16 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                     pass
                 _set_leader_lock_file(None)
             try:
+                if st_before is not None:
+                    st_now = lock_path.stat()
+                    if (st_now.st_dev, st_now.st_ino) != (
+                        st_before.st_dev,
+                        st_before.st_ino,
+                    ) or lock_path.read_text(encoding="utf-8").strip() != raw:
+                        continue
                 lock_path.unlink()
+            except FileNotFoundError:
+                continue
             except OSError:
                 return False
             continue

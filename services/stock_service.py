@@ -17,7 +17,7 @@ from constants import (
 )
 from error_codes import ErrorCode, get_error_message
 from route_helpers import cleanup_history_circuit_state
-from services.stock.retry import suppress_yfinance_retry_reset
+from services.stock.retry import is_retriable_http_error, suppress_yfinance_retry_reset
 from services.stock_provider import is_yfinance_rate_limit_error, with_yfinance_retry
 from utils.caching import (
     _set_cached_value,
@@ -166,9 +166,12 @@ def _history_with_timeout(period_value, interval_value, symbol, market=None):
                 exc,
             )
             raise
+        if is_retriable_http_error(exc):
+            raise
         exc_name = type(exc).__name__
         if "Timeout" in exc_name or "Connection" in exc_name:
             raise
+        suppress_yfinance_retry_reset()
         return pd.DataFrame()
     finally:
         if acquired:

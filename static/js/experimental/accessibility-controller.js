@@ -179,10 +179,16 @@
         ) {
           // Single-character shortcuts (Space/Enter/arrows/d/c/m/h//) must not
           // steal activation keys from focused controls. Explicit keyboard
-          // shortcuts that require a modifier (Ctrl/⌘+K) remain available.
+          // shortcuts that require a modifier (Ctrl/⌘+K) and Escape when
+          // canceling Connect Mode remain available even when canvas/toggle
+          // buttons hold focus.
           const isModifierShortcut =
             (e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey);
-          if (!isModifierShortcut) {
+          const isConnectModeEscape =
+            e.key === "Escape" &&
+            (this.state.state.isConnectMode ||
+              this.state.state.connectedSymbols.length > 0);
+          if (!isModifierShortcut && !isConnectModeEscape) {
             return;
           }
         }

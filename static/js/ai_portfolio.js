@@ -1902,8 +1902,20 @@
         savedAiPortfoliosAbortController.abort();
         savedAiPortfoliosAbortController = null;
       }
+      savedAiPortfoliosLoading = false;
+      showLoadingState(false);
+      renderSavedAiPortfolios();
     };
     window.addEventListener("beforeunload", cleanupAiPortfolioResources);
     window.addEventListener("pagehide", cleanupAiPortfolioResources);
+    window.addEventListener("pageshow", (event) => {
+      if (!event?.persisted) return;
+      savedAiPortfoliosLoading = false;
+      showLoadingState(false);
+      renderSavedAiPortfolios();
+      if (!savedAiPortfoliosLoaded) {
+        void loadSavedAiPortfolios();
+      }
+    });
   }
 })();

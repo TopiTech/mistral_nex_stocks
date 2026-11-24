@@ -28,6 +28,7 @@ from route_helpers import (
     _parse_stock_details_request,
     _parse_stock_history_request,
     rate_limit,
+    sanitize_upstream_log_message,
 )
 from routes.stocks.common import (
     is_market_open,
@@ -55,6 +56,7 @@ from utils.stock_payload import (
     fetch_stock_info_async,
     ok_response,
 )
+from utils.text_utils import _short_text
 
 logger = logging.getLogger(__name__)
 
@@ -457,12 +459,10 @@ def api_stock_history() -> Any:
             return error_response(ErrorCode.CIRCUIT_BREAKER_OPEN, status_code=503)
         state: Any = app_state.market.history_circuit_state.get(circuit_key) or {}
         if state.get("status") == "HALF_OPEN":
-            is_probing = state.get("probing")
-            if not is_probing:
-                claimed = app_state.market.try_claim_circuit_probe(
-                    "yfinance_history", symbol=circuit_key
-                )
-                is_probing = not claimed
+            claimed = app_state.market.try_claim_circuit_probe(
+                "yfinance_history", symbol=circuit_key
+            )
+            is_probing = not claimed
             logger.info(
                 "stock-history circuit HALF_OPEN symbol=%s - scheduling async fetch", circuit_key
             )
@@ -648,7 +648,11 @@ def api_search() -> Any:
             results = app_state.stock_provider.search(q, max_results=10)
             return {"results": results}
         except (requests.RequestException, ValueError, KeyError, AttributeError) as exc:
-            current_app.logger.error("Search API failed (%s): %s", q, exc)
+            current_app.logger.error(
+                "Search API failed (%s): %s",
+                _short_text(q, limit=120),
+                sanitize_upstream_log_message(exc),
+            )
             raise
 
     try:

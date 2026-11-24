@@ -198,6 +198,19 @@ class ShutdownTokenManager:
                 self.logger.error("Failed to write shutdown token file: %s", exc)
             return self.shutdown_token
 
+    def _migrate_single_legacy_file(self, legacy_path, target_path) -> None:
+        if target_path.exists() or not legacy_path.exists():
+            return
+        self._ensure_runtime_state_dir()
+        try:
+            legacy_path.replace(target_path)
+            return
+        except OSError:
+            pass
+        content = legacy_path.read_text(encoding="utf-8")
+        _write_atomic_restricted(target_path, content)
+        legacy_path.unlink(missing_ok=True)
+
     def _migrate_legacy_token_file(self) -> None:
         """Move a legacy project-root token into the runtime state directory.
 
@@ -207,15 +220,11 @@ class ShutdownTokenManager:
         is not silently re-validated.
         """
         try:
-            if not self.token_file.exists() and self._legacy_token_file.exists():
-                self._ensure_runtime_state_dir()
-                self._legacy_token_file.replace(self.token_file)
+            self._migrate_single_legacy_file(self._legacy_token_file, self.token_file)
         except OSError:
             pass
         try:
-            if not self.used_marker.exists() and self._legacy_used_marker.exists():
-                self._ensure_runtime_state_dir()
-                self._legacy_used_marker.replace(self.used_marker)
+            self._migrate_single_legacy_file(self._legacy_used_marker, self.used_marker)
         except OSError:
             pass
 

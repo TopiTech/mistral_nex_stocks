@@ -343,6 +343,14 @@ def _extract_http_error_status(exc: BaseException) -> int | None:
     return None
 
 
+def is_retriable_http_error(exc: BaseException) -> bool:
+    """Return True for transient 5xx or statusless HTTPError so retry decorator handles it."""
+    if not isinstance(exc, (RequestsHTTPError, CurlRequestsHTTPError)):
+        return False
+    status = _extract_http_error_status(exc)
+    return status is None or status >= 500
+
+
 def _sleep_transient_retry(
     attempt: int,
     max_retries: int,

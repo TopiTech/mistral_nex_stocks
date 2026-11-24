@@ -180,11 +180,23 @@ def test_u5_02_win32_signature_frees_cert_context_on_exception() -> None:
         ph_msg._obj.value = 0x9ABC
         return 1
 
+    def _fake_get_param(
+        _h_msg: object,
+        _param: object,
+        _idx: object,
+        pv_data: object,
+        pcb_data: _ByRefHandle,
+    ) -> int:
+        if pv_data is None:
+            pcb_data._obj.value = 1024
+        return 1
+
     mock_wintrust = MagicMock()
     mock_wintrust.WinVerifyTrust.return_value = 0
     mock_crypt32 = MagicMock()
     mock_crypt32.CryptQueryObject.side_effect = _fake_crypt_query
-    mock_crypt32.CertEnumCertificatesInStore.return_value = 0x1234
+    mock_crypt32.CryptMsgGetParam.side_effect = _fake_get_param
+    mock_crypt32.CertFindCertificateInStore.return_value = 0x1234
     mock_crypt32.CertGetNameStringW.side_effect = RuntimeError("boom during cert inspect")
 
     fake_windll = SimpleNamespace(wintrust=mock_wintrust, crypt32=mock_crypt32)

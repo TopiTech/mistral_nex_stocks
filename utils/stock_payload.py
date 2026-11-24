@@ -879,9 +879,11 @@ def build_stock_payload(
         from utils.tradingview_mapper import get_tradingview_symbol_meta, register_ticker_exchange
 
         exchange_raw = info.get("exchange") if isinstance(info, dict) else None
-        tv_sym, _, resolved_prefix = get_tradingview_symbol_meta(symbol, exchange=exchange_raw)
+        tv_sym, is_fallback, resolved_prefix = get_tradingview_symbol_meta(
+            symbol, exchange=exchange_raw
+        )
         exchange_val = resolved_prefix or exchange_raw
-        if exchange_val:
+        if not is_fallback and exchange_val:
             register_ticker_exchange(symbol, exchange_val)
 
         # Volume extraction with positive fallback (handles off-hours zero-volume bars)

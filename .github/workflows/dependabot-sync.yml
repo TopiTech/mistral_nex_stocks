@@ -7,13 +7,14 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   sync-requirements:
     name: Sync requirements-locked.txt
+    timeout-minutes: 10
     if: >-
       github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
       startsWith(github.head_ref, 'dependabot/uv') &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest

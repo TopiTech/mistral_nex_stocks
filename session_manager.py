@@ -317,10 +317,13 @@ class YFinanceSessionManager:
                     self._session_epoch = 0
                     self._warned_curl_cffi_fallback = False
                     self._closed = False
-                    # Set of id(session) currently inside a request. The reaper
-                    # and epoch sweep skip these so we never close a socket
-                    # mid-flight (which would corrupt an in-progress fetch).
+                    # Set + refcount of id(session) currently inside a request.
+                    # Tracking a per-sid count prevents one finished worker in
+                    # a shared yf.download(..., session=sess) batch from
+                    # clearing active tracking while sibling threads are still
+                    # in flight.
                     self._active_sessions: set[int] = set()
+                    self._active_session_counts: dict[int, int] = {}
                     self._active_sessions_lock = threading.Lock()
                     # H-3: Removed separate _request_lock (threading.Lock) to avoid
                     # potential deadlock with _lock (RLock). All shared state is
@@ -450,6 +453,7 @@ class YFinanceSessionManager:
                 raise RuntimeError("Application is shutting down; session request aborted")
             sid = id(session)
             with self._active_sessions_lock:
+                self._active_session_counts[sid] = self._active_session_counts.get(sid, 0) + 1
                 self._active_sessions.add(sid)
             try:
                 wait_time = self._compute_wait()
@@ -558,7 +562,12 @@ class YFinanceSessionManager:
                 return resp
             finally:
                 with self._active_sessions_lock:
-                    self._active_sessions.discard(sid)
+                    remaining = self._active_session_counts.get(sid, 0) - 1
+                    if remaining > 0:
+                        self._active_session_counts[sid] = remaining
+                    else:
+                        self._active_session_counts.pop(sid, None)
+                        self._active_sessions.discard(sid)
 
         session.request = custom_request  # type: ignore[assignment]
         with self._lock:
@@ -591,7 +600,9 @@ class YFinanceSessionManager:
             # Sort by creation timestamp (oldest first) so we evict LRU.
             self._all_sessions.sort(key=lambda e: e[2])
             with self._active_sessions_lock:
-                active = set(self._active_sessions)
+                active = set(self._active_sessions) | {
+                    sid for sid, cnt in self._active_session_counts.items() if cnt > 0
+                }
             removed = 0
             kept = []
             for entry in self._all_sessions:
@@ -615,7 +626,9 @@ class YFinanceSessionManager:
         """
         with self._lock:
             with self._active_sessions_lock:
-                active = set(self._active_sessions)
+                active = set(self._active_sessions) | {
+                    sid for sid, cnt in self._active_session_counts.items() if cnt > 0
+                }
             kept = []
             for entry in self._all_sessions:
                 sess, epoch, _ts = entry
@@ -635,7 +648,9 @@ class YFinanceSessionManager:
         idle_ttl = YFINANCE_SESSION_IDLE_TTL_SEC
         with self._lock:
             with self._active_sessions_lock:
-                active = set(self._active_sessions)
+                active = set(self._active_sessions) | {
+                    sid for sid, cnt in self._active_session_counts.items() if cnt > 0
+                }
             kept = []
             for entry in self._all_sessions:
                 sess, _epoch, ts = entry
@@ -961,6 +976,7 @@ class YFinanceSessionManager:
             self._excluded_until.clear()
             with self._active_sessions_lock:
                 self._active_sessions.clear()
+                self._active_session_counts.clear()
             from utils.env_helpers import _is_testing
 
             is_testing = _is_testing()

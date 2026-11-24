@@ -17,12 +17,14 @@ from flask import current_app, g, request
 
 import routes.api_system
 from app_state import app_state
+from constants import AGENT_ID_RE
 from error_codes import ErrorCode
 from mistral_compat import HAS_AGENTS_SDK, load_sdk_agent, mistral_agents
 from route_helpers import (
     _parse_credentials_save_request,
     openai_base_url_error_response,
     rate_limit,
+    sanitize_upstream_log_message,
 )
 from routes.system.blueprint import api_system_bp
 from schemas.config import (
@@ -600,8 +602,19 @@ def api_credentials_verify():
         requested_mode = data.get("mistral_api_mode")
         verify_mode = requested_mode if requested_mode in ("chat", "agents") else get_api_mode()
         if verify_mode == "agents":
-            agent_id = data.get("mistral_agent_id")
-            if not isinstance(agent_id, str) or not agent_id.strip():
+            raw_agent_id = data.get("mistral_agent_id")
+            if raw_agent_id is not None and not isinstance(raw_agent_id, str):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "mistral_agent_id は文字列で指定してください"},
+                )
+            agent_id = raw_agent_id.strip() if isinstance(raw_agent_id, str) else ""
+            if agent_id and not AGENT_ID_RE.fullmatch(agent_id):
+                return error_response(
+                    ErrorCode.INVALID_INPUT,
+                    details={"reason": "mistral_agent_id の形式が不正です"},
+                )
+            if not agent_id:
                 agent_id = get_agent_id()
 
             if not agent_id:
@@ -644,13 +657,19 @@ def api_credentials_verify():
                 try:
                     agent = get_agent(agent_id=agent_id.strip())
                 except Exception as client_err:
-                    current_app.logger.debug("client.beta.agents.get failed: %s", client_err)
+                    current_app.logger.debug(
+                        "client.beta.agents.get failed: %s",
+                        sanitize_upstream_log_message(client_err),
+                    )
 
             if agent is None and HAS_AGENTS_SDK and mistral_agents is not None:
                 try:
                     agent = load_sdk_agent(agent_id.strip(), api_key=api_key)
                 except Exception as sdk_err:
-                    current_app.logger.debug("load_sdk_agent fallback failed: %s", sdk_err)
+                    current_app.logger.debug(
+                        "load_sdk_agent fallback failed: %s",
+                        sanitize_upstream_log_message(sdk_err),
+                    )
 
             if agent is None:
                 if not callable(get_agent):

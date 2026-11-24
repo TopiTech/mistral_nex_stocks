@@ -31,7 +31,11 @@ from services.stock.errors import (
     _is_yfinance_invalid_symbol_error,
     _is_yfinance_rate_limit_error,
 )
-from services.stock.retry import suppress_yfinance_retry_reset, with_yfinance_retry
+from services.stock.retry import (
+    is_retriable_http_error,
+    suppress_yfinance_retry_reset,
+    with_yfinance_retry,
+)
 from services.stock.sanitize import _finite_float, sanitize_fundamental_dict
 from session_manager import register_auth_reset_listener
 from utils.caching import (
@@ -325,9 +329,12 @@ class YFinanceProvider(BaseStockProvider):
             # failure before this was consolidated).
             if _is_yfinance_rate_limit_error(exc):
                 raise
+            if is_retriable_http_error(exc):
+                raise
             exc_name = type(exc).__name__
             if "Timeout" in exc_name or "Connection" in exc_name:
                 raise
+            suppress_yfinance_retry_reset()
             return pd.DataFrame()
 
     def _derive_quote_from_history(self, df: pd.DataFrame, symbol: str) -> dict | None:
@@ -921,15 +928,18 @@ class YFinanceProvider(BaseStockProvider):
                 if is_rate_limited or (
                     "marketCap" in cached_fast or "quoteType" in cached_fast
                 ):
+                    suppress_yfinance_retry_reset()
                     return cached_fast
         except (AttributeError, RuntimeError):
             cached_fast = None
 
         if is_rate_limited:
+            suppress_yfinance_retry_reset()
             return cached_fast if isinstance(cached_fast, dict) else {}
 
         t = self.get_ticker(symbol)
         if not t:
+            suppress_yfinance_retry_reset()
             return cached_fast if isinstance(cached_fast, dict) else {}
         try:
             fast = t.fast_info
@@ -1029,9 +1039,12 @@ class YFinanceProvider(BaseStockProvider):
             # @with_yfinance_retry owns rate-limit recording (single mark per 429).
             if _is_yfinance_rate_limit_error(exc):
                 raise
+            if is_retriable_http_error(exc):
+                raise
             exc_name = type(exc).__name__
             if "Timeout" in exc_name or "Connection" in exc_name:
                 raise
+            suppress_yfinance_retry_reset()
         return cached_fast if isinstance(cached_fast, dict) else {}
 
     @with_yfinance_retry(max_retries=2, base_delay=2.0, backoff_factor=2.0)
@@ -1043,10 +1056,12 @@ class YFinanceProvider(BaseStockProvider):
             and m_state.is_negative_cached_symbol(symbol) is True
         ):
             logger.debug("symbol %s is in negative cache; skipping get_info", symbol)
+            suppress_yfinance_retry_reset()
             return {}
 
         t = self.get_ticker(symbol)
         if not t:
+            suppress_yfinance_retry_reset()
             return {}
         try:
             info = t.info
@@ -1130,9 +1145,12 @@ class YFinanceProvider(BaseStockProvider):
             # @with_yfinance_retry owns rate-limit recording (single mark per 429).
             if _is_yfinance_rate_limit_error(exc):
                 raise
+            if is_retriable_http_error(exc):
+                raise
             exc_name = type(exc).__name__
             if "Timeout" in exc_name or "Connection" in exc_name:
                 raise
+            suppress_yfinance_retry_reset()
         return {}
 
     def _df_to_records(self, df: pd.DataFrame | None, limit: int = 0) -> list[dict]:

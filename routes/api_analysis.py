@@ -270,6 +270,10 @@ NEWS_RESULT_CACHE_TTL = 180.0
 news_result_cache: TTLCache[str, tuple[float, Any, BaseException | None]] = TTLCache(
     maxsize=256, ttl=NEWS_RESULT_CACHE_TTL
 )
+news_completed_tokens: TTLCache[str, bool] = TTLCache(maxsize=512, ttl=300.0)
+news_uncacheable_results: TTLCache[str, tuple[float, dict[str, Any]]] = TTLCache(
+    maxsize=256, ttl=300.0
+)
 
 # Module-level tracking for in-flight chat completions (mirrors news pattern)
 chat_fetch_lock = threading.Lock()
@@ -1596,12 +1600,15 @@ def api_news():
     # carrying the same request_token after background completion does not launch
     # a duplicate paid LLM run.
     cached_news: tuple[float, Any, BaseException | None] | None = None
+    uncacheable_news: tuple[float, dict[str, Any]] | None = None
     result_holder: FetchJob | None = None
     already_fetching = False
     with news_fetch_lock:
         if news_token_cache_key:
             cached_news = news_result_cache.get(news_token_cache_key)
-        if cached_news is None:
+            if cached_news is None:
+                uncacheable_news = news_uncacheable_results.pop(news_token_cache_key, None)
+        if cached_news is None and uncacheable_news is None:
             if inflight_key in news_fetch_inflight:
                 result_holder = news_fetch_inflight[inflight_key]
                 already_fetching = True
@@ -1632,6 +1639,11 @@ def api_news():
             return _analyze_v2_error_response(cached_err, g)
         if isinstance(cached_res, dict):
             return ok_response({**cached_res, "disclaimer": ANALYSIS_DISCLAIMER})
+
+    if uncacheable_news is not None:
+        _uncacheable_ts, uncacheable_res = uncacheable_news
+        if isinstance(uncacheable_res, dict):
+            return ok_response({**uncacheable_res, "disclaimer": ANALYSIS_DISCLAIMER})
 
     if result_holder is None:
         return error_response(
@@ -1676,18 +1688,26 @@ def api_news():
             finally:
                 with news_fetch_lock:
                     raw_result = result_holder.get("result")
-                    cached_payload = (
-                        copy.deepcopy(raw_result)
-                        if isinstance(raw_result, dict) and _is_cacheable_news_bundle(raw_result)
-                        else None
+                    is_cacheable = isinstance(raw_result, dict) and _is_cacheable_news_bundle(
+                        raw_result
                     )
+                    cached_payload = copy.deepcopy(raw_result) if is_cacheable else None
                     cached_exc = result_holder.get("error")
+                    rc_keys = list(result_holder.get("result_cache_keys") or ())
                     if cached_payload is not None or cached_exc is not None:
-                        for rc_key in list(result_holder.get("result_cache_keys") or ()):
+                        for rc_key in rc_keys:
                             news_result_cache[rc_key] = (
                                 time.time(),
                                 cached_payload,
                                 cached_exc,
+                            )
+                            news_completed_tokens[rc_key] = True
+                    elif isinstance(raw_result, dict):
+                        for rc_key in rc_keys:
+                            news_completed_tokens[rc_key] = True
+                            news_uncacheable_results[rc_key] = (
+                                time.time(),
+                                copy.deepcopy(raw_result),
                             )
                     news_fetch_inflight.pop(inflight_key, None)
                 result_holder["done"].set()
@@ -2528,7 +2548,7 @@ def api_ai_technical_lines():
         current_app.logger.warning(
             "AI technical lines service error id=%s: %s",
             getattr(g, "request_id", "-"),
-            str(raw_error)[:240],
+            sanitize_upstream_log_message(raw_error)[:240],
         )
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,

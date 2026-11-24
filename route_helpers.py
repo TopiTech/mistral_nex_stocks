@@ -268,6 +268,7 @@ def _is_polling_token_inflight(token: str) -> bool:
             chat_fetch_inflight,
             chat_fetch_lock,
             chat_result_cache,
+            news_completed_tokens,
             news_fetch_lock,
             news_result_cache,
         )
@@ -305,6 +306,9 @@ def _is_polling_token_inflight(token: str) -> bool:
         with news_fetch_lock:
             for cached_key in list(news_result_cache.keys()):
                 if cached_key.endswith(f":{token}"):
+                    return False
+            for completed_key in list(news_completed_tokens.keys()):
+                if completed_key.endswith(f":{token}"):
                     return False
 
         from routes.stocks.ai_portfolio import (

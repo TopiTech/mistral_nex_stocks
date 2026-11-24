@@ -632,13 +632,13 @@ def _get_proc_creation_time(pid: int) -> int | None:
 
 
 def _posix_executable_path_is_trusted(path: str) -> bool:
-    """Return False for an executable in a world-writable directory.
+    """Return False for an executable in or under a world-writable directory.
 
     On POSIX the ancestry check only sees a basename, so a local process could
-    copy a shell to ``/tmp/chrome`` and present a forged browser name. Reject
-    world-writable executables and parents so that trick no longer satisfies
-    ``_is_caller_authorized_browser``. Legitimate browser installs live under
-    root-owned or user-owned non-world-writable directories.
+    copy a shell to ``/tmp/chrome`` or ``/tmp/subdir/chrome`` and present a
+    forged browser name. Reject world-writable executables and any world-writable
+    ancestor directory so that trick no longer satisfies
+    ``_is_caller_authorized_browser``.
     """
     if not path:
         return False
@@ -648,12 +648,19 @@ def _posix_executable_path_is_trusted(path: str) -> bool:
         return False
     if st.st_mode & 0o002:
         return False
-    parent = os.path.dirname(os.path.abspath(path)) or "."
-    try:
-        parent_st = os.stat(parent)
-    except OSError:
-        return False
-    return not (parent_st.st_mode & 0o002)
+    cur = os.path.dirname(os.path.abspath(path))
+    while cur:
+        try:
+            cur_st = os.stat(cur)
+        except OSError:
+            return False
+        if cur_st.st_mode & 0o002:
+            return False
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return True
 
 
 def _get_posix_ancestor_process_names(
@@ -940,6 +947,13 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
         wtd.dwProvFlags = 0x00000100  # WTD_SAFER_FLAG
         wtd.dwUIContext = 0
 
+        wintrust.WinVerifyTrust.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(GUID),
+            ctypes.POINTER(WINTRUST_DATA),
+        ]
+        wintrust.WinVerifyTrust.restype = wintypes.LONG
+
         status = wintrust.WinVerifyTrust(
             0,
             ctypes.byref(WINTRUST_ACTION_GENERIC_VERIFY_V2),
@@ -951,6 +965,70 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
         CERT_QUERY_OBJECT_FILE = 1
         CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED = 1 << 10
         CERT_QUERY_FORMAT_FLAG_ALL = 0x0000000E
+        CMSG_SIGNER_INFO_PARAM = 6
+        X509_ASN_ENCODING = 0x00000001
+        PKCS_7_ASN_ENCODING = 0x00010000
+        CERT_FIND_SUBJECT_CERT = 0x000B0000
+        CERT_NAME_SIMPLE_DISPLAY_TYPE = 4
+
+        class CRYPTOAPI_BLOB(ctypes.Structure):
+            _fields_ = [
+                ("cbData", wintypes.DWORD),
+                ("pbData", ctypes.POINTER(wintypes.BYTE)),
+            ]
+
+        class CRYPT_ALGORITHM_IDENTIFIER(ctypes.Structure):
+            _fields_ = [
+                ("pszObjId", ctypes.c_char_p),
+                ("Parameters", CRYPTOAPI_BLOB),
+            ]
+
+        class CRYPT_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [
+                ("cAttr", wintypes.DWORD),
+                ("rgAttr", ctypes.c_void_p),
+            ]
+
+        class CMSG_SIGNER_INFO(ctypes.Structure):
+            _fields_ = [
+                ("dwVersion", wintypes.DWORD),
+                ("Issuer", CRYPTOAPI_BLOB),
+                ("SerialNumber", CRYPTOAPI_BLOB),
+                ("HashAlgorithm", CRYPT_ALGORITHM_IDENTIFIER),
+                ("HashEncryptionAlgorithm", CRYPT_ALGORITHM_IDENTIFIER),
+                ("EncryptedHash", CRYPTOAPI_BLOB),
+                ("AuthAttrs", CRYPT_ATTRIBUTES),
+                ("UnauthAttrs", CRYPT_ATTRIBUTES),
+            ]
+
+        class CRYPT_BIT_BLOB(ctypes.Structure):
+            _fields_ = [
+                ("cbData", wintypes.DWORD),
+                ("pbData", ctypes.POINTER(wintypes.BYTE)),
+                ("cUnusedBits", wintypes.DWORD),
+            ]
+
+        class CERT_PUBLIC_KEY_INFO(ctypes.Structure):
+            _fields_ = [
+                ("Algorithm", CRYPT_ALGORITHM_IDENTIFIER),
+                ("PublicKey", CRYPT_BIT_BLOB),
+            ]
+
+        class CERT_INFO(ctypes.Structure):
+            _fields_ = [
+                ("dwVersion", wintypes.DWORD),
+                ("SerialNumber", CRYPTOAPI_BLOB),
+                ("SignatureAlgorithm", CRYPT_ALGORITHM_IDENTIFIER),
+                ("Issuer", CRYPTOAPI_BLOB),
+                ("NotBefore", wintypes.FILETIME),
+                ("NotAfter", wintypes.FILETIME),
+                ("Subject", CRYPTOAPI_BLOB),
+                ("SubjectPublicKeyInfo", CERT_PUBLIC_KEY_INFO),
+                ("IssuerUniqueId", CRYPT_BIT_BLOB),
+                ("SubjectUniqueId", CRYPT_BIT_BLOB),
+                ("cExtension", wintypes.DWORD),
+                ("rgExtension", ctypes.c_void_p),
+            ]
 
         encoding = wintypes.DWORD()
         content_type = wintypes.DWORD()
@@ -973,8 +1051,24 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
         ]
         crypt32.CryptQueryObject.restype = wintypes.BOOL
 
-        crypt32.CertEnumCertificatesInStore.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
-        crypt32.CertEnumCertificatesInStore.restype = ctypes.c_void_p
+        crypt32.CryptMsgGetParam.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        crypt32.CryptMsgGetParam.restype = wintypes.BOOL
+
+        crypt32.CertFindCertificateInStore.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        crypt32.CertFindCertificateInStore.restype = ctypes.c_void_p
 
         crypt32.CertGetNameStringW.argtypes = [
             ctypes.c_void_p,
@@ -1009,7 +1103,7 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
             ctypes.byref(h_msg),
             None,
         )
-        if not res or not h_store:
+        if not res or not h_store or not h_msg:
             # NH-06 (2026-11-08 review): CryptQueryObject can hand back a
             # message handle even when the store handle is NULL, and the early
             # return leaked it. Close whatever was allocated.
@@ -1019,14 +1113,35 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
                 crypt32.CryptMsgClose(h_msg)
             return None
 
-        subjects: list[str] = []
+        subject: str | None = None
         p_cert = None
         try:
-            CERT_NAME_SIMPLE_DISPLAY_TYPE = 4
-            while True:
-                p_cert = crypt32.CertEnumCertificatesInStore(h_store, p_cert)
-                if not p_cert:
-                    break
+            signer_size = wintypes.DWORD(0)
+            if (
+                not crypt32.CryptMsgGetParam(
+                    h_msg, CMSG_SIGNER_INFO_PARAM, 0, None, ctypes.byref(signer_size)
+                )
+                or signer_size.value < ctypes.sizeof(CMSG_SIGNER_INFO)
+            ):
+                return None
+            signer_buf = (ctypes.c_byte * signer_size.value)()
+            if not crypt32.CryptMsgGetParam(
+                h_msg, CMSG_SIGNER_INFO_PARAM, 0, signer_buf, ctypes.byref(signer_size)
+            ):
+                return None
+            signer_info = ctypes.cast(signer_buf, ctypes.POINTER(CMSG_SIGNER_INFO)).contents
+            cert_info = CERT_INFO()
+            cert_info.Issuer = signer_info.Issuer
+            cert_info.SerialNumber = signer_info.SerialNumber
+            p_cert = crypt32.CertFindCertificateInStore(
+                h_store,
+                X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                0,
+                CERT_FIND_SUBJECT_CERT,
+                ctypes.byref(cert_info),
+                None,
+            )
+            if p_cert:
                 buf_size = crypt32.CertGetNameStringW(
                     p_cert,
                     CERT_NAME_SIMPLE_DISPLAY_TYPE,
@@ -1045,16 +1160,15 @@ def _get_windows_win32_signature(image_path: str) -> tuple[str, str] | None:
                         buf,
                         buf_size,
                     )
-                    subjects.append(buf.value)
+                    subject = buf.value
         finally:
             if p_cert:
                 crypt32.CertFreeCertificateContext(p_cert)
             crypt32.CertCloseStore(h_store, 0)
-            if h_msg:
-                crypt32.CryptMsgClose(h_msg)
+            crypt32.CryptMsgClose(h_msg)
 
-        if subjects:
-            return "Valid", "; ".join(subjects)
+        if subject:
+            return "Valid", subject
         return None
     except Exception:
         logger.debug("Win32 Authenticode verification failed", exc_info=True)
@@ -1181,6 +1295,16 @@ def _get_windows_browser_install_roots() -> tuple[str, ...]:
                 ("Data4", wintypes.BYTE * 8),
             ]
 
+        shell32.SHGetKnownFolderPath.argtypes = [
+            ctypes.POINTER(GUID),
+            wintypes.DWORD,
+            wintypes.HANDLE,
+            ctypes.POINTER(ctypes.c_wchar_p),
+        ]
+        shell32.SHGetKnownFolderPath.restype = wintypes.LONG
+        ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+        ole32.CoTaskMemFree.restype = None
+
         roots: list[str] = []
         for data1, data2, data3, data4 in _WINDOWS_PROGRAM_FILES_FOLDER_IDS:
             folder_id = GUID(data1, data2, data3, (wintypes.BYTE * 8)(*data4))
@@ -1198,7 +1322,7 @@ def _get_windows_browser_install_roots() -> tuple[str, ...]:
                 if folder_path_value:
                     roots.append(folder_path_value)
             finally:
-                ole32.CoTaskMemFree(folder_path)
+                ole32.CoTaskMemFree(ctypes.cast(folder_path, ctypes.c_void_p))
         return tuple(dict.fromkeys(roots))
     except Exception:
         logger.debug("Failed to resolve Windows Program Files directories")

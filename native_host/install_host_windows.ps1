@@ -104,9 +104,11 @@ function Test-DirectoryUserWritable {
           $ruleSid -eq $sidAuthenticatedUsers
         ) {
           if ($rule.AccessControlType -eq 'Allow') {
-            $rights = [System.Security.AccessControl.FileSystemRights]$rule.FileSystemRights
-            if (($rights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -or
-                ($rights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles)) {
+            $mask = [int]$rule.FileSystemRights
+            # WriteData(0x2), AppendData(0x4), DeleteSubdirectoriesAndFiles(0x40),
+            # Delete(0x10000), ChangePermissions(0x40000), TakeOwnership(0x80000),
+            # GenericAll(0x10000000), GenericWrite(0x40000000)
+            if (($mask -band 0x500D0046) -ne 0) {
               return $true
             }
           }

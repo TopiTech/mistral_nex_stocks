@@ -247,7 +247,11 @@ class AppState:
         self.fallback_provider = CompositeFallbackProvider()
 
         from config_store import APP_DATA_DIR
-        from constants import STOCK_HISTORY_CACHE_MAXSIZE, STOCK_HISTORY_DISK_CACHE_TTL
+        from constants import (
+            STOCK_HISTORY_CACHE_MAXSIZE,
+            STOCK_HISTORY_DISK_CACHE_TTL,
+            STOCK_PAYLOAD_DISK_CACHE_TTL,
+        )
         from utils.disk_cache import StockDiskCache
 
         # R3-1: keep the disk caches in the per-user runtime data directory
@@ -264,7 +268,7 @@ class AppState:
         self.payload_disk_cache = StockDiskCache(
             cache_dir=APP_DATA_DIR / ".cache" / "stock_payloads",
             max_entries=256,
-            default_ttl=3600,
+            default_ttl=STOCK_PAYLOAD_DISK_CACHE_TTL,
         )
 
     def initialize_yfinance_cache(self) -> None:

@@ -430,37 +430,41 @@ class MarketDataState:
         concurrent probe resolving ``HALF_OPEN -> CLOSED`` does not trigger a
         false busy rejection.
         """
-        if symbol is None:
-            is_open = self.is_circuit_open(service)
-        else:
-            is_open = self.is_circuit_open(service, symbol=symbol)
-        if is_open:
-            return False, False, "open"
-        circuit_state = (
-            self.get_circuit_state(service)
-            if symbol is None
-            else self.get_circuit_state(service, symbol=symbol)
-        )
-        if circuit_state.get("status") == "HALF_OPEN":
-            claimed = (
-                self.try_claim_circuit_probe(service)
-                if symbol is None
-                else self.try_claim_circuit_probe(service, symbol=symbol)
-            )
-            if claimed:
-                return True, True, ""
-            post_state = (
+        with self.circuit_lock:
+            if symbol is None:
+                is_open = self.is_circuit_open(service)
+            else:
+                is_open = self.is_circuit_open(service, symbol=symbol)
+            if is_open:
+                return False, False, "open"
+            circuit_state = (
                 self.get_circuit_state(service)
                 if symbol is None
                 else self.get_circuit_state(service, symbol=symbol)
             )
-            post_status = post_state.get("status")
-            if post_status == "CLOSED":
-                return True, False, ""
-            if post_status == "OPEN":
+            status = circuit_state.get("status")
+            if status == "OPEN":
                 return False, False, "open"
-            return False, False, "busy"
-        return True, False, ""
+            if status == "HALF_OPEN":
+                claimed = (
+                    self.try_claim_circuit_probe(service)
+                    if symbol is None
+                    else self.try_claim_circuit_probe(service, symbol=symbol)
+                )
+                if claimed:
+                    return True, True, ""
+                post_state = (
+                    self.get_circuit_state(service)
+                    if symbol is None
+                    else self.get_circuit_state(service, symbol=symbol)
+                )
+                post_status = post_state.get("status")
+                if post_status == "CLOSED":
+                    return True, False, ""
+                if post_status == "OPEN":
+                    return False, False, "open"
+                return False, False, "busy"
+            return True, False, ""
 
     def release_circuit_probe(self, service: str, symbol: str | None = None) -> None:
         """Release a HALF_OPEN probe claim without changing circuit health.

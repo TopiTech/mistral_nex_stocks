@@ -311,10 +311,7 @@ def get_stock_info_cached(symbol: str, *, cache_only: bool = False) -> dict:
                         "regularMarketDayLow": fallback_quote.get("regularMarketDayLow"),
                         "regularMarketVolume": fallback_quote.get("regularMarketVolume"),
                     }
-                else:
-                    merged = dict(fast)
-                    if merged:
-                        return merged
+                elif not fast:
                     from constants import NEGATIVE_CACHE_TTL
 
                     _set_cached_value(neg_key, True, NEGATIVE_CACHE_TTL)

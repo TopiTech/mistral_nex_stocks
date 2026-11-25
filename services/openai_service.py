@@ -142,6 +142,8 @@ def _public_openai_error_message(exc: BaseException, status_code: int = 0) -> st
         return (
             "OpenAI互換APIがタイムアウトしました。サーバーの稼働状況を確認して再試行してください。"
         )
+    if status_code == 400:
+        return "OpenAI互換APIへのリクエスト形式が不正です。入力内容やモデル設定を確認してください。"
     if status_code == 401:
         return "OpenAI互換APIの認証に失敗しました。APIキーを確認してください。"
     if status_code == 403:
@@ -669,7 +671,16 @@ def call_openai_chat(
         else None
     )
 
-    norm_temp = _normalize_openai_temperature(temperature)
+    try:
+        norm_temp = _normalize_openai_temperature(temperature)
+    except ValueError:
+        return {
+            "error": {
+                "message": "temperature は 0.0〜2.0 の範囲の有限数値で指定してください。",
+                "status_code": 400,
+                "provider": "openai_compatible",
+            }
+        }
     cache_key = _build_openai_cache_key(
         model,
         messages,
@@ -1192,7 +1203,14 @@ def stream_openai_chat(
         token_param_key: token_limit,
         "stream": True,
     }
-    norm_temp = _normalize_openai_temperature(temperature)
+    try:
+        norm_temp = _normalize_openai_temperature(temperature)
+    except ValueError:
+        yield _stream_error_event(
+            "temperature は 0.0〜2.0 の範囲の有限数値で指定してください。",
+            400,
+        )
+        return
     if norm_temp is not None:
         payload["temperature"] = norm_temp
     if normalized_reasoning_effort is not None:
@@ -1305,9 +1323,9 @@ def stream_openai_chat(
                     except Exception:
                         pass
                     logger.warning(
-                        "OpenAI stream HTTP error status=%d detail=%s",
+                        "OpenAI stream HTTP error model=%s status=%d",
+                        model,
                         stream.status_code,
-                        _sanitize_error_message(str(err_detail)),
                     )
                     if stream.status_code >= 500:
                         app_state.market.report_circuit_result("openai_compatible", success=False)

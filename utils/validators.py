@@ -811,9 +811,25 @@ def extract_json_payload(content, required_fields=None):
     except RecursionError:
         pass
 
-    # Stage 1: Markdown fence
-    for match_fence in re.finditer(r"```(?:json)?\s*(.*?)\s*(?:```|$)", text, re.DOTALL):
-        candidate = match_fence.group(1).strip()
+    # Stage 1: Markdown fence (O(n) linear scan to avoid regex backtracking on huge inputs)
+    pos = 0
+    text_len = len(text)
+    while pos < text_len:
+        fence_start = text.find("```", pos)
+        if fence_start == -1:
+            break
+        content_start = fence_start + 3
+        if text.startswith("json", content_start):
+            content_start += 4
+        close_idx = text.find("```", content_start)
+        if close_idx == -1:
+            candidate = text[content_start:].strip()
+            pos = text_len
+        else:
+            candidate = text[content_start:close_idx].strip()
+            pos = close_idx + 3
+        if not candidate:
+            continue
         try:
             obj, fixed_s = _try_json_parse(candidate)
             if obj is not None:

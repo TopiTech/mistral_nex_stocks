@@ -640,16 +640,18 @@ def _auto_remove_invalid_symbols(
     persist_error: Exception | None = None
     with app_state.market.invalid_symbol_lock, app_state.market.user_stocks_lock:
         get_cont_fn = _get_app_bg_attr("_get_stock_container", _get_stock_container)
+        mark_removed_fn = getattr(app_state.market, "mark_watchlist_removed", None)
         for symbol in symbols_to_remove:
-            if app_state.market.invalid_symbol_streak.get(symbol, 0) < threshold:
+            streak = app_state.market.invalid_symbol_streak.get(symbol, 0)
+            if streak < threshold:
                 continue
-            found = False
             for market in ("us", "jp"):
                 container = get_cont_fn(market)
                 if container and symbol in container:
                     original_stock = copy.deepcopy(container[symbol])
                     del container[symbol]
-                    streak = app_state.market.invalid_symbol_streak.pop(symbol, 0)
+                    if callable(mark_removed_fn):
+                        mark_removed_fn(symbol, market)
                     logger.warning(
                         "Auto-removed invalid symbol %s from %s (consecutive failures: %d)",
                         symbol,
@@ -658,10 +660,7 @@ def _auto_remove_invalid_symbols(
                     )
                     removed.append((symbol, market, original_stock, streak))
                     removed_any = True
-                    found = True
-                    break
-            if not found:
-                app_state.market.invalid_symbol_streak.pop(symbol, None)
+            app_state.market.invalid_symbol_streak.pop(symbol, None)
 
     # C-03: persist outside the locks so slow disk I/O (encrypt + fsync)
     # never blocks SSE/readers. Roll back under the same lock order on
@@ -671,6 +670,7 @@ def _auto_remove_invalid_symbols(
             save_fn = _get_app_bg_attr("save_user_stocks", save_user_stocks)
             save_fn()
         except Exception as exc:
+            clear_removed_fn = getattr(app_state.market, "clear_watchlist_removed", None)
             with app_state.market.invalid_symbol_lock, app_state.market.user_stocks_lock:
                 get_cont_fn = _get_app_bg_attr("_get_stock_container", _get_stock_container)
                 for symbol, market, original_stock, streak in removed:
@@ -680,6 +680,8 @@ def _auto_remove_invalid_symbols(
                         # while locks were released during slow disk persistence.
                         if symbol not in container:
                             container[symbol] = original_stock
+                            if callable(clear_removed_fn):
+                                clear_removed_fn(symbol, market)
                             app_state.market.invalid_symbol_streak[symbol] = streak
                             restored_symbols.append((symbol, market))
                         else:

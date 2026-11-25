@@ -245,6 +245,7 @@ def with_yfinance_retry(
                         is_testing,
                         is_timeout=True,
                         args=args,
+                        symbol_hint=kwargs.get("symbol"),
                     )
                 except (RequestsHTTPError, CurlRequestsHTTPError) as exc:
                     # RequestsHTTPError / CurlRequestsHTTPError inherit from OSError; catch
@@ -361,6 +362,7 @@ def _sleep_transient_retry(
     *,
     is_timeout: bool = False,
     args: tuple[Any, ...] = (),
+    symbol_hint: Any = None,
 ) -> None:
     """Sleep with exponential backoff and jitter between transient retry attempts."""
     if attempt >= max_retries:
@@ -373,12 +375,19 @@ def _sleep_transient_retry(
     jitter = delay * random.SystemRandom().uniform(-0.25, 0.25)
     total_delay = delay + jitter
     if is_timeout:
-        _target = getattr(args[0], "symbol", None) if args else None
+        sym_arg = symbol_hint
+        if sym_arg is None and args:
+            sym_arg = args[1] if (args[0] is self_obj and len(args) > 1) else args[0]
+        _target = (
+            getattr(sym_arg, "symbol", None)
+            or (sym_arg if isinstance(sym_arg, str) else None)
+            or (getattr(args[0], "symbol", None) if args else None)
+        )
         logger.debug(
             "yfinance retry %d/%d for %s after timeout, waiting %.2fs (rl_mult=%.1f)",
             attempt + 1,
             max_retries,
-            _target or str(args),
+            _target or "request",
             total_delay,
             rl_mult,
         )

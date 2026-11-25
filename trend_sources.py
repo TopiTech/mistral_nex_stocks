@@ -63,12 +63,39 @@ REDDIT_USER_AGENT = "python:mistral_nex_stocks:v3.0 (by /u/local-app)"
 # マージ元: _TRENDING_EXECUTOR(max_workers=4) + _SYMBOL_RESEARCH_EXECUTOR(max_workers=6)
 _EXECUTOR = DaemonThreadPoolExecutor(max_workers=6, max_queue_size=24)
 atexit.register(lambda: _EXECUTOR.shutdown(wait=False, cancel_futures=True))
+_DEADLINE_STATE = threading.local()
 
 
-def _submit_trend_task(tasks: list[Future[Any]], fn: Any, *args: Any) -> None:
+def _current_collection_deadline() -> float | None:
+    return getattr(_DEADLINE_STATE, "deadline", None)
+
+
+def _is_collection_deadline_exceeded() -> bool:
+    deadline = _current_collection_deadline()
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def _run_with_collection_deadline(deadline: float | None, fn: Any, *args: Any) -> Any:
+    prev = getattr(_DEADLINE_STATE, "deadline", None)
+    _DEADLINE_STATE.deadline = deadline
+    try:
+        return fn(*args)
+    finally:
+        _DEADLINE_STATE.deadline = prev
+
+
+def _submit_trend_task(
+    tasks: list[Future[Any]],
+    fn: Any,
+    *args: Any,
+    deadline: float | None = None,
+) -> None:
     """Submit a trend collection task cleanly, skipping cleanly if the queue is saturated."""
     try:
-        tasks.append(_EXECUTOR.submit(fn, *args))
+        if deadline is not None:
+            tasks.append(_EXECUTOR.submit(_run_with_collection_deadline, deadline, fn, *args))
+        else:
+            tasks.append(_EXECUTOR.submit(fn, *args))
     except queue.Full:
         logger.debug("Trend executor queue full; skipping task %s", getattr(fn, "__name__", fn))
 
@@ -562,6 +589,11 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
             delay = max(0.0, start_time - now)
 
         if delay > 0:
+            if _is_collection_deadline_exceeded():
+                return []
+            deadline = _current_collection_deadline()
+            if deadline is not None and (time.monotonic() + delay) >= deadline:
+                return []
             time.sleep(delay)
 
         with _GOOGLE_TRENDS_CLIENT_CALL_LOCK:
@@ -741,6 +773,8 @@ def collect_reddit_hot_items(market: str = "us", limit_per_subreddit: int = 5) -
     items: list[dict] = []
     subreddits = REDDIT_MARKET_SUBREDDITS[_market_key(market)]
     for subreddit in subreddits:
+        if _is_collection_deadline_exceeded():
+            break
         url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit_per_subreddit}"
         try:
             payload = _request_json_retry_on_429(url, headers={"User-Agent": REDDIT_USER_AGENT})
@@ -776,7 +810,11 @@ def collect_reddit_search_items(
     items: list[dict] = []
     subreddits = REDDIT_SEARCH_SUBREDDITS[_market_key(market)][:TREND_REDDIT_SEARCH_SUBREDDIT_LIMIT]
     for query in list(queries)[:TREND_REDDIT_SEARCH_QUERY_LIMIT]:
+        if _is_collection_deadline_exceeded():
+            break
         for subreddit in subreddits:
+            if _is_collection_deadline_exceeded():
+                break
             url = (
                 f"https://www.reddit.com/r/{subreddit}/search.json?"
                 f"q={quote_plus(query)}&restrict_sr=1&sort=hot&t=month&limit={limit_per_query}"
@@ -822,8 +860,12 @@ def _request_json_retry_on_429(
             raise
 
         # Second attempt with exponential backoff and jitter for rate limited requests
+        backoff = 2.0 + random.SystemRandom().random()
+        deadline = _current_collection_deadline()
+        if deadline is not None and (time.monotonic() + backoff) >= deadline:
+            raise
         logger.debug("Request rate limited (429); applying backoff. url=%s", url)
-        time.sleep(2.0 + random.SystemRandom().random())
+        time.sleep(backoff)
         try:
             return _request_json(url, params=params, headers=headers)
         except requests.HTTPError as exc2:
@@ -892,6 +934,8 @@ def collect_wikipedia_search_items(
     project = _wikipedia_project(market_key)
     items: list[dict] = []
     for query in queries:
+        if _is_collection_deadline_exceeded():
+            break
         try:
             search_payload = _request_json(
                 f"https://{project}/w/api.php",
@@ -946,6 +990,8 @@ def collect_gdelt_items(
     """GDELT APIからニュース記事を収集する"""
     items: list[dict] = []
     for query in queries:
+        if _is_collection_deadline_exceeded():
+            break
         try:
             payload = _request_json(_gdelt_query_url(query, market))
             articles = payload.get("articles") or []
@@ -1012,20 +1058,27 @@ def collect_market_trending_items(market: str = "us", count: int = 10) -> list[d
     tasks: list[Future[Any]] = []
 
     try:
-        _submit_trend_task(tasks, collect_google_trends_rss_items, market_key, count)
+        deadline = time.monotonic() + TREND_SOURCE_RESULT_TIMEOUT_SEC
+        _submit_trend_task(
+            tasks, collect_google_trends_rss_items, market_key, count, deadline=deadline
+        )
         _submit_trend_task(
             tasks,
             collect_reddit_hot_items,
             market_key,
             max(2, count // 3 or 1),
+            deadline=deadline,
         )
         _submit_trend_task(
             tasks,
             collect_wikipedia_top_items,
             market_key,
             max(2, count // 2 or 1),
+            deadline=deadline,
         )
-        _submit_trend_task(tasks, collect_gdelt_items, queries, market_key, 2)
+        _submit_trend_task(
+            tasks, collect_gdelt_items, queries, market_key, 2, deadline=deadline
+        )
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
         for fut in not_done:
@@ -1082,17 +1135,32 @@ def collect_symbol_research_items(symbol: str, name: str, market: str = "us") ->
     items: list[dict] = []
     tasks: list[Future[Any]] = []
     try:
-        _submit_trend_task(tasks, collect_google_trends_keyword_items, name, market_key, 5)
+        deadline = time.monotonic() + TREND_SOURCE_RESULT_TIMEOUT_SEC
+        _submit_trend_task(
+            tasks, collect_google_trends_keyword_items, name, market_key, 5, deadline=deadline
+        )
         if symbol and symbol != name:
             _submit_trend_task(
-                tasks, collect_google_trends_keyword_items, symbol, market_key, 3
+                tasks,
+                collect_google_trends_keyword_items,
+                symbol,
+                market_key,
+                3,
+                deadline=deadline,
             )
 
-        _submit_trend_task(tasks, collect_reddit_search_items, queries, market_key, 2)
         _submit_trend_task(
-            tasks, collect_wikipedia_search_items, [name, symbol], market_key, 2
+            tasks, collect_reddit_search_items, queries, market_key, 2, deadline=deadline
         )
-        _submit_trend_task(tasks, collect_gdelt_items, queries, market_key, 2)
+        _submit_trend_task(
+            tasks,
+            collect_wikipedia_search_items,
+            [name, symbol],
+            market_key,
+            2,
+            deadline=deadline,
+        )
+        _submit_trend_task(tasks, collect_gdelt_items, queries, market_key, 2, deadline=deadline)
 
         done, not_done = wait(tasks, timeout=TREND_SOURCE_RESULT_TIMEOUT_SEC)
         for future in not_done:

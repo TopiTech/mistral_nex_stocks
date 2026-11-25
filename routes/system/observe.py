@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -180,6 +181,11 @@ def api_metrics():
         except Exception:
             _latest_ts = 0.0
 
+        with getattr(_rt_engine.tv_client, "lock", nullcontext()):
+            tv_subscribed_count = len(getattr(_rt_engine.tv_client, "symbols", set()))
+        with getattr(_rt_engine.yahoojp_scraper, "lock", nullcontext()):
+            jp_scraper_count = len(getattr(_rt_engine.yahoojp_scraper, "symbols", set()))
+
         engine_metrics: dict[str, Any] = {
             "running": bool(getattr(_rt_engine, "running", False)),
             "market_store_count": len(_rt_engine.get_market_snapshot()),
@@ -189,8 +195,8 @@ def api_metrics():
             "tv_last_connected_at": (
                 getattr(_rt_engine.tv_client, "last_connected_at", 0.0) or None
             ),
-            "tv_subscribed_symbols": len(getattr(_rt_engine.tv_client, "symbols", set())),
-            "jp_scraper_symbols": len(getattr(_rt_engine.yahoojp_scraper, "symbols", set())),
+            "tv_subscribed_symbols": tv_subscribed_count,
+            "jp_scraper_symbols": jp_scraper_count,
         }
         # Thread liveness reads the inner ``.thread`` attribute of each producer.
         engine_metrics["tv_thread_alive"] = bool(

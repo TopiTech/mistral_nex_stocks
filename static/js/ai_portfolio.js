@@ -1309,7 +1309,10 @@
     items.forEach((item) => {
       // 現在値がstateに無い場合は捏造した擬似値(+0.50%等)ではなく
       // null センチネルを使い、既存の null 分岐が "--"/ "--%" を表示する。
-      const stock = findStockInState(item.symbol, item.market) || {
+      const normMarket = String(item.market || "")
+        .trim()
+        .toLowerCase();
+      const stock = findStockInState(item.symbol, normMarket) || {
         symbol: item.symbol,
         name: item.symbol,
         price: null,
@@ -1321,7 +1324,7 @@
 
       // US quotes are priced in USD, JP quotes in JPY; label them with the
       // matching currency symbol instead of mislabeling USD as yen.
-      const isJp = item.market === "jp";
+      const isJp = normMarket === "jp";
       const marketFlag = isJp ? "🇯🇵" : "🇺🇸";
       const currencySymbol = isJp ? "¥" : "$";
       const weightPct = toNumber(item.weight_pct) ?? 20;
@@ -1788,14 +1791,17 @@
 
   function findStockInState(symbol, market) {
     if (typeof state === "undefined" || !state.stocks || !symbol) return null;
-    const list = state.stocks[market] || [];
-    const target = normalizePortfolioLookupSymbol(symbol, market);
+    const normMarket = String(market || "")
+      .trim()
+      .toLowerCase();
+    const list = state.stocks[normMarket] || [];
+    const target = normalizePortfolioLookupSymbol(symbol, normMarket);
     if (!target) return null;
     return (
       list.find((s) => {
         if (!s || !s.symbol) return false;
         if (s.symbol === symbol || s.symbol === target) return true;
-        return normalizePortfolioLookupSymbol(s.symbol, market) === target;
+        return normalizePortfolioLookupSymbol(s.symbol, normMarket) === target;
       }) || null
     );
   }

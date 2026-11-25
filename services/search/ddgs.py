@@ -254,6 +254,7 @@ def ddgs_news_search(
         if selected_backend != "auto":
             plans.append((normalized_query, None, "auto"))
 
+        active_plans: list[tuple[str, str | None, str]] = []
         for q, t, b in plans:
             key = (q, t, b)
             if key in seen or not q:
@@ -261,6 +262,9 @@ def ddgs_news_search(
             if q == short_query and q == normalized_query and t is None and b == selected_backend:
                 continue
             seen.add(key)
+            active_plans.append(key)
+
+        for idx, (q, t, b) in enumerate(active_plans):
             try:
                 results = do_search(session, q, t, region, b)
                 if results:
@@ -286,7 +290,8 @@ def ddgs_news_search(
                         b,
                         type(exc).__name__,
                     )
-                time.sleep(random.uniform(0.1, 0.25))
+                if idx < len(active_plans) - 1:
+                    time.sleep(random.uniform(0.1, 0.25))
 
         if last_exc:
             _availability_tracker.record_failure("news search", last_exc)
@@ -353,11 +358,15 @@ def ddgs_text_search(
 
         seen = set()
         last_exc = None
+        active_plans: list[tuple[str, str | None, str]] = []
         for q, t, b in plans:
             key = (q, t, b)
             if key in seen or not q:
                 continue
             seen.add(key)
+            active_plans.append(key)
+
+        for idx, (q, t, b) in enumerate(active_plans):
             try:
                 results = do_search(session, q, t, b)
                 if results:
@@ -389,7 +398,8 @@ def ddgs_text_search(
                         b,
                         type(exc).__name__,
                     )
-                time.sleep(random.uniform(0.1, 0.25))
+                if idx < len(active_plans) - 1:
+                    time.sleep(random.uniform(0.1, 0.25))
 
         if last_exc:
             _availability_tracker.record_failure("text search", last_exc)

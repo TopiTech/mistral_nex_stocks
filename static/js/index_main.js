@@ -953,11 +953,9 @@ function openPortfolioModal(stockKey) {
               shares: sharesParsed.value,
               avg_price: avgPriceParsed.value,
             };
-            const isUsdHolding =
-              stock.currency === "USD" ||
-              (!stock.currency && (market === "us" || market === "US"));
+            const canTrackAvgFx = String(market || "").toLowerCase() === "us";
             if (
-              isUsdHolding &&
+              canTrackAvgFx &&
               fxRateParsed.value !== null &&
               fxRateParsed.value > 0
             ) {

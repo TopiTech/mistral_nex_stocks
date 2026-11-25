@@ -1593,7 +1593,8 @@ function _parseNewsItems(raw) {
     const split = inner
       .split(/'\s*,\s*'|"\s*,\s*"|」\s*,\s*「/g)
       .map((x) => x.replace(/^['"「\s]+|['"」\s]+$/g, "").trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((x) => !_isNoiseLine(x));
     if (split.length > 1) return split;
     text = inner.replace(/^['"「\s]+|['"」\s]+$/g, "").trim();
   }
@@ -2550,7 +2551,9 @@ async function chatPollingReply(payload, options = {}) {
       resOk = true;
       break;
     }
-    await abortableSleep(CHAT_POLL_INTERVAL_MS, signal);
+    if (attempt < CHAT_POLL_MAX_ATTEMPTS) {
+      await abortableSleep(CHAT_POLL_INTERVAL_MS, signal);
+    }
   }
   if (!resOk) {
     throw new Error("AI応答の生成がタイムアウトしました");
@@ -2668,7 +2671,8 @@ async function sendChat(wrapper, inputEl = null) {
     const isJp =
       resolvedSymbol.endsWith(".T") ||
       resolvedSymbol.endsWith(".t") ||
-      /^\d{4}$/.test(resolvedSymbol);
+      /^\d{4}$/.test(resolvedSymbol) ||
+      /^[0-9][A-Z0-9]{3}$/.test(resolvedSymbol.toUpperCase());
     resolvedMarket = isJp ? "jp" : "us";
   }
 
@@ -3118,7 +3122,9 @@ async function requestStockAnalysis(
       err.name = "AbortError";
       throw err;
     }
-    await abortableSleep(ANALYZE_POLL_INTERVAL_MS, signal);
+    if (attempt < ANALYZE_POLL_MAX_ATTEMPTS) {
+      await abortableSleep(ANALYZE_POLL_INTERVAL_MS, signal);
+    }
   }
 
   if (!resOk) {

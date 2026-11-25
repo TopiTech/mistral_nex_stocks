@@ -9,6 +9,7 @@ import logging
 import math
 import threading
 import time
+from collections import deque
 from typing import Any
 
 from cachetools import TTLCache
@@ -202,6 +203,8 @@ class MarketDataState:
         self.first_sync_attempted: bool = False
         self.first_sync_completed_at: float = 0.0
         self.removed_watchlist_symbols: set[tuple[str, str]] = set()
+        self._removed_watchlist_order: deque[tuple[str, str]] = deque()
+        self._removed_watchlist_maxsize = 4096
         self.removed_watchlist_lock = threading.Lock()
 
     @staticmethod
@@ -224,8 +227,22 @@ class MarketDataState:
         if not aliases:
             return
         with self.removed_watchlist_lock:
+            if not self.removed_watchlist_symbols and self._removed_watchlist_order:
+                self._removed_watchlist_order.clear()
             for key in aliases:
-                self.removed_watchlist_symbols.add(key)
+                if key not in self.removed_watchlist_symbols:
+                    self.removed_watchlist_symbols.add(key)
+                    self._removed_watchlist_order.append(key)
+            while (
+                len(self.removed_watchlist_symbols) > self._removed_watchlist_maxsize
+                and self._removed_watchlist_order
+            ):
+                evicted = self._removed_watchlist_order.popleft()
+                self.removed_watchlist_symbols.discard(evicted)
+            if len(self._removed_watchlist_order) > self._removed_watchlist_maxsize * 2:
+                self._removed_watchlist_order = deque(
+                    k for k in self._removed_watchlist_order if k in self.removed_watchlist_symbols
+                )
 
     def clear_watchlist_removed(self, symbol: str, market: str) -> None:
         """Clear a removed-watchlist marker when the symbol is explicitly added/restored."""

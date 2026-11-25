@@ -657,7 +657,9 @@
             const msg = data.message || "AI分析・思考中...";
             startBtn.textContent = `⏳ ${msg} (${elapsed})`;
           }
-          await this.waitForNewsRetry(2000, abortController.signal);
+          if (attempt < maxAttempts) {
+            await this.waitForNewsRetry(2000, abortController.signal);
+          }
         }
 
         if (!isCurrentRequest()) {

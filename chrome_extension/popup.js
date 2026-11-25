@@ -1032,9 +1032,10 @@ async function loadDetectedTickers() {
       symbolSpan.className = "detected-symbol";
       symbolSpan.textContent = item.symbol;
 
+      const badgeMarket = item.market === "jp" ? "jp" : "us";
       const mktSpan = document.createElement("span");
-      mktSpan.className = `detected-mkt-badge ${item.market}`;
-      mktSpan.textContent = item.market === "jp" ? "JP" : "US";
+      mktSpan.className = `detected-mkt-badge ${badgeMarket}`;
+      mktSpan.textContent = badgeMarket === "jp" ? "JP" : "US";
 
       const countSpan = document.createElement("span");
       countSpan.className = "detected-count-badge";

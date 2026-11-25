@@ -1371,7 +1371,7 @@ class YahooJPRealtimeScraper:
             self._executor = None
         if executor is not None:
             try:
-                executor.shutdown(wait=True, cancel_futures=True)
+                executor.shutdown(wait=False, cancel_futures=True)
             except Exception as exc:
                 logger.debug("Error shutting down YahooJPScraper executor: %s", exc)
         if worker is not None and worker is not threading.current_thread() and worker.is_alive():

@@ -6,7 +6,7 @@ annotated-doc==0.0.6 ; python_full_version >= '3.12'
     # via typer
 annotated-types==0.8.0
     # via pydantic
-anyio==4.15.1
+anyio==4.16.0
     # via
     #   httpx
     #   httpx2
@@ -36,7 +36,7 @@ cachetools==7.2.5
     # via
     #   mistral-nex-stocks
     #   mistralai-agents
-certifi==2026.10.23
+certifi==2026.11.20
     # via
     #   curl-cffi
     #   httpcore
@@ -48,9 +48,9 @@ cffi==2.1.1
     # via
     #   cryptography
     #   curl-cffi
-charset-normalizer==3.4.9
+charset-normalizer==3.5.3
     # via requests
-click==8.5.0
+click==8.5.1
     # via
     #   ddgs
     #   flask
@@ -120,13 +120,13 @@ httpx2-jsfetch==1.0 ; python_full_version >= '3.12' and sys_platform == 'emscrip
     # via httpx2
 hyperframe==6.1.0
     # via h2
-idna==3.19
+idna==3.20
     # via
     #   anyio
     #   httpx
     #   httpx2
     #   requests
-importlib-metadata==9.0.1 ; python_full_version < '3.12'
+importlib-metadata==10.2.0 ; python_full_version < '3.12'
     # via keyring
 itsdangerous==2.2.0
     # via
@@ -171,7 +171,7 @@ markdown-it-py==4.3.0 ; python_full_version >= '3.12'
     # via rich
 markdownify==1.2.3 ; python_full_version >= '3.12'
     # via mistralai-vibe-sdk
-markupsafe==3.0.3
+markupsafe==3.0.4
     # via
     #   flask
     #   jinja2
@@ -187,7 +187,7 @@ mcp-types==2.3.0 ; python_full_version >= '3.12'
     # via mcp
 mdurl==0.1.2 ; python_full_version >= '3.12'
     # via markdown-it-py
-mistralai==3.7.0
+mistralai==3.8.0
     # via
     #   mistral-nex-stocks
     #   mistralai-agents
@@ -283,13 +283,13 @@ pandas==3.1.1
     #   mistral-nex-stocks
     #   pytrends-modern
     #   yfinance
-peewee==4.5.0
+peewee==4.5.3
     # via yfinance
-platformdirs==4.11.7
+platformdirs==4.14.8
     # via yfinance
-primp==2.0.0
+primp==2.0.1
     # via ddgs
-protobuf==7.36.1
+protobuf==7.36.2
     # via
     #   googleapis-common-protos
     #   opentelemetry-proto
@@ -297,9 +297,9 @@ protobuf==7.36.1
     #   yfinance
 psutil==7.2.2
     # via mistral-nex-stocks
-pycparser==3.0 ; implementation_name != 'PyPy'
+pycparser==3.12 ; implementation_name != 'PyPy'
     # via cffi
-pydantic==2.14.3
+pydantic==2.14.4
     # via
     #   mcp
     #   mcp-types
@@ -311,7 +311,7 @@ pydantic==2.14.3
     #   mistralai-workflows
     #   pydantic-settings
     #   typer
-pydantic-core==2.50.4
+pydantic-core==2.50.5
     # via pydantic
 pydantic-settings==2.16.3 ; python_full_version >= '3.12'
     # via mistralai-workflows
@@ -321,7 +321,7 @@ pyjwt==2.15.1 ; python_full_version >= '3.12'
     # via
     #   mcp
     #   mistralai-workflows
-python-dateutil==2.9.0.post0
+python-dateutil==4.0.0
     # via
     #   mistralai
     #   pandas
@@ -333,7 +333,7 @@ python-multipart==0.0.34 ; python_full_version >= '3.12'
     # via mcp
 pytrends-modern==0.2.13
     # via mistral-nex-stocks
-pytz==2026.3.post1
+pytz==2026.6
     # via yfinance
 pywin32==312 ; python_full_version >= '3.12' and sys_platform == 'win32'
     # via mcp
@@ -350,7 +350,7 @@ referencing==0.37.0 ; python_full_version >= '3.12'
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2026.9.3
+regex==2026.11.19
     # via tiktoken
 requests==2.34.2
     # via
@@ -378,7 +378,7 @@ six==1.17.0
     #   python-dateutil
 soupsieve==2.10 ; python_full_version < '3.11.5'
     # via beautifulsoup4
-soupsieve==4.1.2 ; python_full_version >= '3.11.5'
+soupsieve==4.1.3 ; python_full_version >= '3.11.5'
     # via beautifulsoup4
 sse-starlette==3.7.0 ; python_full_version >= '3.12'
     # via mcp
@@ -454,7 +454,7 @@ uvicorn==0.54.0 ; python_full_version >= '3.12' and sys_platform != 'emscripten'
     # via mcp
 websocket-client==1.9.2
     # via mistral-nex-stocks
-websockets==17.2
+websockets==17.4
     # via yfinance
 werkzeug==3.1.9
     # via flask
@@ -462,7 +462,7 @@ wrapt==2.5.2 ; python_full_version >= '3.12'
     # via
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-httpx
-wtforms==3.2.2
+wtforms==3.3.2
     # via flask-wtf
 yfinance==1.8.0
     # via mistral-nex-stocks

@@ -1280,19 +1280,20 @@
 
     if (totalPlEl) {
       const plPct = (simulatedPlJpy / VIRTUAL_BASE_CAPITAL_JPY) * 100;
-      const sign = simulatedPlJpy >= 0 ? "+" : "";
-      // Keep the sign on the amount as well as the percentage: printing the
-      // absolute value made a loss read as "¥500,000 (-5.0%)".
-      const amount = Math.round(simulatedPlJpy).toLocaleString();
-      totalPlEl.textContent = `${sign}¥${amount} (${sign}${plPct.toFixed(1)}%)`;
+      const sign = simulatedPlJpy >= 0 ? "+" : "-";
+      const absAmount = Math.round(Math.abs(simulatedPlJpy)).toLocaleString();
+      const absPct = Math.abs(plPct).toFixed(1);
+      totalPlEl.textContent = `${sign}¥${absAmount} (${sign}${absPct}%)`;
       totalPlEl.classList.toggle("pos", simulatedPlJpy >= 0);
       totalPlEl.classList.toggle("neg", simulatedPlJpy < 0);
     }
 
     if (todayPlEl) {
-      const sign = simulatedTodayPlJpy >= 0 ? "+" : "";
-      const amount = Math.round(simulatedTodayPlJpy).toLocaleString();
-      todayPlEl.textContent = `${sign}¥${amount}`;
+      const sign = simulatedTodayPlJpy >= 0 ? "+" : "-";
+      const absAmount = Math.round(
+        Math.abs(simulatedTodayPlJpy),
+      ).toLocaleString();
+      todayPlEl.textContent = `${sign}¥${absAmount}`;
       todayPlEl.classList.toggle("pos", simulatedTodayPlJpy >= 0);
       todayPlEl.classList.toggle("neg", simulatedTodayPlJpy < 0);
     }
@@ -1912,7 +1913,10 @@
       showLoadingState(false);
       renderSavedAiPortfolios();
     };
-    window.addEventListener("beforeunload", cleanupAiPortfolioResources);
+    window.addEventListener("beforeunload", () => {
+      cleanupAiPortfolioResources();
+      destroyAiPortfolioCharts();
+    });
     window.addEventListener("pagehide", cleanupAiPortfolioResources);
     window.addEventListener("pageshow", (event) => {
       if (!event?.persisted) return;

@@ -351,7 +351,8 @@ def verify_openai_connection(
                     }
 
             data = resp.json()
-            raw_models = data.get("data", []) if isinstance(data, dict) else []
+            raw_data_val = data.get("data") if isinstance(data, dict) else None
+            raw_models = raw_data_val if isinstance(raw_data_val, list) else []
             model_ids: list[str] = []
             for item in raw_models:
                 if isinstance(item, dict) and "id" in item:
@@ -1647,7 +1648,7 @@ def call_openai_chat_with_tools(
                 return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
             if isinstance(fn_args, dict):
                 try:
-                    serialized_args = json.dumps(fn_args, ensure_ascii=False)
+                    serialized_args = json.dumps(fn_args, ensure_ascii=False, allow_nan=False)
                 except (TypeError, ValueError, RecursionError):
                     logger.warning(
                         "OpenAI agent loop rejected unserializable tool arguments: tool=%s",
@@ -1661,6 +1662,7 @@ def call_openai_chat_with_tools(
                             "OpenAI agent loop rejected an oversized tool call payload"
                         )
                         return _tool_loop_error("AIツール呼び出しの引数が大きすぎます")
+                    fn_args = serialized_args
             elif not isinstance(fn_args, str):
                 logger.warning(
                     "OpenAI agent loop replaced a non-text tool argument payload: "
@@ -1959,7 +1961,8 @@ def get_openai_embeddings_batch(
                 usage = data.get("usage")
                 if isinstance(usage, dict):
                     app_state.ai.record_openai_usage(usage, model=target_model)
-                raw_data = data.get("data", [])
+                raw_data_val = data.get("data")
+                raw_data = raw_data_val if isinstance(raw_data_val, list) else []
                 for fallback_idx, item in enumerate(raw_data):
                     if not isinstance(item, dict):
                         continue

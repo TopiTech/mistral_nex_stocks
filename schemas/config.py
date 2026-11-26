@@ -196,10 +196,20 @@ class CredentialsSaveRequest(BaseModel):
         openai_model_text = raw_openai_model if isinstance(raw_openai_model, str) else None
         if raw_openai_model is not None and openai_model_text is None:
             raise ValueError("openai_model_not_string")
+        if openai_model_text is not None:
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in openai_model_text):
+                raise ValueError("openai_model_control_chars")
+            if len(openai_model_text.strip()) > 200:
+                raise ValueError("openai_model_too_long")
         raw_emb_model = data.get("openai_embeddings_model")
         emb_model_text = raw_emb_model if isinstance(raw_emb_model, str) else None
         if raw_emb_model is not None and emb_model_text is None:
             raise ValueError("openai_emb_model_not_string")
+        if emb_model_text is not None:
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in emb_model_text):
+                raise ValueError("openai_emb_model_control_chars")
+            if len(emb_model_text.strip()) > 200:
+                raise ValueError("openai_emb_model_too_long")
         return {
             **data,
             **stripped,

@@ -395,7 +395,7 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                         # exposure. When the slot cannot be acquired within the
                         # timeout, skip the history fallback instead of firing
                         # an unthrottled request.
-                        from constants import HISTORY_SEMAPHORE_TIMEOUT
+                        from constants import HISTORY_SEMAPHORE_TIMEOUT, YFINANCE_TIMEOUT_SINGLE
 
                         acquired = app_state.market.yfinance_history_semaphore.acquire(
                             blocking=True, timeout=HISTORY_SEMAPHORE_TIMEOUT
@@ -407,7 +407,7 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                                 "status": "データ取得不可",
                             }
                         try:
-                            hist = ticker.history(period="1d")
+                            hist = ticker.history(period="1d", timeout=YFINANCE_TIMEOUT_SINGLE)
                         finally:
                             app_state.market.yfinance_history_semaphore.release()
                         if hist is not None and not hist.empty and "Close" in hist:
@@ -457,8 +457,21 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                             change = round(price - prev_f, 4)
                         if change_pct is None:
                             change_pct = round((change / prev_f) * 100, 2)
-            except Exception:
-                pass
+            except Exception as yf_exc:
+                from services.stock.errors import (
+                    _handle_yf_rate_limit,
+                    _is_yfinance_rate_limit_error,
+                )
+
+                if _is_yfinance_rate_limit_error(yf_exc):
+                    _handle_yf_rate_limit(
+                        yf_exc, app_state.market, context=f"ai_tool_quote symbol={symbol}"
+                    )
+                logger.debug(
+                    "Stock quote fallback fetch failed for %s error_type=%s",
+                    symbol,
+                    type(yf_exc).__name__,
+                )
 
         if not info and price is None:
             return {"symbol": symbol, "market": market, "status": "データ取得不可または市場外"}
@@ -728,6 +741,16 @@ def _tool_calculate_technical_levels(args: dict[str, Any]) -> dict[str, Any]:
             "trend_bias": trend_bias,
         }
     except Exception as exc:
+        try:
+            from app_state import app_state as _app_state
+            from services.stock.errors import _handle_yf_rate_limit, _is_yfinance_rate_limit_error
+
+            if _is_yfinance_rate_limit_error(exc):
+                _handle_yf_rate_limit(
+                    exc, _app_state.market, context=f"ai_tool_technical symbol={symbol}"
+                )
+        except Exception:
+            pass
         logger.warning(
             "Technical levels tool failed for %s error_type=%s", symbol, type(exc).__name__
         )

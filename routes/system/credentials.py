@@ -216,7 +216,20 @@ def api_credentials():
         return ok_response(_build_safe_credentials_response())
 
     if request.method == "DELETE":
-        failed_keys = routes.api_system.clear_api_credentials()
+        try:
+            failed_keys = routes.api_system.clear_api_credentials()
+        except RuntimeError:
+            current_app.logger.warning(
+                "Credentials clear failed id=%s reason=config_unreadable",
+                getattr(g, "request_id", "-"),
+            )
+            return error_response(
+                ErrorCode.CONFIG_ERROR,
+                status_code=503,
+                details={
+                    "reason": "設定ファイルを一時的に読み込めないため資格情報を削除できません。再試行してください。"
+                },
+            )
         safe_state = _build_safe_credentials_response()
         if failed_keys:
             current_app.logger.warning(

@@ -10,7 +10,8 @@ import threading
 import time
 import weakref
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
+from concurrent.futures import wait as wait_futures
 from typing import Any, ClassVar
 
 from services.nikkei225jp_parser import (
@@ -64,6 +65,7 @@ def _get_or_create_weak_session(
     thread_local: threading.local,
     sessions_lock: threading.Lock,
     all_sessions: weakref.WeakSet[Any],
+    epoch_ref: list[int] | None = None,
 ) -> Any:
     """Return a tracked thread-local HTTP session, safely handling non-weakref doubles."""
     session = getattr(thread_local, "session", None)
@@ -76,9 +78,20 @@ def _get_or_create_weak_session(
             if not still_active:
                 session = None
                 thread_local.session = None
+        start_epoch = epoch_ref[0] if epoch_ref is not None else 0
     if session is None:
-        session = _create_cffi_session()
+        new_session = _create_cffi_session()
         with sessions_lock:
+            current_epoch = epoch_ref[0] if epoch_ref is not None else 0
+            if epoch_ref is not None and current_epoch != start_epoch:
+                try:
+                    new_session.close()
+                except Exception as exc:
+                    _get_logger().debug(
+                        "Closed stale in-flight scraper session after close(): %s", exc
+                    )
+                return new_session
+            session = new_session
             thread_local.session = session
             try:
                 all_sessions.add(session)
@@ -100,6 +113,7 @@ class _BaseFallbackScraper:
         self._http_lock = threading.Lock()
         self._sessions_lock = threading.Lock()
         self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
+        self._session_epoch_ref: list[int] = [0]
         self.lock = threading.Lock()
         self._consecutive_failures: dict[str, int] = {}
         self._structure_change_reported: set[str] = set()
@@ -118,7 +132,10 @@ class _BaseFallbackScraper:
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
         return _get_or_create_weak_session(
-            self._thread_local, self._sessions_lock, self._all_sessions
+            self._thread_local,
+            self._sessions_lock,
+            self._all_sessions,
+            self._session_epoch_ref,
         )
 
     @property
@@ -128,6 +145,7 @@ class _BaseFallbackScraper:
     def close(self) -> None:
         """Close all allocated HTTP sessions."""
         with self._sessions_lock:
+            self._session_epoch_ref[0] += 1
             sessions = list(self._all_sessions)
             self._all_sessions.clear()
         for sess in sessions:
@@ -682,6 +700,7 @@ class YahooJPRealtimeScraper:
         self._lifecycle_lock = threading.Lock()
         self._sessions_lock = threading.Lock()
         self._all_sessions: weakref.WeakSet[Any] = weakref.WeakSet()
+        self._session_epoch_ref: list[int] = [0]
         self.lock = threading.Lock()
         self._consecutive_failures: dict[tuple[str, str], int] = {}
         self._structure_change_reported: set[tuple[str, str]] = set()
@@ -757,7 +776,10 @@ class YahooJPRealtimeScraper:
     def _get_session(self) -> Any:
         """Return a thread-local curl_cffi/requests session."""
         return _get_or_create_weak_session(
-            self._thread_local, self._sessions_lock, self._all_sessions
+            self._thread_local,
+            self._sessions_lock,
+            self._all_sessions,
+            getattr(self, "_session_epoch_ref", None),
         )
 
     @property
@@ -767,6 +789,9 @@ class YahooJPRealtimeScraper:
     def close(self) -> None:
         """Close all allocated HTTP sessions and child fallbacks."""
         with self._sessions_lock:
+            epoch_ref = getattr(self, "_session_epoch_ref", None)
+            if epoch_ref is not None:
+                epoch_ref[0] += 1
             sessions = list(self._all_sessions)
             self._all_sessions.clear()
         for sess in sessions:
@@ -1306,25 +1331,30 @@ class YahooJPRealtimeScraper:
                                 lambda: self._is_worker_current(my_epoch),
                                 SCRAPER_REQUEST_STAGGER_SEC,
                             )
-                        for future in as_completed(future_to_sym):
-                            if not self._is_worker_current(my_epoch):
-                                break
-                            sym = future_to_sym[future]
-                            try:
-                                payload = future.result()
-                                if (
-                                    payload
-                                    and self._is_worker_current(my_epoch)
-                                    and self._is_symbol_current(sym, target_tokens.get(sym))
-                                ):
-                                    if self._dispatch_price_changed(payload):
-                                        cycle_updates += 1
-                                    if self.on_update_callback:
-                                        self.on_update_callback(payload)
-                            except Exception as exc:
-                                logger.debug(
-                                    "[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc
-                                )
+                        pending = set(future_to_sym.keys())
+                        while pending and self._is_worker_current(my_epoch):
+                            done, pending = wait_futures(
+                                pending, timeout=0.5, return_when=FIRST_COMPLETED
+                            )
+                            for future in done:
+                                if not self._is_worker_current(my_epoch):
+                                    break
+                                sym = future_to_sym[future]
+                                try:
+                                    payload = future.result()
+                                    if (
+                                        payload
+                                        and self._is_worker_current(my_epoch)
+                                        and self._is_symbol_current(sym, target_tokens.get(sym))
+                                    ):
+                                        if self._dispatch_price_changed(payload):
+                                            cycle_updates += 1
+                                        if self.on_update_callback:
+                                            self.on_update_callback(payload)
+                                except Exception as exc:
+                                    logger.debug(
+                                        "[Yahoo JP Scraper] Async worker error for %s: %s", sym, exc
+                                    )
                     else:
                         for sym in target_symbols:
                             if not self._is_worker_current(my_epoch):
@@ -1350,17 +1380,24 @@ class YahooJPRealtimeScraper:
 
     def start(self) -> None:
         with self._lifecycle_lock:
-            if not self.running:
-                self.running = True
-                self._epoch += 1
-                epoch = self._epoch
-                self.thread = threading.Thread(
-                    target=self._worker_loop,
-                    args=(epoch,),
-                    daemon=True,
-                    name="YahooJPScraperWorker",
-                )
-                self.thread.start()
+            prev_worker = self.thread if not self.running else None
+        if prev_worker is not None and prev_worker.is_alive():
+            prev_worker.join(timeout=1.0)
+        with self._lifecycle_lock:
+            if self.running:
+                return
+            if self.thread is not None and self.thread.is_alive():
+                raise RuntimeError("previous YahooJP scraper worker is still running")
+            self.running = True
+            self._epoch += 1
+            epoch = self._epoch
+            self.thread = threading.Thread(
+                target=self._worker_loop,
+                args=(epoch,),
+                daemon=True,
+                name="YahooJPScraperWorker",
+            )
+            self.thread.start()
 
     def stop(self) -> None:
         with self._lifecycle_lock:

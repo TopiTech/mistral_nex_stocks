@@ -85,6 +85,16 @@ class _TransientDefaultConfig(dict):
         return _TransientDefaultConfig({k: copy.deepcopy(v, memo) for k, v in self.items()})
 
 
+def is_config_unreadable(cfg: Any = None) -> bool:
+    """Return True when config is corrupted or came from a transient read failure."""
+    return bool(
+        is_config_corrupted()
+        or getattr(config_store, "_CONFIG_TRANSIENT_READ_FAILED", False)
+        or isinstance(cfg, _TransientDefaultConfig)
+        or getattr(type(cfg), "__name__", "") == "_TransientDefaultConfig"
+    )
+
+
 def load_config() -> dict[str, Any]:
     """設定ファイルを読み込む。存在しない場合は初期化。
 

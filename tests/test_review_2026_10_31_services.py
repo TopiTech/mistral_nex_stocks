@@ -20,7 +20,7 @@ import pytest
 from pydantic import ValidationError
 
 from app_state import app_state
-from constants import CHART_IMAGE_MAX_IMAGE_DATA_CHARS
+from constants import CHART_IMAGE_MAX_IMAGE_DATA_CHARS, YFINANCE_TIMEOUT_SINGLE
 from services.ai_portfolio_service import generate_ai_portfolio_by_theme
 from services.ai_service import (
     _release_mistral_call_slot,
@@ -675,7 +675,7 @@ def test_svc12_semaphore_free_runs_history_and_releases():
         result = _tool_get_stock_quote({"symbol": "TESTFREE", "market": "us"})
 
     assert result["price"] == 150.0
-    ticker.history.assert_called_once_with(period="1d")
+    ticker.history.assert_called_once_with(period="1d", timeout=YFINANCE_TIMEOUT_SINGLE)
     # BoundedSemaphore raises on unbalanced release — acquiring proves the
     # slot was returned exactly once.
     assert sem.acquire(blocking=False)

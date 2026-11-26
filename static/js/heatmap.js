@@ -1049,7 +1049,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const selectKeyboardMesh = (index) => {
       const meshes = state.three.stockMeshes;
       if (!meshes.length) return;
-      state.three.keyboardIndex = (index + meshes.length) % meshes.length;
+      state.three.keyboardIndex =
+        ((index % meshes.length) + meshes.length) % meshes.length;
       const nextMesh = meshes[state.three.keyboardIndex];
       if (state.three.hoveredMesh && state.three.hoveredMesh !== nextMesh) {
         if (state.three.hoveredMesh.material) {
@@ -1081,10 +1082,16 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.viewMode !== "3d") return;
       if (event.key === "ArrowRight" || event.key === "ArrowDown") {
         event.preventDefault();
-        selectKeyboardMesh(state.three.keyboardIndex + 1);
+        const nextIdx =
+          state.three.keyboardIndex < 0 ? 0 : state.three.keyboardIndex + 1;
+        selectKeyboardMesh(nextIdx);
       } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
         event.preventDefault();
-        selectKeyboardMesh(state.three.keyboardIndex - 1);
+        const prevIdx =
+          state.three.keyboardIndex < 0
+            ? state.three.stockMeshes.length - 1
+            : state.three.keyboardIndex - 1;
+        selectKeyboardMesh(prevIdx);
       } else if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         onClick();

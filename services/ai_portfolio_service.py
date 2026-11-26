@@ -4,6 +4,7 @@ Provides dynamic AI theme portfolio generation powered by Web Search & Mistral A
 encrypted-at-rest JSON storage (ai_portfolios.json), and automatic rebalancing.
 """
 
+import copy
 import hashlib
 import json
 import logging
@@ -13,6 +14,7 @@ import re
 import threading
 import time
 import uuid
+import weakref
 from typing import Any
 
 from config_store import APP_DATA_DIR, config_update_lock
@@ -787,6 +789,11 @@ def _find_saved_ai_portfolio(clean_id: str, search_theme: str) -> dict[str, Any]
     return None
 
 
+_AI_GEN_EVENT_OUTCOMES: weakref.WeakKeyDictionary[threading.Event, dict[str, Any]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def _acquire_ai_generation_slot(key: str) -> bool:
     """Claim the generation slot for ``key``; False if another thread holds it."""
     with _AI_GEN_LOCK:
@@ -796,22 +803,46 @@ def _acquire_ai_generation_slot(key: str) -> bool:
         return True
 
 
+def _get_ai_generation_event(key: str) -> threading.Event | None:
+    """Return the active in-flight event for ``key``, if any."""
+    with _AI_GEN_LOCK:
+        return _AI_GEN_INFLIGHT.get(key)
+
+
+def _record_ai_generation_outcome(
+    key: str,
+    *,
+    result: dict[str, Any] | None = None,
+    error: BaseException | None = None,
+) -> None:
+    """Attach the leader's outcome to its active generation event before release."""
+    with _AI_GEN_LOCK:
+        event = _AI_GEN_INFLIGHT.get(key)
+        if event is not None:
+            _AI_GEN_EVENT_OUTCOMES[event] = {"result": result, "error": error}
+
+
+def _get_ai_generation_outcome(event: threading.Event | None) -> dict[str, Any] | None:
+    """Return the recorded outcome for *event*, if any."""
+    if event is None:
+        return None
+    with _AI_GEN_LOCK:
+        return _AI_GEN_EVENT_OUTCOMES.get(event)
+
+
 def _wait_ai_generation_slot(
     key: str, timeout: float = _AI_GEN_HANDOFF_TIMEOUT_SEC
 ) -> bool:
     """Block until the current generation for ``key`` finishes (or timeout).
 
-    Returns ``True`` when a generation event was observed and waited on, and
-    ``False`` when the slot was already released before the wait began. The
-    caller uses that distinction to avoid spinning when a third request wins
-    the re-acquisition race.
+    Returns ``True`` when the observed generation event was signaled within
+    *timeout*, and ``False`` when no slot was active or the wait timed out.
     """
     with _AI_GEN_LOCK:
         event = _AI_GEN_INFLIGHT.get(key)
     if event is None:
         return False
-    event.wait(timeout)
-    return True
+    return bool(event.wait(timeout))
 
 
 def _release_ai_generation_slot(key: str) -> None:
@@ -884,28 +915,52 @@ def generate_ai_portfolio_by_theme(
     if not _acquire_ai_generation_slot(key):
         logger.info("AI portfolio generation in progress for theme/id: %s; waiting", safe_log_id)
         # A third request can win the slot between our event wake-up and the
-        # re-acquisition. Re-check the saved result and retry that handoff a
-        # bounded number of times instead of turning that one race into a 503.
+        # re-acquisition. Re-check the leader's outcome / saved result and retry
+        # that handoff a bounded number of times instead of turning one race
+        # into a 503, while ensuring force_rebalance waiters never silently
+        # return stale pre-rebalance disk data on leader failure or timeout.
         deadline = time.monotonic() + _AI_GEN_HANDOFF_TIMEOUT_SEC
         acquired_after_wait = False
         for _attempt in range(_AI_GEN_HANDOFF_MAX_ATTEMPTS):
             remaining = deadline - time.monotonic()
             if remaining <= 0.0:
                 break
+            inflight_event = _get_ai_generation_event(key)
             waited = _wait_ai_generation_slot(key, timeout=remaining)
-            saved = _find_saved_ai_portfolio(clean_id, search_theme)
-            if saved is not None:
-                logger.info(
-                    "Reusing AI portfolio generated concurrently for theme/id: %s", safe_log_id
-                )
-                return saved
+            if waited:
+                outcome = _get_ai_generation_outcome(inflight_event)
+                if outcome is not None:
+                    leader_result = outcome.get("result")
+                    if isinstance(leader_result, dict):
+                        logger.info(
+                            "Reusing AI portfolio leader outcome for theme/id: %s",
+                            safe_log_id,
+                        )
+                        return copy.deepcopy(leader_result)
+                elif not force_rebalance:
+                    saved = _find_saved_ai_portfolio(clean_id, search_theme)
+                    if saved is not None:
+                        logger.info(
+                            "Reusing AI portfolio generated concurrently for theme/id: %s",
+                            safe_log_id,
+                        )
+                        return saved
+            elif not force_rebalance:
+                saved = _find_saved_ai_portfolio(clean_id, search_theme)
+                if saved is not None:
+                    logger.info(
+                        "Reusing AI portfolio generated concurrently for theme/id: %s",
+                        safe_log_id,
+                    )
+                    return saved
             if _acquire_ai_generation_slot(key):
                 acquired_after_wait = True
                 break
             if not waited:
                 # No event existed at the observed instant (the owner released
-                # between our lookup and wait). Yield briefly so a concurrent
-                # owner can publish its event rather than spinning.
+                # between our lookup and wait) or the wait timed out. Yield
+                # briefly so a concurrent owner can publish its event rather
+                # than spinning.
                 time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
         if not acquired_after_wait:
             logger.warning(
@@ -957,9 +1012,11 @@ def generate_ai_portfolio_by_theme(
                 "AI API key not configured or in preview mode; returning fallback or preserved portfolio for theme: %s",
                 _safe_log_theme(search_theme),
             )
-            return _fallback_or_preserve_existing(
+            res = _fallback_or_preserve_existing(
                 "APIキーが未設定またはプレビューモードのため、以前保存したポートフォリオを表示しています。"
             )
+            _record_ai_generation_outcome(key, result=res)
+            return res
 
         # Sanitize the user-supplied theme before interpolating it into the LLM
         # prompt: strip control/XML metacharacters and cap its length so a
@@ -1101,6 +1158,7 @@ def generate_ai_portfolio_by_theme(
                 canonical_result = sanitize_ai_portfolio(parsed_result)
                 if canonical_result.get("items"):
                     _persist_generated_ai_portfolio(canonical_result)
+                    _record_ai_generation_outcome(key, result=canonical_result)
                     return canonical_result
                 logger.warning(
                     "AI portfolio response contained no usable items after sanitization; "
@@ -1108,7 +1166,8 @@ def generate_ai_portfolio_by_theme(
                     _safe_log_theme(search_theme),
                 )
 
-        except PortfolioStorageError:
+        except PortfolioStorageError as storage_exc:
+            _record_ai_generation_outcome(key, error=storage_exc)
             raise
         except Exception as e:
             logger.error(
@@ -1121,8 +1180,10 @@ def generate_ai_portfolio_by_theme(
         # replaces the user's data (items, rationale, target prices) with a
         # generic template when the LLM call fails. Reuse the saved portfolio
         # and only attach a warning instead.
-        return _fallback_or_preserve_existing(
+        fallback_res = _fallback_or_preserve_existing(
             "AIの再生成に失敗したため、以前保存したポートフォリオを表示しています。"
         )
+        _record_ai_generation_outcome(key, result=fallback_res)
+        return fallback_res
     finally:
         _release_ai_generation_slot(key)

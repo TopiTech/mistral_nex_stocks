@@ -2736,14 +2736,37 @@ function triggerPriceFlash(priceEl, flashClass) {
         event.animationName === "flash-green" ||
         event.animationName === "flash-red"
       ) {
+        if (priceEl.__flashCleanupTimer) {
+          clearTimeout(priceEl.__flashCleanupTimer);
+          priceEl.__flashCleanupTimer = null;
+        }
         priceEl.classList.remove("flash-up", "flash-down");
       }
     };
     priceEl.addEventListener("animationend", priceEl.__flashCleanupHandler);
   }
+  if (priceEl.__flashCleanupTimer) {
+    clearTimeout(priceEl.__flashCleanupTimer);
+    priceEl.__flashCleanupTimer = null;
+  }
+  if (priceEl.__flashRafId && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(priceEl.__flashRafId);
+    priceEl.__flashRafId = null;
+  }
   priceEl.classList.remove("flash-up", "flash-down");
-  void priceEl.offsetWidth;
-  priceEl.classList.add(flashClass);
+  const applyFlash = () => {
+    priceEl.__flashRafId = null;
+    priceEl.classList.add(flashClass);
+    priceEl.__flashCleanupTimer = setTimeout(() => {
+      priceEl.__flashCleanupTimer = null;
+      priceEl.classList.remove("flash-up", "flash-down");
+    }, 1300);
+  };
+  if (typeof requestAnimationFrame === "function") {
+    priceEl.__flashRafId = requestAnimationFrame(applyFlash);
+  } else {
+    applyFlash();
+  }
 }
 
 // (L16 と同じ契約) ドロワーがこの銘柄で開いている間は .chart-container が
@@ -3409,10 +3432,13 @@ function trapDrawerFocus(event, drawerOverlay) {
   }
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
+  const active = document.activeElement;
+  const isOutsideOrContainer =
+    active === drawerOverlay || !drawerOverlay.contains(active);
+  if (event.shiftKey && (active === first || isOutsideOrContainer)) {
     event.preventDefault();
     last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
+  } else if (!event.shiftKey && (active === last || isOutsideOrContainer)) {
     event.preventDefault();
     first.focus();
   }
@@ -4762,10 +4788,12 @@ function openFullscreenChart(wrapper) {
     if (!focusable.length) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
+    const active = document.activeElement;
+    const isOutsideOrContainer = active === modal || !modal.contains(active);
+    if (e.shiftKey && (active === first || isOutsideOrContainer)) {
       e.preventDefault();
       last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
+    } else if (!e.shiftKey && (active === last || isOutsideOrContainer)) {
       e.preventDefault();
       first.focus();
     }

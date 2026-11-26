@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$explicitManifestPath = $PSBoundParameters.ContainsKey('ManifestPath')
 if (-not $ManifestPath) {
   $baseDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
   $ManifestPath = Join-Path $baseDir 'com.mistral_nex_stocks.host.json'
@@ -19,6 +20,9 @@ if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
 }
 $templatePath = (Resolve-Path -LiteralPath $templatePath).Path
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+  if ($explicitManifestPath) {
+    throw "Manifest file not found: $ManifestPath"
+  }
   $ManifestPath = $templatePath
   Write-Host "[INFO] Generated manifest not found; validating template." -ForegroundColor Yellow
 }

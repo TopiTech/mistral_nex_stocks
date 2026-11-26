@@ -618,7 +618,9 @@ def api_reset_stocks() -> Any:
         previous_us = dict(app_state.market.user_us)
         previous_jp = dict(app_state.market.user_jp)
         previous_idx = dict(app_state.market.user_idx)
-        app_state.market.user_us, app_state.market.user_jp, app_state.market.user_idx = {}, {}, {}
+        app_state.market.user_us.clear()
+        app_state.market.user_jp.clear()
+        app_state.market.user_idx.clear()
 
     try:
         save_user_stocks()
@@ -631,9 +633,14 @@ def api_reset_stocks() -> Any:
             # pre-reset dicts when no other save committed in the meantime.
             # Otherwise the on-disk state is authoritative, so reload it.
             if app_state.market.user_stocks_rev == rev_before:
-                app_state.market.user_us = {**previous_us, **app_state.market.user_us}
-                app_state.market.user_jp = {**previous_jp, **app_state.market.user_jp}
-                app_state.market.user_idx = {**previous_idx, **app_state.market.user_idx}
+                for target_dict, prev_dict in (
+                    (app_state.market.user_us, previous_us),
+                    (app_state.market.user_jp, previous_jp),
+                    (app_state.market.user_idx, previous_idx),
+                ):
+                    merged = {**prev_dict, **target_dict}
+                    target_dict.clear()
+                    target_dict.update(merged)
             else:
                 reload_persisted = True
         if reload_persisted:

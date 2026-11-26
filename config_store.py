@@ -36,7 +36,7 @@ from config.corruption import (  # noqa: F401
     clear_config_corruption_flag,
     is_config_corrupted,
 )
-from config.io import _config_cache_key, load_config, save_config  # noqa: F401
+from config.io import _config_cache_key, is_config_unreadable, load_config, save_config  # noqa: F401
 from config.locks import _master_key_update_lock, config_update_lock  # noqa: F401
 from config.master_key import get_or_create_master_key  # noqa: F401
 from config.merge import (  # noqa: F401

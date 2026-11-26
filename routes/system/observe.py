@@ -73,6 +73,49 @@ def api_health():
     return ok_response(health_data)
 
 
+def _combined_disk_cache_stats() -> dict[str, Any]:
+    """Aggregate stock and payload disk cache stats without overwriting."""
+    named_caches = (
+        ("stock_disk_cache", app_state.stock_disk_cache),
+        ("payload_disk_cache", app_state.payload_disk_cache),
+    )
+    per_cache: dict[str, dict[str, Any]] = {}
+    total_entries = 0
+    total_size_bytes = 0
+    total_max_entries = 0
+    last_cleanup_ts = 0.0
+    default_ttl: float | int | None = None
+
+    for cache_name, disk_cache in named_caches:
+        try:
+            c_stats = disk_cache.stats()
+        except Exception as exc:
+            current_app.logger.debug("Failed to read %s stats: %s", cache_name, exc)
+            continue
+        if not isinstance(c_stats, dict):
+            continue
+        per_cache[cache_name] = c_stats
+        total_entries += int(c_stats.get("disk_cache_entries") or 0)
+        total_size_bytes += int(c_stats.get("disk_cache_total_size_bytes") or 0)
+        total_max_entries += int(c_stats.get("disk_cache_max_entries") or 0)
+        cleanup_val = c_stats.get("disk_cache_last_cleanup_ts")
+        if isinstance(cleanup_val, (int, float)) and not isinstance(cleanup_val, bool):
+            last_cleanup_ts = max(last_cleanup_ts, float(cleanup_val))
+        if default_ttl is None and "disk_cache_default_ttl" in c_stats:
+            default_ttl = c_stats["disk_cache_default_ttl"]
+
+    combined: dict[str, Any] = {}
+    if per_cache:
+        combined["disk_cache_entries"] = total_entries
+        combined["disk_cache_total_size_bytes"] = total_size_bytes
+        combined["disk_cache_max_entries"] = total_max_entries
+        if default_ttl is not None:
+            combined["disk_cache_default_ttl"] = default_ttl
+        combined["disk_cache_last_cleanup_ts"] = last_cleanup_ts
+        combined.update(per_cache)
+    return combined
+
+
 @api_system_bp.route("/api/cache-stats", methods=["GET", "OPTIONS"])
 @rate_limit(max_requests=30, window_seconds=60)
 def api_cache_stats():
@@ -93,15 +136,7 @@ def api_cache_stats():
     with app_state.cache.cache_lock:
         cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
     stats["cache_sizes"] = cache_sizes
-    # Include disk cache statistics
-    try:
-        stats.update(app_state.stock_disk_cache.stats())
-    except Exception as exc:
-        current_app.logger.debug("Failed to read disk cache stats: %s", exc)
-    try:
-        stats.update(app_state.payload_disk_cache.stats())
-    except Exception as exc:
-        current_app.logger.debug("Failed to read payload disk cache stats: %s", exc)
+    stats.update(_combined_disk_cache_stats())
     return ok_response({"cache_stats": stats})
 
 
@@ -225,14 +260,7 @@ def api_metrics():
     # Disk-cache stats are best-effort observability; a transient OSError
     # here must not turn the whole metrics endpoint into a 500 (the sibling
     # /api/cache-stats already isolates each cache).
-    disk_stats: dict[str, Any] = {}
-    for _disk_cache in (app_state.stock_disk_cache, app_state.payload_disk_cache):
-        try:
-            disk_stats.update(_disk_cache.stats())
-        except Exception as exc:
-            current_app.logger.debug(
-                "Failed to read disk cache stats for /api/metrics: %s", exc
-            )
+    disk_stats = _combined_disk_cache_stats()
 
     return ok_response(
         {

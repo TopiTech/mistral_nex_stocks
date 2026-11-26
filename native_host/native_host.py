@@ -1967,6 +1967,7 @@ def main():
                                     break
                             except OSError as lock_err:
                                 last_read_err = lock_err
+                            if attempt < 9:
                                 time.sleep(0.02 * (1.5**attempt) + random.uniform(0.005, 0.015))
                         if not raw and last_read_err is not None:
                             raise last_read_err

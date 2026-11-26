@@ -743,20 +743,23 @@ def _extract_mistral_wait_seconds(response) -> float:
         if not text:
             return 0.0
         try:
-            return max(0.0, float(text))
+            val = float(text)
+            return min(max(0.0, val), 3600.0) if math.isfinite(val) else 0.0
         except (ValueError, TypeError):
             pass
         lower = text.lower()
         if lower.endswith("ms"):
             try:
-                return max(0.0, float(lower[:-2].strip()) / 1000.0)
+                val = float(lower[:-2].strip()) / 1000.0
+                return min(max(0.0, val), 3600.0) if math.isfinite(val) else 0.0
             except (ValueError, TypeError):
                 return 0.0
         try:
             dt = parsedate_to_datetime(text)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=UTC)
-            return max(0.0, (dt - datetime.now(UTC)).total_seconds())
+            delta = (dt - datetime.now(UTC)).total_seconds()
+            return min(max(0.0, delta), 3600.0) if math.isfinite(delta) else 0.0
         except (ValueError, TypeError, AttributeError):
             return 0.0
 
@@ -769,6 +772,8 @@ def _extract_mistral_wait_seconds(response) -> float:
             if raw:
                 try:
                     epoch = float(str(raw).strip())
+                    if not math.isfinite(epoch):
+                        continue
                     # X-RateLimit-Reset is conventionally epoch *seconds*,
                     # but proxies/providers also emit milliseconds (1.7e12) or
                     # microseconds (1.7e15). Treating milliseconds as seconds
@@ -3083,29 +3088,17 @@ def stream_mistral_chat(
                 sdk_stream = client.chat.stream(**kwargs)
             for chunk in sdk_stream:
                 saw_upstream_chunk = True
-                delta_text = _extract_stream_delta(chunk, include_thinking=include_thinking)
-                if delta_text:
-                    if include_thinking:
-                        thinking_only = _extract_thinking_delta(chunk)
-                        if thinking_only:
-                            yield {"type": "thinking", "text": thinking_only}
-                            if delta_text == thinking_only:
-                                visible_text = ""
-                            elif delta_text.startswith(thinking_only):
-                                visible_text = delta_text[len(thinking_only) :]
-                            elif delta_text.endswith(thinking_only):
-                                visible_text = delta_text[: -len(thinking_only)]
-                            elif thinking_only in delta_text:
-                                visible_text = delta_text.replace(thinking_only, "", 1)
-                            else:
-                                visible_text = delta_text
-                            if visible_text:
-                                full_parts.append(visible_text)
-                                yield {"type": "delta", "text": visible_text}
-                        else:
-                            full_parts.append(delta_text)
-                            yield {"type": "delta", "text": delta_text}
-                    else:
+                if include_thinking:
+                    thinking_only = _extract_thinking_delta(chunk)
+                    if thinking_only:
+                        yield {"type": "thinking", "text": thinking_only}
+                    visible_text = _extract_stream_delta(chunk, include_thinking=False)
+                    if visible_text:
+                        full_parts.append(visible_text)
+                        yield {"type": "delta", "text": visible_text}
+                else:
+                    delta_text = _extract_stream_delta(chunk, include_thinking=False)
+                    if delta_text:
                         full_parts.append(delta_text)
                         yield {"type": "delta", "text": delta_text}
                 # Best-effort usage capture: some SDK versions attach usage to

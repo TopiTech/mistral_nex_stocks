@@ -164,7 +164,11 @@ class YFinanceProvider(BaseStockProvider):
             return None
         if m_state.is_yf_rate_limited():
             return None
-        sess = _shim().yf_session_manager.get_session()
+        try:
+            sess = _shim().yf_session_manager.get_session()
+        except RuntimeError as exc:
+            logger.debug("yf_session_manager.get_session() aborted for %s: %s", symbol, exc)
+            return None
         now = time.monotonic()
         with self._ticker_cache_lock:
             entry = self._ticker_cache.get(symbol)
@@ -1171,10 +1175,23 @@ class YFinanceProvider(BaseStockProvider):
                 clean_row: dict[str, Any] = {}
                 for k, v in row.items():
                     key_str = str(k)
-                    if isinstance(v, float) and (math.isinf(v) or math.isnan(v)):
+                    if v is None or v is pd.NaT:
                         clean_row[key_str] = None
+                    elif isinstance(v, numbers.Real) and not is_bool_like(v):
+                        num_val = float(v)
+                        clean_row[key_str] = (
+                            None
+                            if (math.isinf(num_val) or math.isnan(num_val))
+                            else v
+                        )
+                    elif isinstance(v, (pd.Timestamp, datetime)):
+                        clean_row[key_str] = v.isoformat()
                     else:
-                        clean_row[key_str] = v
+                        try:
+                            is_na = bool(pd.isna(v))
+                        except (TypeError, ValueError):
+                            is_na = False
+                        clean_row[key_str] = None if is_na else v
                 cleaned_records.append(clean_row)
             if limit > 0:
                 cleaned_records = cleaned_records[:limit]

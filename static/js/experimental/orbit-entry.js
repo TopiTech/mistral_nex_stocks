@@ -113,7 +113,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // global shortcuts (which intentionally ignore focused controls —
   // role="application" is in their suppression list, so without these local
   // cases the keys the canvas aria-label promises (D/C/H) would be dead).
-  canvas.addEventListener("keydown", (e) => {
+  addManagedListener(canvas, "keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const stocks = state.state.stockList || [];

@@ -1534,6 +1534,31 @@ def api_news():
         force_refresh or (now - last_update_ts > CACHE_DURATION_NEWS)
     )
 
+    def _finalize_news_holder(holder: FetchJob) -> None:
+        with news_fetch_lock:
+            raw_result = holder.get("result")
+            is_cacheable = isinstance(raw_result, dict) and _is_cacheable_news_bundle(raw_result)
+            cached_payload = copy.deepcopy(raw_result) if is_cacheable else None
+            cached_exc = holder.get("error")
+            rc_keys = list(holder.get("result_cache_keys") or ())
+            if cached_payload is not None or cached_exc is not None:
+                for rc_key in rc_keys:
+                    news_result_cache[rc_key] = (
+                        time.time(),
+                        cached_payload,
+                        cached_exc,
+                    )
+                    news_completed_tokens[rc_key] = True
+            elif isinstance(raw_result, dict):
+                for rc_key in rc_keys:
+                    news_completed_tokens[rc_key] = True
+                    news_uncacheable_results[rc_key] = (
+                        time.time(),
+                        copy.deepcopy(raw_result),
+                    )
+            news_fetch_inflight.pop(inflight_key, None)
+        holder["done"].set()
+
     # SWR: If we have a cached bundle and we're not forcing refresh, return it immediately.
     # In the background, trigger revalidation if it's stale.
     # Cache contents are process-local and may survive a partial/older code
@@ -1555,6 +1580,10 @@ def api_news():
                         "result": None,
                         "error": None,
                         "done": threading.Event(),
+                        "step": "collecting_news",
+                        "start_time": time.time(),
+                        "message": "最新ニュースを更新しています...",
+                        "result_cache_keys": set(),
                     }
                     news_fetch_inflight[inflight_key] = created_holder
                     new_swr_holder = created_holder
@@ -1571,28 +1600,28 @@ def api_news():
                             force_refresh=force_refresh,
                         )
                         swr_holder["result"] = res
+                        swr_holder["step"] = "done"
+                        swr_holder["message"] = "ニュース要約の生成が完了しました"
                         if not is_preview and _is_cacheable_news_bundle(res):
                             _set_cached_value(latest_cache_key, res, duration=86400)
                             _set_cached_value(f"{latest_cache_key}_ts", time.time(), duration=86400)
                     except Exception as exc:
                         swr_holder["error"] = exc
+                        swr_holder["step"] = "error"
+                        swr_holder["message"] = "ニュース要約の取得に失敗しました"
                         current_app.logger.warning(
                             "Background SWR news refresh failed error_type=%s",
                             type(exc).__name__,
                         )
                     finally:
-                        with news_fetch_lock:
-                            news_fetch_inflight.pop(inflight_key, None)
-                        swr_holder["done"].set()
+                        _finalize_news_holder(swr_holder)
 
                 try:
                     _submit_in_app_context(app_state.execution.news_executor, _run_news_job_swr)
                 except Exception as exc:
                     current_app.logger.warning("Failed to schedule SWR news job: %s", exc)
-                    with news_fetch_lock:
-                        news_fetch_inflight.pop(inflight_key, None)
                     swr_holder["error"] = exc
-                    swr_holder["done"].set()
+                    _finalize_news_holder(swr_holder)
         return ok_response(response_bundle)
 
     # Fallback to standard synchronous wait and poll for the first fetch or force refresh.
@@ -1686,31 +1715,7 @@ def api_news():
                 result_holder["step"] = "error"
                 result_holder["message"] = "ニュース要約の取得に失敗しました"
             finally:
-                with news_fetch_lock:
-                    raw_result = result_holder.get("result")
-                    is_cacheable = isinstance(raw_result, dict) and _is_cacheable_news_bundle(
-                        raw_result
-                    )
-                    cached_payload = copy.deepcopy(raw_result) if is_cacheable else None
-                    cached_exc = result_holder.get("error")
-                    rc_keys = list(result_holder.get("result_cache_keys") or ())
-                    if cached_payload is not None or cached_exc is not None:
-                        for rc_key in rc_keys:
-                            news_result_cache[rc_key] = (
-                                time.time(),
-                                cached_payload,
-                                cached_exc,
-                            )
-                            news_completed_tokens[rc_key] = True
-                    elif isinstance(raw_result, dict):
-                        for rc_key in rc_keys:
-                            news_completed_tokens[rc_key] = True
-                            news_uncacheable_results[rc_key] = (
-                                time.time(),
-                                copy.deepcopy(raw_result),
-                            )
-                    news_fetch_inflight.pop(inflight_key, None)
-                result_holder["done"].set()
+                _finalize_news_holder(result_holder)
 
         try:
             _submit_in_app_context(app_state.execution.news_executor, _run_news_job)
@@ -2447,6 +2452,26 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     )
 
 
+def _map_ai_dict_error_status(raw_error: Any) -> tuple[ErrorCode, int]:
+    """Map an upstream provider error dict status_code to an ErrorCode and HTTP status."""
+    raw_code = raw_error.get("status_code") if isinstance(raw_error, dict) else None
+    if not isinstance(raw_code, int) or isinstance(raw_code, bool) or not (400 <= raw_code <= 599):
+        return ErrorCode.INTERNAL_SERVER_ERROR, 500
+    if raw_code == 401:
+        return ErrorCode.API_AUTH_FAILED, 401
+    if raw_code == 403:
+        return ErrorCode.FORBIDDEN, 403
+    if raw_code == 429:
+        return ErrorCode.API_RATE_LIMITED, 429
+    if raw_code == 503:
+        return ErrorCode.API_SERVICE_ERROR, 503
+    if raw_code == 504:
+        return ErrorCode.TIMEOUT_ERROR, 504
+    if raw_code >= 500:
+        return ErrorCode.API_SERVICE_ERROR, raw_code
+    return ErrorCode.API_SERVICE_ERROR, raw_code
+
+
 @api_analysis_bp.route("/api/ai-technical-lines", methods=["POST", "OPTIONS"])
 @rate_limit(max_requests=15, window_seconds=60)
 def api_ai_technical_lines():
@@ -2621,17 +2646,19 @@ def api_analyze_chart_image():
     )
     if isinstance(res, dict) and "error" in res:
         raw_err = res["error"]
+        err_code, http_status = _map_ai_dict_error_status(raw_err)
         err_msg = raw_err.get("message", "") if isinstance(raw_err, dict) else str(raw_err)
         req_id = getattr(g, "request_id", "-")
         current_app.logger.error(
-            "Analyze chart image failed id=%s: %s",
+            "Analyze chart image failed id=%s status=%d: %s",
             req_id,
+            http_status,
             sanitize_upstream_log_message(err_msg),
         )
         return error_response(
-            ErrorCode.INTERNAL_SERVER_ERROR,
+            err_code,
             details={"reason": "画像分析に失敗しました"},
-            status_code=500,
+            status_code=http_status,
         )
 
     return ok_response(res)

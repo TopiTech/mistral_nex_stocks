@@ -750,6 +750,22 @@ class RealtimeMarketEngine:
         with lock:
             return self._is_pts_worker_current_locked(epoch)
 
+    def _is_pts_symbol_current(self, symbol: str) -> bool:
+        """Return whether *symbol* is still registered in the JP scraper or user_jp."""
+        if self.yahoojp_scraper._is_symbol_current(symbol):
+            return True
+        alias = symbol[:-2] if symbol.endswith((".T", ".t")) else f"{symbol}.T"
+        try:
+            from app_state import app_state
+
+            if hasattr(app_state, "market") and app_state.market is not None:
+                with app_state.market.user_stocks_lock:
+                    user_jp = app_state.market.user_jp
+                    return symbol in user_jp or alias in user_jp
+        except Exception:
+            return False
+        return False
+
     def _pts_worker_loop(self, my_epoch: int | None = None) -> None:
         if my_epoch is None:
             lock = getattr(self, "_lifecycle_lock", None) or nullcontext()
@@ -844,7 +860,7 @@ class RealtimeMarketEngine:
                         if (
                             payload
                             and self._is_pts_worker_current(my_epoch)
-                            and self.yahoojp_scraper._is_symbol_current(sym)
+                            and self._is_pts_symbol_current(sym)
                         ):
                             if pts_registration is not None:
                                 try:

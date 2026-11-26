@@ -2133,10 +2133,14 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
     return;
   }
 
+  const isPortfolioContext = wrapper.dataset.marketContext === "portfolio";
+  const containerSel = isPortfolioContext
+    ? ".pnl-chart-container"
+    : ".chart-container:not(.pnl-chart-container)";
   const container =
-    wrapper.querySelector(".chart-container") ||
+    wrapper.querySelector(containerSel) ||
     (isDrawerOwnedByWrapper()
-      ? document.querySelector("#stock-detail-drawer .chart-container")
+      ? document.querySelector(`#stock-detail-drawer ${containerSel}`)
       : null);
   container?.classList?.add("loading");
 

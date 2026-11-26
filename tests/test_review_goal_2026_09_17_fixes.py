@@ -142,7 +142,7 @@ def test_orbit_canvas_keyboard_path():
     assert 'tabindex="0"' in template
     assert "orbit-canvas-help" in template
     entry = _read("static/js/experimental/orbit-entry.js")
-    assert 'canvas.addEventListener("keydown"' in entry
+    assert 'addManagedListener(canvas, "keydown"' in entry
     css = _read("static/css/experimental-orbit.css")
     assert ".orbit-canvas:focus-visible" in css
     assert ".hud-pill-btn:focus-visible" in css

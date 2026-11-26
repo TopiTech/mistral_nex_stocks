@@ -135,6 +135,25 @@
       }
     }
 
+    destroy() {
+      this.resetReconnect();
+      const pending = this._pendingDeltaFrames || [];
+      this._pendingDeltaFrames = [];
+      pending.forEach((entry) => {
+        try {
+          if (
+            typeof window !== "undefined" &&
+            typeof window.cancelAnimationFrame === "function"
+          ) {
+            window.cancelAnimationFrame(entry.frame);
+          }
+        } catch {
+          // no-op: the frame may already have run
+        }
+      });
+      this.domCache.clear();
+    }
+
     /**
      * Schedule a reconnection callback with full jitter exponential backoff.
      * @param {Function} reconnectFn - Function to execute on reconnect
@@ -699,6 +718,23 @@
         window.realtimeClient.flushPendingDeltas();
       }
     };
+    if (
+      typeof window !== "undefined" &&
+      typeof window.addEventListener === "function" &&
+      !window.__realtimeClientCleanupBound
+    ) {
+      window.__realtimeClientCleanupBound = true;
+      const cleanupRealtimeClient = () => {
+        if (
+          window.realtimeClient &&
+          typeof window.realtimeClient.destroy === "function"
+        ) {
+          window.realtimeClient.destroy();
+        }
+      };
+      window.addEventListener("pagehide", cleanupRealtimeClient);
+      window.addEventListener("beforeunload", cleanupRealtimeClient);
+    }
   };
 
   if (typeof document !== "undefined" && document.addEventListener) {

@@ -195,7 +195,7 @@ class APIClient {
           this._handleReconnect(onError);
           return;
         }
-        this.openSSE(resolvedUrl, onMessage, onError, options);
+        this._openSSEInternal(resolvedUrl, onMessage, onError, options, true);
       })
       .catch((err) => {
         _log.warn("SSE: Failed to resolve stream URL", err);
@@ -350,11 +350,20 @@ class APIClient {
     }
   }
   openSSE(url, onMessage, onError, options = {}) {
+    return this._openSSEInternal(url, onMessage, onError, options, false);
+  }
+  _openSSEInternal(
+    url,
+    onMessage,
+    onError,
+    options = {},
+    preserveVisibilityPause = false,
+  ) {
     const initialParams = { url, onMessage, onError, options };
     if (!this.isVisibilityPaused) {
       this._lastSSEParams = initialParams;
     }
-    this._teardownSSE();
+    this._teardownSSE(preserveVisibilityPause);
     this._reconnecting = false;
     // The very first connection may not have a URL yet: the stream URL is
     // minted asynchronously (a short-lived, single-use SSE ticket), and that

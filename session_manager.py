@@ -368,10 +368,8 @@ class YFinanceSessionManager:
         """Return the curl_cffi impersonate target for the given UA index."""
         return _CURL_IMPERSONATE_TARGETS[ua_index % len(_CURL_IMPERSONATE_TARGETS)]
 
-    def _is_shutting_down(self) -> bool:
-        """Check whether session manager has been closed or app is shutting down."""
-        if getattr(self, "_closed", False):
-            return True
+    def _is_app_shutting_down(self) -> bool:
+        """Return True when the process-wide shutdown event has been signaled."""
         try:
             from app_state import app_state
 
@@ -384,6 +382,12 @@ class YFinanceSessionManager:
         except Exception:
             pass
         return False
+
+    def _is_shutting_down(self) -> bool:
+        """Check whether session manager has been closed or app is shutting down."""
+        if getattr(self, "_closed", False):
+            return True
+        return self._is_app_shutting_down()
 
     @contextmanager
     def _acquire_concurrency(self):
@@ -796,6 +800,8 @@ class YFinanceSessionManager:
         """
         sess_to_return = None
         with self._lock:
+            if self._is_app_shutting_down():
+                raise RuntimeError("Application is shutting down; session creation aborted")
             self._closed = False
             idx = self._ua_index
             current_epoch = self._session_epoch

@@ -534,8 +534,21 @@ function updateSingleIndexChip(chip, idx) {
         if (Number.isFinite(oldP) && Number.isFinite(newP) && oldP !== newP) {
           const flashCls = newP > oldP ? "flash-up" : "flash-down";
           priceEl.classList.remove("flash-up", "flash-down");
-          void priceEl.offsetWidth;
-          priceEl.classList.add(flashCls);
+          if (
+            priceEl.__flashRafId &&
+            typeof cancelAnimationFrame === "function"
+          ) {
+            cancelAnimationFrame(priceEl.__flashRafId);
+            priceEl.__flashRafId = null;
+          }
+          if (typeof requestAnimationFrame === "function") {
+            priceEl.__flashRafId = requestAnimationFrame(() => {
+              priceEl.__flashRafId = null;
+              priceEl.classList.add(flashCls);
+            });
+          } else {
+            priceEl.classList.add(flashCls);
+          }
         }
       }
     }
@@ -1810,6 +1823,7 @@ async function loadNews(forceRefresh = false) {
   if (newsMetaStatsEl) newsMetaStatsEl.textContent = "表示件数: 取得中...";
 
   let timeoutId = null;
+  let timedOut = false;
   let newsRequestController = null;
   try {
     const headers = {
@@ -1824,6 +1838,7 @@ async function loadNews(forceRefresh = false) {
       activeNewsRequestController = newsRequestController;
     }
     timeoutId = setTimeout(() => {
+      timedOut = true;
       newsRequestController.abort();
     }, CONSTANTS.TIMEOUT.NEWS_REQUEST);
 
@@ -1953,8 +1968,12 @@ async function loadNews(forceRefresh = false) {
       trendsBox?.classList.add("show");
     });
   } catch (e) {
+    if (newsRequestController?.signal?.aborted && !timedOut) {
+      return;
+    }
     $logger.error("News error:", e);
-    const isTimeout = e?.name === "AbortError" || e?.name === "TimeoutError";
+    const isTimeout =
+      timedOut || e?.name === "AbortError" || e?.name === "TimeoutError";
     const message = isTimeout
       ? "ニュース取得がタイムアウトしました。一部の情報が表示されない可能性があります。"
       : `ニュース取得エラー: ${e.message}`;
@@ -2109,7 +2128,7 @@ async function searchStocks() {
       row.appendChild(exchange);
 
       row.addEventListener("click", () =>
-        addStockPrompt(item.symbol, item.name),
+        addStockPrompt(item.symbol, displayName),
       );
       list?.appendChild(row);
     });
@@ -2433,11 +2452,14 @@ async function streamChatReply(payload, onDelta, options) {
       while ((sep = buffer.indexOf("\n\n")) !== -1) {
         const raw = buffer.slice(0, sep);
         buffer = buffer.slice(sep + 2);
-        const line = raw.split("\n").find((l) => l.startsWith("data: "));
-        if (!line) continue;
+        const dataLines = raw
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => (l.startsWith("data: ") ? l.slice(6) : l.slice(5)));
+        if (!dataLines.length) continue;
         let evt;
         try {
-          evt = JSON.parse(line.slice(6));
+          evt = JSON.parse(dataLines.join("\n"));
         } catch (_e) {
           continue;
         }
@@ -2890,21 +2912,24 @@ function applyAnalysisResult(wrapper, stock, data) {
       aiSlider.querySelectorAll(".ai-extra-card").forEach((c) => c.remove());
 
       if (data.analyzed_at) {
-        const dateCard = document.createElement("div");
-        dateCard.className = "ai-card ai-extra-card";
+        const parsedDate = new Date(data.analyzed_at);
+        if (!Number.isNaN(parsedDate.getTime())) {
+          const dateCard = document.createElement("div");
+          dateCard.className = "ai-card ai-extra-card";
 
-        const dateTitle = document.createElement("div");
-        dateTitle.className = "ai-card-title";
-        dateTitle.textContent = "分析日時";
+          const dateTitle = document.createElement("div");
+          dateTitle.className = "ai-card-title";
+          dateTitle.textContent = "分析日時";
 
-        const dateContent = document.createElement("div");
-        dateContent.className = "ai-card-content";
-        dateContent.style.fontSize = "0.85rem";
-        dateContent.textContent = new Date(data.analyzed_at).toLocaleString();
+          const dateContent = document.createElement("div");
+          dateContent.className = "ai-card-content";
+          dateContent.style.fontSize = "0.85rem";
+          dateContent.textContent = parsedDate.toLocaleString();
 
-        dateCard.appendChild(dateTitle);
-        dateCard.appendChild(dateContent);
-        aiSlider.appendChild(dateCard);
+          dateCard.appendChild(dateTitle);
+          dateCard.appendChild(dateContent);
+          aiSlider.appendChild(dateCard);
+        }
       }
 
       if (data.confidence) {

@@ -591,12 +591,12 @@ def _start(extension_id=None):
     if os.name == "nt":  # pragma: no cover
         # DETACHED_PROCESS (0x8): 親の stdin/stdout/stderr から切り離す
         # CREATE_NEW_PROCESS_GROUP (0x200): 独立したプロセスグループで起動（シグナル伝播を防ぐ）
-        # CREATE_BREAKAWAY_FROM_JOB (0x100): 親プロセスの Job Object から離脱してバックグラウンド生存を保証
+        # CREATE_BREAKAWAY_FROM_JOB (0x01000000): 親プロセスの Job Object から離脱してバックグラウンド生存を保証
         # CREATE_NO_WINDOW (0x08000000): ウィンドウ非表示でバックグラウンド実行
-        detached_process = 0x00000008
-        create_new_process_group = 0x00000200
-        create_breakaway_from_job = 0x00000100
-        create_no_window = 0x08000000
+        detached_process = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        create_new_process_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        create_breakaway_from_job = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+        create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
         kwargs["creationflags"] = (
             detached_process
             | create_new_process_group

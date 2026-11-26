@@ -1955,10 +1955,46 @@ def _credentials_error_from_validation(exc: ValidationError) -> tuple[Any, int]:
                 details={"reason": "openai_modelは文字列で指定してください"},
                 status_code=400,
             )
+        if first == "openai_model_control_chars":
+            return error_response(
+                ErrorCode.UNSAFE_INPUT,
+                details={
+                    "fields": ["openai_model"],
+                    "reason": "openai_modelに制御文字を含めることはできません",
+                },
+                status_code=400,
+            )
+        if first == "openai_model_too_long":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "fields": ["openai_model"],
+                    "reason": "openai_modelは200文字以内で指定してください",
+                },
+                status_code=400,
+            )
         if first == "openai_emb_model_not_string":
             return error_response(
                 ErrorCode.INVALID_INPUT,
                 details={"reason": "openai_embeddings_modelは文字列で指定してください"},
+                status_code=400,
+            )
+        if first == "openai_emb_model_control_chars":
+            return error_response(
+                ErrorCode.UNSAFE_INPUT,
+                details={
+                    "fields": ["openai_embeddings_model"],
+                    "reason": "openai_embeddings_modelに制御文字を含めることはできません",
+                },
+                status_code=400,
+            )
+        if first == "openai_emb_model_too_long":
+            return error_response(
+                ErrorCode.INVALID_INPUT,
+                details={
+                    "fields": ["openai_embeddings_model"],
+                    "reason": "openai_embeddings_modelは200文字以内で指定してください",
+                },
                 status_code=400,
             )
     except Exception as err:

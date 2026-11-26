@@ -540,7 +540,7 @@ def test_frontend_fixes_are_wired():
     assert "createRequestToken" in ai_dive_src
     assert 'ai_provider: "mistral"' in settings_src
     assert "OpenAI互換のBase URL" in settings_src
-    assert "Math.round(simulatedPlJpy).toLocaleString()" in ai_portfolio_src
+    assert "Math.round(Math.abs(simulatedPlJpy)).toLocaleString()" in ai_portfolio_src
     assert "startsWith(`${stockKey}|`)" in state_src
     assert "stockDetailsCacheAt" in state_src
     assert "isStockDetailsCacheFresh" in (ROOT / "static" / "js" / "ui.js").read_text(

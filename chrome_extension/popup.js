@@ -157,6 +157,7 @@ function fallbackBackendBase() {
 
 let backendPort = DEFAULT_BACKEND_PORT;
 let currentBackendBase = fallbackBackendBase();
+let backendPortResolvedByLiveCheck = false;
 // backendPort の storage.local 水和が完了するのを待つ共有 Promise。
 // ポップアップ起動直後のクリックで古い既定ポートへ遷移しないようにする(FE-ext-10)。
 const backendPortHydrated = new Promise((resolve) => {
@@ -164,7 +165,7 @@ const backendPortHydrated = new Promise((resolve) => {
     chrome.storage.local.get(["backendPort"], (items) => {
       try {
         if (chrome.runtime?.lastError) return;
-        if (items && items.backendPort) {
+        if (!backendPortResolvedByLiveCheck && items && items.backendPort) {
           backendPort = normalizeBackendPort(items.backendPort);
           currentBackendBase = fallbackBackendBase();
         }
@@ -510,6 +511,7 @@ async function fetchAndRenderStocks(base, signal = null, generation = null) {
     allStocksData = data;
     const stockContainer = $("stockListContainer");
     stockContainer?.classList.remove("stale");
+    stockContainer?.removeAttribute("aria-label");
 
     filterAndRenderStocks();
 
@@ -597,6 +599,7 @@ function stopStockPolling() {
 
 function setHealth(health) {
   if (health?.ok) {
+    backendPortResolvedByLiveCheck = true;
     currentBackendBase = health.base || fallbackBackendBase();
     setSafeText(healthPill, "起動済み");
     healthPill.className = "pill ok";
@@ -657,6 +660,7 @@ async function refresh() {
   const ctx = await send("getContext");
   if (!ctx?.ok) throw new Error(ctx?.error || "状態取得に失敗しました");
   if (ctx.backendPort) {
+    backendPortResolvedByLiveCheck = true;
     backendPort = normalizeBackendPort(ctx.backendPort);
     currentBackendBase = fallbackBackendBase();
   }

@@ -152,8 +152,12 @@
       const clean = String(symbol).trim().toUpperCase();
       if (this.data.selectedSymbol === clean) return;
 
+      const prevCursor = this.data.timeCursor;
       this.data.selectedSymbol = clean;
       this.data.timeCursor = 0; // Reset time cursor to latest on symbol change
+      if (prevCursor !== 0) {
+        this.notify("timeCursor", 0);
+      }
       this.notify("selectedSymbol", clean);
       this.syncUrl();
     }

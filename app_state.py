@@ -17,6 +17,7 @@ since all classes are re-exported for backward compatibility.
 import logging
 import shutil
 import threading
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -105,18 +106,30 @@ class _InMemoryCookieCache(_InMemoryYfCache):
     """Cookie-cache variant that mirrors ``yfinance.cache._CookieCache.lookup``.
 
     The real cookie cache returns ``{"cookie": <stored value>, "age": <timedelta>}``
-    and ``YfData._load_cookie_curlCffi`` reads ``cookie_dict["cookie"]``. A raw
-    return value would raise ``KeyError`` on every cached-cookie reuse, so this
-    subclass wraps lookups in the same shape the yfinance consumer expects.
+    and ``YfData._load_cookie_curlCffi`` reads ``cookie_dict["cookie"]`` and
+    ``cookie_dict["age"]`` to expire aged cookies. Tracking monotonic store
+    timestamps lets yfinance proactively refresh stale cookies instead of
+    treating every cached cookie as age zero forever.
     """
+
+    def store(self, key: str, value: Any) -> None:
+        if value is None:
+            super().store(key, None)
+            return
+        super().store(key, (value, time.monotonic()))
 
     def lookup(self, key: str) -> Any:
         with self._lock:
-            value = self._store.get(key)
-        if value is None:
+            entry = self._store.get(key)
+        if entry is None:
             return None
-
-        return {"cookie": value, "age": timedelta(0)}
+        if isinstance(entry, tuple) and len(entry) == 2:
+            value, stored_ts = entry
+            age_sec = max(0.0, time.monotonic() - float(stored_ts))
+        else:
+            value = entry
+            age_sec = 0.0
+        return {"cookie": value, "age": timedelta(seconds=age_sec)}
 
 
 # Re-export logging filters and formatters

@@ -492,6 +492,10 @@ def clear_api_credentials() -> list[str]:
     """
     with config_store.config_update_lock():
         cfg = config_store.load_config()
+        if config_store.is_config_unreadable(cfg):
+            raise RuntimeError(
+                "Config is corrupted or temporarily unreadable; aborting credential deletion."
+            )
         previous_config = copy.deepcopy(cfg)
         previous_keyring_values = {}
         with crypto_utils._EPHEMERAL_LOCK:
@@ -723,6 +727,10 @@ def set_model_name(model_name: str) -> bool:
     )
     with config_store.config_update_lock():
         cfg = config_store.load_config()
+        if config_store.is_config_unreadable(cfg):
+            raise RuntimeError(
+                "Config is corrupted or temporarily unreadable; aborting model update."
+            )
         cfg["mistral_model"] = target_name
         config_store.save_config(cfg)
     return True
@@ -757,6 +765,10 @@ def set_custom_ai_prompt(prompt: str):
     """カスタムAI分析プロンプトを保存"""
     with config_store.config_update_lock():
         cfg: dict[str, Any] = config_store.load_config()
+        if config_store.is_config_unreadable(cfg):
+            raise RuntimeError(
+                "Config is corrupted or temporarily unreadable; aborting prompt update."
+            )
         cfg["custom_ai_prompt"] = (prompt or "").strip()
         config_store.save_config(cfg)
 
@@ -790,9 +802,9 @@ def get_or_create_flask_secret_key() -> str:
 
     with config_store.config_update_lock():
         cfg = config_store.load_config()
-        if config_store.is_config_corrupted():
+        if config_store.is_config_unreadable(cfg):
             raise RuntimeError(
-                "Refusing to generate flask_secret_key while configuration is corrupted."
+                "Refusing to generate flask_secret_key while configuration is corrupted or unreadable."
             )
         secret = _resolve_valid_flask_secret(cfg, master_key)
         if secret is not None:
@@ -871,9 +883,9 @@ def get_or_create_extension_api_token() -> str:
 
     with config_store.config_update_lock():
         cfg = config_store.load_config()
-        if config_store.is_config_corrupted():
+        if config_store.is_config_unreadable(cfg):
             raise RuntimeError(
-                "Refusing to rotate or backfill extension_api_token while configuration is corrupted."
+                "Refusing to rotate or backfill extension_api_token while configuration is corrupted or unreadable."
             )
         secret, needs_backfill = _resolve_valid_extension_token(cfg, master_key)
         if secret is None:

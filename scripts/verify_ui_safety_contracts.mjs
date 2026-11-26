@@ -113,12 +113,15 @@ for (const file of listFiles("templates")) {
   const scriptBlocks =
     source.match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi) || [];
   for (const block of scriptBlocks) {
-    if (!/{{[^}]*\bapp_config\b[^}]*}}/.test(block)) continue;
-    checks += 1;
-    if (!/\|\s*tojson/.test(block)) {
-      fail(
-        `${file}: app_config interpolated into a script block without |tojson`,
-      );
+    const exprs = block.match(/{{[\s\S]*?}}/g) || [];
+    for (const expr of exprs) {
+      if (!/\bapp_config\b/.test(expr)) continue;
+      checks += 1;
+      if (!/\|\s*tojson\b/.test(expr)) {
+        fail(
+          `${file}: app_config interpolated into a script block without |tojson -> ${expr.trim()}`,
+        );
+      }
     }
   }
 }
@@ -148,13 +151,11 @@ function extractBalancedFromOffset(source, openBraceOffset) {
 // ---------------------------------------------------------------------------
 for (const file of jsFiles) {
   const source = read(file);
-  const lines = source.split(/\r?\n/);
-  lines.forEach((line, index) => {
-    const match = line.match(
-      /addEventListener\(\s*["']message["']\s*,\s*([^)]+)/,
-    );
-    if (!match) return;
+  const msgRe = /addEventListener\(\s*["']message["']\s*,\s*([^,)]+)/g;
+  for (const match of source.matchAll(msgRe)) {
     checks += 1;
+    const matchOffset = match.index ?? 0;
+    const lineNum = source.slice(0, matchOffset).split(/\r?\n/).length;
     const handler = match[1].trim();
     let body = "";
     if (/^[A-Za-z_$][\w$]*$/.test(handler)) {
@@ -166,8 +167,7 @@ for (const file of jsFiles) {
         body = extractBalancedFromOffset(source, braceIdx);
       }
     } else {
-      const lineOffset = lines.slice(0, index).join("\n").length;
-      const braceIdx = source.indexOf("{", lineOffset);
+      const braceIdx = source.indexOf("{", matchOffset);
       body = extractBalancedFromOffset(source, braceIdx);
     }
     const cleanBody = stripJsComments(body || "");
@@ -177,10 +177,10 @@ for (const file of jsFiles) {
         /\.(?:has|includes)\([^)]*\.origin\b/.test(cleanBody));
     if (!checksOrigin) {
       fail(
-        `${file}:${index + 1}: message listener ${handler} without a verified origin comparison`,
+        `${file}:${lineNum}: message listener ${handler} without a verified origin comparison`,
       );
     }
-  });
+  }
 }
 
 // ---------------------------------------------------------------------------

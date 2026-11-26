@@ -816,7 +816,7 @@ def test_api_client_serialises_open_chains_by_token() -> None:
 
 def test_orbit_keyboard_shortcuts_match_canvas_aria_promise() -> None:
     source = _read("static/js/experimental/orbit-entry.js")
-    keydown_start = source.index('canvas.addEventListener("keydown", (e) => {')
+    keydown_start = source.index('addManagedListener(canvas, "keydown", (e) => {')
     keydown_end = source.index("// 4. Initialize Temporal Controller", keydown_start)
     keydown_block = source[keydown_start:keydown_end]
     for key in ("d", "c", "m", "h", "?"):

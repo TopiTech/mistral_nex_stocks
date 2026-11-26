@@ -341,6 +341,7 @@ def clear_cache_key_in_bucket(key: str, duration: int) -> None:
         cache = global_cache.caches.get(duration)
         if cache is not None:
             cache.pop(safe_key, None)
+        global_cache.inflight_tokens.pop((safe_key, duration), None)
 
 
 def _ensure_cache_bucket(duration):

@@ -2,7 +2,7 @@
 #    uv export --locked --no-hashes --no-dev -o requirements-locked.txt
 aiocache==0.12.3 ; python_full_version >= '3.12'
     # via mistralai-workflows-plugins-mistralai
-annotated-doc==0.0.6 ; python_full_version >= '3.12'
+annotated-doc==0.0.7 ; python_full_version >= '3.12'
     # via typer
 annotated-types==0.8.0
     # via pydantic
@@ -19,7 +19,7 @@ attrs==26.1.0 ; python_full_version >= '3.12'
     # via
     #   jsonschema
     #   referencing
-authlib==1.9.9 ; python_full_version >= '3.12'
+authlib==1.9.10 ; python_full_version >= '3.12'
     # via
     #   mistralai
     #   mistralai-workflows-plugins-mistralai
@@ -36,7 +36,7 @@ cachetools==7.2.5
     # via
     #   mistral-nex-stocks
     #   mistralai-agents
-certifi==2026.10.23
+certifi==2026.11.20
     # via
     #   curl-cffi
     #   httpcore
@@ -146,7 +146,7 @@ jinja2==3.1.6
     # via flask
 joserfc==1.8.0 ; python_full_version >= '3.12'
     # via authlib
-jsonpatch==1.47 ; python_full_version >= '3.12'
+jsonpatch==1.48 ; python_full_version >= '3.12'
     # via
     #   mistralai-vibe-harness
     #   mistralai-workflows
@@ -169,7 +169,7 @@ lxml==6.1.3
     #   yfinance
 markdown-it-py==4.3.0 ; python_full_version >= '3.12'
     # via rich
-markdownify==1.2.3 ; python_full_version >= '3.12'
+markdownify==1.2.4 ; python_full_version >= '3.12'
     # via mistralai-vibe-sdk
 markupsafe==3.0.3
     # via
@@ -187,7 +187,7 @@ mcp-types==2.3.0 ; python_full_version >= '3.12'
     # via mcp
 mdurl==0.1.2 ; python_full_version >= '3.12'
     # via markdown-it-py
-mistralai==3.7.0
+mistralai==3.8.0
     # via
     #   mistral-nex-stocks
     #   mistralai-agents
@@ -299,7 +299,7 @@ psutil==7.2.2
     # via mistral-nex-stocks
 pycparser==3.0 ; implementation_name != 'PyPy'
     # via cffi
-pydantic==2.14.3
+pydantic==2.14.4
     # via
     #   mcp
     #   mcp-types
@@ -311,7 +311,7 @@ pydantic==2.14.3
     #   mistralai-workflows
     #   pydantic-settings
     #   typer
-pydantic-core==2.50.4
+pydantic-core==2.50.5
     # via pydantic
 pydantic-settings==2.16.3 ; python_full_version >= '3.12'
     # via mistralai-workflows
@@ -339,7 +339,7 @@ pywin32==312 ; python_full_version >= '3.12' and sys_platform == 'win32'
     # via mcp
 pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
     # via keyring
-pyyaml==6.0.3 ; python_full_version >= '3.12'
+pyyaml==6.0.4 ; python_full_version >= '3.12'
     # via
     #   libcst
     #   mistralai-agents
@@ -373,14 +373,12 @@ secretstorage==3.5.0 ; sys_platform == 'linux'
 shellingham==1.5.4 ; python_full_version >= '3.12'
     # via typer
 six==1.17.0
-    # via
-    #   markdownify
-    #   python-dateutil
+    # via python-dateutil
 soupsieve==2.10 ; python_full_version < '3.11.5'
     # via beautifulsoup4
 soupsieve==4.1.2 ; python_full_version >= '3.11.5'
     # via beautifulsoup4
-sse-starlette==3.7.0 ; python_full_version >= '3.12'
+sse-starlette==3.7.1 ; python_full_version >= '3.12'
     # via mcp
 starlette==1.10.0 ; python_full_version >= '3.12'
     # via
@@ -412,9 +410,9 @@ truststore==0.10.5 ; sys_platform != 'emscripten'
     # via
     #   httpcore2
     #   httpx2
-typer==0.29.1 ; python_full_version >= '3.12'
+typer==0.29.2 ; python_full_version >= '3.12'
     # via mistralai-agents
-types-protobuf==7.35.1.20260906 ; python_full_version >= '3.12'
+types-protobuf==7.35.1.20261122 ; python_full_version >= '3.12'
     # via temporalio
 typing-extensions==4.16.0
     # via

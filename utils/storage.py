@@ -808,6 +808,17 @@ class UserStocksPersistError(RuntimeError):
     """Raised when user_stocks.json could not be written safely."""
 
 
+def _replace_user_stocks_with_retry(tmp_file: Path, target_file: Path) -> None:
+    for attempt in range(4):
+        try:
+            os.replace(tmp_file, target_file)
+            return
+        except PermissionError:
+            if not _is_windows() or attempt == 3:
+                raise
+            time.sleep(0.015 * (attempt + 1))
+
+
 def _write_user_stocks_with_lock(
     data_encoded: str, tmp_file: Path, target_file: Path, lock_file: Path
 ) -> None:
@@ -859,15 +870,7 @@ def _write_user_stocks_with_lock(
                         except OSError:
                             pass
                     if tmp_file.exists():
-                        for attempt in range(4):
-                            try:
-                                os.replace(tmp_file, target_file)
-                                break
-                            except PermissionError:
-                                if _is_windows() and attempt < 3:
-                                    time.sleep(0.015 * (attempt + 1))
-                                    continue
-                                raise
+                        _replace_user_stocks_with_retry(tmp_file, target_file)
                     else:
                         raise UserStocksPersistError(
                             f"user_stocks tmp file missing after locked write: {tmp_file}"
@@ -950,7 +953,7 @@ def _write_user_stocks_with_lock(
                     finally:
                         os.umask(old_umask)
                 # Promote inside the lock (no TOCTOU window).
-                os.replace(tmp_file, target_file)
+                _replace_user_stocks_with_retry(tmp_file, target_file)
                 o_dir = getattr(os, "O_DIRECTORY", None)
                 if o_dir is not None:
                     try:

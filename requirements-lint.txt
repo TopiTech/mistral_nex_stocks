@@ -1,4 +1,4 @@
 # Lint tools — pinned versions for CI reproducibility (see pyproject.toml dependency-groups.lint)
 flake8==7.5.0
 pylint==4.1.4
-ruff==0.17.5
+ruff==0.17.6

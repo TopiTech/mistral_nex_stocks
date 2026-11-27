@@ -430,7 +430,7 @@ class MarketDataState:
                 return False
             if target.get("probing"):
                 since = float(target.get("probing_since") or 0.0)
-                if since <= 0.0 or (now_mono - since) < probe_ttl_sec:
+                if (now_mono - since) < probe_ttl_sec:
                     return False
             target["probing"] = True
             target["probing_since"] = now_mono

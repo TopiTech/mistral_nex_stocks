@@ -64,12 +64,12 @@ def test_circuit_enter_call_ttl_reclaim_and_closed_race() -> None:
     allowed2, claimed2, reason2 = market.enter_circuit_call(svc)
     assert (allowed2, claimed2, reason2) == (False, False, "busy")
 
-    # Stale probe past _CIRCUIT_PROBE_TTL_SEC is reclaimed cleanly.
+    # Stale probes are reclaimed even when a low monotonic clock origin
+    # makes the saved timestamp negative (e.g. soon after OS startup).
     with market.circuit_lock:
-        market.circuit_states[svc]["probing_since"] = (
-            time.monotonic() - (MarketDataState._CIRCUIT_PROBE_TTL_SEC + 5.0)
-        )
-    allowed3, claimed3, reason3 = market.enter_circuit_call(svc)
+        market.circuit_states[svc]["probing_since"] = -205.0
+    with patch("market_state.time.monotonic", return_value=100.0):
+        allowed3, claimed3, reason3 = market.enter_circuit_call(svc)
     assert (allowed3, claimed3, reason3) == (True, True, "")
 
     # If state flips HALF_OPEN -> CLOSED between get_circuit_state and try_claim,

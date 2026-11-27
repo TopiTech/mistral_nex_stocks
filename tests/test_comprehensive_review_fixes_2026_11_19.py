@@ -70,6 +70,14 @@ def test_decode_http_response_text_avoids_iso8859_1_mojibake_and_handles_meta():
     )
     assert "日経平均株価チャート" in decode_http_response_text(resp_utf8)
 
+    response_without_headers = SimpleNamespace(
+        headers=None,
+        encoding="ISO-8859-1",
+        content=utf8_html,
+        text=utf8_html.decode("latin-1"),
+    )
+    assert "日経平均株価チャート" in decode_http_response_text(response_without_headers)
+
     sjis_html = (
         '<html><head><meta charset="Shift_JIS"></head>'
         "<body>現在値 2,500円</body></html>"

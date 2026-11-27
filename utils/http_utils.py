@@ -138,10 +138,9 @@ def decode_http_response_text(resp: Any, *, default_encoding: str = "utf-8") -> 
 
         headers = getattr(resp, "headers", None)
         content_type = None
-        if isinstance(headers, dict) or (
-            headers is not None and callable(getattr(headers, "get", None))
-        ):
-            content_type = headers.get("Content-Type") or headers.get("content-type")
+        get_header = getattr(headers, "get", None)
+        if callable(get_header):
+            content_type = get_header("Content-Type") or get_header("content-type")
         if isinstance(content_type, str):
             m_hdr = _CHARSET_RE.search(content_type)
             if m_hdr:

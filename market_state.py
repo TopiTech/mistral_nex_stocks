@@ -429,7 +429,16 @@ class MarketDataState:
             if not target or target.get("status") != "HALF_OPEN":
                 return False
             if target.get("probing"):
-                since = float(target.get("probing_since") or 0.0)
+                # A missing timestamp means the claim cannot be proven stale
+                # (legacy/partially initialised state), so treat it as live
+                # instead of silently starting a second concurrent probe.
+                raw_since = target.get("probing_since")
+                if raw_since is None:
+                    return False
+                try:
+                    since = float(raw_since)
+                except (TypeError, ValueError):
+                    return False
                 if (now_mono - since) < probe_ttl_sec:
                     return False
             target["probing"] = True

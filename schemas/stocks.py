@@ -406,12 +406,16 @@ class ScreenerQueryRequest(BaseModel):
                 raise ValueError("must_be_non_negative")
             return val
         if isinstance(v, (int, float)):
-            if not math.isfinite(v):
+            try:
+                fval = float(v)
+            except OverflowError:
+                raise ValueError("must_be_finite") from None
+            if not math.isfinite(fval):
                 raise ValueError("must_be_finite")
             field_name = info.field_name or ""
-            if field_name not in ("min_change", "max_change") and v < 0:
+            if field_name not in ("min_change", "max_change") and fval < 0:
                 raise ValueError("must_be_non_negative")
-            return float(v)
+            return fval
         raise ValueError("must_be_number")
 
     @model_validator(mode="after")

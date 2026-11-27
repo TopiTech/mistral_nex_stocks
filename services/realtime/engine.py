@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import threading
 import time
 from collections.abc import Generator
@@ -45,6 +44,13 @@ PTS_JOIN_TIMEOUT_SEC: float = 10.0
 # each a (connect, read) pair. stop() drains an in-flight fetch up to this
 # bound, then reports False explicitly instead of wedging restart().
 PTS_FETCH_DRAIN_TIMEOUT_SEC: float = 30.0
+
+
+def _finite_numeric_value(value: object) -> float | None:
+    """Return *value* as a finite float when it is a non-boolean int or float."""
+    if isinstance(value, (int, float)) and not is_bool_like(value):
+        return _finite_number(value)
+    return None
 
 
 def _producer_symbol(payload: object) -> str | None:
@@ -220,14 +226,8 @@ class RealtimeMarketEngine:
             or is_jp_stock_code(bare_code)
         )
         decimals = 2 if is_jpy else 4
-        price = payload.get("price")
-        if (
-            price is not None
-            and isinstance(price, (int, float))
-            and not is_bool_like(price)
-            and math.isfinite(price)
-            and price > 0
-        ):
+        price = _finite_numeric_value(payload.get("price"))
+        if price is not None and price > 0:
             prev_close = _get_yfinance_previous_close(symbol)
             if prev_close and prev_close > 0:
                 change = price - prev_close
@@ -242,23 +242,13 @@ class RealtimeMarketEngine:
                 except Exception as exc:
                     logger.debug("Failed updating previous_close cache for %s: %s", symbol, exc)
 
-        raw_ch = payload.get("change")
-        if (
-            raw_ch is not None
-            and isinstance(raw_ch, (int, float))
-            and not is_bool_like(raw_ch)
-            and math.isfinite(raw_ch)
-        ):
-            payload["change"] = round(float(raw_ch), decimals)
+        ch_val = _finite_numeric_value(payload.get("change"))
+        if ch_val is not None:
+            payload["change"] = round(ch_val, decimals)
 
-        raw_chp = payload.get("change_percent")
-        if (
-            raw_chp is not None
-            and isinstance(raw_chp, (int, float))
-            and not is_bool_like(raw_chp)
-            and math.isfinite(raw_chp)
-        ):
-            payload["change_percent"] = round(float(raw_chp), 2)
+        chp_val = _finite_numeric_value(payload.get("change_percent"))
+        if chp_val is not None:
+            payload["change_percent"] = round(chp_val, 2)
 
         should_continue, inc_vol_f, yf_vol_fallback = self._resolve_volume_before_lock(
             self.market_store, symbol, payload, registration
@@ -304,31 +294,15 @@ class RealtimeMarketEngine:
         )
         decimals = 2 if is_jp else 4
 
-        raw_price = payload.get("price")
-        if (
-            raw_price is not None
-            and isinstance(raw_price, (int, float))
-            and not is_bool_like(raw_price)
-            and math.isfinite(raw_price)
-            and raw_price > 0
-        ):
-            payload["price"] = round(float(raw_price), decimals)
+        raw_price = _finite_numeric_value(payload.get("price"))
+        if raw_price is not None and raw_price > 0:
+            payload["price"] = round(raw_price, decimals)
 
-        raw_ch = payload.get("change")
-        raw_chp = payload.get("change_percent")
+        raw_ch = _finite_numeric_value(payload.get("change"))
+        raw_chp = _finite_numeric_value(payload.get("change_percent"))
 
-        has_ch = (
-            raw_ch is not None
-            and isinstance(raw_ch, (int, float))
-            and not is_bool_like(raw_ch)
-            and math.isfinite(raw_ch)
-        )
-        has_chp = (
-            raw_chp is not None
-            and isinstance(raw_chp, (int, float))
-            and not is_bool_like(raw_chp)
-            and math.isfinite(raw_chp)
-        )
+        has_ch = raw_ch is not None
+        has_chp = raw_chp is not None
 
         prev_close = _get_yfinance_previous_close(symbol)
         if prev_close and prev_close > 0:
@@ -344,13 +318,10 @@ class RealtimeMarketEngine:
 
             if (
                 raw_price is not None
-                and isinstance(raw_price, (int, float))
-                and not is_bool_like(raw_price)
-                and math.isfinite(raw_price)
                 and raw_price > 0
-                and (not has_ch or (raw_ch == 0.0 and abs(float(raw_price) - prev_close) > 1e-4))
+                and (not has_ch or (raw_ch == 0.0 and abs(raw_price - prev_close) > 1e-4))
             ):
-                calc_change = float(raw_price) - prev_close
+                calc_change = raw_price - prev_close
                 payload["change"] = round(calc_change, decimals)
                 if not has_chp or raw_chp == 0.0:
                     payload["change_percent"] = round((calc_change / prev_close) * 100, 2)
@@ -358,14 +329,14 @@ class RealtimeMarketEngine:
                 has_chp = True
 
         if has_ch and "change" in payload:
-            ch_val = payload["change"]
-            if isinstance(ch_val, (int, float)) and not is_bool_like(ch_val) and math.isfinite(ch_val):
-                payload["change"] = round(float(ch_val), decimals)
+            ch_val = _finite_numeric_value(payload["change"])
+            if ch_val is not None:
+                payload["change"] = round(ch_val, decimals)
 
         if has_chp and "change_percent" in payload:
-            chp_val = payload["change_percent"]
-            if isinstance(chp_val, (int, float)) and not is_bool_like(chp_val) and math.isfinite(chp_val):
-                payload["change_percent"] = round(float(chp_val), 2)
+            chp_val = _finite_numeric_value(payload["change_percent"])
+            if chp_val is not None:
+                payload["change_percent"] = round(chp_val, 2)
 
         should_continue, inc_vol_f, yf_vol_fallback = self._resolve_volume_before_lock(
             self.pts_store, symbol, payload, registration

@@ -1365,6 +1365,8 @@ def _sanitize_error_value(
     """
     if isinstance(value, str):
         return _sanitize_error_message(value)
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     if isinstance(value, (dict, list, tuple)):
         if _depth >= _MAX_ERROR_SANITIZE_DEPTH:
             return "[max-depth]"

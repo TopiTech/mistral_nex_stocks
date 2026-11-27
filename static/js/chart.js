@@ -128,8 +128,17 @@ const aiTechnicalLinesPlugin = {
       const metrics = ctx.measureText(labelText);
       const bgWidth = metrics.width + 12;
       const bgHeight = 18;
-      const badgeX = Math.min(endX - bgWidth, xScale.right - bgWidth - 4);
-      const badgeY = endY - bgHeight / 2;
+      const minBadgeX = Number.isFinite(xScale.left) ? xScale.left + 4 : 4;
+      const maxBadgeX = Number.isFinite(xScale.right)
+        ? Math.max(minBadgeX, xScale.right - bgWidth - 4)
+        : Math.max(minBadgeX, endX - bgWidth);
+      const badgeX = Math.max(minBadgeX, Math.min(endX - bgWidth, maxBadgeX));
+      const rawBadgeY = endY - bgHeight / 2;
+      const minBadgeY = Number.isFinite(yScale.top) ? yScale.top + 2 : 2;
+      const maxBadgeY = Number.isFinite(yScale.bottom)
+        ? Math.max(minBadgeY, yScale.bottom - bgHeight - 2)
+        : rawBadgeY;
+      const badgeY = Math.max(minBadgeY, Math.min(rawBadgeY, maxBadgeY));
 
       ctx.setLineDash([]);
       ctx.fillStyle = "rgba(13, 17, 30, 0.88)";

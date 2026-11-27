@@ -379,7 +379,8 @@ class MarketDataState:
                 return False
             status = target.get("status")
             if status == "OPEN":
-                if now >= (target.get("open_until") or 0.0):
+                open_until = finite_float(target.get("open_until"), 0.0) or 0.0
+                if now >= open_until:
                     target["status"] = "HALF_OPEN"
                     target["probing"] = False
                     target["probing_since"] = 0.0
@@ -401,7 +402,8 @@ class MarketDataState:
             if not target:
                 return False
             if target.get("status") == "OPEN":
-                return now < (target.get("open_until") or 0.0)
+                open_until = finite_float(target.get("open_until"), 0.0) or 0.0
+                return now < open_until
             return False
 
     _CIRCUIT_PROBE_TTL_SEC: float = 300.0
@@ -429,17 +431,11 @@ class MarketDataState:
             if not target or target.get("status") != "HALF_OPEN":
                 return False
             if target.get("probing"):
-                # A missing timestamp means the claim cannot be proven stale
-                # (legacy/partially initialised state), so treat it as live
-                # instead of silently starting a second concurrent probe.
-                raw_since = target.get("probing_since")
-                if raw_since is None:
-                    return False
-                try:
-                    since = float(raw_since)
-                except (TypeError, ValueError):
-                    return False
-                if (now_mono - since) < probe_ttl_sec:
+                # A missing or non-finite timestamp means the claim cannot be
+                # proven stale, so treat it as live instead of silently starting
+                # a second concurrent probe.
+                since = finite_float(target.get("probing_since"), None)
+                if since is None or (now_mono - since) < probe_ttl_sec:
                     return False
             target["probing"] = True
             target["probing_since"] = now_mono

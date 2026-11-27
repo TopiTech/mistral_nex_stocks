@@ -1323,6 +1323,10 @@ _MAX_PROVIDER_ERROR_SCALAR_LEN = 200
 
 def _sanitize_provider_error_scalar(value: Any) -> Any:
     """Return a safe scalar diagnostic value, or ``None`` to drop it."""
+    if isinstance(value, bool):
+        return value
+    if is_bool_like(value):
+        return bool(value)
     if not isinstance(value, _ALLOWED_PROVIDER_ERROR_SCALAR_TYPES):
         return None
     if isinstance(value, str):
@@ -1331,6 +1335,8 @@ def _sanitize_provider_error_scalar(value: Any) -> Any:
         from utils.text_utils import _sanitize_error_message
 
         return _sanitize_error_message(value)[:_MAX_PROVIDER_ERROR_SCALAR_LEN]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     return value
 
 

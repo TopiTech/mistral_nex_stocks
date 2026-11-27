@@ -137,7 +137,7 @@ def ensure_manifest_exists():
             tmp_path = manifest_path.with_suffix(".json.tmp")
             try:
                 data = json.loads(template_path.read_text(encoding="utf-8"))
-                data["allowed_origins"] = ["chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef"]
+                data["allowed_origins"] = ["chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/"]
                 tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
                 os.replace(tmp_path, manifest_path)
                 created = True

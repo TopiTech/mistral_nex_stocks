@@ -260,6 +260,15 @@ def _build_openai_headers(api_key: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _is_redirect_status(status_code: Any) -> bool:
+    """Return whether *status_code* is an HTTP 3xx redirect rejected by follow_redirects=False."""
+    return (
+        isinstance(status_code, int)
+        and not isinstance(status_code, bool)
+        and 300 <= status_code < 400
+    )
+
+
 def verify_openai_connection(
     base_url: str | None = None,
     api_key: str | None = None,
@@ -283,6 +292,13 @@ def verify_openai_connection(
             resp = client.get(models_endpoint, headers=headers)
             latency_ms = int((time.time() - start_ts) * 1000)
 
+            if _is_redirect_status(resp.status_code):
+                return {
+                    "ok": False,
+                    "valid": False,
+                    "error": f"リダイレクト応答は許可されていません (HTTP {resp.status_code})",
+                    "latency_ms": latency_ms,
+                }
             if resp.status_code == 401:
                 return {
                     "ok": False,
@@ -340,6 +356,13 @@ def verify_openai_connection(
                         "ok": False,
                         "valid": False,
                         "error": auth_err,
+                        "latency_ms": latency_ms,
+                    }
+                if _is_redirect_status(auth_resp.status_code):
+                    return {
+                        "ok": False,
+                        "valid": False,
+                        "error": f"OpenRouterリダイレクト応答は許可されていません (HTTP {auth_resp.status_code})",
                         "latency_ms": latency_ms,
                     }
                 if auth_resp.status_code >= 400:
@@ -918,6 +941,25 @@ def call_openai_chat(
                 if payload_modified:
                     resp = client.post(endpoint, json=payload, headers=headers)
 
+            if _is_redirect_status(resp.status_code):
+                logger.warning(
+                    "OpenAI-compat redirect blocked id=%s model=%s status=%d url=%s",
+                    req_id,
+                    model,
+                    resp.status_code,
+                    _safe_base_url_for_log(endpoint),
+                )
+                if circuit_probe_claimed:
+                    app_state.market.release_circuit_probe("openai_compatible")
+                    circuit_probe_claimed = False
+                return {
+                    "error": {
+                        "message": f"Redirects are not permitted from OpenAI provider (HTTP {resp.status_code})",
+                        "status_code": resp.status_code,
+                        "provider": "openai_compatible",
+                    }
+                }
+
             if resp.status_code >= 400:
                 err_detail = resp.text[:500]
                 try:
@@ -982,6 +1024,7 @@ def call_openai_chat(
                     "error": {
                         "message": "Invalid JSON response from OpenAI provider",
                         "status_code": 502,
+                        "provider": "openai_compatible",
                     }
                 }
             if not isinstance(data, dict):
@@ -995,6 +1038,7 @@ def call_openai_chat(
                     "error": {
                         "message": "Invalid JSON response from OpenAI provider",
                         "status_code": 502,
+                        "provider": "openai_compatible",
                     }
                 }
 
@@ -1307,6 +1351,22 @@ def stream_openai_chat(
                         stream = None
                         stream_cm = _open_stream(payload)
                         stream = stream_cm.__enter__()
+
+                if _is_redirect_status(stream.status_code):
+                    stream_errored = True
+                    logger.warning(
+                        "OpenAI stream redirect blocked model=%s status=%d",
+                        model,
+                        stream.status_code,
+                    )
+                    if circuit_probe_claimed:
+                        app_state.market.release_circuit_probe("openai_compatible")
+                        circuit_probe_claimed = False
+                    yield _stream_error_event(
+                        f"Redirects are not permitted from OpenAI provider (HTTP {stream.status_code})",
+                        stream.status_code,
+                    )
+                    return
 
                 if stream.status_code >= 400:
                     stream_errored = True
@@ -1994,6 +2054,13 @@ def get_openai_embeddings_batch(
                     resp.status_code,
                     _sanitize_error_message(resp.text[:200]),
                 )
+                if _is_redirect_status(resp.status_code):
+                    logger.warning(
+                        "OpenAI embeddings aborted after redirect response (HTTP %d); "
+                        "remaining batches fall back to None",
+                        resp.status_code,
+                    )
+                    break
                 if resp.status_code >= 500 and app_state.market.is_circuit_open(
                     "openai_compatible"
                 ):

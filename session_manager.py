@@ -887,14 +887,15 @@ class YFinanceSessionManager:
             self._excluded_until[key] = new_until
             self._ua_index = (self._ua_index + 1) % len(YFINANCE_USER_AGENTS)
             self._session_epoch += 1
+            target_epoch = self._session_epoch
             logger.warning(
                 "YFinanceSessionManager rotated due to limit. UA index: %d, epoch: %d",
                 self._ua_index,
-                self._session_epoch,
+                target_epoch,
             )
         # Drop all prior-epoch sessions process-wide (they carry the burnt
         # crumb/cookie identity). Spares any session currently inside a request.
-        self._reclaim_epoch_sessions(self._session_epoch)
+        self._reclaim_epoch_sessions(target_epoch)
         # A rate-limit means our current crumb/cookie identity is burnt. Force a
         # fresh authentication on the next request so we don't immediately
         # re-trigger the block with a stale crumb. (Called outside the lock to
@@ -906,14 +907,15 @@ class YFinanceSessionManager:
         with self._lock:
             self._ua_index = (self._ua_index + 1) % len(YFINANCE_USER_AGENTS)
             self._session_epoch += 1
+            target_epoch = self._session_epoch
             logger.warning(
                 "YFinanceSessionManager rotated User-Agent due to session refresh/401. UA index: %d, epoch: %d",
                 self._ua_index,
-                self._session_epoch,
+                target_epoch,
             )
         # Sweep prior-epoch sessions (burnt crumb/cookie identity). In-flight
         # sessions are spared.
-        self._reclaim_epoch_sessions(self._session_epoch)
+        self._reclaim_epoch_sessions(target_epoch)
         reset_yfinance_auth()
 
     def is_session_alive(self, session) -> bool:

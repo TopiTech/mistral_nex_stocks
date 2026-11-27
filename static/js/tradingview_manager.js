@@ -987,10 +987,27 @@
         mountWidget();
       } else {
         let tvScript = document.getElementById("tv-script-js");
-        if (tvScript && tvScript.dataset?.loadFailed === "true") {
+        if (
+          tvScript &&
+          (tvScript.dataset?.loadFailed === "true" ||
+            tvScript.dataset?.loaded === "true")
+        ) {
+          // Failed or already finished loading without exposing
+          // TradingView.widget — remove the stale tag so we recreate a fresh
+          // <script> instead of attaching a load listener that will never fire.
           tvScript.remove();
           tvScript = null;
         }
+        const handleLoaded = (scriptEl) => {
+          if (scriptEl?.dataset) {
+            scriptEl.dataset.loaded = "true";
+          }
+          if (window.TradingView && window.TradingView.widget) {
+            mountWidget();
+          } else if (typeof scriptEl?.onerror === "function") {
+            scriptEl.onerror();
+          }
+        };
         if (!tvScript) {
           tvScript = document.createElement("script");
           tvScript.id = "tv-script-js";
@@ -998,7 +1015,7 @@
           tvScript.async = true;
           const nonce = document.querySelector("script[nonce]")?.nonce || "";
           if (nonce) tvScript.nonce = nonce;
-          tvScript.onload = mountWidget;
+          tvScript.onload = () => handleLoaded(tvScript);
           // (L15, 2026-11-07 review) a failed CDN load left a dead script
           // element in the DOM forever: every retry re-attached a `load`
           // listener to an element that can never fire, so the fullscreen
@@ -1006,10 +1023,14 @@
           // element so the next renderAdvancedChart creates a fresh one.
           tvScript.onerror = () => {
             console.error("TradingView: Failed to load the tv.js script");
-            tvScript.dataset.loadFailed = "true";
+            if (tvScript.dataset) {
+              tvScript.dataset.loadFailed = "true";
+            }
             const stale = document.getElementById("tv-script-js");
             if (stale) {
-              stale.dataset.loadFailed = "true";
+              if (stale.dataset) {
+                stale.dataset.loadFailed = "true";
+              }
               stale.remove();
             } else if (tvScript.parentNode) {
               tvScript.remove();
@@ -1038,8 +1059,9 @@
           if (tvScript._pendingMountHandler) {
             tvScript.removeEventListener("load", tvScript._pendingMountHandler);
           }
-          tvScript._pendingMountHandler = mountWidget;
-          tvScript.addEventListener("load", mountWidget);
+          const onPendingLoad = () => handleLoaded(tvScript);
+          tvScript._pendingMountHandler = onPendingLoad;
+          tvScript.addEventListener("load", onPendingLoad);
         }
       }
     },

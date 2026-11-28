@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import vm from "node:vm";
+import { extractFunction } from "./_brace_matcher.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const UTILS_PATH = path.join(ROOT, "static/js/utils.js");
@@ -30,26 +31,6 @@ let checks = 0;
 
 function fail(message) {
   failures.push(message);
-}
-
-function extractFunction(source, name, sourcePath) {
-  const marker = `function ${name}(`;
-  const start = source.indexOf(marker);
-  if (start === -1) {
-    throw new Error(`${sourcePath} no longer defines ${name}()`);
-  }
-  const open = source.indexOf("{", start);
-  if (open === -1) throw new Error(`${sourcePath} has no body for ${name}()`);
-  let depth = 0;
-  for (let index = open; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === "{") depth += 1;
-    else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, index + 1);
-    }
-  }
-  throw new Error(`${sourcePath} has unbalanced braces in ${name}()`);
 }
 
 function equal(actual, expected, label) {

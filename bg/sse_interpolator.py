@@ -159,7 +159,12 @@ def _interpolate_and_fluctuate_market(
     return new_current
 
 
-def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: bool) -> None:
+def _fluctuate_indices(
+    indices_dict: dict[str, Any],
+    us_open: bool,
+    jp_open: bool,
+    target_indices: dict[str, Any] | None = None,
+) -> None:
     """開場ステータスに応じて主要指数の価格を微小変動させる"""
     for key, info in indices_dict.items():
         if not isinstance(info, dict) or "price" not in info:
@@ -177,6 +182,26 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
         if not math.isfinite(price) or not math.isfinite(change):
             continue
 
+        target_price = price
+        if isinstance(target_indices, dict):
+            t_info = target_indices.get(key)
+            if isinstance(t_info, dict):
+                try:
+                    t_price = normalize_optional_number(t_info.get("price"))
+                except (ValueError, TypeError):
+                    t_price = None
+                if t_price is not None and math.isfinite(t_price) and t_price > 0:
+                    target_price = t_price
+                    _t_change = normalize_optional_number(
+                        t_info.get("change"), allow_negative=True
+                    )
+                    if _t_change is not None and math.isfinite(_t_change):
+                        change = _t_change
+
+        prev_close = target_price - change if target_indices is not None else price - change
+        if price <= 0 or not math.isfinite(target_price) or target_price <= 0:
+            continue
+
         should_fluctuate = (
             (key == "N225" and jp_open)
             or (key in ("DJI", "SP500", "NASDAQ", "VIX") and us_open)
@@ -186,12 +211,13 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
         if should_fluctuate and _get_simulate_fluctuation() and random.random() < 0.3:  # nosec B311
             vol = 0.0001
             change_factor = 1.0 + random.uniform(-vol, vol)  # nosec B311
-            new_price = price * change_factor
-            prev_close = price - change
+            diff_step = (target_price - price) * 0.25
+            new_price = price * change_factor + diff_step
+            new_price = max(target_price * 0.99, min(target_price * 1.01, new_price))
 
+            is_fx = key in ("USDJPY", "EURJPY")
+            published_price = round(new_price, 3 if is_fx else 2)
             if prev_close != 0 and math.isfinite(prev_close):
-                is_fx = key in ("USDJPY", "EURJPY")
-                published_price = round(new_price, 3 if is_fx else 2)
                 # Change must be consistent with the rounded price that is
                 # actually published (same rule as the stock interpolator).
                 new_change = published_price - prev_close
@@ -201,14 +227,7 @@ def _fluctuate_indices(indices_dict: dict[str, Any], us_open: bool, jp_open: boo
                 info["change"] = round(new_change, 3 if is_fx else 2)
                 info["percent"] = round(new_percent, 2)
             else:
-                # prev_close == 0 (or non-finite): a percent change is
-                # undefined. Keep the price/change fresh but leave percent
-                # untouched rather than emitting NaN/inf into the SSE frame
-                # (allow_nan=False would drop the whole payload downstream).
-                if key in ("USDJPY", "EURJPY"):
-                    info["price"] = round(new_price, 3)
-                else:
-                    info["price"] = round(new_price, 2)
+                info["price"] = published_price
 
 
 def bg_interpolate_loop() -> None:
@@ -241,6 +260,14 @@ def bg_interpolate_loop() -> None:
                 current_idx = list(app_state.market.current_stocks_cache.get("idx", []))
 
                 indices_copy = copy.deepcopy(app_state.market.current_indices_cache)
+                target_indices_snapshot = (
+                    copy.deepcopy(app_state.market.target_indices_cache)
+                    if isinstance(getattr(app_state.market, "target_indices_cache", None), dict)
+                    else None
+                )
+                if not target_indices_snapshot and indices_copy:
+                    app_state.market.target_indices_cache = copy.deepcopy(indices_copy)
+                    target_indices_snapshot = copy.deepcopy(indices_copy)
                 # M25 (2026-11-07 review): snapshot the exact container objects
                 # read above. The compute below runs WITHOUT the lock; if a
                 # concurrent publisher (sync_all_stocks_now / the reset
@@ -272,7 +299,12 @@ def bg_interpolate_loop() -> None:
                     # publishers (_update_indices_data) as well as whole-dict
                     # replacements (sync publish / reset).
                     fluctuated_indices = copy.deepcopy(indices_copy)
-                    _fluctuate_indices(fluctuated_indices, us_open, jp_open)
+                    _fluctuate_indices(
+                        fluctuated_indices,
+                        us_open,
+                        jp_open,
+                        target_indices=target_indices_snapshot,
+                    )
 
                 with app_state.cache.sse_data_lock:
                     still_ours = (

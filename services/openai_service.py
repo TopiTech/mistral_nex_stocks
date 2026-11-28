@@ -42,7 +42,7 @@ from credential_manager import (
 )
 from services.ai_tools import MISTRAL_FINANCIAL_TOOLS, execute_mistral_tool_call
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
-from utils.networking import validate_outbound_base_url
+from utils.networking import normalize_chart_image_url, validate_outbound_base_url
 from utils.normalization import is_bool_like
 from utils.text_utils import _sanitize_error_message
 from utils.text_utils import json_safe_tool_value as _json_safe_tool_value
@@ -80,6 +80,90 @@ def _safe_base_url_for_log(base_url: str) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+_OPENAI_MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+_OPENAI_MAX_ERROR_BYTES = 64 * 1024
+_OPENAI_MAX_STREAM_BYTES = 10 * 1024 * 1024
+
+
+def _enforce_openai_response_size(resp: Any, max_bytes: int, context: str) -> None:
+    """Enforce bounded response bodies on real HTTP responses while staying mock-safe."""
+    headers = getattr(resp, "headers", None)
+    cl_raw = headers.get("Content-Length") if headers is not None and hasattr(headers, "get") else None
+    if isinstance(cl_raw, (int, str)) and not isinstance(cl_raw, bool):
+        try:
+            if int(str(cl_raw).strip()) > max_bytes:
+                raise ValueError(f"{context} response exceeds {max_bytes} bytes")
+        except ValueError as exc:
+            if "exceeds" in str(exc):
+                raise
+    raw_content = getattr(resp, "content", None)
+    if isinstance(raw_content, (bytes, bytearray)) and len(raw_content) > max_bytes:
+        raise ValueError(f"{context} response exceeds {max_bytes} bytes")
+
+
+def _read_bounded_stream_error_text(stream: Any, max_bytes: int = _OPENAI_MAX_ERROR_BYTES) -> str:
+    """Read an httpx error stream bounded by ``max_bytes``, staying mock-safe."""
+    headers = getattr(stream, "headers", None)
+    cl_raw = headers.get("Content-Length") if headers is not None and hasattr(headers, "get") else None
+    if isinstance(cl_raw, (int, str)) and not isinstance(cl_raw, bool):
+        try:
+            if int(str(cl_raw).strip()) > max_bytes:
+                return ""
+        except ValueError:
+            pass
+    if isinstance(stream, httpx.Response) and hasattr(stream, "iter_bytes"):
+        buf = bytearray()
+        for chunk in stream.iter_bytes():
+            if not isinstance(chunk, (bytes, bytearray)):
+                continue
+            remaining = max_bytes - len(buf)
+            if remaining <= 0:
+                break
+            buf.extend(chunk[:remaining])
+            if len(buf) >= max_bytes:
+                break
+        return buf.decode("utf-8", errors="replace")[:500]
+    stream.read()
+    raw_content = getattr(stream, "content", None)
+    if isinstance(raw_content, (bytes, bytearray)) and len(raw_content) > max_bytes:
+        return bytes(raw_content[:500]).decode("utf-8", errors="replace")
+    raw_text = getattr(stream, "text", "")
+    return raw_text[:500] if isinstance(raw_text, str) else ""
+
+
+def _extract_openai_reasoning_text(value: Any) -> str:
+    """Extract text from OpenAI-compatible reasoning fields (str, dict, or list)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("text", "value", "content", "reasoning"):
+            candidate = value.get(key)
+            if candidate:
+                extracted = _extract_openai_reasoning_text(candidate)
+                if extracted:
+                    return extracted
+        return ""
+    if isinstance(value, (list, tuple)):
+        return "".join(_extract_openai_reasoning_text(item) for item in value)
+    text_attr = getattr(value, "text", None)
+    if isinstance(text_attr, str):
+        return text_attr
+    return ""
+
+
+def _parse_stream_error_status(err_obj: Any) -> int:
+    """Extract a valid HTTP error status (default 502) from an in-band SSE error object."""
+    if isinstance(err_obj, dict):
+        for key in ("status_code", "status", "code"):
+            raw = err_obj.get(key)
+            if isinstance(raw, int) and not isinstance(raw, bool) and 400 <= raw <= 599:
+                return raw
+            if isinstance(raw, str) and raw.strip().isdigit():
+                parsed = int(raw.strip())
+                if 400 <= parsed <= 599:
+                    return parsed
+    return 502
 
 
 def _normalize_openai_temperature(temperature: Any) -> float | None:
@@ -290,6 +374,7 @@ def verify_openai_connection(
     try:
         with _create_httpx_client(timeout=timeout_sec, follow_redirects=False) as client:
             resp = client.get(models_endpoint, headers=headers)
+            _enforce_openai_response_size(resp, _OPENAI_MAX_RESPONSE_BYTES, "OpenAI models")
             latency_ms = int((time.time() - start_ts) * 1000)
 
             if _is_redirect_status(resp.status_code):
@@ -340,6 +425,9 @@ def verify_openai_connection(
                         "latency_ms": latency_ms,
                     }
                 auth_resp = client.get(f"{target_url}/auth/key", headers=headers)
+                _enforce_openai_response_size(
+                    auth_resp, _OPENAI_MAX_ERROR_BYTES, "OpenRouter auth"
+                )
                 if auth_resp.status_code == 401:
                     auth_err = "認証エラー: OpenRouterのAPIキーが無効です (HTTP 401)"
                     try:
@@ -857,10 +945,11 @@ def call_openai_chat(
             client = _get_openai_client(base_url, api_key)
             payload_modified = False
             resp = client.post(endpoint, json=payload, headers=headers)
+            _enforce_openai_response_size(resp, _OPENAI_MAX_RESPONSE_BYTES, "OpenAI chat")
 
             # Retry handler for common 400 / 422 parameter rejections across diverse OpenAI providers
             if resp.status_code in (400, 422):
-                resp_text_lower = resp.text.lower()
+                resp_text_lower = (resp.text[:_OPENAI_MAX_ERROR_BYTES]).lower()
 
                 # 1. max_tokens / max_completion_tokens incompatibility
                 if (
@@ -940,6 +1029,7 @@ def call_openai_chat(
 
                 if payload_modified:
                     resp = client.post(endpoint, json=payload, headers=headers)
+                    _enforce_openai_response_size(resp, _OPENAI_MAX_RESPONSE_BYTES, "OpenAI chat")
 
             if _is_redirect_status(resp.status_code):
                 logger.warning(
@@ -1122,7 +1212,7 @@ def call_openai_chat(
         # as provider failures: three in a row would open the circuit and
         # disable every OpenAI feature for the full window even though the
         # provider is healthy.
-        if isinstance(exc, httpx.TimeoutException):
+        if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
             status_code = 504
         elif isinstance(exc, (httpx.TransportError, ConnectionError, OSError)):
             status_code = 503
@@ -1131,7 +1221,7 @@ def call_openai_chat(
         else:
             status_code = 500
         is_provider_failure = isinstance(
-            exc, (httpx.TransportError, ConnectionError, OSError)
+            exc, (httpx.TransportError, ConnectionError, TimeoutError, OSError)
         ) or (resp_status is not None and resp_status >= 500)
         if is_provider_failure:
             app_state.market.report_circuit_result("openai_compatible", success=False)
@@ -1309,8 +1399,7 @@ def stream_openai_chat(
 
                 # Retry handler for common 400 parameter rejections (e.g. reasoning_effort / temperature / max_tokens)
                 if stream.status_code in (400, 422):
-                    stream.read()
-                    err_detail = stream.text[:500]
+                    err_detail = _read_bounded_stream_error_text(stream)
                     err_detail_lower = err_detail.lower()
                     modified = False
 
@@ -1370,8 +1459,7 @@ def stream_openai_chat(
 
                 if stream.status_code >= 400:
                     stream_errored = True
-                    stream.read()
-                    err_detail = stream.text[:500]
+                    err_detail = _read_bounded_stream_error_text(stream)
                     try:
                         err_json = json.loads(err_detail)
                         if isinstance(err_json, dict) and "error" in err_json:
@@ -1400,6 +1488,7 @@ def stream_openai_chat(
                     yield _stream_error_event(err_msg, stream.status_code)
                     return
 
+                stream_bytes = 0
                 for line in stream.iter_lines():
                     if not line:
                         continue
@@ -1408,6 +1497,9 @@ def stream_openai_chat(
                         if isinstance(line, (bytes, bytearray))
                         else str(line)
                     ).strip()
+                    stream_bytes += len(line) if isinstance(line, (bytes, bytearray)) else len(line_str.encode("utf-8", errors="replace"))
+                    if stream_bytes > _OPENAI_MAX_STREAM_BYTES:
+                        raise ValueError("OpenAI stream response exceeds size limit")
                     if line_str.startswith("data:"):
                         data_part = line_str.removeprefix("data:").strip()
                         if data_part == "[DONE]":
@@ -1416,6 +1508,35 @@ def stream_openai_chat(
                             chunk = json.loads(data_part)
                             if not isinstance(chunk, dict):
                                 continue
+                            chunk_err = chunk.get("error")
+                            if chunk_err is not None and chunk_err is not False:
+                                stream_errored = True
+                                err_status = _parse_stream_error_status(chunk_err)
+                                raw_err_msg = (
+                                    chunk_err.get("message", "")
+                                    if isinstance(chunk_err, dict)
+                                    else str(chunk_err)
+                                )
+                                logger.warning(
+                                    "OpenAI stream in-band SSE error model=%s status=%d",
+                                    model,
+                                    err_status,
+                                )
+                                if err_status >= 500:
+                                    app_state.market.report_circuit_result(
+                                        "openai_compatible", success=False
+                                    )
+                                    circuit_probe_claimed = False
+                                elif circuit_probe_claimed:
+                                    app_state.market.release_circuit_probe("openai_compatible")
+                                    circuit_probe_claimed = False
+                                yield _stream_error_event(
+                                    _public_openai_error_message(
+                                        Exception(raw_err_msg), err_status
+                                    ),
+                                    err_status,
+                                )
+                                return
                             saw_upstream_chunk = True
                             chunk_usage = chunk.get("usage")
                             if isinstance(chunk_usage, dict) and chunk_usage:
@@ -1440,11 +1561,7 @@ def stream_openai_chat(
                                     full_parts.append(delta_text)
                                     yield {"type": "delta", "text": delta_text}
                                 if r_val:
-                                    r_text = (
-                                        r_val
-                                        if isinstance(r_val, str)
-                                        else "".join(str(x) for x in r_val)
-                                    )
+                                    r_text = _extract_openai_reasoning_text(r_val)
                                     if r_text:
                                         if include_thinking is True:
                                             yield {"type": "thinking", "text": r_text}
@@ -1457,6 +1574,21 @@ def stream_openai_chat(
                         except Exception as c_err:
                             logger.debug("Failed parsing SSE chunk: %s", c_err)
                             continue
+
+                if not saw_upstream_chunk:
+                    stream_errored = True
+                    logger.warning(
+                        "OpenAI stream ended without any upstream JSON chunks model=%s",
+                        model,
+                    )
+                    if circuit_probe_claimed:
+                        app_state.market.release_circuit_probe("openai_compatible")
+                        circuit_probe_claimed = False
+                    yield _stream_error_event(
+                        "AIサービス（OpenAI互換）から有効なストリーム応答を受信できませんでした。",
+                        502,
+                    )
+                    return
 
                 app_state.market.report_circuit_result("openai_compatible", success=True)
                 circuit_probe_claimed = False
@@ -1479,7 +1611,7 @@ def stream_openai_chat(
         # Same rule as call_openai_chat: only communication-class failures and
         # explicit provider 5xx responses count against the circuit breaker.
         # Application bugs without an HTTP response must not open it.
-        if isinstance(exc, httpx.TimeoutException):
+        if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
             status_code = 504
         elif isinstance(exc, (httpx.TransportError, ConnectionError, OSError)):
             status_code = 503
@@ -1488,7 +1620,7 @@ def stream_openai_chat(
         else:
             status_code = 500
         is_provider_failure = isinstance(
-            exc, (httpx.TransportError, ConnectionError, OSError)
+            exc, (httpx.TransportError, ConnectionError, TimeoutError, OSError)
         ) or (resp_status is not None and resp_status >= 500)
         if is_provider_failure:
             app_state.market.report_circuit_result("openai_compatible", success=False)
@@ -1664,8 +1796,8 @@ def call_openai_chat_with_tools(
         # the typed 502 envelope.  The assistant message must reference exactly
         # the sanitized ids the tool results below use, otherwise the next
         # provider request is rejected for a dangling tool_call_id.
-        normalized_tcs: list[dict[str, Any]] = []
-        invalid_tc_ids: set[str] = set()
+        normalized_entries: list[tuple[dict[str, Any], bool]] = []
+        seen_tc_ids: set[str] = set()
         for idx, tc in enumerate(tool_calls):
             if not isinstance(tc, dict):
                 logger.warning(
@@ -1692,13 +1824,19 @@ def call_openai_chat_with_tools(
             tc_id = raw_id if isinstance(raw_id, str) and raw_id else ""
             if not tc_id:
                 tc_id = f"call_{iteration}_{idx}_{_gen_token()}"
+            if tc_id in seen_tc_ids:
+                suffix = f"_{idx}_{_gen_token()}"
+                prefix_len = max(1, max_tool_call_id_chars - len(suffix))
+                tc_id = f"{tc_id[:prefix_len]}{suffix}"
+            seen_tc_ids.add(tc_id)
 
+            call_invalid = False
             raw_name = fn.get("name")
             if isinstance(raw_name, str) and raw_name.strip():
                 fn_name = raw_name.strip()[:80]
             else:
                 fn_name = "unknown_tool"
-                invalid_tc_ids.add(tc_id)
+                call_invalid = True
 
             fn_args = fn.get("arguments")
             if fn_args is None:
@@ -1714,7 +1852,7 @@ def call_openai_chat_with_tools(
                         "OpenAI agent loop rejected unserializable tool arguments: tool=%s",
                         fn_name,
                     )
-                    invalid_tc_ids.add(tc_id)
+                    call_invalid = True
                     fn_args = "{}"
                 else:
                     if len(serialized_args) > max_tool_argument_chars:
@@ -1730,20 +1868,24 @@ def call_openai_chat_with_tools(
                     fn_name,
                     type(fn_args).__name__,
                 )
-                invalid_tc_ids.add(tc_id)
+                call_invalid = True
                 fn_args = "{}"
 
-            normalized_tcs.append(
-                {
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {"name": fn_name, "arguments": fn_args},
-                }
+            normalized_entries.append(
+                (
+                    {
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {"name": fn_name, "arguments": fn_args},
+                    },
+                    call_invalid,
+                )
             )
 
-        if not normalized_tcs:
+        if not normalized_entries:
             return _tool_loop_error("AIサービスから不正なツール呼び出しを受信しました")
 
+        normalized_tcs = [tc for tc, _ in normalized_entries]
         # Normalize assistant message for OpenAI/Ollama compatibility:
         # Some compatible servers reject 'content: None' while others accept it.
         # Ensure clean dict structure with role and tool_calls preserved.
@@ -1754,16 +1896,16 @@ def call_openai_chat_with_tools(
         }
         current_messages.append(assistant_turn_msg)
 
-        def _exec_single_tool(
-            tc: dict[str, Any], invalid_ids: set[str] = invalid_tc_ids
-        ) -> dict[str, Any]:
+        def _exec_single_tool(entry: tuple[dict[str, Any], bool]) -> dict[str, Any]:
+            tc, is_invalid = entry
+
             def _execute() -> dict[str, Any]:
                 tc_id = tc["id"]
                 fn = tc["function"]
                 fn_name = fn["name"]
                 fn_args = fn["arguments"]
                 try:
-                    if tc_id in invalid_ids:
+                    if is_invalid:
                         raise TypeError("tool function payload is malformed")
                     tool_output = execute_mistral_tool_call(fn_name, fn_args)
                     tool_content = _serialize_tool_result(tool_output)
@@ -1791,15 +1933,15 @@ def call_openai_chat_with_tools(
                     return _execute()
             return _execute()
 
-        if len(normalized_tcs) > 1:
+        if len(normalized_entries) > 1:
             with DaemonThreadPoolExecutor(
-                max_workers=min(len(normalized_tcs), 4), thread_name_prefix="openai-tool-exec"
+                max_workers=min(len(normalized_entries), 4), thread_name_prefix="openai-tool-exec"
             ) as executor:
-                tool_messages = list(executor.map(_exec_single_tool, normalized_tcs))
+                tool_messages = list(executor.map(_exec_single_tool, normalized_entries))
             current_messages.extend(tool_messages)
         else:
-            for tc in normalized_tcs:
-                current_messages.append(_exec_single_tool(tc))
+            for entry in normalized_entries:
+                current_messages.append(_exec_single_tool(entry))
 
     # If loop finishes without direct answer, call one last synthesis
     return call_openai_chat(
@@ -1827,12 +1969,9 @@ def analyze_chart_image_with_openai(
 
     target_model = model or get_openai_model()
 
-    clean_img = image_data.strip()
-    if clean_img.startswith(("http://", "https://", "data:image/")):
-        image_url = clean_img
-    else:
-        clean_b64 = "".join(clean_img.split())
-        image_url = f"data:image/png;base64,{clean_b64}"
+    image_url, image_err = normalize_chart_image_url(image_data)
+    if image_err or not image_url:
+        return {"error": image_err or "画像データが不正です。"}
 
     safe_sym = _sanitize_prompt_text(symbol, 16) if symbol else "対象銘柄"
     user_text = (
@@ -1992,6 +2131,7 @@ def get_openai_embeddings_batch(
                     break
                 client = _get_openai_client(base_url, api_key)
                 resp = client.post(endpoint, json=payload, headers=headers)
+                _enforce_openai_response_size(resp, _OPENAI_MAX_RESPONSE_BYTES, "OpenAI embeddings")
             if resp.status_code == 200:
                 try:
                     data = resp.json()

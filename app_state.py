@@ -402,7 +402,10 @@ class AppState:
         except Exception as e:
             logger.debug("Error stopping realtime market engine: %s", e)
 
-        self.execution.shutdown()
+        try:
+            self.execution.shutdown()
+        except Exception as e:
+            logger.debug("Error shutting down execution pools: %s", e)
 
         try:
             from services.news_service import shutdown_news_fanout_pool

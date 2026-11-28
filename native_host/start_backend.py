@@ -465,26 +465,10 @@ def _start(extension_id=None):
             if pid_text:
                 pid = int(pid_text)
                 if is_running(pid):
-                    healthy = is_backend_healthy_once(timeout_sec=1.5)
-                    if healthy:
-                        return {
-                            "ok": True,
-                            "message": f"Already running (pid={pid})",
-                            "pid": pid,
-                            "port": port,
-                        }
-                    try:
-                        pid_file_age_sec = max(
-                            0.0, time.time() - float(pid_source.stat().st_mtime)
-                        )
-                    except (OSError, TypeError, ValueError):
-                        # Unknown age must not be treated as "fresh warming up"
-                        # forever; fall back to the stale path.
-                        pid_file_age_sec = PID_WARMUP_GRACE_SEC + 1.0
                     # A live PID is not proof that it owns the backend: after a
                     # crash the OS can reuse the PID for an unrelated program.
-                    # Reject that case so the caller spawns instead of waiting
-                    # PID_WARMUP_GRACE_SEC for a backend that will never start.
+                    # Reject that case BEFORE trusting healthy/port_in_use so an
+                    # unrelated process can never mask a missing/foreign server.
                     pid_identity = _pid_is_backend_process(pid)
                     if pid_identity is False:
                         logger.warning(
@@ -494,20 +478,69 @@ def _start(extension_id=None):
                             pid,
                         )
                         pid_source.unlink(missing_ok=True)
-                    elif port_in_use:
-                        # A backend that has bound the port but is still
-                        # warming up must not be mistaken for a foreign
-                        # listener: the first start() call returns
-                        # warming_up, and a second call during bootstrap used
-                        # to delete the live PID file and report an error.
-                        if pid_file_age_sec <= PID_WARMUP_GRACE_SEC:
-                            logger.info(
-                                "Backend port %s is bound while PID %s is still "
-                                "warming up (age=%.1fs).",
+                    else:
+                        healthy = is_backend_healthy_once(timeout_sec=1.5)
+                        if healthy:
+                            return {
+                                "ok": True,
+                                "message": f"Already running (pid={pid})",
+                                "pid": pid,
+                                "port": port,
+                            }
+                        try:
+                            pid_file_age_sec = max(
+                                0.0, time.time() - float(pid_source.stat().st_mtime)
+                            )
+                        except (OSError, TypeError, ValueError):
+                            # Unknown age must not be treated as "fresh warming up"
+                            # forever; fall back to the stale path.
+                            pid_file_age_sec = PID_WARMUP_GRACE_SEC + 1.0
+                        if port_in_use:
+                            # A backend that has bound the port but is still
+                            # warming up must not be mistaken for a foreign
+                            # listener: the first start() call returns
+                            # warming_up, and a second call during bootstrap used
+                            # to delete the live PID file and report an error.
+                            if pid_file_age_sec <= PID_WARMUP_GRACE_SEC:
+                                logger.info(
+                                    "Backend port %s is bound while PID %s is still "
+                                    "warming up (age=%.1fs).",
+                                    port,
+                                    pid,
+                                    pid_file_age_sec,
+                                )
+                                return {
+                                    "ok": True,
+                                    "message": (
+                                        f"Backend process is still starting (pid={pid});"
+                                        " waiting for health check."
+                                    ),
+                                    "pid": pid,
+                                    "port": port,
+                                    "warming_up": True,
+                                }
+                            logger.warning(
+                                "Backend port %s is occupied but health check failed; "
+                                "PID %s is not accepted as a healthy backend.",
                                 port,
+                                pid,
+                            )
+                            pid_source.unlink(missing_ok=True)
+                            return {
+                                "ok": False,
+                                "error": f"Port {port} is already in use by an unhealthy process.",
+                                "port": port,
+                            }
+                        # PID が生きていてもヘルス応答が長時間得られない場合は
+                        # PID再利用や別プロセス混入を疑い、古いPID情報として破棄する。
+                        elif pid_file_age_sec > PID_WARMUP_GRACE_SEC:
+                            logger.warning(
+                                "Stale backend PID detected (pid=%s age=%.1fs). Removing pid file.",
                                 pid,
                                 pid_file_age_sec,
                             )
+                            pid_source.unlink(missing_ok=True)
+                        else:
                             return {
                                 "ok": True,
                                 "message": (
@@ -518,38 +551,6 @@ def _start(extension_id=None):
                                 "port": port,
                                 "warming_up": True,
                             }
-                        logger.warning(
-                            "Backend port %s is occupied but health check failed; "
-                            "PID %s is not accepted as a healthy backend.",
-                            port,
-                            pid,
-                        )
-                        pid_source.unlink(missing_ok=True)
-                        return {
-                            "ok": False,
-                            "error": f"Port {port} is already in use by an unhealthy process.",
-                            "port": port,
-                        }
-                    # PID が生きていてもヘルス応答が長時間得られない場合は
-                    # PID再利用や別プロセス混入を疑い、古いPID情報として破棄する。
-                    elif pid_file_age_sec > PID_WARMUP_GRACE_SEC:
-                        logger.warning(
-                            "Stale backend PID detected (pid=%s age=%.1fs). Removing pid file.",
-                            pid,
-                            pid_file_age_sec,
-                        )
-                        pid_source.unlink(missing_ok=True)
-                    else:
-                        return {
-                            "ok": True,
-                            "message": (
-                                f"Backend process is still starting (pid={pid});"
-                                " waiting for health check."
-                            ),
-                            "pid": pid,
-                            "port": port,
-                            "warming_up": True,
-                        }
             # 実行中でない場合は古いPIDファイルを削除
             pid_source.unlink(missing_ok=True)
         except ValueError:

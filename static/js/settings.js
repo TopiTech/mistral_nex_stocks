@@ -12,6 +12,8 @@ const STOCKS_LOAD_MAX_RETRIES = 8;
 let stocksLoadRetryTimer = null;
 let stocksLoadAbortController = null;
 let stocksLoadGeneration = 0;
+let credentialsAbortController = null;
+let credentialsStateGeneration = 0;
 let _currentCredentialsData = null;
 // 移動操作の多重実行ガード: 連打で同一スワップが2回適用されるのを防ぐ。
 const stocksMoveInFlight = new Set();
@@ -704,7 +706,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const consoleLink = document.createElement("a");
       consoleLink.href = "https://console.mistral.ai/build/agents";
       consoleLink.target = "_blank";
-      consoleLink.rel = "noopener";
+      consoleLink.rel = "noopener noreferrer";
       consoleLink.textContent = "Mistral AI Console";
       note.appendChild(consoleLink);
       note.appendChild(document.createTextNode(" で行ってください。"));
@@ -976,9 +978,12 @@ document.addEventListener("DOMContentLoaded", () => {
         : { ai_provider: "mistral" };
       if (_currentCredentialsData?.api_mode === "agents") {
         payload.mistral_api_mode = "agents";
-        const curAgentId =
-          document.getElementById("agent-id-settings-input")?.value?.trim() ||
-          _currentCredentialsData.agent_id;
+        const agentSettingsEl = document.getElementById(
+          "agent-id-settings-input",
+        );
+        const curAgentId = agentSettingsEl
+          ? agentSettingsEl.value?.trim() || ""
+          : _currentCredentialsData.agent_id || "";
         if (curAgentId) {
           payload.mistral_agent_id = curAgentId;
         }
@@ -1128,10 +1133,15 @@ document.addEventListener("DOMContentLoaded", () => {
         modeBadge.className = "api-connection-mode-badge badge-agents";
       }
       if (agentIdGroup) agentIdGroup.style.display = "block";
-      if (agentIdInput && data.agent_id) agentIdInput.value = data.agent_id;
-      if (agentIdDisplay && data.agent_id) {
-        agentIdDisplay.style.display = "inline";
-        agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
+      if (agentIdInput) agentIdInput.value = data.agent_id || "";
+      if (agentIdDisplay) {
+        if (data.agent_id) {
+          agentIdDisplay.style.display = "inline";
+          agentIdDisplay.textContent = `(ID: ${data.agent_id})`;
+        } else {
+          agentIdDisplay.style.display = "none";
+          agentIdDisplay.textContent = "";
+        }
       }
     } else if (data.preview_mode) {
       const misRadio = document.querySelector(
@@ -1354,8 +1364,24 @@ document.addEventListener("DOMContentLoaded", () => {
     promptInput.addEventListener("input", updatePromptCounter);
 
     // Load existing credentials state (custom prompt, model catalog, etc.)
-    apiFetch("/api/credentials", {}, { showToast: false })
+    if (credentialsAbortController) {
+      credentialsAbortController.abort();
+    }
+    credentialsAbortController = new AbortController();
+    const initialCredsCtrl = credentialsAbortController;
+    const initialCredsGen = ++credentialsStateGeneration;
+    apiFetch(
+      "/api/credentials",
+      { signal: initialCredsCtrl.signal },
+      { showToast: false },
+    )
       .then(({ data }) => {
+        if (
+          initialCredsCtrl.signal.aborted ||
+          initialCredsGen !== credentialsStateGeneration
+        ) {
+          return;
+        }
         if (data && data.ok) {
           _currentCredentialsData = data;
           if (data.custom_ai_prompt && !promptInput.value) {
@@ -1421,7 +1447,11 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         }
       })
-      .catch((err) => logger.error("Failed to load credentials state:", err));
+      .catch((err) => {
+        if (err?.name !== "AbortError") {
+          logger.error("Failed to load credentials state:", err);
+        }
+      });
 
     // Save prompt
     savePromptBtn.addEventListener("click", async () => {
@@ -1509,10 +1539,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (
           _currentCredentialsData?.api_mode === "agents" &&
-          agentSettingsInput &&
-          agentSettingsInput.value.trim()
+          agentSettingsInput
         ) {
-          payload.mistral_agent_id = agentSettingsInput.value.trim();
+          const nextAgentId = agentSettingsInput.value.trim();
+          const prevAgentId = String(_currentCredentialsData?.agent_id || "");
+          if (nextAgentId || prevAgentId) {
+            payload.mistral_agent_id = nextAgentId;
+          }
         }
       }
 
@@ -1534,6 +1567,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       payload.ai_provider = selectedProvider;
 
+      credentialsStateGeneration += 1;
+      if (credentialsAbortController) {
+        credentialsAbortController.abort();
+        credentialsAbortController = null;
+      }
       saveAlphaBtn.disabled = true;
       saveAlphaBtn.textContent = "保存中...";
       try {
@@ -1742,6 +1780,10 @@ if (
     if (stocksLoadAbortController) {
       stocksLoadAbortController.abort();
       stocksLoadAbortController = null;
+    }
+    if (credentialsAbortController) {
+      credentialsAbortController.abort();
+      credentialsAbortController = null;
     }
     for (const timerId of _settingsStatusClearTimers.values()) {
       clearTimeout(timerId);

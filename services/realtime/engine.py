@@ -945,21 +945,33 @@ class RealtimeMarketEngine:
                     raise RuntimeError("previous PTS worker is still running")
                 self.running = True
                 logger.info("Starting RealtimeMarketEngine producers...")
-                if self._bg_executor is None or getattr(self._bg_executor, "_shutdown", True):
-                    self._bg_executor = DaemonThreadPoolExecutor(
-                        max_workers=4, thread_name_prefix="RealtimeBg"
+                try:
+                    if self._bg_executor is None or getattr(self._bg_executor, "_shutdown", True):
+                        self._bg_executor = DaemonThreadPoolExecutor(
+                            max_workers=4, thread_name_prefix="RealtimeBg"
+                        )
+                    self.tv_client.start()
+                    self.yahoojp_scraper.start()
+                    self._pts_epoch += 1
+                    pts_epoch = self._pts_epoch
+                    self.pts_thread = threading.Thread(
+                        target=self._pts_worker_loop,
+                        args=(pts_epoch,),
+                        daemon=True,
+                        name="JPPTSWorker",
                     )
-                self.tv_client.start()
-                self.yahoojp_scraper.start()
-                self._pts_epoch += 1
-                pts_epoch = self._pts_epoch
-                self.pts_thread = threading.Thread(
-                    target=self._pts_worker_loop,
-                    args=(pts_epoch,),
-                    daemon=True,
-                    name="JPPTSWorker",
-                )
-                self.pts_thread.start()
+                    self.pts_thread.start()
+                except Exception:
+                    self.running = False
+                    try:
+                        self.tv_client.stop()
+                    except Exception:
+                        pass
+                    try:
+                        self.yahoojp_scraper.stop()
+                    except Exception:
+                        pass
+                    raise
 
     def _pts_fetch_tracker(self) -> threading.Event | None:
         """Fetch-idle event, or None for engines built without __init__.
@@ -1017,10 +1029,11 @@ class RealtimeMarketEngine:
                 else:
                     # Idle worker: sleeps abort promptly on running=False.
                     thread.join(timeout=5.0)
-                    if thread.is_alive() and not self._drain_pts_fetch():
-                        # Still fetching after the bounded drain: final grace
-                        # for a just-finished fetch, then report explicitly.
-                        thread.join(timeout=2.0)
+                    if thread.is_alive():
+                        drained = self._drain_pts_fetch()
+                        if thread.is_alive():
+                            # Give the worker thread time to exit once the fetch drained.
+                            thread.join(timeout=5.0 if drained else 2.0)
             with state_lock:
                 if self.pts_thread is not None and not self.pts_thread.is_alive():
                     self.pts_thread = None

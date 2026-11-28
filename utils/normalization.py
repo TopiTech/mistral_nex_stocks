@@ -432,6 +432,25 @@ def normalize_history_frame(hist, inplace=False):
                 logger.warning("Failed to convert history index to DatetimeIndex: %s", exc)
                 return pd.DataFrame()
 
+        if "Close" not in frame.columns and "close" in frame.columns:
+            lower_to_canonical = {
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "volume": "Volume",
+                "adj close": "Adj Close",
+            }
+            rename_map = {
+                col: lower_to_canonical[col]
+                for col in frame.columns
+                if isinstance(col, str)
+                and col in lower_to_canonical
+                and lower_to_canonical[col] not in frame.columns
+            }
+            if rename_map:
+                frame = frame.copy() if inplace else frame
+                frame = frame.rename(columns=rename_map)
         if "Close" not in frame.columns:
             logger.warning("normalize_history_frame: 'Close' column not found in DataFrame")
             return pd.DataFrame()

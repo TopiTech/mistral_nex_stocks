@@ -126,9 +126,14 @@ def api_cache_stats():
     if not ok:
         return denied
     allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
-    if not allow_remote and not routes.api_system._is_local_request(request):
+    is_local = routes.api_system._is_local_request(request)
+    if not allow_remote and not is_local:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
-    if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
+    if (
+        (not allow_remote or is_local)
+        and request.headers.get("Origin")
+        and not is_allowed_trusted_origin(request)
+    ):
         return error_response(
             ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
         )
@@ -153,9 +158,14 @@ def api_metrics():
     if not ok:
         return denied
     allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
-    if not allow_remote and not routes.api_system._is_local_request(request):
+    is_local = routes.api_system._is_local_request(request)
+    if not allow_remote and not is_local:
         return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
-    if not allow_remote and request.headers.get("Origin") and not is_allowed_trusted_origin(request):
+    if (
+        (not allow_remote or is_local)
+        and request.headers.get("Origin")
+        and not is_allowed_trusted_origin(request)
+    ):
         return error_response(
             ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
         )

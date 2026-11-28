@@ -70,6 +70,25 @@ def _sync_legacy_preferences_into_runtime(action: str) -> None:
         if _is_same_path(config_store.LEGACY_CONFIG_FILE, config_store.CONFIG_FILE):
             return
         try:
+            with open(config_store.LEGACY_CONFIG_FILE, "r", encoding="utf-8") as lf:
+                legacy_data = json.load(lf)
+            with open(config_store.CONFIG_FILE, "r", encoding="utf-8") as rf:
+                runtime_data = json.load(rf)
+        except (OSError, ValueError):
+            legacy_data = None
+            runtime_data = None
+        if (
+            isinstance(legacy_data, dict)
+            and isinstance(runtime_data, dict)
+            and legacy_data.get("mns_master_key")
+            and not runtime_data.get("mns_master_key")
+        ):
+            logger.warning(
+                "Keeping legacy config %s because runtime config lacks mns_master_key",
+                config_store.LEGACY_CONFIG_FILE,
+            )
+            raise RuntimeError(f"legacy config {action} retained legacy mns_master_key")
+        try:
             config_store.LEGACY_CONFIG_FILE.unlink()
             logger.info(
                 "Removed legacy config after %s: %s", action, config_store.LEGACY_CONFIG_FILE

@@ -577,6 +577,11 @@
         }
 
         const sanitizedDelta = { ...data };
+        delete sanitizedDelta.symbol;
+        delete sanitizedDelta.market;
+        delete sanitizedDelta.name;
+        delete sanitizedDelta.currency;
+        delete sanitizedDelta.tv_symbol;
         if (validPrice !== null) {
           sanitizedDelta.price = validPrice;
         } else {
@@ -609,7 +614,16 @@
         cached.wrappers.forEach((wrapper) => {
           const currentStock = wrapper.__stockData
             ? { ...wrapper.__stockData, ...sanitizedDelta, is_realtime: true }
-            : { ...sanitizedDelta, is_realtime: true };
+            : {
+                ...sanitizedDelta,
+                ...(wrapper.dataset.symbol
+                  ? { symbol: wrapper.dataset.symbol }
+                  : {}),
+                ...(wrapper.dataset.market
+                  ? { market: wrapper.dataset.market }
+                  : {}),
+                is_realtime: true,
+              };
 
           // Preserve existing positive volume when scraper/partial deltas omit
           // volume or report 0/null, while allowing newer positive volume updates.

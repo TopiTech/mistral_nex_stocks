@@ -98,6 +98,13 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
                 log_dirs.append(fallback_dir)
 
         tb_lines = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        try:
+            from utils.networking import mask_sensitive_url
+            from utils.text_utils import _sanitize_error_message
+
+            tb_lines = mask_sensitive_url(_sanitize_error_message(tb_lines))
+        except Exception:
+            pass
         timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         entry = f"[{timestamp}] CRITICAL startup exception:\n{tb_lines}\n"
 
@@ -117,7 +124,15 @@ def _early_excepthook(exc_type, exc_value, exc_tb):
                             os.O_WRONLY | os.O_CREAT | os.O_APPEND,
                             0o600,
                         )
-                        with os.fdopen(fd, "a", encoding="utf-8") as f:
+                        try:
+                            f_handle = os.fdopen(fd, "a", encoding="utf-8")
+                        except Exception:
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                            raise
+                        with f_handle as f:
                             f.write(entry)
                         try:
                             os.chmod(target, 0o600)

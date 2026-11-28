@@ -341,18 +341,6 @@ def _migrate_legacy_user_stocks() -> bool:
                 # Nothing to retry from; let the normal load path report the
                 # corrupt target (and fail closed on save).
                 return True
-            # A previous migration was interrupted after creating the target
-            # but before writing it. Remove the unusable partial file and
-            # retry from the only complete copy.
-            try:
-                target.unlink()
-            except OSError as unlink_exc:
-                logger.warning(
-                    "Could not remove partial user stocks target %s: %s",
-                    target,
-                    unlink_exc,
-                )
-                return False
         if not legacy.exists():
             return True
         lock_fd: int | None = None

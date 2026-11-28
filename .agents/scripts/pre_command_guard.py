@@ -150,7 +150,11 @@ def _split_shell_segments(cmd_line: str) -> list[tuple[str, str]]:
     return segments
 
 
-def _rewrite_rg_segment(segment: str) -> str:
+def _rewrite_rg_segment(segment: str, prev_sep: str = "") -> str:
+    # Skip rewriting `rg` immediately after a pipe (`|`): piped stdin search is
+    # intentional and appending `.` would search the filesystem instead.
+    if prev_sep == "|":
+        return segment
     match = re.match(r'^(\s*)(rg(?:\.exe)?)(?=\s|$)(.*)$', segment, re.IGNORECASE | re.DOTALL)
     if not match:
         return segment
@@ -168,11 +172,25 @@ def _rewrite_rg_segment(segment: str) -> str:
     while i < len(raw_tokens):
         t = raw_tokens[i]
         if end_of_options:
+            if re.match(r"^(?:\d*>>?|\d*<&|\d*>&\d*|<<?)$", t):
+                i += 2 if t in (">", ">>", "<", "2>", "2>>", "&>", "&>>") else 1
+                continue
             positional_args.append(t)
             i += 1
             continue
         if t == "--":
             end_of_options = True
+            i += 1
+            continue
+        # Skip shell redirection operators and their target filenames so they are
+        # never miscounted as positional search paths.
+        if re.match(r"^(?:\d*>&\d+|\d*<&-)$", t):
+            i += 1
+            continue
+        if re.match(r"^(?:\d*>>?|\d*<|&>>?)$", t):
+            i += 2
+            continue
+        if re.match(r"^(?:\d*>>?|\d*<|&>>?)\S+$", t):
             i += 1
             continue
         if t.startswith("-") and t != "-":
@@ -184,7 +202,9 @@ def _rewrite_rg_segment(segment: str) -> str:
                 has_regexp_flag = True
                 i += 2
                 continue
-            if t.startswith(("--regexp=", "-e=", "--file=", "-f=")):
+            if t.startswith(("--regexp=", "-e=", "--file=", "-f=")) or (
+                len(t) > 2 and t[:2] in ("-e", "-f")
+            ):
                 has_regexp_flag = True
                 i += 1
                 continue
@@ -192,7 +212,9 @@ def _rewrite_rg_segment(segment: str) -> str:
                 has_globs = True
                 i += 2
                 continue
-            if t.startswith(("--glob=", "--iglob=", "-g=")):
+            if t.startswith(("--glob=", "--iglob=", "-g=")) or (
+                len(t) > 2 and t.startswith("-g")
+            ):
                 has_globs = True
                 i += 1
                 continue
@@ -202,6 +224,9 @@ def _rewrite_rg_segment(segment: str) -> str:
                 continue
             if t.startswith("--max-filesize="):
                 has_max_filesize = True
+                i += 1
+                continue
+            if len(t) > 2 and t[:2] in ("-t", "-T") and not t.startswith("--"):
                 i += 1
                 continue
             if t in _VALUE_FLAGS:
@@ -237,10 +262,12 @@ def process_command(cmd_line: str) -> str:
         return cmd_line
 
     parts: list[str] = []
+    prev_sep = ""
     for segment, sep in _split_shell_segments(cmd_line):
-        parts.append(_rewrite_rg_segment(segment))
+        parts.append(_rewrite_rg_segment(segment, prev_sep=prev_sep))
         if sep:
             parts.append(sep)
+        prev_sep = sep
     return "".join(parts)
 
 def main():

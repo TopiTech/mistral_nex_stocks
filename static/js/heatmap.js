@@ -163,10 +163,46 @@ document.addEventListener("DOMContentLoaded", () => {
     return true;
   }
 
+  function _getDedicated3DErrorEl() {
+    const dedicated = document.getElementById?.("heatmap-3d-error");
+    if (
+      dedicated &&
+      (dedicated.classList?.contains("heatmap-3d-error") ||
+        String(dedicated.className || "").includes("heatmap-3d-error"))
+    ) {
+      return dedicated;
+    }
+    return null;
+  }
+
   function clear3DErrorBanner() {
-    document
-      .querySelectorAll?.(".heatmap-3d-error")
-      ?.forEach((node) => node.remove());
+    const dedicated = _getDedicated3DErrorEl();
+    if (dedicated) {
+      dedicated.textContent = "";
+      dedicated.classList?.add("hidden");
+    }
+    document.querySelectorAll?.(".heatmap-3d-error")?.forEach((node) => {
+      if (node.id !== "heatmap-3d-error") node.remove();
+    });
+  }
+
+  function show3DErrorBanner(message) {
+    const dedicated = _getDedicated3DErrorEl();
+    if (dedicated) {
+      dedicated.textContent = message;
+      dedicated.classList?.remove("hidden");
+      return;
+    }
+    const target = document.getElementById("view-mode-toggle-container");
+    const channel = target || document.body;
+    if (!channel.querySelector(".heatmap-3d-error")) {
+      const msg = document.createElement("div");
+      msg.className = "heatmap-3d-error";
+      msg.setAttribute("role", "alert");
+      msg.style.gridColumn = "1 / -1";
+      msg.textContent = message;
+      channel.appendChild(msg);
+    }
   }
 
   function switchViewMode(mode) {
@@ -182,18 +218,8 @@ document.addEventListener("DOMContentLoaded", () => {
         // (L21, 2026-11-07 review) #heatmap-3d-canvas carries `hidden` on
         // these paths, so writing the message there gave the user NO
         // feedback while the 3D button appeared to do nothing. Deliver to a
-        // visible channel instead; the 2D fallback state is unchanged.
-        const target = document.getElementById("view-mode-toggle-container");
-        const channel = target || document.body;
-        if (!channel.querySelector(".heatmap-3d-error")) {
-          const msg = document.createElement("div");
-          msg.className = "heatmap-3d-error";
-          msg.setAttribute("role", "alert");
-          msg.style.gridColumn = "1 / -1";
-          msg.textContent =
-            "3D表示を読み込めません。2D表示を使用してください。";
-          channel.appendChild(msg);
-        }
+        // visible full-width banner outside .view-toggle instead.
+        show3DErrorBanner("3D表示を読み込めません。2D表示を使用してください。");
         return;
       }
       if (!state.three.isInit) {
@@ -203,17 +229,9 @@ document.addEventListener("DOMContentLoaded", () => {
           console.error("3D heatmap initialization failed:", error);
           state.three.isInit = false;
           // (L21) same rationale: deliver the failure to a visible channel.
-          const target = document.getElementById("view-mode-toggle-container");
-          const channel = target || document.body;
-          if (!channel.querySelector(".heatmap-3d-error")) {
-            const msg = document.createElement("div");
-            msg.className = "heatmap-3d-error";
-            msg.setAttribute("role", "alert");
-            msg.style.gridColumn = "1 / -1";
-            msg.textContent =
-              "3D表示を初期化できません。2D表示を使用してください。";
-            channel.appendChild(msg);
-          }
+          show3DErrorBanner(
+            "3D表示を初期化できません。2D表示を使用してください。",
+          );
           return;
         }
       }

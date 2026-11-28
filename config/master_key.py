@@ -195,7 +195,18 @@ def get_or_create_master_key() -> str:
         )
         saved_new_config = False
         try:
-            cfg["mns_master_key"] = config_store._encode_secret(new_key, "mns_master_key")
+            encoded_master = config_store._encode_secret(new_key, "mns_master_key")
+            if (
+                isinstance(encoded_master, dict)
+                and encoded_master.get("scheme") == "ephemeral"
+                and not _allow_ephemeral_master
+            ):
+                raise RuntimeError(
+                    "FATAL: Secure storage (keyring/DPAPI) fell back to ephemeral memory "
+                    "for mns_master_key, but MNS_ALLOW_EPHEMERAL_MASTER_KEY is not enabled. "
+                    "Refusing to persist an ephemeral master key; set MNS_MASTER_KEY instead."
+                )
+            cfg["mns_master_key"] = encoded_master
             try:
                 config_store.save_config(cfg)
                 saved_new_config = True
@@ -216,7 +227,7 @@ def get_or_create_master_key() -> str:
                 if isinstance(persisted, dict)
                 else ""
             )
-            if not persisted_key:
+            if not persisted_key or persisted_key != new_key:
                 raise RuntimeError("Failed to verify persisted master key")
         except Exception:
             if saved_new_config:

@@ -72,7 +72,12 @@ class ExecutionState:
             try:
                 ex.shutdown(wait=wait, cancel_futures=not wait)
             except TypeError:
-                ex.shutdown(wait=wait)
+                try:
+                    ex.shutdown(wait=wait)
+                except Exception as exc:
+                    logger.debug("Executor shutdown failed: %s", exc)
+            except Exception as exc:
+                logger.debug("Executor shutdown failed: %s", exc)
 
         # A wall-clock deadline can stretch the join budget by hours when the
         # system clock is adjusted (NTP/manual change) mid-shutdown; the

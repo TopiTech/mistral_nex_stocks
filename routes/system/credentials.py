@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any
 
@@ -24,6 +25,7 @@ from route_helpers import (
     _parse_credentials_save_request,
     openai_base_url_error_response,
     rate_limit,
+    sanitize_client_upstream_text,
     sanitize_upstream_log_message,
 )
 from routes.system.blueprint import api_system_bp
@@ -41,7 +43,6 @@ from utils.stock_payload import error_response, ok_response
 from utils.text_utils import (
     _parse_json_request,
     _parse_optional_json_request,
-    _sanitize_error_message,
     _token_fingerprint,
 )
 
@@ -559,7 +560,8 @@ def api_credentials_verify():
             # (what static/js/setup.js and settings.js read); keep the legacy
             # compat keys as additive extra_fields only.
             fallback_msg = "OpenAI互換APIキーの検証に失敗しました。設定と接続を確認してください。"
-            sanitized_error = _sanitize_error_message(str(res_dict.get("error") or fallback_msg))
+            raw_err_text = re.sub(r"<[^>]+>", " ", str(res_dict.get("error") or fallback_msg))
+            sanitized_error = sanitize_client_upstream_text(raw_err_text, fallback_msg)
             latency_ms = res_dict.get("latency_ms", 0)
             return error_response(
                 ErrorCode.INVALID_API_KEY,

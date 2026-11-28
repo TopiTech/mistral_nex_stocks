@@ -551,7 +551,6 @@ def api_add_stock_ext() -> Any:
             ErrorCode.INVALID_MARKET, details={"reason": mismatch}, status_code=400
         )
 
-    name = parsed["name"] or _stock_display_name(symbol, market)
     with app_state.market.user_stocks_lock:
         rev_before = app_state.market.user_stocks_rev
         container = _get_stock_container(market)
@@ -565,6 +564,7 @@ def api_add_stock_ext() -> Any:
             )
         if not _watchlist_has_capacity(market):
             return _watchlist_capacity_error(market)
+        name = parsed["name"] or _stock_display_name(symbol, market)
         container[symbol] = name
 
     try:
@@ -728,6 +728,7 @@ def api_heatmap() -> Any:
         disk_cached = app_state.payload_disk_cache.get(cache_key, ignore_ttl=True)
     except Exception as exc:
         logger.debug("Failed to read heatmap disk cache: %s", exc)
+    has_usable_disk_cache = bool(isinstance(disk_cached, dict) and disk_cached.get("stocks"))
 
     with app_state.heatmap_fetch_lock:
         now = time.monotonic()
@@ -763,7 +764,7 @@ def api_heatmap() -> Any:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
                 app_state.heatmap_fetch_start_times.pop(cache_key, None)
             current_app.logger.warning("Heatmap fetch queue is full market=%s", market)
-            if not disk_cached:
+            if not has_usable_disk_cache:
                 return error_response(
                     ErrorCode.TOO_MANY_REQUESTS,
                     details={
@@ -776,7 +777,7 @@ def api_heatmap() -> Any:
                 app_state.heatmap_fetch_inflight.discard(cache_key)
                 app_state.heatmap_fetch_start_times.pop(cache_key, None)
             logger.warning("Failed to submit heatmap fetch for %s: %s", market, exc)
-            if not disk_cached:
+            if not has_usable_disk_cache:
                 return error_response(
                     ErrorCode.API_SERVICE_ERROR,
                     details={
@@ -785,7 +786,8 @@ def api_heatmap() -> Any:
                     status_code=503,
                 )
 
-    if disk_cached and isinstance(disk_cached, dict) and disk_cached.get("stocks"):
+    if has_usable_disk_cache:
+        assert isinstance(disk_cached, dict)
         return ok_response(disk_cached)
 
     return ok_response(

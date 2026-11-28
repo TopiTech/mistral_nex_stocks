@@ -348,6 +348,11 @@ def save_api_credentials(
             # write; reject before any durable state changes.
             raise ValueError(f"{key_name} contains control characters")
     with config_store.config_update_lock():
+        cfg = config_store.load_config()
+        if config_store.is_config_unreadable(cfg):
+            raise RuntimeError(
+                "Refusing to save API credentials while configuration is corrupted or unreadable."
+            )
         # R17-07: os.environ is mutated AFTER save_config() commits. Snapshot
         # the env values it is about to touch so a failure mid-loop can be
         # rolled back together with the secret storage, instead of leaving
@@ -363,7 +368,6 @@ def save_api_credentials(
             log=logger,
         )
         try:
-            cfg = config_store.load_config()
             credentials = {
                 key: value
                 for key, value in _get_api_credentials_blob(cfg).items()
@@ -923,13 +927,9 @@ def require_extension_token(request_obj: Any) -> tuple[bool, str]:
         # must not be able to trigger that work (CFG-02).
         return False, "invalid or missing extension token"
     token = auth_header.removeprefix("Bearer ").strip()
+    if not token or not token.isascii():
+        return False, "invalid or missing extension token"
     expected_token = get_or_create_extension_api_token()
-    # secrets.compare_digest() raises TypeError for str inputs containing
-    # non-ASCII characters; the header is attacker-controlled, so a
-    # non-ASCII token must be rejected here instead of crashing the
-    # endpoint with an unhandled 500 (DATA-3). Branching on ASCII-ness
-    # leaks nothing the attacker does not already control; the compare
-    # itself stays constant-time for ASCII inputs.
-    if token.isascii() and secrets.compare_digest(token, expected_token):
+    if secrets.compare_digest(token.encode("utf-8"), expected_token.encode("utf-8")):
         return True, ""
     return False, "invalid or missing extension token"

@@ -9,7 +9,7 @@ import logging
 import math
 import threading
 import time
-from collections import deque
+from collections import OrderedDict
 from typing import Any
 
 from cachetools import TTLCache
@@ -203,7 +203,7 @@ class MarketDataState:
         self.first_sync_attempted: bool = False
         self.first_sync_completed_at: float = 0.0
         self.removed_watchlist_symbols: set[tuple[str, str]] = set()
-        self._removed_watchlist_order: deque[tuple[str, str]] = deque()
+        self._removed_watchlist_order: OrderedDict[tuple[str, str], None] = OrderedDict()
         self._removed_watchlist_maxsize = 4096
         self.removed_watchlist_lock = threading.Lock()
 
@@ -230,19 +230,15 @@ class MarketDataState:
             if not self.removed_watchlist_symbols and self._removed_watchlist_order:
                 self._removed_watchlist_order.clear()
             for key in aliases:
-                if key not in self.removed_watchlist_symbols:
-                    self.removed_watchlist_symbols.add(key)
-                    self._removed_watchlist_order.append(key)
+                self.removed_watchlist_symbols.add(key)
+                self._removed_watchlist_order[key] = None
+                self._removed_watchlist_order.move_to_end(key)
             while (
                 len(self.removed_watchlist_symbols) > self._removed_watchlist_maxsize
                 and self._removed_watchlist_order
             ):
-                evicted = self._removed_watchlist_order.popleft()
+                evicted, _ = self._removed_watchlist_order.popitem(last=False)
                 self.removed_watchlist_symbols.discard(evicted)
-            if len(self._removed_watchlist_order) > self._removed_watchlist_maxsize * 2:
-                self._removed_watchlist_order = deque(
-                    k for k in self._removed_watchlist_order if k in self.removed_watchlist_symbols
-                )
 
     def clear_watchlist_removed(self, symbol: str, market: str) -> None:
         """Clear a removed-watchlist marker when the symbol is explicitly added/restored."""
@@ -252,6 +248,7 @@ class MarketDataState:
         with self.removed_watchlist_lock:
             for key in aliases:
                 self.removed_watchlist_symbols.discard(key)
+                self._removed_watchlist_order.pop(key, None)
 
     def is_watchlist_removed(self, symbol: str, market: str) -> bool:
         """Return True if *(symbol, market)* was removed and not yet re-added."""
@@ -488,7 +485,12 @@ class MarketDataState:
                 return False, False, "busy"
             return True, False, ""
 
-    def release_circuit_probe(self, service: str, symbol: str | None = None) -> None:
+    def release_circuit_probe(
+        self,
+        service: str,
+        symbol: str | None = None,
+        probe_since: float | None = None,
+    ) -> None:
         """Release a HALF_OPEN probe claim without changing circuit health.
 
         Some failures, such as an upstream 429, are intentionally tracked by a
@@ -496,12 +498,9 @@ class MarketDataState:
         paths still must clear the single-probe claim so the circuit cannot be
         left permanently marked as probing.
 
-        The ``probing`` flag is cleared unconditionally when a probe was
-        actually claimed. A concurrent ``report_circuit_result`` may have
-        already moved the status from HALF_OPEN to OPEN (or to CLOSED on
-        success) before this defensive release runs; in that case the flag
-        would otherwise remain stuck at ``True`` and ``try_claim_circuit_probe``
-        would refuse future HALF_OPEN probes indefinitely.
+        When *probe_since* is provided, only clear the claim if it still matches
+        the active ``probing_since`` token so a timed-out stale probe cannot
+        clear a newer probe's ownership.
         """
         with self.circuit_lock:
             target: CircuitState | None = (
@@ -510,6 +509,8 @@ class MarketDataState:
                 else self.circuit_states.get(service)
             )
             if target and target.get("probing"):
+                if probe_since is not None and target.get("probing_since") != probe_since:
+                    return
                 target["probing"] = False
                 target["probing_since"] = 0.0
 

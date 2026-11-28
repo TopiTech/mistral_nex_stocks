@@ -88,6 +88,8 @@ class APIClient {
   private _offlineHandler: (() => void) | null;
   /** Token of the newest in-flight _openWithResolvedUrl chain (L11, 2026-11-07). */
   private _openChainToken: object | null = null;
+  private _sseOpened: boolean;
+  private _sseConnectStartedAt: number;
 
   constructor(baseURL = "/api", config: APIClientConfig = {}) {
     this.baseURL = baseURL;
@@ -112,6 +114,8 @@ class APIClient {
     this._visibilityHandler = null;
     this._onlineHandler = null;
     this._offlineHandler = null;
+    this._sseOpened = false;
+    this._sseConnectStartedAt = 0;
     this._setupEventListeners();
   }
 
@@ -169,6 +173,16 @@ class APIClient {
         if (this._lastSSEParams && !this.isVisibilityPaused) {
           this._resumeSSE(true);
         }
+      } else if (
+        !this._sseOpened &&
+        this.currentEventSource &&
+        this._sseConnectStartedAt > 0 &&
+        now - this._sseConnectStartedAt >= this.sseHeartbeatTimeout &&
+        !this.isVisibilityPaused &&
+        this._lastSSEParams
+      ) {
+        _log.warn("SSE: Initial connect timeout. Reconnecting...");
+        this._handleReconnect(this._lastSSEParams.onError);
       }
       this.lastCheckTime = now;
     }, this.watchdogInterval);
@@ -476,6 +490,8 @@ class APIClient {
     try {
       const eventSource = new EventSource(fullURL);
       this.currentEventSource = eventSource;
+      this._sseOpened = false;
+      this._sseConnectStartedAt = Date.now();
       this._armVisibilityPause();
 
       // Wrap addEventListener and removeEventListener so any custom SSE event
@@ -584,6 +600,7 @@ class APIClient {
               this.lastEventId =
                 Number((event as MessageEvent).lastEventId) || 0;
             }
+            this._sseOpened = true;
             if (type !== "error") {
               this.sseReconnectAttempt = 0;
             }
@@ -646,9 +663,11 @@ class APIClient {
       this._startSleepWatchdog();
       eventSource.onopen = () => {
         _log.info("SSE: Connection established");
+        this._sseOpened = true;
         this._resetHeartbeatTimer(onError);
       };
       eventSource.onmessage = (event: MessageEvent<string>) => {
+        this._sseOpened = true;
         this.sseReconnectAttempt = 0;
         if (event && event.lastEventId) {
           this.lastEventId = Number(event.lastEventId) || 0;
@@ -662,6 +681,7 @@ class APIClient {
         }
       };
       eventSource.addEventListener("heartbeat", (event: Event) => {
+        this._sseOpened = true;
         this.sseReconnectAttempt = 0;
         if (event && (event as MessageEvent).lastEventId) {
           this.lastEventId = Number((event as MessageEvent).lastEventId) || 0;
@@ -767,6 +787,8 @@ class APIClient {
     this._reconnecting = false;
     this.isConnecting = false;
     this._openChainToken = null;
+    this._sseOpened = false;
+    this._sseConnectStartedAt = 0;
     this._stopSleepWatchdog();
     if (!preserveVisibilityPause && this._visibilityTimeout) {
       clearTimeout(this._visibilityTimeout);

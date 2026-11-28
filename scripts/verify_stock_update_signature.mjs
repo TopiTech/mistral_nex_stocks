@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { extractFunction } from "./_brace_matcher.mjs";
 
 // 銘柄カード更新の差分ゲート契約の回帰ゲート。
 //
@@ -16,25 +17,6 @@ const UI_PATH = "static/js/ui.js";
 
 function fail(message) {
   throw new Error(message);
-}
-
-function extractFunction(source, name, sourcePath) {
-  const marker = `function ${name}(`;
-  const start = source.indexOf(marker);
-  if (start === -1) fail(`${sourcePath} no longer defines ${name}()`);
-  const open = source.indexOf("{", start);
-  if (open === -1) fail(`${sourcePath} has no body for ${name}()`);
-  let depth = 0;
-  for (let index = open; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, index + 1);
-    }
-  }
-  return fail(`${sourcePath} has unbalanced braces in ${name}()`);
 }
 
 function loadSignatureHelpers() {

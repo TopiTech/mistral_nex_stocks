@@ -411,6 +411,26 @@
         const isKnown = KNOWN_US_TICKERS.has(sym);
         if (!isKnown && EXCLUDED_WORDS.has(sym)) continue;
         if (!isKnown && sym.length < 3) continue; // Skip unknown 1-2 letter words
+        if (EXCLUDED_WORDS.has(sym)) {
+          // Stop-words and 1-letter tickers (e.g. A, NOW, CAT) must not fire
+          // in ordinary prose; allow them only with explicit ticker context.
+          const ctxStart = Math.max(0, symIndex - 20);
+          const ctxEnd = Math.min(text.length, symIndex + sym.length + 20);
+          const surrounding = text.slice(ctxStart, ctxEnd);
+          const escapedSym = sym.replace(/\./g, "\\.");
+          const hasTickerContext =
+            new RegExp(`[（(]\\s*${escapedSym}\\s*[)）]`).test(surrounding) ||
+            new RegExp(`(?:NYSE|NASDAQ|AMEX)\\s*:\\s*${escapedSym}\\b`).test(
+              surrounding,
+            ) ||
+            /(?:ticker|tickers|stock|stocks|shares|blue chips|銘柄|株式)/i.test(
+              surrounding,
+            ) ||
+            new RegExp(
+              `(?:[A-Z]{1,5}(?:\\.[A-Z])?\\s*,\\s*${escapedSym}\\b|\\b${escapedSym}\\s*,\\s*[A-Z]{1,5})`,
+            ).test(surrounding);
+          if (!hasTickerContext) continue;
+        }
 
         addMatch(foundMap, sym, "us", text, symIndex, isKnown ? 2 : 1);
       }

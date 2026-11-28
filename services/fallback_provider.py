@@ -575,12 +575,17 @@ def _extract_yahoo_jp_price(soup, raw_text):
                     return text
 
     # 3. Regex fallbacks anchored on human-readable labels (現在値 / yen sign).
-    #    These survive wholesale class renames because they key off the visible
-    #    text, not the markup.
-    match = re.search(r"現在値.{0,120}?([\d,]+\.?\d*)", raw_text, re.DOTALL)
+    #    Match against visible text only so HTML attributes/hashed class names
+    #    (e.g. class="_3rXWJKZF") cannot be captured as bogus prices.
+    visible_text = (
+        soup.get_text(" ", strip=True)
+        if soup is not None
+        else re.sub(r"<[^>]+>", " ", raw_text or "")
+    )
+    match = re.search(r"現在値.{0,120}?(\d[\d,]*(?:\.\d+)?)", visible_text, re.DOTALL)
     if match:
         return match.group(1)
-    match = re.search(r"¥\s*([\d,]+\.?\d*)", raw_text)
+    match = re.search(r"¥\s*(\d[\d,]*(?:\.\d+)?)", visible_text)
     if match:
         return match.group(1)
 
@@ -819,18 +824,18 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
         if not client:
             return None
 
-        def _to_float(val: Any, default: float = 0.0) -> float:
+        def _to_float_opt(val: Any) -> float | None:
             if val is None or is_bool_like(val):
-                return default
+                return None
             try:
                 s = str(val).replace(",", "").replace("+", "").strip()
                 num = float(s)
-                return num if math.isfinite(num) else default
+                return num if math.isfinite(num) else None
             except (ValueError, TypeError, OverflowError):
-                return default
+                return None
 
-        def _derive_prev_close(cur_price: float, cur_change: float) -> float | None:
-            if not math.isfinite(cur_change):
+        def _derive_prev_close(cur_price: float, cur_change: float | None) -> float | None:
+            if cur_change is None or not math.isfinite(cur_change):
                 return None
             candidate = cur_price - cur_change
             return candidate if math.isfinite(candidate) and candidate > 0 else None
@@ -844,10 +849,10 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
             parts = idx_cache.get(code)
             if not parts or len(parts) < 2:
                 return None
-            price = _to_float(parts[0])
-            if not math.isfinite(price) or price <= 0:
+            price = _to_float_opt(parts[0])
+            if price is None or not math.isfinite(price) or price <= 0:
                 return None
-            change = _to_float(parts[1]) if len(parts) > 1 else 0.0
+            change = _to_float_opt(parts[1]) if len(parts) > 1 else None
             # OHLC are unknown from this feed; report None instead of faking
             # them as the current price (same policy as YahooJPScraperProvider
             # above — faked O=H=L would misrepresent the fallback quote as a
@@ -895,11 +900,11 @@ class Nikkei225JPProvider(_CurlCffiSessionProvider):
         if not parts or len(parts) < 11:
             return None
 
-        price = _to_float(parts[8])
-        if not math.isfinite(price) or price <= 0:
+        price = _to_float_opt(parts[8])
+        if price is None or not math.isfinite(price) or price <= 0:
             return None
 
-        change = _to_float(parts[9])
+        change = _to_float_opt(parts[9])
         # OHLC unknown — None per the provider policy (see the index branch).
         return {
             "symbol": symbol,

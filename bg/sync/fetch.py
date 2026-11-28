@@ -331,6 +331,13 @@ def fetch_stocks_batch(
 
         if payload is not None:
             results_map[(symbol, market)] = payload
+            if isinstance(payload, dict) and not lightweight:
+                try:
+                    app_state.payload_disk_cache.set(
+                        f"payload_{symbol}_{market}", _strip_portfolio_fields(payload)
+                    )
+                except (OSError, TypeError):
+                    logger.debug("Failed to cache batch payload for %s", symbol)
         else:
             fallback_items.append((symbol, name, market))
 

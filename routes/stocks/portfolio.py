@@ -259,12 +259,15 @@ def api_update_portfolio() -> Any:
         )
     invalidate_stock_caches(symbol)
     persisted_fx_rate: float | None = None
-    raw_fx = val.get("avg_fx_rate") if isinstance(val, dict) else None
+    raw_fx = written_snapshot.get("avg_fx_rate") if isinstance(written_snapshot, dict) else None
     if isinstance(raw_fx, (int, float)) and not is_bool_like(raw_fx):
         persisted_fx_rate = float(raw_fx)
+    persisted_name = (
+        str(written_snapshot.get("name") or "") if isinstance(written_snapshot, dict) else ""
+    ) or _stock_display_name(symbol, market)
     ensure_stock_placeholder_in_caches(
         symbol,
-        _stock_display_name(symbol, market),
+        persisted_name,
         market,
         shares=shares,
         avg_price=avg_price,

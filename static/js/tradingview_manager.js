@@ -16,8 +16,10 @@
   // clearContainer() detaches it when clearing the owning chart container.
   let activeMessageHandler = null;
   let activeMessageHandlerOwner = null;
+  let activeChartWidget = null;
   let _tickerTapeGeneration = 0;
   let _chartGeneration = 0;
+  const _containerClearGenerations = new Map();
 
   const DEFAULT_TAPE_SYMBOLS = [
     { proName: "INDEX:NKY", title: "日経225", description: "日経225" },
@@ -630,6 +632,25 @@
       if (isChartContainer) {
         // チャート用コンテナのクリア時に進行中の非同期ウィジェット生成も無効化する。
         _chartGeneration++;
+        const clearedContainerId =
+          typeof container === "string" ? container : el?.id || "";
+        if (clearedContainerId) {
+          _containerClearGenerations.set(
+            clearedContainerId,
+            (_containerClearGenerations.get(clearedContainerId) || 0) + 1,
+          );
+        }
+        if (
+          activeChartWidget &&
+          typeof activeChartWidget.remove === "function"
+        ) {
+          try {
+            activeChartWidget.remove();
+          } catch (_widgetErr) {
+            // ignore teardown error on detached widget
+          }
+        }
+        activeChartWidget = null;
       } else {
         _tickerTapeGeneration++;
       }
@@ -959,7 +980,17 @@
         }
         if (window.TradingView && window.TradingView.widget) {
           try {
-            new window.TradingView.widget({
+            if (
+              activeChartWidget &&
+              typeof activeChartWidget.remove === "function"
+            ) {
+              try {
+                activeChartWidget.remove();
+              } catch (_widgetErr) {
+                // ignore stale widget cleanup errors
+              }
+            }
+            activeChartWidget = new window.TradingView.widget({
               container_id: innerId,
               symbol: currentTvSymbol,
               interval: "D",
@@ -998,6 +1029,20 @@
           tvScript.remove();
           tvScript = null;
         }
+        const clearGenAtStart =
+          _containerClearGenerations.get(containerId) || 0;
+        const pendingTarget = {
+          clearGen: clearGenAtStart,
+          containerId,
+          container,
+        };
+        const registerErrorTarget = (scriptEl) => {
+          if (!scriptEl) return;
+          if (!scriptEl._pendingErrorTargets) {
+            scriptEl._pendingErrorTargets = new Map();
+          }
+          scriptEl._pendingErrorTargets.set(containerId, pendingTarget);
+        };
         const handleLoaded = (scriptEl) => {
           if (scriptEl?.dataset) {
             scriptEl.dataset.loaded = "true";
@@ -1016,6 +1061,7 @@
           const nonce = document.querySelector("script[nonce]")?.nonce || "";
           if (nonce) tvScript.nonce = nonce;
           tvScript.onload = () => handleLoaded(tvScript);
+          registerErrorTarget(tvScript);
           // (L15, 2026-11-07 review) a failed CDN load left a dead script
           // element in the DOM forever: every retry re-attached a `load`
           // listener to an element that can never fire, so the fullscreen
@@ -1035,20 +1081,35 @@
             } else if (tvScript.parentNode) {
               tvScript.remove();
             }
-            const chartHost =
-              document.getElementById(containerId) ||
-              container ||
-              document.getElementById("tradingview-chart-container");
-            if (chartHost) {
-              const innerEl = document.getElementById(`${containerId}-inner`);
-              if (innerEl) innerEl.style.display = "none";
-              if (!chartHost.querySelector(".tv-load-error")) {
-                const msg = document.createElement("div");
-                msg.className = "tv-load-error";
-                msg.setAttribute("role", "alert");
-                msg.textContent =
-                  "チャートの読み込みに失敗しました。再試行してください。";
-                chartHost.appendChild(msg);
+            const targets = tvScript._pendingErrorTargets
+              ? Array.from(tvScript._pendingErrorTargets.values())
+              : [pendingTarget];
+            for (const target of targets) {
+              const curClearGen =
+                _containerClearGenerations.get(target.containerId) || 0;
+              if (
+                target.clearGen !== curClearGen ||
+                target.container?.isConnected === false
+              ) {
+                continue;
+              }
+              const chartHost =
+                document.getElementById(target.containerId) ||
+                target.container ||
+                document.getElementById("tradingview-chart-container");
+              if (chartHost) {
+                const innerEl = document.getElementById(
+                  `${target.containerId}-inner`,
+                );
+                if (innerEl) innerEl.style.display = "none";
+                if (!chartHost.querySelector(".tv-load-error")) {
+                  const msg = document.createElement("div");
+                  msg.className = "tv-load-error";
+                  msg.setAttribute("role", "alert");
+                  msg.textContent =
+                    "チャートの読み込みに失敗しました。再試行してください。";
+                  chartHost.appendChild(msg);
+                }
               }
             }
           };
@@ -1061,6 +1122,7 @@
           }
           const onPendingLoad = () => handleLoaded(tvScript);
           tvScript._pendingMountHandler = onPendingLoad;
+          registerErrorTarget(tvScript);
           tvScript.addEventListener("load", onPendingLoad);
         }
       }

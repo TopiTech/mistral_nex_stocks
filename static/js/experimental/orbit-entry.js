@@ -135,16 +135,24 @@ document.addEventListener("DOMContentLoaded", () => {
         state.setSelectedSymbol(prev.symbol);
         return;
       }
-      if (e.key === "Enter" || e.key === " ") {
+      if (e.key === "Enter") {
         e.preventDefault();
         if (current) state.setSelectedSymbol(current);
         return;
       }
     }
 
-    // (L26, 2026-11-07 review) Single-letter shortcuts promised by the canvas
+    // (L26, 2026-11-07 review) Keyboard shortcuts promised by the canvas
     // aria-label, active on canvas focus (global ones are suppressed there).
     switch (e.key) {
+      case " ":
+        e.preventDefault();
+        state.togglePause();
+        break;
+      case "/":
+        e.preventDefault();
+        accessibilityController.openSearchModal();
+        break;
       case "d":
       case "D":
         e.preventDefault();
@@ -225,7 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // 8. Bind Central Stock Info Card
-  state.subscribe((key, val, data) => {
+  const unsubCenterCard = state.subscribe((key, val, data) => {
     if (key === "selectedSymbol" || key === "stocks") {
       updateCenterCard(data);
     }
@@ -853,12 +861,22 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   // Cleanup on unload
-  window.addEventListener("beforeunload", () => {
+  // Run reversible suspension on persisted bfcache pagehide, and permanent
+  // teardown only when pagehide is NOT persisted (avoiding beforeunload
+  // breaking bfcache / cancelled navigations).
+  window.addEventListener("pagehide", (event) => {
+    if (event?.persisted) {
+      cleanupObservatoryResources();
+      return;
+    }
     if (observatoryRefreshTimer !== null) {
       window.clearInterval(observatoryRefreshTimer);
       observatoryRefreshTimer = null;
     }
     cleanupObservatoryResources();
+    if (typeof unsubCenterCard === "function") {
+      unsubCenterCard();
+    }
     observatoryUnloadHandlers.forEach(([target, type, fn, opts]) => {
       if (opts !== undefined) {
         target.removeEventListener(type, fn, opts);
@@ -874,8 +892,6 @@ document.addEventListener("DOMContentLoaded", () => {
     aiDiveController.destroy();
     accessibilityController.destroy();
   });
-
-  window.addEventListener("pagehide", cleanupObservatoryResources);
   window.addEventListener("pageshow", (event) => {
     if (!event?.persisted) return;
     startObservatoryRefresh();

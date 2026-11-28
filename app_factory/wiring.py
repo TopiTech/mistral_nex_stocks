@@ -69,7 +69,7 @@ def _configure_secret_key(app: Flask) -> None:
     from utils.env_helpers import _is_production_env
 
     _is_prod_env = _is_production_env()
-    _flask_secret = os.environ.get("FLASK_SECRET_KEY")
+    _flask_secret = (os.environ.get("FLASK_SECRET_KEY") or "").strip()
 
     if _flask_secret:
         if len(_flask_secret) < 32:

@@ -660,16 +660,21 @@ def get_current_usdjpy_rate(
     """
     # 1. Check in-memory indices cache
     try:
-        usdjpy_info = app_state.market.current_indices_cache.get("USDJPY", {})
+        indices_cache = app_state.market.current_indices_cache
+        usdjpy_info = (
+            indices_cache.get("USDJPY", {})
+            if isinstance(indices_cache, dict)
+            else None
+        )
         if (
-            usdjpy_info
+            isinstance(usdjpy_info, dict)
             and usdjpy_info.get("price") not in (None, "--", "")
             and not is_bool_like(usdjpy_info.get("price"))
         ):
             fx = float(usdjpy_info["price"])
             if math.isfinite(fx) and fx > 0:
                 return fx, False
-    except (ValueError, TypeError, OverflowError):
+    except (AttributeError, ValueError, TypeError, OverflowError):
         pass
 
     # 2. Check realtime market engine snapshot
@@ -1417,9 +1422,10 @@ def error_response(
         try:
             ec_int = int(error_code)
         except (ValueError, TypeError):
-            # Non-numeric codes (e.g. a custom ``AppError`` code string) fall
-            # back to UNKNOWN while the raw ``code`` string is preserved below.
-            pass
+            if isinstance(error_code, str):
+                member = ErrorCode.__members__.get(error_code.strip())
+                if member is not None:
+                    ec_int = int(member)
     if message is None:
         message = get_error_message(ec_int, lang="ja")
     # The envelope owner must sanitize every string leaf, including the

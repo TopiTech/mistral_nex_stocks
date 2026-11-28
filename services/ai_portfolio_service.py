@@ -32,7 +32,12 @@ from credential_manager import (
 from crypto_utils import _is_windows, protect_data, unprotect_data
 from services.ai_service import _sanitize_prompt_text, call_mistral_chat, is_mistral_error
 from services.search_service import collect_symbol_research_context
-from utils.normalization import is_bool_like, is_valid_symbol, normalize_symbol_for_market
+from utils.normalization import (
+    is_bool_like,
+    is_valid_symbol,
+    market_symbol_mismatch,
+    normalize_symbol_for_market,
+)
 from utils.text_utils import wrap_cdata
 from utils.threading import restrictive_umask_lock, safe_fdopen
 from utils.validators import (
@@ -121,11 +126,14 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             # to the yfinance ticker "7203.T" instead of being silently stored as
             # an unresolvable holding. Mirrors route_helpers normalization.
             symbol = normalize_symbol_for_market(symbol, market)
-            if market not in AI_PORTFOLIO_MARKETS or not is_valid_symbol(symbol):
+            if (
+                market not in AI_PORTFOLIO_MARKETS
+                or not is_valid_symbol(symbol)
+                or market_symbol_mismatch(symbol, market)
+            ):
                 continue
             if (symbol, market) in seen_symbols:
                 continue
-            seen_symbols.add((symbol, market))
             weight_raw = it.get("weight_pct")
             if is_bool_like(weight_raw):
                 continue
@@ -165,6 +173,7 @@ def sanitize_ai_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
             if risk_level not in ("low", "mid", "high"):
                 risk_level = "mid"
             item_name = _strip_html_tags(str(it.get("name") or "")).strip()[:MAX_STOCK_NAME_LENGTH]
+            seen_symbols.add((symbol, market))
             clean_items.append(
                 {
                     "symbol": symbol,
@@ -926,7 +935,7 @@ def generate_ai_portfolio_by_theme(
             if remaining <= 0.0:
                 break
             inflight_event = _get_ai_generation_event(key)
-            waited = _wait_ai_generation_slot(key, timeout=remaining)
+            waited = bool(inflight_event is not None and inflight_event.wait(remaining))
             if waited:
                 outcome = _get_ai_generation_outcome(inflight_event)
                 if outcome is not None:

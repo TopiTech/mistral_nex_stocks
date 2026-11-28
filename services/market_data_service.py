@@ -360,6 +360,8 @@ def build_popular_symbol_items(
     pop_unseen_items: list[tuple[str, str, str]] = []
     q_lower = q.strip().lower() if q else ""
     for mkt, pop_list in pop_sources:
+        if not should_include_market(market_filter, mkt):
+            continue
         for sym in pop_list:
             if sym in seen_symbols:
                 continue

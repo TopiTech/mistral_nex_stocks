@@ -76,10 +76,12 @@ def _normalize_major_holders_frame(df: pd.DataFrame) -> dict[str, Any]:
         for label, value in zip(df["Label"], df["Value"], strict=False):
             if label is not None and value is not None:
                 result[str(label)] = value
-        return result
+        return sanitize_fundamental_dict(result)
     if len(df.columns) >= 1:
         series = df.iloc[:, 0]
-        return {str(idx): val for idx, val in series.items() if val is not None}
+        return sanitize_fundamental_dict(
+            {str(idx): val for idx, val in series.items() if val is not None}
+        )
     return {}
 
 
@@ -667,6 +669,9 @@ class YFinanceProvider(BaseStockProvider):
         self, cache_miss_symbols: list[str], period: str, timeout: float
     ) -> pd.DataFrame:
         """Run yf.download directly inside @with_yfinance_retry so transient errors retry."""
+        if self._get_market_state().is_yf_rate_limited():
+            suppress_yfinance_retry_reset()
+            return pd.DataFrame()
         sess = _shim().yf_session_manager.get_session()
         batch_workers = min(3, len(cache_miss_symbols))
         return yf.download(
@@ -693,8 +698,26 @@ class YFinanceProvider(BaseStockProvider):
             normalized.append(df_col)
         if len(normalized) == 1:
             return normalized[0]
+        tz_flags = [
+            getattr(df_col.index, "tz", None) is not None
+            for df_col in normalized
+            if isinstance(df_col.index, pd.DatetimeIndex)
+        ]
+        if tz_flags and any(tz_flags) and not all(tz_flags):
+            aligned: list[pd.DataFrame] = []
+            for df_col in normalized:
+                idx = df_col.index
+                if isinstance(idx, pd.DatetimeIndex):
+                    df_copy = df_col.copy()
+                    df_copy.index = (
+                        idx.tz_convert("UTC") if idx.tz is not None else idx.tz_localize("UTC")
+                    )
+                    aligned.append(df_copy)
+                else:
+                    aligned.append(df_col)
+            normalized = aligned
         try:
-            return pd.concat(normalized, axis=1)
+            return pd.concat(normalized, axis=1, sort=True)
         except (ValueError, TypeError, KeyError, pd.errors.InvalidIndexError) as exc:
             logger.warning(
                 "Batch concat failed (%s); falling back to per-symbol incremental concat",
@@ -950,10 +973,26 @@ class YFinanceProvider(BaseStockProvider):
 
             def _fast_get(field_names):
                 for field_name in field_names:
-                    if isinstance(fast, dict) and field_name in fast:
-                        value = fast.get(field_name)
-                    else:
-                        value = getattr(fast, field_name, None)
+                    try:
+                        if isinstance(fast, dict) and field_name in fast:
+                            value = fast.get(field_name)
+                        else:
+                            value = getattr(fast, field_name, None)
+                    except (KeyError, ValueError, TypeError, AttributeError) as field_exc:
+                        if _is_yfinance_rate_limit_error(field_exc) or is_retriable_http_error(
+                            field_exc
+                        ):
+                            raise
+                        exc_name = type(field_exc).__name__
+                        if "Timeout" in exc_name or "Connection" in exc_name:
+                            raise
+                        logger.debug(
+                            "fast_info field %s failed for %s: %s",
+                            field_name,
+                            symbol,
+                            field_exc,
+                        )
+                        value = None
                     if value is not None:
                         return value
                 return None

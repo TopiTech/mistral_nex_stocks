@@ -73,6 +73,31 @@ stream_bp = Blueprint("stream", __name__)
 # individually to preserve replay semantics.
 _initial_snapshot_cache: dict[int, tuple[int, bool, bool, bool, str]] = {}
 _initial_snapshot_lock = threading.Lock()
+_initial_snapshot_log_seqs: dict[int, tuple[str, int]] = {}
+_mode2_frame_log_seqs: dict[str, tuple[str, int]] = {}
+_sse_frame_dedup_lock = threading.Lock()
+
+
+def _emit_deduped_initial_snapshot(sse_mode: int, frame: str) -> int:
+    """Emit *frame* to ``sse_event_log`` only if the snapshot changed or expired."""
+    with _sse_frame_dedup_lock:
+        prev = _initial_snapshot_log_seqs.get(sse_mode)
+        if prev is not None and prev[0] == frame and sse_event_log.contains(prev[1], sse_mode):
+            return prev[1]
+        seq = sse_event_log.emit(sse_mode, "frame", frame)
+        _initial_snapshot_log_seqs[sse_mode] = (frame, seq)
+        return seq
+
+
+def _emit_deduped_mode2_frame(kind_key: str, frame: str) -> int:
+    """Emit a Mode-2 delta frame once across concurrent SSE connections."""
+    with _sse_frame_dedup_lock:
+        prev = _mode2_frame_log_seqs.get(kind_key)
+        if prev is not None and prev[0] == frame and sse_event_log.contains(prev[1], 2):
+            return prev[1]
+        seq = sse_event_log.emit(2, "frame", frame)
+        _mode2_frame_log_seqs[kind_key] = (frame, seq)
+        return seq
 
 
 def _sse_data_generation() -> int:
@@ -319,8 +344,7 @@ def api_stocks_stream() -> Any:
                     if send_initial:
                         initial_payload = _initial_snapshot_for_mode(sse_mode)
                         initial_frame = f"retry: 3000\ndata: {initial_payload}\n\n"
-                        initial_seq = sse_event_log.emit(sse_mode, "frame", initial_frame)
-                        yield f"id: {initial_seq}\n{initial_frame}"
+                        initial_seq = _emit_deduped_initial_snapshot(sse_mode, initial_frame)
                         if sse_mode == 2:
                             try:
                                 realtime_market_engine.get_market_deltas(rt_client_id)
@@ -329,6 +353,7 @@ def api_stocks_stream() -> Any:
                                 current_app.logger.debug(
                                     "Failed to purge initial deltas: %s", purge_exc
                                 )
+                        yield f"id: {initial_seq}\n{initial_frame}"
 
                     heartbeat_interval = SSE_HEARTBEAT_INTERVAL
                     last_heartbeat_time = time.time()
@@ -381,7 +406,7 @@ def api_stocks_stream() -> Any:
                                         allow_nan=False,
                                     )
                                     delta_frame = f"event: realtime_update\ndata: {delta_data}\n\n"
-                                    seq = sse_event_log.emit(2, "frame", delta_frame)
+                                    seq = _emit_deduped_mode2_frame("realtime_update", delta_frame)
                                     yield f"id: {seq}\n{delta_frame}"
 
                                 pts_deltas = realtime_market_engine.get_pts_deltas(rt_client_id)
@@ -393,7 +418,7 @@ def api_stocks_stream() -> Any:
                                         allow_nan=False,
                                     )
                                     pts_frame = f"event: pts_update\ndata: {pts_data}\n\n"
-                                    seq = sse_event_log.emit(2, "frame", pts_frame)
+                                    seq = _emit_deduped_mode2_frame("pts_update", pts_frame)
                                     yield f"id: {seq}\n{pts_frame}"
                             except Exception as e:
                                 current_app.logger.debug(
@@ -419,8 +444,7 @@ def api_stocks_stream() -> Any:
                                         full_frame = (
                                             f"event: realtime_update\ndata: {full_data}\n\n"
                                         )
-                                        seq = sse_event_log.emit(2, "frame", full_frame)
-                                        yield f"id: {seq}\n{full_frame}"
+                                        yield full_frame
                                 except Exception as e:
                                     current_app.logger.debug(
                                         "Failed emitting mode-2 periodic snapshot: %s", e

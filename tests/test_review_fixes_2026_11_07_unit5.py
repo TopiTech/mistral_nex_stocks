@@ -137,6 +137,7 @@ def test_is_market_open_success_probe_cached_under_valid_key(monkeypatch):
         return "REGULAR"
 
     monkeypatch.setattr(market_utils, "_fetch_live_market_state", _ok_fetch)
+    monkeypatch.setattr(market_utils, "_us_early_close_date", lambda _d: False)
     from utils.caching import global_cache
 
     with global_cache.cache_lock:

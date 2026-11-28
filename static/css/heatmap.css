@@ -430,6 +430,34 @@
   box-shadow: 0 0 18px rgba(0, 242, 255, 0.08);
 }
 
+body.theme-color-jp .legend-bar {
+  background: linear-gradient(
+    90deg,
+    #00e676 0%,
+    #2e7d32 22%,
+    #263238 50%,
+    #7f1515 78%,
+    #d50000 100%
+  );
+}
+
+.heatmap-3d-error {
+  width: min(100%, 1600px);
+  margin: 0 auto 14px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: rgba(213, 0, 0, 0.16);
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  color: #ffd0d0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.heatmap-3d-error.hidden {
+  display: none;
+}
+
 .heatmap-page footer {
   margin-top: auto;
   padding: 28px;

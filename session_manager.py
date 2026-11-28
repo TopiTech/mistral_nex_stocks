@@ -324,6 +324,7 @@ class YFinanceSessionManager:
                     # in flight.
                     self._active_sessions: set[int] = set()
                     self._active_session_counts: dict[int, int] = {}
+                    self._closing_sessions: set[int] = set()
                     self._active_sessions_lock = threading.Lock()
                     # H-3: Removed separate _request_lock (threading.Lock) to avoid
                     # potential deadlock with _lock (RLock). All shared state is
@@ -340,6 +341,7 @@ class YFinanceSessionManager:
                         0.0 if is_testing else YFINANCE_REQ_MIN_INTERVAL_BASE
                     )
                     self._last_block_ts = 0.0
+                    self._last_decay_ts = 0.0
                     # Fix 3: consecutive 401 counter for accelerated interval growth.
                     self._consecutive_401_count = 0
                     self._last_401_ts = 0.0
@@ -456,9 +458,20 @@ class YFinanceSessionManager:
             if self._is_shutting_down():
                 raise RuntimeError("Application is shutting down; session request aborted")
             sid = id(session)
+            session_closing = False
             with self._active_sessions_lock:
-                self._active_session_counts[sid] = self._active_session_counts.get(sid, 0) + 1
-                self._active_sessions.add(sid)
+                if sid in self._closing_sessions:
+                    session_closing = True
+                else:
+                    self._active_session_counts[sid] = self._active_session_counts.get(sid, 0) + 1
+                    self._active_sessions.add(sid)
+            if session_closing:
+                fresh_sess = self.get_session()
+                if fresh_sess is not session:
+                    return fresh_sess.request(*args, **kwargs)
+                with self._active_sessions_lock:
+                    self._active_session_counts[sid] = self._active_session_counts.get(sid, 0) + 1
+                    self._active_sessions.add(sid)
             try:
                 wait_time = self._compute_wait()
                 if wait_time > 0.0:
@@ -591,12 +604,26 @@ class YFinanceSessionManager:
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Failed to close stale yfinance session: %s", exc)
 
+    def _close_reclaimed_entries(self, entries: list[tuple[Any, int, float]]) -> None:
+        """Close reclaimed session entries outside locks and clear closing markers."""
+        if not entries:
+            return
+        try:
+            for entry in entries:
+                self._close_session_entry(entry)
+        finally:
+            with self._active_sessions_lock:
+                for entry in entries:
+                    self._closing_sessions.discard(id(entry[0]))
+
     def _enforce_pool_cap(self) -> None:
         """Close + drop the oldest idle sessions until under YFINANCE_SESSION_POOL_MAX.
 
         Only sessions that are NOT currently inside a request are reclaimed,
-        preserving correctness under concurrency. Runs under self._lock.
+        preserving correctness under concurrency. Actual socket closure runs
+        outside locks.
         """
+        to_close: list[tuple[Any, int, float]] = []
         with self._lock:
             max_sessions = YFINANCE_SESSION_POOL_MAX
             if len(self._all_sessions) <= max_sessions:
@@ -604,21 +631,26 @@ class YFinanceSessionManager:
             # Sort by creation timestamp (oldest first) so we evict LRU.
             self._all_sessions.sort(key=lambda e: e[2])
             with self._active_sessions_lock:
-                active = set(self._active_sessions) | {
-                    sid for sid, cnt in self._active_session_counts.items() if cnt > 0
-                }
-            removed = 0
-            kept = []
-            for entry in self._all_sessions:
-                if len(self._all_sessions) - removed <= max_sessions:
-                    kept.append(entry)
-                    continue
-                if id(entry[0]) in active:
-                    kept.append(entry)
-                    continue
-                self._close_session_entry(entry)
-                removed += 1
+                active = (
+                    set(self._active_sessions)
+                    | {sid for sid, cnt in self._active_session_counts.items() if cnt > 0}
+                    | set(self._closing_sessions)
+                )
+                removed = 0
+                kept = []
+                for entry in self._all_sessions:
+                    if len(self._all_sessions) - removed <= max_sessions:
+                        kept.append(entry)
+                        continue
+                    sid = id(entry[0])
+                    if sid in active:
+                        kept.append(entry)
+                        continue
+                    self._closing_sessions.add(sid)
+                    to_close.append(entry)
+                    removed += 1
             self._all_sessions = kept
+        self._close_reclaimed_entries(to_close)
 
     def _reclaim_epoch_sessions(self, new_epoch: int) -> None:
         """Close + drop every session created in an epoch older than new_epoch.
@@ -628,19 +660,25 @@ class YFinanceSessionManager:
         process-wide — except any session currently inside a request, which is
         spared to avoid closing a socket mid-flight.
         """
+        to_close: list[tuple[Any, int, float]] = []
         with self._lock:
             with self._active_sessions_lock:
-                active = set(self._active_sessions) | {
-                    sid for sid, cnt in self._active_session_counts.items() if cnt > 0
-                }
-            kept = []
-            for entry in self._all_sessions:
-                sess, epoch, _ts = entry
-                if epoch < new_epoch and id(sess) not in active:
-                    self._close_session_entry(entry)
-                else:
-                    kept.append(entry)
+                active = (
+                    set(self._active_sessions)
+                    | {sid for sid, cnt in self._active_session_counts.items() if cnt > 0}
+                    | set(self._closing_sessions)
+                )
+                kept = []
+                for entry in self._all_sessions:
+                    sess, epoch, _ts = entry
+                    sid = id(sess)
+                    if epoch < new_epoch and sid not in active:
+                        self._closing_sessions.add(sid)
+                        to_close.append(entry)
+                    else:
+                        kept.append(entry)
             self._all_sessions = kept
+        self._close_reclaimed_entries(to_close)
 
     def _reclaim_idle_and_cap(self) -> None:
         """Reclaim idle sessions (beyond TTL) and enforce the hard pool cap.
@@ -650,22 +688,28 @@ class YFinanceSessionManager:
         """
         now = time.time()
         idle_ttl = YFINANCE_SESSION_IDLE_TTL_SEC
+        to_close: list[tuple[Any, int, float]] = []
         with self._lock:
             with self._active_sessions_lock:
-                active = set(self._active_sessions) | {
-                    sid for sid, cnt in self._active_session_counts.items() if cnt > 0
-                }
-            kept = []
-            for entry in self._all_sessions:
-                sess, _epoch, ts = entry
-                if id(sess) in active:
-                    kept.append(entry)
-                    continue
-                if now - ts > idle_ttl:
-                    self._close_session_entry(entry)
-                else:
-                    kept.append(entry)
+                active = (
+                    set(self._active_sessions)
+                    | {sid for sid, cnt in self._active_session_counts.items() if cnt > 0}
+                    | set(self._closing_sessions)
+                )
+                kept = []
+                for entry in self._all_sessions:
+                    sess, _epoch, ts = entry
+                    sid = id(sess)
+                    if sid in active:
+                        kept.append(entry)
+                        continue
+                    if now - ts > idle_ttl:
+                        self._closing_sessions.add(sid)
+                        to_close.append(entry)
+                    else:
+                        kept.append(entry)
             self._all_sessions = kept
+        self._close_reclaimed_entries(to_close)
         # Enforce the cap after idle reclamation.
         self._enforce_pool_cap()
 
@@ -688,28 +732,32 @@ class YFinanceSessionManager:
         wait_time = 0.0
         with self._lock:
             now = time.time()
-            # Relax the adaptive interval back toward base after a quiet period
-            # so we don't stay artificially slow once Yahoo stops blocking us.
+            # Relax the adaptive interval back toward base at most once per
+            # decay interval after the latest block / decay step.
+            decay_ref = max(self._last_block_ts, getattr(self, "_last_decay_ts", 0.0))
             if (
                 self._adaptive_interval_sec > YFINANCE_REQ_MIN_INTERVAL_BASE
-                and now - self._last_block_ts > YFINANCE_REQ_INTERVAL_DECAY_AFTER
+                and now - decay_ref > YFINANCE_REQ_INTERVAL_DECAY_AFTER
             ):
                 self._adaptive_interval_sec = max(
                     YFINANCE_REQ_MIN_INTERVAL_BASE,
                     self._adaptive_interval_sec * YFINANCE_REQ_INTERVAL_DECAY,
                 )
+                self._last_decay_ts = now
             min_interval = self._adaptive_interval_sec
-            # Wall clock stepped backwards (NTP correction, manual change, VM
-            # restore): the stored reservation is now in the future, so the raw
-            # gap would sleep for the whole skew (potentially hours) and stall
-            # every yfinance request. Treat the interval as exhausted and
-            # re-anchor the reservation on the new clock.
-            elapsed = max(0.0, now - self._last_request_ts)
-            if elapsed < min_interval:
-                wait_time = min_interval - elapsed
-                self._last_request_ts = now + wait_time
-            else:
+            # Stagger concurrent threads across future slots while still guarding
+            # against large backward wall-clock jumps (NTP/manual step).
+            max_future_horizon = max(
+                float(YFINANCE_MAX_CONCURRENT_REQUESTS) * float(min_interval) * 2.0,
+                60.0,
+            )
+            if self._last_request_ts - now > max_future_horizon:
+                wait_time = 0.0
                 self._last_request_ts = now
+            else:
+                next_slot = max(now, self._last_request_ts + min_interval)
+                wait_time = max(0.0, next_slot - now)
+                self._last_request_ts = next_slot
         return wait_time
 
     def _handle_block(self, status_code: int, resp: Any) -> None:
@@ -762,6 +810,7 @@ class YFinanceSessionManager:
             )
             adaptive_interval = self._adaptive_interval_sec
             self._last_block_ts = now_block
+            self._last_decay_ts = now_block
 
             # Status-specific default exclusion durations.
             # 403 (Forbidden) → 180s; 402 (Payment Required) → 300s; 429 (Too Many Requests) → 300s; 439 (Blocked) → 180s
@@ -799,6 +848,7 @@ class YFinanceSessionManager:
           Yahoo, triggering a cascade of rate-limit failures.
         """
         sess_to_return = None
+        stale_to_close: list[tuple[Any, int, float]] = []
         with self._lock:
             if self._is_app_shutting_down():
                 raise RuntimeError("Application is shutting down; session creation aborted")
@@ -808,16 +858,23 @@ class YFinanceSessionManager:
             if not hasattr(self._local, "sessions"):
                 self._local.sessions = {}
 
+            def _defer_stale_close(stale_sess: Any) -> None:
+                sid = id(stale_sess)
+                with self._active_sessions_lock:
+                    is_active = sid in self._active_sessions or self._active_session_counts.get(sid, 0) > 0
+                    already_closing = sid in self._closing_sessions
+                    if not is_active and not already_closing:
+                        self._closing_sessions.add(sid)
+                        stale_to_close.append((stale_sess, current_epoch, 0.0))
+                if not is_active:
+                    self._all_sessions = [e for e in self._all_sessions if e[0] is not stale_sess]
+
             # Close and remove any stale sessions for other UA indexes to prevent memory leaks.
             # _all_sessions now stores (session, epoch, ts) tuples, so we match on identity.
             for k in list(self._local.sessions.keys()):
                 if k != idx:
                     sess, _ = self._local.sessions.pop(k)
-                    try:
-                        sess.close()
-                    except Exception as exc:
-                        logger.debug("Failed to close stale yfinance session: %s", exc)
-                    self._all_sessions = [e for e in self._all_sessions if e[0] is not sess]
+                    _defer_stale_close(sess)
 
             if idx in self._local.sessions:
                 sess, epoch = self._local.sessions[idx]
@@ -828,29 +885,34 @@ class YFinanceSessionManager:
                     # must not hand out a closed session.
                     _session_still_valid = any(e[0] is sess for e in self._all_sessions)
                     if _session_still_valid:
+                        with self._active_sessions_lock:
+                            _is_closing = id(sess) in self._closing_sessions
+                    else:
+                        _is_closing = True
+                    if _session_still_valid and not _is_closing:
                         # Update timestamp so idle reaper does not close it before request starts
                         now = time.time()
                         for i, entry in enumerate(self._all_sessions):
                             if entry[0] is sess:
                                 self._all_sessions[i] = (entry[0], entry[1], now)
                                 break
-                        return sess
-                    logger.debug(
-                        "Discarding stale thread-local yfinance session"
-                        " (epoch=%d, reclaimed by idle reaper)",
-                        epoch,
-                    )
-                try:
-                    sess.close()
-                except Exception as exc:
-                    logger.debug("Failed to close yfinance session: %s", exc)
-                self._local.sessions.pop(idx, None)
-                self._all_sessions = [e for e in self._all_sessions if e[0] is not sess]
+                        sess_to_return = sess
+                    else:
+                        logger.debug(
+                            "Discarding stale thread-local yfinance session"
+                            " (epoch=%d, reclaimed by idle reaper)",
+                            epoch,
+                        )
+                if sess_to_return is None:
+                    self._local.sessions.pop(idx, None)
+                    _defer_stale_close(sess)
 
-            ua = YFINANCE_USER_AGENTS[idx]
-            sess_to_return = self._create_session(ua, ua_index=idx)
-            self._local.sessions[idx] = (sess_to_return, current_epoch)
+            if sess_to_return is None:
+                ua = YFINANCE_USER_AGENTS[idx]
+                sess_to_return = self._create_session(ua, ua_index=idx)
+                self._local.sessions[idx] = (sess_to_return, current_epoch)
 
+        self._close_reclaimed_entries(stale_to_close)
         return sess_to_return
 
     def _update_session_timestamp(self, session: Any) -> None:

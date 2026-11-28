@@ -84,6 +84,7 @@ class MessageAnnouncer:
 
     def __init__(self):
         self.listeners: list[queue.Queue[Any]] = []
+        self._closed_queues: set[int] = set()
         self.lock = threading.Lock()
         # Observability counters, incremented inside ``self.lock`` (read-
         # modify-write is not atomic under the GIL) and exposed via ``stats()``:
@@ -91,6 +92,20 @@ class MessageAnnouncer:
         #   * dropped_count:   slow listeners removed due to queue overflow.
         self.announced_count = 0
         self.dropped_count = 0
+
+    def _enqueue_close_sentinel(self, q: queue.Queue[Any]) -> None:
+        """Guarantee a ``None`` sentinel reaches a closed listener queue."""
+        budget = max(getattr(q, "maxsize", 0), 1) + 8
+        for _ in range(budget):
+            try:
+                q.put_nowait(None)
+                return
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
+        logger.warning("SSE queue overflow persists: dropping sentinel for one listener")
 
     def listen(self, maxsize: int | None = None, *, enforce_limit: bool = True):
         """Register and return a new SSE listener queue.
@@ -111,6 +126,7 @@ class MessageAnnouncer:
     def unlisten(self, q):
         """Unregister a listener queue."""
         with self.lock:
+            self._closed_queues.discard(id(q))
             try:
                 self.listeners.remove(q)
             except ValueError:
@@ -132,22 +148,15 @@ class MessageAnnouncer:
             for q_over in overloaded:
                 try:
                     self.listeners.remove(q_over)
-                    try:
-                        q_over.put_nowait(None)
-                    except queue.Full:
-                        try:
-                            q_over.get_nowait()
-                        except queue.Empty:
-                            pass
-                        try:
-                            q_over.put_nowait(None)
-                        except queue.Full:
-                            pass
+                    self._closed_queues.add(id(q_over))
                 except ValueError:
                     pass
             targets = list(self.listeners)
             if overloaded:
                 self.dropped_count += len(overloaded)
+
+        for q_over in overloaded:
+            self._enqueue_close_sentinel(q_over)
 
         if overloaded:
             logger.info(
@@ -157,42 +166,25 @@ class MessageAnnouncer:
 
         delivered = 0
         for q_target in targets:
+            with self.lock:
+                if id(q_target) in self._closed_queues:
+                    continue
             try:
                 q_target.put_nowait(msg)
                 delivered += 1
             except queue.Full:
-                # DATA-9 race window: the queue filled between the snapshot
-                # above and this put_nowait (another broadcaster or a
-                # concurrent announce). Unify with the backpressure path:
-                # terminate the listener with the None sentinel so the client
-                # reconnects and replays via Last-Event-ID. Quietly evicting
-                # one event here would leave a permanent hole in the stream
-                # (mode-1 consumers never heal without a reconnect).
                 removed_now = False
                 with self.lock:
                     try:
                         self.listeners.remove(q_target)
+                        self._closed_queues.add(id(q_target))
                         removed_now = True
                         self.dropped_count += 1
                     except ValueError:
                         pass
                 if not removed_now:
-                    # Listener was already removed by unlisten() or a concurrent
-                    # announce(); skip sentinel injection and dropped_count increment.
                     continue
-                try:
-                    q_target.put_nowait(None)
-                except queue.Full:
-                    try:
-                        q_target.get_nowait()
-                    except queue.Empty:
-                        pass
-                    try:
-                        q_target.put_nowait(None)
-                    except queue.Full:
-                        logger.warning(
-                            "SSE queue overflow persists: dropping sentinel for one listener"
-                        )
+                self._enqueue_close_sentinel(q_target)
                 logger.info(
                     "SSE backpressure: dropped 1 listener mid-broadcast due to queue overflow"
                 )
@@ -217,19 +209,12 @@ class MessageAnnouncer:
     def close(self) -> None:
         """Close and unregister all active listeners, signaling stream termination."""
         with self.lock:
-            for q in list(self.listeners):
-                try:
-                    q.put_nowait(None)
-                except queue.Full:
-                    try:
-                        q.get_nowait()
-                    except queue.Empty:
-                        pass
-                    try:
-                        q.put_nowait(None)
-                    except queue.Full:
-                        pass
+            closing = list(self.listeners)
+            for q in closing:
+                self._closed_queues.add(id(q))
             self.listeners.clear()
+        for q in closing:
+            self._enqueue_close_sentinel(q)
 
     def stats(self):
         """Return observability counters (listeners / announced / dropped)."""

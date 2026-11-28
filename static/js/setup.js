@@ -14,6 +14,20 @@ const MIN_KEY_LENGTHS = {
 };
 
 let setupAbortController = null;
+let setupSubmitInFlight = false;
+
+function setSetupSubmitBusy(isBusy) {
+  setupSubmitInFlight = isBusy;
+  const saveBtn = getEl("saveBtn");
+  const previewBtn = getEl("previewBtn");
+  if (saveBtn) {
+    saveBtn.disabled = isBusy;
+    saveBtn.textContent = isBusy ? "保存中..." : "保存して開始";
+  }
+  if (previewBtn) {
+    previewBtn.disabled = isBusy;
+  }
+}
 
 function getOrCreateSetupAbortController() {
   if (!setupAbortController || setupAbortController.signal.aborted) {
@@ -359,8 +373,9 @@ function syncApiModeUi() {
 }
 
 async function startPreviewMode() {
-  const btn = getEl("previewBtn");
-  if (btn) btn.disabled = true;
+  if (setupSubmitInFlight) return;
+  setSetupSubmitBusy(true);
+  let redirected = false;
   try {
     const response = await csrfFetch("/api/credentials", {
       method: "POST",
@@ -378,19 +393,23 @@ async function startPreviewMode() {
       );
     }
     setErrorMessage("");
+    redirected = true;
     window.location.href = "/main";
   } catch (error) {
-    if (btn) btn.disabled = false;
     if (error?.name === "AbortError") return;
     setErrorMessage(error.message || "プレビューモードを開始できませんでした");
+  } finally {
+    if (!redirected) {
+      setSetupSubmitBusy(false);
+    }
   }
 }
 
 async function saveKey() {
   const saveBtn = getEl("saveBtn");
   // Enterキーハンドラ経由でも二重送信しないよう、検証より先に
-  // 送信中フラグ(ボタンのdisabled)で再入を止める。
-  if (saveBtn?.disabled) return;
+  // 共通送信中フラグ(setupSubmitInFlight / button.disabled)で再入を止める。
+  if (setupSubmitInFlight || saveBtn?.disabled) return;
   const aiProvider = getAiProvider();
   const langsearchInput = getEl("langsearchApiKey");
   const tavilyInput = getEl("tavilyApiKey");
@@ -482,22 +501,20 @@ async function saveKey() {
     options.agentId = apiMode === "agents" ? agentId : "";
   }
 
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = "保存中...";
-  }
-
+  setSetupSubmitBusy(true);
+  let redirected = false;
   try {
     await storeCredentials(options);
     setErrorMessage("");
+    redirected = true;
     window.location.href = "/main";
   } catch (error) {
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = "保存して開始";
-    }
     if (error?.name === "AbortError") return;
     setErrorMessage(error.message || "APIキーの保存に失敗しました");
+  } finally {
+    if (!redirected) {
+      setSetupSubmitBusy(false);
+    }
   }
 }
 

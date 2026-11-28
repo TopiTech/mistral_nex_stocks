@@ -113,34 +113,48 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> bool:
     """
     if not source.exists():
         return False
-    _ensure_runtime_dir()
-    try:
-        # O_EXCL makes the existence check atomic: two processes starting
-        # together cannot both stream into the same target and interleave a
-        # half-written config that load_config() then classifies as corrupt.
-        # Copying content (not metadata) also stops the legacy file's mode
-        # (e.g. 0o644 from a checkout) from being propagated onto the runtime
-        # config (CFG-11).
-        fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        # A peer process created the target first and owns the migration. It may
-        # still be streaming the copy, so success is reported only when the
-        # target already holds a complete JSON object: an empty or half-written
-        # target used to be reported as migrated, which made the caller log the
-        # success and stop retrying while the legacy file (the only complete
-        # copy) stayed in place for the wrong reason.
+    if target.exists():
         return _is_complete_json_object(target)
-    except OSError as exc:
-        logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
-        return False
+    _ensure_runtime_dir()
+    tmp_target = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
+    published = False
     try:
-        with safe_fdopen(fd, "wb", encoding=None) as dst, open(source, "rb") as src:
-            shutil.copyfileobj(src, dst)
-            # Match the durability of the other writers in this module: without
-            # it a crash between the copy and the source unlink can leave an
-            # empty or partial target while the only complete copy is gone.
-            dst.flush()
-            os.fsync(dst.fileno())
+        if os.name == "nt":
+            with open(tmp_target, "wb") as dst, open(source, "rb") as src:
+                shutil.copyfileobj(src, dst)
+                dst.flush()
+                try:
+                    os.fsync(dst.fileno())
+                except OSError:
+                    pass
+        else:
+            with restrictive_umask_lock():
+                old_umask = os.umask(0o077)
+                try:
+                    fd = os.open(
+                        str(tmp_target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    )
+                finally:
+                    os.umask(old_umask)
+                with safe_fdopen(fd, "wb", encoding=None) as dst, open(source, "rb") as src:
+                    shutil.copyfileobj(src, dst)
+                    dst.flush()
+                    os.fsync(dst.fileno())
+        try:
+            os.link(tmp_target, target)
+            published = True
+        except FileExistsError:
+            return _is_complete_json_object(target)
+        except OSError:
+            if target.exists():
+                return _is_complete_json_object(target)
+            os.replace(tmp_target, target)
+            published = True
+        if os.name != "nt" and target.exists():
+            try:
+                os.chmod(target, 0o600)
+            except OSError:
+                pass
         logger.info("Migrated legacy runtime file %s -> %s", source, target)
         # The target's data is fsynced, but its directory entry is not durable
         # until the containing directory is fsynced.  Deleting the source before
@@ -163,13 +177,14 @@ def _migrate_legacy_runtime_file(source: Path, target: Path) -> bool:
             logger.warning("Failed to remove legacy runtime file %s: %s", source, rm_exc)
     except OSError as exc:
         logger.warning("Failed to migrate legacy runtime file %s: %s", source, exc)
-        # Leave no partial target behind so a later attempt can retry.
-        try:
-            target.unlink()
-        except OSError:
-            pass
         return False
-    return True
+    finally:
+        if tmp_target.exists():
+            try:
+                tmp_target.unlink()
+            except OSError:
+                pass
+    return published
 
 
 def _write_and_replace_with_lock(

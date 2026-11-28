@@ -31,6 +31,7 @@ from services.realtime.utils import (
     _ESCAPED_QUOTE_RES,
     _PTS_TRADING_FLAG_RE,
     _PTS_TRADING_FLAG_UNESCAPED_RE,
+    SCRAPER_BLOCK_STATUS_CODES,
     TickerPayload,
     _create_cffi_session,
     _extract_next_data_quotes,
@@ -247,7 +248,7 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
             idx = html.find(label)
             if idx < 0:
                 return None
-            window = html[idx : idx + 400]
+            window = re.sub(r"<[^>]+>", " ", html[idx : idx + 400])
             if signed:
                 # M15 (2026-11-07 review): Japanese quotes on SBI render a
                 # negative day-change with the ▲/▼ marks, which `[+-]` cannot
@@ -312,7 +313,7 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
         if idx < 0:
             self._record_fetch_failure(symbol, kind="pts")
             return None
-        window = html[idx : idx + 600]
+        window = re.sub(r"<[^>]+>", " ", html[idx : idx + 600])
         # Strip clock times BEFORE price extraction: with a layout like
         # "PTS 17:05" the primary label match would otherwise adopt the clock
         # hour (17) as the price — the timestamp stripping used to run only in
@@ -405,11 +406,17 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
 
         cache: dict[int, list[str]] = {}
         session = self._get_session()
+        blocked_during_refresh = False
         for url in (self.INDEX_MID_URL, self.INDEX_BTM_URL):
             resp: Any = None
             try:
                 resp = session.get(url, timeout=6.0)
-                _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+                _mark_scraper_blocked_from_status(
+                    resp.status_code, propagate_to_yfinance=False, response=resp
+                )
+                if resp.status_code in SCRAPER_BLOCK_STATUS_CODES:
+                    blocked_during_refresh = True
+                    break
                 if resp.status_code == 200:
                     text = resp.content.decode("utf-8", errors="replace")
                     parse_ajax_index_js(text, cache)
@@ -418,17 +425,20 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
             finally:
                 close_response_quietly(resp)
 
-        resp_ndy: Any = None
-        try:
-            resp_ndy = session.get(self.INDEX_NDY_URL, timeout=6.0)
-            _mark_scraper_blocked_from_status(resp_ndy.status_code, propagate_to_yfinance=False)
-            if resp_ndy.status_code == 200:
-                text = resp_ndy.content.decode("utf-8", errors="replace")
-                parse_ndy_min_js(text, cache)
-        except Exception as exc:
-            logger.debug("[Nikkei225JP Scraper] Failed to fetch NDY min: %s", exc)
-        finally:
-            close_response_quietly(resp_ndy)
+        if not blocked_during_refresh and not _is_scraper_blocked():
+            resp_ndy: Any = None
+            try:
+                resp_ndy = session.get(self.INDEX_NDY_URL, timeout=6.0)
+                _mark_scraper_blocked_from_status(
+                    resp_ndy.status_code, propagate_to_yfinance=False, response=resp_ndy
+                )
+                if resp_ndy.status_code == 200:
+                    text = resp_ndy.content.decode("utf-8", errors="replace")
+                    parse_ndy_min_js(text, cache)
+            except Exception as exc:
+                logger.debug("[Nikkei225JP Scraper] Failed to fetch NDY min: %s", exc)
+            finally:
+                close_response_quietly(resp_ndy)
 
         if cache:
             with self._cache_lock:
@@ -1045,12 +1055,16 @@ class YahooJPRealtimeScraper:
         payload = self._fetch_kabutan_symbol(symbol)
         if payload:
             return payload
+        if _is_scraper_blocked():
+            return None
 
         url = f"{self.BASE_URL}{clean_code}.T"
         resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            _mark_scraper_blocked_from_status(
+                resp.status_code, propagate_to_yfinance=True, response=resp
+            )
             if resp.status_code == 200:
                 try:
                     html = decode_http_response_text(resp)
@@ -1134,12 +1148,16 @@ class YahooJPRealtimeScraper:
         payload = self._fetch_kabutan_pts_symbol(symbol)
         if payload:
             return payload
+        if _is_scraper_blocked():
+            return None
 
         url = f"{self.BASE_URL}{clean_code}.T?md=pts"
         resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            _mark_scraper_blocked_from_status(
+                resp.status_code, propagate_to_yfinance=True, response=resp
+            )
 
             if resp.status_code == 200:
                 try:

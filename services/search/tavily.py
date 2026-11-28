@@ -71,6 +71,11 @@ def _try_claim_tavily_probe() -> bool:
     return True
 
 
+_DEFAULT_IS_TAVILY_CIRCUIT_OPEN = _is_tavily_circuit_open
+_DEFAULT_IS_TAVILY_CIRCUIT_HALF_OPEN = _is_tavily_circuit_half_open
+_DEFAULT_TRY_CLAIM_TAVILY_PROBE = _try_claim_tavily_probe
+
+
 def _release_tavily_probe() -> None:
     try:
         from app_state import app_state
@@ -192,23 +197,50 @@ def tavily_search(
     eff_max_results = normalize_search_limit(max_results, default=8, max_value=20)
     if eff_max_results is None:
         return []
-    if _is_tavily_circuit_open():
-        logger.info("Tavily circuit is open; skipping search request")
-        return []
-
     circuit_probe_claimed = False
-    if _is_tavily_circuit_half_open():
-        if not _try_claim_tavily_probe():
-            if _is_tavily_circuit_half_open():
-                logger.info(
-                    "Tavily circuit recovery probe already in progress; skipping search request"
+    use_atomic_circuit = (
+        _is_tavily_circuit_open is _DEFAULT_IS_TAVILY_CIRCUIT_OPEN
+        and _is_tavily_circuit_half_open is _DEFAULT_IS_TAVILY_CIRCUIT_HALF_OPEN
+        and _try_claim_tavily_probe is _DEFAULT_TRY_CLAIM_TAVILY_PROBE
+    )
+    if use_atomic_circuit:
+        try:
+            from app_state import app_state
+
+            market = getattr(app_state, "market", None)
+            if market is not None and hasattr(market, "enter_circuit_call"):
+                allowed, circuit_probe_claimed, deny_reason = market.enter_circuit_call(
+                    _TAVILY_CIRCUIT_NAME
                 )
-                return []
-            if _is_tavily_circuit_open():
-                logger.info("Tavily circuit opened while acquiring probe; skipping search request")
-                return []
-        else:
-            circuit_probe_claimed = True
+                if not allowed:
+                    if deny_reason == "busy":
+                        logger.info(
+                            "Tavily circuit recovery probe already in progress; skipping search request"
+                        )
+                    else:
+                        logger.info("Tavily circuit is open; skipping search request")
+                    return []
+        except Exception:
+            pass
+    else:
+        if _is_tavily_circuit_open():
+            logger.info("Tavily circuit is open; skipping search request")
+            return []
+
+        if _is_tavily_circuit_half_open():
+            if not _try_claim_tavily_probe():
+                if _is_tavily_circuit_half_open():
+                    logger.info(
+                        "Tavily circuit recovery probe already in progress; skipping search request"
+                    )
+                    return []
+                if _is_tavily_circuit_open():
+                    logger.info(
+                        "Tavily circuit opened while acquiring probe; skipping search request"
+                    )
+                    return []
+            else:
+                circuit_probe_claimed = True
 
     time_range_map = {
         "d": "day",

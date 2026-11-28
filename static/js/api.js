@@ -403,8 +403,21 @@ const INDEX_BAR_CONFIG = [
   { label: "VIX", key: "VIX" },
 ];
 
-const formatIndexNumber = (value) =>
-  value != null ? Number(value).toLocaleString() : "--";
+const _parseFiniteIndexMetric = (value) => {
+  if (value == null || typeof value === "boolean" || Array.isArray(value)) {
+    return NaN;
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return NaN;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : NaN;
+};
+
+const formatIndexNumber = (value) => {
+  const num = _parseFiniteIndexMetric(value);
+  return Number.isFinite(num) ? num.toLocaleString() : "--";
+};
 
 function buildIndexChip(label, key, isDuplicateCopy = false) {
   const chip = document.createElement("span");
@@ -513,9 +526,27 @@ function ensureIndicesBarStructure(bar) {
 
 function updateSingleIndexChip(chip, idx) {
   if (!chip || !idx) return;
-  const changeNum = Number(idx.change) || 0;
-  const cls = changeNum >= 0 ? "pos" : "neg";
-  const sign = changeNum >= 0 ? "+" : "";
+  const parseMetric =
+    typeof _parseFiniteIndexMetric === "function"
+      ? _parseFiniteIndexMetric
+      : (v) => {
+          if (v == null || typeof v === "boolean" || Array.isArray(v)) {
+            return NaN;
+          }
+          if (typeof v === "string" && v.trim() === "") return NaN;
+          const n = Number(v);
+          return Number.isFinite(n) ? n : NaN;
+        };
+  const changeNum = parseMetric(idx.change);
+  const pctNum = parseMetric(idx.percent);
+  const hasChange = Number.isFinite(changeNum);
+  const hasPct = Number.isFinite(pctNum);
+  const basisNum = hasChange ? changeNum : pctNum;
+  const cls = Number.isFinite(basisNum)
+    ? basisNum >= 0
+      ? "pos"
+      : "neg"
+    : "pos";
   const priceEl = chip.querySelector(".index-price");
   const changeEl = chip.querySelector(".index-change");
   const openEl = chip.querySelector(".index-open");
@@ -561,10 +592,12 @@ function updateSingleIndexChip(chip, idx) {
     );
   }
   if (changeEl) {
-    const changeText = idx.change != null ? idx.change : "--";
-    const pctText = idx.percent != null ? idx.percent : "--";
+    const chgSign = hasChange && changeNum >= 0 ? "+" : "";
+    const pctSign = hasPct && pctNum >= 0 ? "+" : "";
+    const changeText = hasChange ? `${chgSign}${idx.change}` : "--";
+    const pctText = hasPct ? `${pctSign}${idx.percent}` : "--";
     changeEl.className = `index-change ${cls}`;
-    changeEl.textContent = `${sign}${changeText} (${sign}${pctText}%)`;
+    changeEl.textContent = `${changeText} (${pctText}%)`;
   }
   if (openEl) openEl.textContent = formatIndexNumber(idx.open);
   if (highEl) highEl.textContent = formatIndexNumber(idx.high);
@@ -615,9 +648,15 @@ function updateIndicesBar(indices) {
     const parts = INDEX_BAR_CONFIG.map(({ label, key }) => {
       const idx = indices[key];
       if (!idx) return null;
-      const chg = Number(idx.change) || 0;
-      const sign = chg >= 0 ? "+" : "";
-      return `${label} ${formatIndexNumber(idx.price)} ${sign}${idx.change ?? "--"} (${sign}${idx.percent ?? "--"}%)`;
+      const chg = _parseFiniteIndexMetric(idx.change);
+      const pct = _parseFiniteIndexMetric(idx.percent);
+      const chgText = Number.isFinite(chg)
+        ? `${chg >= 0 ? "+" : ""}${idx.change}`
+        : "--";
+      const pctText = Number.isFinite(pct)
+        ? `${pct >= 0 ? "+" : ""}${idx.percent}`
+        : "--";
+      return `${label} ${formatIndexNumber(idx.price)} ${chgText} (${pctText}%)`;
     }).filter(Boolean);
     if (parts.length) srBar.textContent = parts.join(" ｜ ");
   }
@@ -1126,6 +1165,10 @@ function connectSSE(overrideMode) {
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         signal: ticketAbortController.signal,
+        timeoutMs:
+          typeof FAST_FETCH_TIMEOUT_MS === "number"
+            ? FAST_FETCH_TIMEOUT_MS
+            : 10000,
       });
       if (!isCurrentConnection()) return null;
       if (!ticketResponse.ok) {
@@ -1333,32 +1376,38 @@ function updateStocksFromSseData(data) {
     });
   }
 
+  const diffUpdateMarket = (market) => {
+    (state.stocks[market] || []).forEach((stock) => {
+      const stockKey = makeStockKey(market, stock.symbol);
+      const lastTs = stockHashMap.get(stockKey);
+      // 差分ゲートは ui.js の描画ハッシュと同じ組成(utils.js の
+      // stockUpdateSignature)を使う。snapshot_ts_ms だけに頼ると、
+      // そのフィールドを含まないリアルタイム delta フレームで
+      // volume/high/low/pts_price の変化を取りこぼす。
+      const currentTs = stockUpdateSignature(stock);
+      if (lastTs === currentTs) return;
+      stockHashMap.set(stockKey, currentTs);
+      findAllWrappersByStockKey(stockKey).forEach((wrapper) =>
+        updateExistingCard(wrapper, stock),
+      );
+    });
+  };
+
   if (shouldFullRender) {
     renderStocks("us", state.stocks.us);
     renderStocks("jp", state.stocks.jp);
     renderStocks("idx", state.stocks.idx);
   } else if (marketsToReconcile.length > 0) {
+    const reconcileSet = new Set(marketsToReconcile);
     marketsToReconcile.forEach((market) =>
       renderStocks(market, state.stocks[market]),
     );
+    ["us", "jp", "idx"].forEach((market) => {
+      if (!reconcileSet.has(market)) diffUpdateMarket(market);
+    });
   } else {
     // Differential update: only update changed cards
-    ["us", "jp", "idx"].forEach((market) => {
-      (state.stocks[market] || []).forEach((stock) => {
-        const stockKey = makeStockKey(market, stock.symbol);
-        const lastTs = stockHashMap.get(stockKey);
-        // 差分ゲートは ui.js の描画ハッシュと同じ組成(utils.js の
-        // stockUpdateSignature)を使う。snapshot_ts_ms だけに頼ると、
-        // そのフィールドを含まないリアルタイム delta フレームで
-        // volume/high/low/pts_price の変化を取りこぼす。
-        const currentTs = stockUpdateSignature(stock);
-        if (lastTs === currentTs) return;
-        stockHashMap.set(stockKey, currentTs);
-        findAllWrappersByStockKey(stockKey).forEach((wrapper) =>
-          updateExistingCard(wrapper, stock),
-        );
-      });
-    });
+    ["us", "jp", "idx"].forEach(diffUpdateMarket);
   }
 
   const activeTab = document.querySelector(".tab.active")?.id;
@@ -2079,6 +2128,7 @@ async function searchStocks() {
       `/api/search?q=${encodeURIComponent(q)}`,
       {
         signal: controller.signal,
+        timeoutMs: CONSTANTS.TIMEOUT.SEARCH,
       },
       { showToast: false },
     );
@@ -2136,17 +2186,15 @@ async function searchStocks() {
     input?.dispatchEvent(new CustomEvent("searchresultschange"));
   } catch (err) {
     if (activeSearchController !== controller) return;
-    if (err.name === "AbortError" || err.type === "timeout") return;
+    if (err.name === "AbortError") return;
     $logger.error("Search error:", err);
     if (list) {
       list.textContent = "";
-      list.appendChild(
-        createEl(
-          "div",
-          "no-results",
-          `検索エラーが発生しました: ${err.message || ""}`,
-        ),
-      );
+      const errText =
+        err.type === APIErrorType.TIMEOUT
+          ? "検索がタイムアウトしました。しばらくしてから再試行してください。"
+          : `検索エラーが発生しました: ${err.message || ""}`;
+      list.appendChild(createEl("div", "no-results", errText));
     }
     input?.setAttribute("aria-expanded", "false");
   } finally {

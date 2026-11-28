@@ -20,6 +20,7 @@ from app_state import app_state
 from constants import _BASE_ALLOWED_CORS_ORIGINS
 from utils.env_helpers import _env_bool as _networking_env_bool
 from utils.env_helpers import _is_production_env as _networking_is_prod
+from utils.env_helpers import _is_remote_api_enabled as _networking_is_remote_api_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,24 @@ _SENSITIVE_QUERY_PARAMS = (
 )
 
 
+_SENSITIVE_QUERY_SPAN_RE = re.compile(r"\?([^\s'\"]+)")
+
+
+def _mask_query_segment(query: str) -> str:
+    pairs = []
+    for pair in query.split("&"):
+        if not pair:
+            continue
+        key, sep, _value = pair.partition("=")
+        # Flask decodes query parameter names before the route reads them, so
+        # do the same once here before comparing against sensitive names.
+        if unquote_plus(key).lower() in _SENSITIVE_QUERY_PARAMS:
+            pairs.append(f"{key}=[REDACTED]")
+        else:
+            pairs.append(pair if sep else key)
+    return "&".join(pairs)
+
+
 def mask_sensitive_url(url: str) -> str:
     """Return *url* with any secret-bearing query params replaced by a mask.
 
@@ -205,21 +224,10 @@ def mask_sensitive_url(url: str) -> str:
     """
     if not url or "?" not in url:
         return url
-    path, _, query = url.partition("?")
-    if not query:
-        return url
-    pairs = []
-    for pair in query.split("&"):
-        if not pair:
-            continue
-        key, sep, _value = pair.partition("=")
-        # Flask decodes query parameter names before the route reads them, so
-        # do the same once here before comparing against sensitive names.
-        if unquote_plus(key).lower() in _SENSITIVE_QUERY_PARAMS:
-            pairs.append(f"{key}=[REDACTED]")
-        else:
-            pairs.append(pair if sep else key)
-    return f"{path}?{'&'.join(pairs)}"
+    return _SENSITIVE_QUERY_SPAN_RE.sub(
+        lambda m: f"?{_mask_query_segment(m.group(1))}",
+        url,
+    )
 
 
 def get_configured_admin_token() -> str:
@@ -279,12 +287,10 @@ def require_trusted_or_admin(req, require_origin=True):
         # Fail closed in remote mode even if startup validation was skipped.
         return False, "admin token must contain at least 32 characters"
 
-    # In remote/proxy mode, the reverse proxy is responsible for admitting the
-    # connection and the mandatory admin token is the application-level
-    # credential.  The local browser Origin allow-list must not be applied here:
-    # it only contains loopback origins and would otherwise make every public
-    # same-origin POST fail before its valid token can be checked.
-    if allow_remote:
+    # In remote/proxy mode (requiring both MNS_ALLOW_REMOTE_API and MNS_PROXY_FIX),
+    # the reverse proxy is responsible for admitting the connection and the
+    # mandatory admin token is the application-level credential.
+    if _networking_is_remote_api_enabled():
         if not _is_local_request(req):
             return False, "forbidden"
     else:
@@ -504,10 +510,11 @@ def require_sse_auth(req, require_origin: bool = False):
     if allow_remote and len(admin_token) < 32:
         return False, "admin token must contain at least 32 characters"
 
-    # Match the regular protected-API policy: a remote deployment is admitted
-    # by its trusted proxy and must authenticate with the configured admin
-    # token, while local deployments retain the loopback/Origin gate.
-    if allow_remote:
+    # Match the regular protected-API policy: a remote deployment (both
+    # MNS_ALLOW_REMOTE_API and MNS_PROXY_FIX) is admitted by its trusted proxy
+    # and must authenticate with the configured admin token, while local
+    # deployments retain the loopback/Origin gate.
+    if _networking_is_remote_api_enabled():
         if not _is_local_request(req):
             return False, "forbidden"
     else:
@@ -602,12 +609,36 @@ _BLOCKED_OUTBOUND_NETWORKS = (
 )
 
 
+_WELL_KNOWN_NAT64_NET = ipaddress.ip_network("64:ff9b::/96")
+_LOCAL_NAT64_NET = ipaddress.ip_network("64:ff9b:1::/48")
+_SIIT_TRANSLATED_NET = ipaddress.ip_network("::ffff:0:0:0/96")
+_IPV4_COMPAT_NET = ipaddress.ip_network("::/96")
+
+
+def _extract_embedded_ipv4s(addr: ipaddress.IPv6Address) -> list[ipaddress.IPv4Address]:
+    """Extract embedded IPv4 addresses across IPv6 transition/NAT64 encodings."""
+    embedded: list[ipaddress.IPv4Address] = []
+    for candidate in (addr.ipv4_mapped, addr.sixtofour):
+        if candidate is not None:
+            embedded.append(candidate)
+    teredo = addr.teredo
+    if teredo is not None:
+        embedded.extend(teredo)
+    if (
+        addr in _WELL_KNOWN_NAT64_NET
+        or addr in _LOCAL_NAT64_NET
+        or addr in _SIIT_TRANSLATED_NET
+        or (addr in _IPV4_COMPAT_NET and addr not in (ipaddress.IPv6Address("::"), ipaddress.IPv6Address("::1")))
+    ):
+        embedded.append(ipaddress.IPv4Address(addr.packed[12:16]))
+    return embedded
+
+
 def _is_blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Return True if an IP address (or its IPv4-mapped target) falls in a blocked range."""
+    """Return True if an IP address (or any embedded IPv4 target) falls in a blocked range."""
     addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [addr]
-    mapped_v4 = getattr(addr, "ipv4_mapped", None)
-    if mapped_v4 is not None:
-        addresses.append(mapped_v4)
+    if isinstance(addr, ipaddress.IPv6Address):
+        addresses.extend(_extract_embedded_ipv4s(addr))
     for item in addresses:
         for network in _BLOCKED_OUTBOUND_NETWORKS:
             if item.version == network.version and item in network:
@@ -810,6 +841,8 @@ def inspect_outbound_base_url(raw: str) -> tuple[bool, str, str]:
         return False, "url_invalid", "Base URLが不正です (http/https のみ対応)"
     if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
         return False, "url_userinfo_forbidden", "Base URLに認証情報を含めることはできません"
+    if parsed.query or parsed.fragment:
+        return False, "url_invalid", "Base URLにクエリ文字列やフラグメントは含められません"
     if not parsed.hostname:
         return False, "url_invalid", "Base URLが不正です (http/https のみ対応)"
     if is_blocked_outbound_host(parsed.hostname):
@@ -826,6 +859,59 @@ def validate_outbound_base_url(raw: str) -> tuple[bool, str]:
     """
     ok, _code, reason = inspect_outbound_base_url(raw)
     return ok, reason
+
+
+def normalize_chart_image_url(image_data: str) -> tuple[str | None, str | None]:
+    """Normalize chart image input to a validated URL or data URI.
+
+    Accepts base64 payloads, ``data:image/...`` URIs (case-insensitive scheme),
+    or ``http(s)://`` URLs without embedded credentials, control characters,
+    or literal blocked/metadata IP hosts. Returns ``(image_url, error_message)``.
+    """
+    if not image_data or not isinstance(image_data, str) or not image_data.strip():
+        return None, "画像データが不正です。"
+
+    clean_img = image_data.strip()
+    lower_img = clean_img.lower()
+    if lower_img.startswith("data:"):
+        if not lower_img.startswith("data:image/"):
+            return None, "サポートされていないデータURI形式です。"
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in clean_img):
+            return None, "画像データに不正な制御文字が含まれています。"
+        return "data:image/" + clean_img[len("data:image/") :], None
+
+    if lower_img.startswith(("http://", "https://")):
+        if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in clean_img):
+            return None, "画像URLに不正な文字が含まれています。"
+        try:
+            parsed = urlsplit(clean_img)
+            port = parsed.port
+        except ValueError:
+            return None, "画像URLが不正です。"
+        if port is not None and port <= 0:
+            return None, "画像URLが不正です。"
+        if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+            return None, "画像URLに認証情報を含めることはできません。"
+        if not parsed.hostname:
+            return None, "画像URLが不正です。"
+        cleaned_host = parsed.hostname.strip().split("%", 1)[0].strip()
+        try:
+            literal_addr = ipaddress.ip_address(cleaned_host)
+        except ValueError:
+            literal_addr = None
+        if literal_addr is not None and _is_blocked_ip(literal_addr):
+            return None, "セキュリティポリシーにより、この画像URLは使用できません。"
+        if clean_img.startswith(parsed.scheme):
+            normalized_scheme = parsed.scheme.lower()
+            if normalized_scheme != parsed.scheme:
+                return normalized_scheme + clean_img[len(parsed.scheme) :], None
+        return clean_img, None
+
+    if ":" in clean_img.split("/", 1)[0]:
+        return None, "サポートされていない画像URLスキームです。"
+
+    clean_b64 = "".join(clean_img.split())
+    return f"data:image/png;base64,{clean_b64}", None
 
 
 def _is_local_request(req):

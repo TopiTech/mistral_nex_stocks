@@ -180,7 +180,11 @@ class TradingViewWSClient:
             msg = self.format_tv_message("quote_remove_symbols", [session_id, symbol])
             self._safe_send(ws_to_send, msg)
 
-    def _on_message(self, ws: Any, message: str) -> None:
+    def _on_message(self, ws: Any, message: Any) -> None:
+        if isinstance(message, (bytes, bytearray)):
+            message = bytes(message).decode("utf-8", errors="replace")
+        elif not isinstance(message, str):
+            return
         hb_replies: list[str] = []
         for msg_body in _iter_tv_frame_bodies(message):
             if msg_body.startswith("~h~"):
@@ -321,6 +325,8 @@ class TradingViewWSClient:
                         10.0,
                         step=0.1,
                     )
+                    if app_state.execution.shutdown_event.is_set():
+                        break
                     continue
 
                 ws_app: Any = None
@@ -365,10 +371,6 @@ class TradingViewWSClient:
                         nonlocal backoff
                         with self._lifecycle_lock:
                             is_current = self.running and epoch == self._worker_epoch
-                            if is_current:
-                                self.connected = True
-                                backoff = 1.0
-                                self.last_connected_at = time.time()
                         if not is_current:
                             try:
                                 ws.close()
@@ -382,30 +384,39 @@ class TradingViewWSClient:
                             current_session_id,
                             sym_count,
                         )
-                        self._safe_send(
-                            ws,
-                            self.format_tv_message("set_auth_token", ["unauthorized_user_token"]),
-                        )
-                        self._safe_send(
-                            ws,
-                            self.format_tv_message("quote_create_session", [current_session_id]),
-                        )
-                        self._safe_send(
-                            ws,
-                            self.format_tv_message(
-                                "quote_set_fields",
-                                [
-                                    current_session_id,
-                                    "lp",
-                                    "ch",
-                                    "chp",
-                                    "volume",
-                                    "ask",
-                                    "bid",
-                                    "description",
-                                ],
-                            ),
-                        )
+                        with self._send_lock:
+                            for hs_msg in (
+                                self.format_tv_message(
+                                    "set_auth_token", ["unauthorized_user_token"]
+                                ),
+                                self.format_tv_message(
+                                    "quote_create_session", [current_session_id]
+                                ),
+                                self.format_tv_message(
+                                    "quote_set_fields",
+                                    [
+                                        current_session_id,
+                                        "lp",
+                                        "ch",
+                                        "chp",
+                                        "volume",
+                                        "ask",
+                                        "bid",
+                                        "description",
+                                    ],
+                                ),
+                            ):
+                                try:
+                                    ws.send(hs_msg)
+                                except Exception as exc:
+                                    logger.debug("Failed sending WS handshake frame: %s", exc)
+                                    return
+                        with self._lifecycle_lock:
+                            if not (self.running and epoch == self._worker_epoch):
+                                return
+                            self.connected = True
+                            backoff = 1.0
+                            self.last_connected_at = time.time()
                         with self.lock:
                             sym_list = list(self.symbols)
                         for sym in sym_list:
@@ -438,8 +449,18 @@ class TradingViewWSClient:
             restart_pending = False
             restart_epoch = 0
             unexpected_exit = False
+            try:
+                from app_state import app_state
+
+                shutting_down = app_state.execution.shutdown_event.is_set()
+            except Exception:
+                shutting_down = False
             with self._lifecycle_lock:
-                unexpected_exit = self.running and epoch == self._worker_epoch
+                if shutting_down:
+                    self.running = False
+                unexpected_exit = (
+                    self.running and epoch == self._worker_epoch and not shutting_down
+                )
                 if self.thread is worker_thread and not unexpected_exit:
                     self.thread = None
                 if not unexpected_exit:

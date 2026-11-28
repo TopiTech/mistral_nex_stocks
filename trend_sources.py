@@ -386,6 +386,25 @@ class _ThreadSessionGuard:
         self.close()
 
 
+_MAX_TREND_RESPONSE_BYTES = 2 * 1024 * 1024
+
+
+def _check_trend_response_size(response: Any, max_bytes: int = _MAX_TREND_RESPONSE_BYTES) -> None:
+    """Enforce bounded response size while preserving mock compatibility."""
+    headers = getattr(response, "headers", None)
+    cl_raw = headers.get("Content-Length") if headers is not None and hasattr(headers, "get") else None
+    if isinstance(cl_raw, (int, str)) and not isinstance(cl_raw, bool):
+        try:
+            if int(str(cl_raw).strip()) > max_bytes:
+                raise ValueError("Trend response exceeds size limit")
+        except ValueError as exc:
+            if "exceeds size limit" in str(exc):
+                raise
+    raw_content = getattr(response, "content", None)
+    if isinstance(raw_content, (bytes, bytearray)) and len(raw_content) > max_bytes:
+        raise ValueError("Trend response exceeds size limit")
+
+
 def _get_trend_session() -> requests.Session:
     """Return a thread-local HTTP session for trend collection."""
     with _TREND_SESSION_LOCK:
@@ -397,6 +416,7 @@ def _get_trend_session() -> requests.Session:
     if prev_guard is not None:
         prev_guard.close()
     s = requests.Session()
+    s.trust_env = False
     adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
@@ -441,6 +461,7 @@ def _request_json(
             headers=req_headers,
         )
         response.raise_for_status()
+        _check_trend_response_size(response)
         data = response.json()
         return data if isinstance(data, dict) else {}
     finally:
@@ -462,10 +483,14 @@ def _fetch_rss_feed(rss_url: str):
             },
         )
         response.raise_for_status()
+        _check_trend_response_size(response)
         raw_content = getattr(response, "content", None)
         if isinstance(raw_content, (bytes, bytearray)) and raw_content:
             return feedparser.parse(bytes(raw_content))
-        return feedparser.parse(response.text)
+        resp_text = getattr(response, "text", "")
+        if isinstance(resp_text, str) and len(resp_text) > _MAX_TREND_RESPONSE_BYTES:
+            raise ValueError("Trend RSS response text exceeds size limit")
+        return feedparser.parse(resp_text)
     finally:
         close_response_quietly(response)
 
@@ -578,6 +603,8 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
     try:
         delay = 0.0
         with _GOOGLE_TRENDS_LOCK:
+            if _is_collection_deadline_exceeded():
+                return []
             now = time.time()
             if _GOOGLE_TRENDS_LAST_CALL > now + _GOOGLE_TRENDS_MAX_SKEW_SEC:
                 logger.warning(
@@ -585,15 +612,14 @@ def _trend_queries_for_keyword(keyword: str, market: str, limit: int = 5) -> lis
                 )
                 _GOOGLE_TRENDS_LAST_CALL = now
             start_time = max(_GOOGLE_TRENDS_LAST_CALL + _GOOGLE_TRENDS_MIN_INTERVAL, now)
-            _GOOGLE_TRENDS_LAST_CALL = start_time
             delay = max(0.0, start_time - now)
+            if delay > 0:
+                deadline = _current_collection_deadline()
+                if deadline is not None and (time.monotonic() + delay) >= deadline:
+                    return []
+            _GOOGLE_TRENDS_LAST_CALL = start_time
 
         if delay > 0:
-            if _is_collection_deadline_exceeded():
-                return []
-            deadline = _current_collection_deadline()
-            if deadline is not None and (time.monotonic() + delay) >= deadline:
-                return []
             time.sleep(delay)
 
         with _GOOGLE_TRENDS_CLIENT_CALL_LOCK:
@@ -895,7 +921,11 @@ def collect_wikipedia_top_items(market: str = "us", limit: int = 10) -> list[dic
         payload_items = payload.get("items") if isinstance(payload, dict) else None
         top_item = payload_items[0] if isinstance(payload_items, list) and payload_items else {}
         articles = top_item.get("articles", []) if isinstance(top_item, dict) else []
+        if not isinstance(articles, list):
+            articles = []
         for article in articles[:limit]:
+            if not isinstance(article, dict):
+                continue
             title = _safe_text(article.get("article"))
             if not title or title in (
                 "Main_Page",
@@ -994,8 +1024,11 @@ def collect_gdelt_items(
             break
         try:
             payload = _request_json(_gdelt_query_url(query, market))
-            articles = payload.get("articles") or []
+            raw_articles = payload.get("articles") if isinstance(payload, dict) else None
+            articles = raw_articles if isinstance(raw_articles, list) else []
             for article in articles[:max_per_query]:
+                if not isinstance(article, dict):
+                    continue
                 title = _safe_text(article.get("title"))
                 url = _safe_text(article.get("url"))
                 if not title and not url:

@@ -171,8 +171,22 @@
         return;
       }
 
+      const stockObjs = symbols.map((sym) => {
+        const found =
+          data.stocks && typeof data.stocks.get === "function"
+            ? data.stocks.get(sym)
+            : null;
+        return found || { symbol: sym, price: 0, changePercent: 0 };
+      });
+      const activeStockCount = symbols.filter(
+        (sym) =>
+          data.stocks &&
+          typeof data.stocks.has === "function" &&
+          data.stocks.has(sym),
+      ).length;
+
       if (this.els.aiCompareBtn) {
-        this.els.aiCompareBtn.disabled = symbols.length < 2;
+        this.els.aiCompareBtn.disabled = activeStockCount < 2;
       }
 
       const table = document.createElement("table");
@@ -184,14 +198,6 @@
       const thMetric = document.createElement("th");
       thMetric.textContent = "指標";
       headRow.appendChild(thMetric);
-
-      const stockObjs = symbols.map((sym) => {
-        const found =
-          data.stocks && typeof data.stocks.get === "function"
-            ? data.stocks.get(sym)
-            : null;
-        return found || { symbol: sym, price: 0, changePercent: 0 };
-      });
 
       for (const st of stockObjs) {
         const th = document.createElement("th");
@@ -385,10 +391,13 @@
 
     async runAiComparison() {
       const symbols = this.state.state.connectedSymbols;
-      if (!symbols || symbols.length < 2) {
+      const stockObjs = (symbols || [])
+        .map((s) => this.state.state.stocks?.get?.(s))
+        .filter(Boolean);
+      if (!symbols || stockObjs.length < 2) {
         if (typeof global.showToast === "function") {
           global.showToast(
-            "⚠️ 比較には2つ以上の銘柄を接続してください",
+            "⚠️ 比較には現在の市場に存在する2つ以上の銘柄を接続してください",
             "#f59e0b",
           );
         }
@@ -430,9 +439,6 @@
       this._abortController = abortController;
 
       try {
-        const stockObjs = symbols
-          .map((s) => this.state.state.stocks.get(s))
-          .filter(Boolean);
         const dataSummary = stockObjs
           .map((s) => {
             const chg = Number.isFinite(s.changePercent) ? s.changePercent : 0;
@@ -523,7 +529,7 @@
           resultCard.className = "ai-comparison-card";
 
           const title = document.createElement("h4");
-          title.textContent = `✨ AI 星座比較分析 (${symbols.join(" vs ")})`;
+          title.textContent = `✨ AI 星座比較分析 (${stockObjs.map((s) => s.symbol).join(" vs ")})`;
           resultCard.appendChild(title);
 
           const body = document.createElement("p");

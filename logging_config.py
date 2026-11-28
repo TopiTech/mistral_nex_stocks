@@ -9,6 +9,7 @@ Exports:
 """
 
 import logging
+import math
 import os
 import threading
 import time
@@ -164,12 +165,15 @@ class WarningDeduplicationFilter(logging.Filter):
         env_value = os.environ.get("MNS_LOG_WARNING_DEDUP_SEC", "")
         if env_value.strip():
             try:
-                dedup_window_sec = float(env_value.strip())
+                parsed_dedup = float(env_value.strip())
+                if math.isfinite(parsed_dedup):
+                    dedup_window_sec = parsed_dedup
             except (ValueError, TypeError):
                 pass
         from collections import OrderedDict
 
-        self.dedup_window_sec = 60.0 if dedup_window_sec is None else max(dedup_window_sec, 0.0)
+        resolved_dedup = 60.0 if dedup_window_sec is None or not math.isfinite(dedup_window_sec) else dedup_window_sec
+        self.dedup_window_sec = max(resolved_dedup, 0.0)
         self.max_entries = max(max_entries or 500, 100)
         self._recent_messages: OrderedDict[str, tuple[float, int]] = OrderedDict()
         self._lock = threading.Lock()
@@ -215,29 +219,46 @@ class URLMaskingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         from utils.networking import mask_sensitive_url
 
+        # If record.args is present AND record.msg contains a sensitive query
+        # param placeholder (e.g. "GET %s?sse_ticket=%s"), masking record.msg
+        # before formatting would replace "%s" with "[REDACTED]" and break
+        # LogRecord.getMessage() arity. Materialize and mask the formatted
+        # message in that case.
+        if record.args and isinstance(record.msg, str) and "%" in record.msg:
+            masked_template = mask_sensitive_url(record.msg)
+            if masked_template.count("%") != record.msg.count("%"):
+                try:
+                    formatted = record.getMessage()
+                except Exception:
+                    formatted = f"{record.msg} {record.args}"
+                record.msg = mask_sensitive_url(formatted)
+                record.args = ()
+                return True
+
         if record.msg and isinstance(record.msg, str):
             record.msg = mask_sensitive_url(record.msg)
+        elif record.msg is not None and not isinstance(record.msg, str):
+            msg_text = str(record.msg)
+            masked_text = mask_sensitive_url(msg_text)
+            if masked_text != msg_text:
+                record.msg = masked_text
+
         if record.args:
+            def _mask_arg_value(val: object) -> object:
+                if isinstance(val, str):
+                    return mask_sensitive_url(val)
+                if isinstance(val, dict):
+                    return {k: _mask_arg_value(v) for k, v in val.items()}
+                if isinstance(val, Exception):
+                    val_text = str(val)
+                    masked_val = mask_sensitive_url(val_text)
+                    return masked_val if masked_val != val_text else val
+                return val
+
             if isinstance(record.args, tuple):
-                new_args: list[object] = []
-                for arg in record.args:
-                    if isinstance(arg, str):
-                        new_args.append(mask_sensitive_url(arg))
-                    elif isinstance(arg, dict):
-                        new_args.append(
-                            {
-                                k: (mask_sensitive_url(v) if isinstance(v, str) else v)
-                                for k, v in arg.items()
-                            }
-                        )
-                    else:
-                        new_args.append(arg)
-                record.args = tuple(new_args)
+                record.args = tuple(_mask_arg_value(arg) for arg in record.args)
             elif isinstance(record.args, dict):
-                record.args = {
-                    k: (mask_sensitive_url(v) if isinstance(v, str) else v)
-                    for k, v in record.args.items()
-                }
+                record.args = {k: _mask_arg_value(v) for k, v in record.args.items()}
         return True
 
 

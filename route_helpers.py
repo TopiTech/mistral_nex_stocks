@@ -654,8 +654,23 @@ def rate_limit(
 
                     _rate_limit_store[key].append(current_time)
 
-                    if pending_token_registration is not None:
-                        token_key, distinct_key, _token = pending_token_registration
+            result = f(*args, **kwargs)
+            if pending_token_registration is not None and not skip_handler:
+                status_code = 200
+                if (
+                    isinstance(result, tuple)
+                    and len(result) >= 2
+                    and isinstance(result[1], int)
+                    and not isinstance(result[1], bool)
+                ):
+                    status_code = result[1]
+                elif hasattr(result, "status_code"):
+                    raw_sc = getattr(result, "status_code", 200)
+                    if isinstance(raw_sc, int) and not isinstance(raw_sc, bool):
+                        status_code = raw_sc
+                if 200 <= status_code < 300:
+                    token_key, distinct_key, _token = pending_token_registration
+                    with _rate_limit_lock:
                         # Under a saturated store, keep the accepted endpoint
                         # bucket rather than evicting it for an optional
                         # polling cache entry.
@@ -674,7 +689,7 @@ def rate_limit(
                                 _rate_limit_window_by_key[token_key] = effective_window_seconds
                                 _rate_limit_distinct_token_counts[distinct_key] = count + 1
 
-            return f(*args, **kwargs)
+            return result
 
         return wrapper
 

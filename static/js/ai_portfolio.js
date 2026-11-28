@@ -152,6 +152,8 @@
         activeAiPreset = presetKey;
 
         if (presetKey === "custom") {
+          cancelAiPortfolioRequest();
+          showLoadingState(false);
           if (customPanel) customPanel.classList.remove("hidden");
         } else {
           if (customPanel) customPanel.classList.add("hidden");
@@ -925,6 +927,8 @@
   }
 
   async function saveAiPortfolio(portfolio) {
+    const startGeneration = aiPortfolioRequestGeneration;
+    const expectedId = String(portfolio?.id ?? "");
     try {
       const resp = await csrfFetch("/api/ai-portfolio/save", {
         method: "POST",
@@ -942,8 +946,15 @@
       }
       if (data.ok) {
         if (data.portfolio) {
-          currentAiPortfolio = data.portfolio;
-          upsertSavedAiPortfolio(currentAiPortfolio);
+          upsertSavedAiPortfolio(data.portfolio);
+          const stillSamePortfolio =
+            aiPortfolioRequestGeneration === startGeneration &&
+            (currentAiPortfolio === portfolio ||
+              (expectedId &&
+                String(currentAiPortfolio?.id ?? "") === expectedId));
+          if (stillSamePortfolio) {
+            currentAiPortfolio = data.portfolio;
+          }
         }
         if (typeof showToast === "function") {
           showToast("💾 カスタムテーマを保存しました", "#7dffb0");

@@ -171,6 +171,7 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:  # pragma: no cover
     in_blob, in_buffer = _blob_from_bytes(data)
     out_blob = DataBlob()
 
+    _CRYPTPROTECT_UI_FORBIDDEN = 0x01
     try:
         if not _crypt32.CryptUnprotectData(
             ctypes.byref(in_blob),
@@ -178,7 +179,7 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:  # pragma: no cover
             None,
             None,
             None,
-            0,
+            _CRYPTPROTECT_UI_FORBIDDEN,
             ctypes.byref(out_blob),
         ):
             err = ctypes.get_last_error()  # type: ignore[attr-defined,unused-ignore]
@@ -242,6 +243,7 @@ def _encode_secret(value: str, key_name: str = "default"):
                 type(exc).__name__,
             )
 
+    dpapi_error = None
     if _is_windows():
         try:
             protected = _dpapi_protect(raw)
@@ -250,9 +252,8 @@ def _encode_secret(value: str, key_name: str = "default"):
                 "value": base64.b64encode(protected).decode("ascii"),
             }
         except (OSError, RuntimeError) as exc:
+            dpapi_error = exc
             logger.exception("DPAPI protection failed; unable to securely store secret")
-            if not keyring_error:
-                raise RuntimeError("Secure secret storage unavailable") from exc
 
     # プレーンテキストへのフォールバックはセキュリティリスクのため完全に削除しましたが、
     # ヘッドレス/Docker環境での起動不能を防ぐため、MNS_EPHEMERAL_FALLBACK=1が指定されている場合は一時的インメモリ保存（ephemeral）にフォールバックします。
@@ -275,6 +276,8 @@ def _encode_secret(value: str, key_name: str = "default"):
     error_msg = f"セキュアストレージ (keyring/DPAPI) が利用できません。対象: {key_name}。"
     if keyring_error:
         error_msg += f" KeyringError: {type(keyring_error).__name__}."
+    if dpapi_error:
+        error_msg += f" DPAPIError: {type(dpapi_error).__name__}."
 
     logger.error(
         "No secure storage (keyring/DPAPI) available for '%s'. "

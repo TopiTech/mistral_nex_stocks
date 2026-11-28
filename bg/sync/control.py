@@ -27,6 +27,7 @@ from bg.sse_interpolator import bg_interpolate_loop
 from bg.sync.fetch import fetch_stocks_batch
 from bg.sync.process import (
     _auto_remove_invalid_symbols,
+    _is_stale_sync_generation,
     _prepare_sync_items,
     _process_fetched_stocks,
     _update_indices_data,
@@ -166,6 +167,13 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
         snapshot_ts_ms = int(time.time() * 1000)
         fetch_batch_fn = _get_app_bg_attr("fetch_stocks_batch", fetch_stocks_batch)
         fetched_items = fetch_batch_fn(items, snapshot_ts_ms=snapshot_ts_ms)
+
+        if _is_stale_sync_generation(sync_generation, allow_zero=True):
+            logger.info(
+                "Discarding stale stock sync generation %s before invalid-symbol cleanup",
+                sync_generation,
+            )
+            return
 
         auto_rm_fn = _get_app_bg_attr("_auto_remove_invalid_symbols", _auto_remove_invalid_symbols)
         auto_rm_fn(items, fetched_items)

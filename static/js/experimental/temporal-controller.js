@@ -300,6 +300,7 @@
         }
       } else {
         // Normal Wheel: Scrub time cursor
+        this.stopTimelapse();
         const historyKey = `${this.state.state.selectedSymbol}:${this.state.state.timeGranularity}`;
         const history = this.historyCache.get(historyKey) || [];
         if (!history.length) return;

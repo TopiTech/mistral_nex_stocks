@@ -52,11 +52,13 @@ from mistral_compat import (
     mistral_agents,
 )
 from services.preview_responses import build_preview_chat_response, build_preview_stream_events
+from utils.networking import normalize_chart_image_url
 from utils.text_utils import _sanitize_error_message, _token_fingerprint
 from utils.text_utils import json_safe_tool_value as _json_safe_tool_value
 from utils.text_utils import sanitize_prompt_text as _sanitize_prompt_text
 from utils.threading import DaemonThreadPoolExecutor
 from utils.validators import (
+    _is_chat_content_failure,
     build_assistant_text_message,
     extract_chat_content,
     extract_json_payload,
@@ -101,7 +103,7 @@ def _public_mistral_error_message(exc: BaseException, status_code: int) -> str:
     useful for local classification below, but must not be returned to a
     browser or written verbatim to application logs.
     """
-    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException, TimeoutError)):
         return "Mistral APIがタイムアウトしました。しばらくしてから再試行してください。"
     if status_code == 401:
         return "Mistral APIの認証に失敗しました。APIキーを確認してください。"
@@ -124,19 +126,7 @@ def _exception_status_code(exc: BaseException | None) -> int:
     """
     if exc is None:
         return 0
-    status = getattr(exc, "status_code", 0)
-    if isinstance(status, int) and not isinstance(status, bool) and status > 0:
-        return status
-    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-        try:
-            return int(exc.response.status_code)
-        except (ValueError, TypeError):
-            return 0
-    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
-        return 504
-    if isinstance(exc, (ConnectionError, httpx.NetworkError)):
-        return 503
-    return 0
+    return _extract_mistral_error_status(exc)
 
 
 def _should_trip_mistral_circuit(
@@ -172,6 +162,7 @@ def _should_trip_mistral_circuit(
             ConnectionError,
             httpx.TimeoutException,
             httpx.NetworkError,
+            TimeoutError,
         ),
     ):
         return True
@@ -1094,7 +1085,7 @@ def _extract_mistral_error_status(exc: BaseException) -> int:
                     return parsed_resp
             except (ValueError, TypeError):
                 pass
-    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException)):
+    if isinstance(exc, (RequestsTimeout, CurlRequestsTimeout, httpx.TimeoutException, TimeoutError)):
         return 504
     if isinstance(exc, (ConnectionError, httpx.NetworkError)):
         return 503
@@ -1282,6 +1273,15 @@ def call_mistral_chat(
     client = _get_mistral_client(api_key)
     if client is None:
         return {"error": {"message": "Mistral API key is missing or invalid"}}
+
+    if app_state.market.peek_circuit_open("mistral"):
+        logger.warning("Mistral circuit is OPEN (pre-slot fast-fail). Skipping API call.")
+        return {
+            "error": {
+                "message": "AI service is temporarily unavailable (circuit open)",
+                "status_code": 503,
+            }
+        }
 
     circuit_probe_claimed = False
     try:
@@ -1723,23 +1723,8 @@ def call_mistral_chat(
             return fallback_res
 
         # サーキットへの報告 (403等のTier制限や429レート制限はインフラ障害ではないためサーキット対象外)
-        is_tier_err = _is_mistral_tier_restriction_error(exc, err_payload, status_code)
-        is_circuit_failure = (
-            not is_tier_err
-            and status_code != 403
-            and (
-                isinstance(
-                    exc,
-                    (
-                        RequestsTimeout,
-                        CurlRequestsTimeout,
-                        ConnectionError,
-                        httpx.TimeoutException,
-                        httpx.NetworkError,
-                    ),
-                )
-                or status_code >= 500
-            )
+        is_circuit_failure = _should_trip_mistral_circuit(
+            exc, status_code, err_payload, unknown_is_failure=False
         )
         if is_circuit_failure:
             app_state.market.report_circuit_result(
@@ -1951,9 +1936,9 @@ def call_mistral_chat_with_tools(
         # assistant message referencing the provider's original/missing id, and
         # the next request is rejected with HTTP 400 because the tool message
         # does not match the assistant tool_call.
-        valid_tcs: list[dict[str, Any]] = []
-        invalid_tc_ids: set[str] = set()
-        for tc in tool_calls:
+        valid_entries: list[tuple[dict[str, Any], bool]] = []
+        seen_tc_ids: set[str] = set()
+        for idx, tc in enumerate(tool_calls):
             raw_id = tc.get("id")
             if (
                 isinstance(raw_id, str)
@@ -1963,6 +1948,11 @@ def call_mistral_chat_with_tools(
                 tc_id = raw_id
             else:
                 tc_id = f"call_{secrets.token_hex(4)}"
+            if tc_id in seen_tc_ids:
+                suffix = f"_{idx}_{secrets.token_hex(4)}"
+                prefix_len = max(1, max_tool_call_id_chars - len(suffix))
+                tc_id = f"{tc_id[:prefix_len]}{suffix}"
+            seen_tc_ids.add(tc_id)
             raw_fn = tc.get("function")
             fn_name = "unknown_tool"
             fn_args: dict[str, Any] | str = {}
@@ -1980,15 +1970,17 @@ def call_mistral_chat_with_tools(
                     fn_args = raw_args
                 else:
                     invalid = True
-            if invalid:
-                invalid_tc_ids.add(tc_id)
-            valid_tcs.append(
-                {
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {"name": fn_name, "arguments": fn_args},
-                }
+            valid_entries.append(
+                (
+                    {
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {"name": fn_name, "arguments": fn_args},
+                    },
+                    invalid,
+                )
             )
+        valid_tcs = [tc for tc, _ in valid_entries]
 
         # Reject oversized fields before appending the model message to the
         # next request.  This bounds prompt growth even when a provider returns
@@ -2007,7 +1999,10 @@ def call_mistral_chat_with_tools(
                     break
                 if isinstance(raw_args, dict):
                     try:
-                        if len(json.dumps(raw_args, ensure_ascii=False)) > max_tool_argument_chars:
+                        if (
+                            len(json.dumps(raw_args, ensure_ascii=False, allow_nan=False))
+                            > max_tool_argument_chars
+                        ):
                             oversized_call = True
                             break
                     except (TypeError, ValueError, RecursionError):
@@ -2021,16 +2016,16 @@ def call_mistral_chat_with_tools(
         normalized_msg["tool_calls"] = valid_tcs
         current_messages.append(normalized_msg)
 
-        def _exec_single_tool(
-            tc: dict[str, Any], invalid_ids: set[str] = invalid_tc_ids
-        ) -> dict[str, Any]:
-            def _execute() -> dict[str, Any]:
+        def _exec_single_tool(entry: tuple[dict[str, Any], bool]) -> Any:
+            tc, is_invalid = entry
+
+            def _execute() -> Any:
                 tc_id = tc.get("id")
                 if not isinstance(tc_id, str) or not tc_id or len(tc_id) > max_tool_call_id_chars:
                     tc_id = f"call_{secrets.token_hex(4)}"
                 fn_name = "unknown_tool"
                 try:
-                    if tc_id in invalid_ids:
+                    if is_invalid:
                         raise TypeError("tool function payload is malformed")
                     fn = tc.get("function")
                     if not isinstance(fn, dict):
@@ -2046,7 +2041,8 @@ def call_mistral_chat_with_tools(
                         raise ValueError("tool arguments are too large")
                     if (
                         isinstance(fn_args, dict)
-                        and len(json.dumps(fn_args, ensure_ascii=False)) > max_tool_argument_chars
+                        and len(json.dumps(fn_args, ensure_ascii=False, allow_nan=False))
+                        > max_tool_argument_chars
                     ):
                         raise ValueError("tool arguments are too large")
                     tool_output = execute_mistral_tool_call(fn_name, fn_args)
@@ -2065,18 +2061,16 @@ def call_mistral_chat_with_tools(
                     return _execute()
             return _execute()
 
-        if len(valid_tcs) > 1:
-            
-
+        if len(valid_entries) > 1:
             with DaemonThreadPoolExecutor(
-                max_workers=min(len(valid_tcs), 4),
+                max_workers=min(len(valid_entries), 4),
                 thread_name_prefix="mistral-tool-exec",
             ) as executor:
-                tool_messages = list(executor.map(_exec_single_tool, valid_tcs))
+                tool_messages = list(executor.map(_exec_single_tool, valid_entries))
             current_messages.extend(tool_messages)
         else:
-            for tc in valid_tcs:
-                current_messages.append(_exec_single_tool(tc))
+            for entry in valid_entries:
+                current_messages.append(_exec_single_tool(entry))
 
     # If loop exhausted without a final direct text response, do a final synthesis call without tools
     final_response = call_mistral_chat(
@@ -2099,7 +2093,34 @@ _TECH_LINES_REPAIR_SCHEMA = {
         "trend_bias": {"type": "string"},
         "lines": {
             "type": "array",
-            "items": {"type": "object"},
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": "string"},
+                    "type": {"type": "string"},
+                    "label": {"type": "string"},
+                    "color": {"type": "string"},
+                    "style": {"type": "string"},
+                    "start_date": {"type": "string"},
+                    "start_price": {"type": "number"},
+                    "end_date": {"type": "string"},
+                    "end_price": {"type": "number"},
+                    "description": {"type": "string"},
+                },
+                "required": [
+                    "id",
+                    "type",
+                    "label",
+                    "color",
+                    "style",
+                    "start_date",
+                    "start_price",
+                    "end_date",
+                    "end_price",
+                    "description",
+                ],
+            },
         },
     },
     "required": ["summary", "trend_bias", "lines"],
@@ -2281,7 +2302,7 @@ def generate_ai_technical_lines(api_key, symbol, market, period, history_data):
             # returns empty (no exception raised) — not only when json.loads
             # raises. A single post-check replaces the old except-clause call so
             # both malformed-output classes reach the repair path exactly once.
-            if not parsed_obj:
+            if not parsed_obj and content and not _is_chat_content_failure(content):
                 logger.warning("Attempting LLM repair for technical lines payload.")
                 parsed_obj, _ = repair_technical_lines_json_with_llm(api_key, content)
 
@@ -2361,15 +2382,9 @@ def analyze_chart_image_with_mistral(
     Accepts base64 string or data URL (e.g. data:image/png;base64,...) and returns
     structured visual analysis of technical patterns, support/resistance, and indicators.
     """
-    if not image_data or not isinstance(image_data, str) or not image_data.strip():
-        return {"error": "画像データが不正です。"}
-
-    clean_img = image_data.strip()
-    if clean_img.startswith(("http://", "https://", "data:image/")):
-        image_url = clean_img
-    else:
-        clean_b64 = "".join(clean_img.split())
-        image_url = f"data:image/png;base64,{clean_b64}"
+    image_url, image_err = normalize_chart_image_url(image_data)
+    if image_err or not image_url:
+        return {"error": image_err or "画像データが不正です。"}
 
     if is_openai_provider():
         from services.openai_service import analyze_chart_image_with_openai
@@ -2486,6 +2501,21 @@ def _drain_queue(q: "queue.Queue[Any]") -> int:
         drained += 1
 
 
+def _is_thinking_content_part(item: Any) -> bool:
+    """Return True when a content chunk/dict represents internal reasoning."""
+    if isinstance(item, dict):
+        item_type = str(item.get("type") or "").strip().lower()
+        return item_type in ("thinking", "reasoning") or bool(
+            item.get("thinking") or item.get("reasoning_content") or item.get("reasoning")
+        )
+    item_type = str(getattr(item, "type", "") or "").strip().lower()
+    return item_type in ("thinking", "reasoning") or bool(
+        getattr(item, "thinking", None)
+        or getattr(item, "reasoning_content", None)
+        or getattr(item, "reasoning", None)
+    )
+
+
 def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | None:
     """Extract the incremental text from one streaming chunk.
 
@@ -2501,39 +2531,33 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
     def _text_from_val(val: Any) -> str | None:
         if isinstance(val, str) and val:
             return val
-        if hasattr(val, "text") and isinstance(val.text, str) and val.text:
-            return val.text
-        if include_thinking and (hasattr(val, "thinking") or hasattr(val, "reasoning_content")):
-            th = getattr(val, "thinking", None) or getattr(val, "reasoning_content", None)
+        if not isinstance(val, list) and _is_thinking_content_part(val):
+            if not include_thinking:
+                return None
+            th = (
+                (val.get("thinking") or val.get("reasoning_content") or val.get("reasoning"))
+                if isinstance(val, dict)
+                else (
+                    getattr(val, "thinking", None)
+                    or getattr(val, "reasoning_content", None)
+                    or getattr(val, "reasoning", None)
+                )
+            )
             if th:
                 return _text_from_val(th)
+        if isinstance(val, dict):
+            t = val.get("text") or val.get("value") or val.get("content")
+            return t if isinstance(t, str) and t else None
+        if hasattr(val, "text") and isinstance(val.text, str) and val.text:
+            return val.text
         if isinstance(val, list):
             parts = []
             for item in val:
-                if isinstance(item, str) and item:
-                    parts.append(item)
-                elif isinstance(item, dict):
-                    t = item.get("text") or item.get("value") or item.get("content")
-                    if isinstance(t, str) and t:
-                        parts.append(t)
-                    elif include_thinking:
-                        th = item.get("thinking") or item.get("reasoning_content")
-                        if th:
-                            th_text = _text_from_val(th)
-                            if th_text:
-                                parts.append(th_text)
-                elif hasattr(item, "text") and isinstance(item.text, str):
-                    t = item.text
-                    if t:
-                        parts.append(t)
-                elif include_thinking and (
-                    hasattr(item, "thinking") or hasattr(item, "reasoning_content")
-                ):
-                    th = getattr(item, "thinking", None) or getattr(item, "reasoning_content", None)
-                    if th:
-                        th_text = _text_from_val(th)
-                        if th_text:
-                            parts.append(th_text)
+                if not include_thinking and _is_thinking_content_part(item):
+                    continue
+                item_text = _text_from_val(item)
+                if item_text:
+                    parts.append(item_text)
             res = "".join(parts)
             return res if res else None
         return None
@@ -2547,7 +2571,11 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
             if txt:
                 return txt
             if include_thinking:
-                reasoning = _text_from_val(delta.get("reasoning_content") or delta.get("thinking"))
+                reasoning = _text_from_val(
+                    delta.get("reasoning_content")
+                    or delta.get("thinking")
+                    or delta.get("reasoning")
+                )
                 if reasoning:
                     return reasoning
         return None
@@ -2567,7 +2595,9 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
             return txt
         if include_thinking:
             reasoning = _text_from_val(
-                getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
+                getattr(delta, "reasoning_content", None)
+                or getattr(delta, "thinking", None)
+                or getattr(delta, "reasoning", None)
             )
             if reasoning:
                 return reasoning
@@ -2579,39 +2609,48 @@ def _extract_stream_delta(chunk: Any, include_thinking: bool = False) -> str | N
 def _extract_thinking_delta(chunk: Any) -> str | None:
     """Extract only internal reasoning/thinking text from a stream chunk."""
 
-    def _thinking_from_val(val: Any) -> str | None:
+    def _thinking_payload_to_text(val: Any) -> str | None:
         if isinstance(val, str) and val:
             return val
+        if isinstance(val, dict):
+            th = val.get("thinking") or val.get("reasoning_content") or val.get("reasoning")
+            if th:
+                return _thinking_payload_to_text(th)
+            t = val.get("text") or val.get("value") or val.get("content")
+            if isinstance(t, str) and t:
+                return t
+            return None
+        th = (
+            getattr(val, "thinking", None)
+            or getattr(val, "reasoning_content", None)
+            or getattr(val, "reasoning", None)
+        )
+        if th:
+            return _thinking_payload_to_text(th)
         if hasattr(val, "text") and isinstance(val.text, str) and val.text:
             return val.text
-        if hasattr(val, "thinking") or hasattr(val, "reasoning_content"):
-            th = getattr(val, "thinking", None) or getattr(val, "reasoning_content", None)
-            if th:
-                return _thinking_from_val(th)
         if isinstance(val, list):
             parts = []
             for item in val:
-                if isinstance(item, dict):
-                    th = item.get("thinking") or item.get("reasoning_content")
-                elif hasattr(item, "thinking") or hasattr(item, "reasoning_content"):
-                    th = getattr(item, "thinking", None) or getattr(item, "reasoning_content", None)
-                else:
-                    th = None
-                if th:
-                    th_text = _thinking_from_val(th)
-                    if th_text:
-                        parts.append(th_text)
+                th_text = _thinking_payload_to_text(item)
+                if th_text:
+                    parts.append(th_text)
             res = "".join(parts)
             return res if res else None
         return None
 
     def _thinking_from_content(val: Any) -> str | None:
-        if (
-            isinstance(val, list)
-            or hasattr(val, "thinking")
-            or hasattr(val, "reasoning_content")
-        ):
-            return _thinking_from_val(val)
+        if isinstance(val, list):
+            parts = []
+            for item in val:
+                if _is_thinking_content_part(item):
+                    th_text = _thinking_payload_to_text(item)
+                    if th_text:
+                        parts.append(th_text)
+            res = "".join(parts)
+            return res if res else None
+        if _is_thinking_content_part(val):
+            return _thinking_payload_to_text(val)
         return None
 
     parts: list[str] = []
@@ -2623,9 +2662,13 @@ def _extract_thinking_delta(chunk: Any) -> str | None:
             content_th = _thinking_from_content(delta.get("content"))
             if content_th:
                 parts.append(content_th)
-            r_raw = delta.get("reasoning_content") or delta.get("thinking")
+            r_raw = (
+                delta.get("reasoning_content")
+                or delta.get("thinking")
+                or delta.get("reasoning")
+            )
             if r_raw:
-                r_th = _thinking_from_val(r_raw)
+                r_th = _thinking_payload_to_text(r_raw)
                 if r_th:
                     parts.append(r_th)
         joined = "".join(parts)
@@ -2645,9 +2688,13 @@ def _extract_thinking_delta(chunk: Any) -> str | None:
         content_th = _thinking_from_content(getattr(delta, "content", None))
         if content_th:
             parts.append(content_th)
-        r_raw = getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
+        r_raw = (
+            getattr(delta, "reasoning_content", None)
+            or getattr(delta, "thinking", None)
+            or getattr(delta, "reasoning", None)
+        )
         if r_raw:
-            r_th = _thinking_from_val(r_raw)
+            r_th = _thinking_payload_to_text(r_raw)
             if r_th:
                 parts.append(r_th)
     except (AttributeError, IndexError):

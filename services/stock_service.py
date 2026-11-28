@@ -389,10 +389,19 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
         return result
     except Exception as exc:
         logger.error("Stock history fetch failed (%s, %s, %s): %s", symbol, period, interval, exc)
-        is_transient = isinstance(exc, TimeoutError) and "server overloaded" in str(exc)
+        is_rate_limited = is_yfinance_rate_limit_error(exc) or app_state.market.is_yf_rate_limited()
+        is_transient = bool(
+            is_rate_limited
+            or isinstance(
+                exc,
+                (TimeoutError, RequestsTimeout, CurlRequestsTimeout, ConnectionError),
+            )
+            or is_retriable_http_error(exc)
+        )
+        err_code = int(ErrorCode.API_RATE_LIMITED) if is_rate_limited else int(ErrorCode.FETCH_FAILED)
         return {
-            "error": get_error_message(ErrorCode.FETCH_FAILED, lang="ja"),
-            "error_code": int(ErrorCode.FETCH_FAILED),
+            "error": get_error_message(err_code, lang="ja"),
+            "error_code": err_code,
             "symbol": symbol,
             "transient": is_transient,
         }

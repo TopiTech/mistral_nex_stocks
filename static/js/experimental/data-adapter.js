@@ -386,13 +386,27 @@
     }
 
     const currentPoint = history[cursorIndex];
-    const prevPoint = cursorIndex > 0 ? history[cursorIndex - 1] : history[0];
+    const prevPoint = cursorIndex > 0 ? history[cursorIndex - 1] : null;
     const basePoint = history[0];
 
     const historicalPrice = currentPoint.close;
-    const priceChange = historicalPrice - prevPoint.close;
-    const priceChangePercent =
-      prevPoint.close > 0 ? (priceChange / prevPoint.close) * 100 : 0;
+    let priceChange = 0;
+    let priceChangePercent = 0;
+    if (prevPoint) {
+      priceChange = historicalPrice - prevPoint.close;
+      priceChangePercent =
+        prevPoint.close > 0 ? (priceChange / prevPoint.close) * 100 : 0;
+    } else if (
+      Number.isFinite(currentPoint.open) &&
+      currentPoint.open > 0 &&
+      historicalPrice !== currentPoint.open
+    ) {
+      priceChange = historicalPrice - currentPoint.open;
+      priceChangePercent = (priceChange / currentPoint.open) * 100;
+    } else if (cursorIndex === history.length - 1) {
+      priceChange = toFiniteNumberSafe(stock.change, 0);
+      priceChangePercent = toFiniteNumberSafe(stock.changePercent, 0);
+    }
     const periodReturnPercent =
       basePoint.close > 0
         ? ((historicalPrice - basePoint.close) / basePoint.close) * 100

@@ -537,13 +537,21 @@ def extract_chat_content(response, preserve_for_history: bool = False):
                     return final_text
             else:
                 if final_text:
-                    return _clean_reasoning_tags(final_text, preserve_for_history=False)
-                elif final_thinking:
+                    cleaned_text = _clean_reasoning_tags(final_text, preserve_for_history=False)
+                    if cleaned_text:
+                        return cleaned_text
+                if final_thinking:
                     logger.info(
                         "extract_chat_content: list content contained only thinking chunks; using thinking content as fallback (%d chars)",
                         len(final_thinking),
                     )
-                    return _clean_reasoning_tags(final_thinking, preserve_for_history=False)
+                    cleaned_thinking = _clean_reasoning_tags(
+                        final_thinking, preserve_for_history=False
+                    )
+                    if cleaned_thinking:
+                        return cleaned_thinking
+                if final_text:
+                    return "(思考プロセスのみの応答でした)"
 
             logger.warning(
                 "extract_chat_content: list chunks but no text extracted chunk_count=%d",

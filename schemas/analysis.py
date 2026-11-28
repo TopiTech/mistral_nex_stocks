@@ -384,7 +384,10 @@ class AIAnalyzeChartImageRequest(BaseModel):
         """
         if not isinstance(data, dict):
             return data
-        raw_image = data.get("image_data") or data.get("image")
+        raw_img_data = data.get("image_data")
+        if isinstance(raw_img_data, str) and not raw_img_data.strip():
+            raw_img_data = None
+        raw_image = raw_img_data if raw_img_data is not None else data.get("image")
         image_text = raw_image if isinstance(raw_image, str) else None
         if image_text is None or not image_text:
             raise ValueError("image_required")

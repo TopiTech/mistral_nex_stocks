@@ -142,6 +142,19 @@ def _ai_portfolio_error_response(
             status_code=status,
         )
 
+    if isinstance(job_err, queue.Full):
+        current_app.logger.warning(
+            "AI portfolio executor queue saturated id=%s: %s", req_id, safe_log_msg
+        )
+        return error_response(
+            ErrorCode.TOO_MANY_REQUESTS,
+            details={
+                "reason": "サーバーの処理容量を超えました。しばらくしてから再試行してください。",
+                "error_type": err_type,
+            },
+            status_code=503,
+        )
+
     if isinstance(job_err, (requests.ConnectionError, ConnectionError, OSError, httpx.HTTPError)):
         current_app.logger.error(
             "AI portfolio network error id=%s error_type=%s: %s", req_id, err_type, safe_log_msg
@@ -410,6 +423,8 @@ def api_generate_ai_portfolio() -> Any:
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+                if req_token is not None:
+                    ai_portfolio_token_records.pop(req_token, None)
             result_holder["error"] = exc
             result_holder["done"].set()
             return error_response(
@@ -425,6 +440,8 @@ def api_generate_ai_portfolio() -> Any:
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+                if req_token is not None:
+                    ai_portfolio_token_records.pop(req_token, None)
             result_holder["error"] = exc
             result_holder["done"].set()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
@@ -586,6 +603,8 @@ def api_rebalance_ai_portfolio() -> Any:
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+                if req_token is not None:
+                    ai_portfolio_token_records.pop(req_token, None)
             result_holder["error"] = exc
             result_holder["done"].set()
             return error_response(
@@ -601,6 +620,8 @@ def api_rebalance_ai_portfolio() -> Any:
             )
             with ai_portfolio_fetch_lock:
                 ai_portfolio_fetch_inflight.pop(inflight_key, None)
+                if req_token is not None:
+                    ai_portfolio_token_records.pop(req_token, None)
             result_holder["error"] = exc
             result_holder["done"].set()
             return error_response(ErrorCode.INTERNAL_SERVER_ERROR, status_code=500)
@@ -928,7 +949,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
 
     added_count = 0
     skipped_symbols: list[str] = []
-    added_symbols: list[tuple[str, str, float, float, float | None]] = []
+    added_symbols: list[tuple[str, str, float, float, float | None, str]] = []
     # API-7: remember the exact holding dicts this request wrote so the
     # rollback below can be conditional on the write still being ours.
     written_entries: list[tuple[str, str, dict[str, Any]]] = []
@@ -977,7 +998,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
             # live object would still match and the rollback would delete the
             # other request's already-persisted update.
             written_entries.append((symbol, market, copy.deepcopy(holding_entry)))
-            added_symbols.append((symbol, market, target_price, shares, avg_fx_val))
+            added_symbols.append((symbol, market, target_price, shares, avg_fx_val, resolved_name))
             added_count += 1
 
     if added_count > 0:
@@ -1010,13 +1031,8 @@ def api_copy_ai_portfolio_to_my() -> Any:
             )
 
     if added_symbols:
-        for sym, mkt, target_price, shares, fx_rate in added_symbols:
+        for sym, mkt, target_price, shares, fx_rate, resolved_name in added_symbols:
             invalidate_stock_caches(sym)
-            resolved_name = (
-                default_names_by_market.get(mkt, {}).get(sym)
-                or custom_names.get((sym, mkt))
-                or _stock_display_name(sym, mkt)
-            )
             ensure_stock_placeholder_in_caches(
                 sym,
                 resolved_name,
@@ -1026,7 +1042,7 @@ def api_copy_ai_portfolio_to_my() -> Any:
                 avg_fx_rate=fx_rate,
             )
 
-        for sym, mkt, _, _, _ in added_symbols:
+        for sym, mkt, *_rest in added_symbols:
             _common._sync_realtime_symbol(sym, mkt, register=True)
 
         _common._announce_watchlist_state()

@@ -529,6 +529,9 @@ def _update_indices_data(
                 )
                 return
             app_state.market.current_indices_cache.update(new_header_data)
+            if not isinstance(getattr(app_state.market, "target_indices_cache", None), dict):
+                app_state.market.target_indices_cache = {}
+            app_state.market.target_indices_cache.update(copy.deepcopy(new_header_data))
             indices_snapshot = copy.deepcopy(app_state.market.current_indices_cache)
 
         try:

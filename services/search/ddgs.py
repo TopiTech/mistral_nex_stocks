@@ -245,12 +245,13 @@ def ddgs_news_search(
 
         # Fallback cascade:
         # 1. Primary query + preferred backend + timelimit
-        # 2. Shortened query + preferred backend + no timelimit
+        # 2. Shortened query + preferred backend + no timelimit (only if shorter)
         # 3. Primary query + fallback backend ('auto') if preferred != 'auto'
-        plans = [
+        plans: list[tuple[str, str | None, str]] = [
             (normalized_query, timelimit, selected_backend),
-            (short_query, None, selected_backend),
         ]
+        if short_query and short_query != normalized_query:
+            plans.append((short_query, None, selected_backend))
         if selected_backend != "auto":
             plans.append((normalized_query, None, "auto"))
 
@@ -258,8 +259,6 @@ def ddgs_news_search(
         for q, t, b in plans:
             key = (q, t, b)
             if key in seen or not q:
-                continue
-            if q == short_query and q == normalized_query and t is None and b == selected_backend:
                 continue
             seen.add(key)
             active_plans.append(key)

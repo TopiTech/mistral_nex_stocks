@@ -74,7 +74,8 @@ def _detach_inherited_leader_lock_locked() -> None:
 
 def _reset_leader_lock_in_child() -> None:
     """Reset inherited leader-lock state immediately in a forked child process."""
-    global _LEADER_LOCK_FILE, _LEADER_LOCK_PID
+    global _LEADER_LOCK_FILE, _LEADER_LOCK_PID, _LEADER_LOCK_MUTEX
+    _LEADER_LOCK_MUTEX = threading.RLock()
     _LEADER_LOCK_FILE = None
     _LEADER_LOCK_PID = None
     _set_app_bg_attr("_LEADER_LOCK_FILE", None)
@@ -231,13 +232,20 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
         except FileExistsError:
             try:
                 st_before = lock_path.stat()
-                raw = lock_path.read_text(encoding="utf-8").strip()
-                owner_pid = int(raw) if raw.isdigit() else None
+            except FileNotFoundError:
+                continue
+            except OSError:
+                st_before = None
+            raw_bytes: bytes | None = None
+            raw = ""
+            owner_pid: int | None = None
+            try:
+                raw_bytes = lock_path.read_bytes()
+                raw = raw_bytes.decode("utf-8", errors="replace").strip()
+                owner_pid = int(raw) if (raw.isascii() and raw.isdigit()) else None
             except FileNotFoundError:
                 continue
             except (OSError, ValueError):
-                st_before = None
-                raw = ""
                 owner_pid = None
             if owner_pid == pid:
                 logger.debug("Atomic leader lock already held by pid=%d", pid)
@@ -270,7 +278,7 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
                     if (st_now.st_dev, st_now.st_ino) != (
                         st_before.st_dev,
                         st_before.st_ino,
-                    ) or lock_path.read_text(encoding="utf-8").strip() != raw:
+                    ) or (raw_bytes is not None and lock_path.read_bytes() != raw_bytes):
                         continue
                 lock_path.unlink()
             except FileNotFoundError:
@@ -305,6 +313,12 @@ def _try_acquire_atomic_lock(lock_path: Path, pid: int) -> bool:
             except OSError:
                 pass
             return False
+        prev_f = _get_leader_lock_file()
+        if prev_f is not None and prev_f is not f:
+            try:
+                prev_f.close()
+            except OSError:
+                pass
         _set_leader_lock_file(f)
         _set_leader_lock_mode("atomic", lock_path)
         logger.debug("Acquired atomic leader lock at %s (pid=%d)", lock_path, pid)

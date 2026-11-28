@@ -369,7 +369,7 @@ def _tool_get_stock_quote(args: dict[str, Any]) -> dict[str, Any]:
                 pass
 
         # 3. Fallback to ticker fast_info / 1d history
-        if price is None:
+        if price is None and not app_state.market.is_yf_rate_limited():
             try:
                 from utils.market_utils import safe_get_ticker
 

@@ -42,10 +42,15 @@ try {
       stdio: "inherit",
     },
   );
-  execFileSync(process.execPath, [prettierPath, "--write", generatedPath], {
-    stdio: "inherit",
-  });
-  const generated = readFileSync(generatedPath);
+  const rawGenerated = readFileSync(generatedPath);
+  const generated = execFileSync(
+    process.execPath,
+    [prettierPath, "--stdin-filepath", trackedPath],
+    {
+      input: rawGenerated,
+      stdio: ["pipe", "pipe", "inherit"],
+    },
+  );
   const tracked = readFileSync(trackedPath);
   if (!generated.equals(tracked)) {
     console.error(

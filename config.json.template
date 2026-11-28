@@ -1,22 +1,5 @@
 {
   "mistral_model": "mistral-medium-3.5",
-  "api_credentials": {
-    "mistral_api_key": {
-      "scheme": "keyring",
-      "value": ""
-    },
-    "tavily_api_key": {
-      "scheme": "keyring",
-      "value": ""
-    }
-  },
-  "flask_secret_key": {
-    "scheme": "fernet",
-    "value": ""
-  },
-  "custom_ai_prompt": "",
-  "mns_master_key": {
-    "scheme": "keyring",
-    "value": ""
-  }
+  "api_credentials": {},
+  "custom_ai_prompt": ""
 }

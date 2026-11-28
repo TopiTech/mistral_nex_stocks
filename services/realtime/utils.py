@@ -25,6 +25,7 @@ except ImportError:
     cffi_requests = None  # type: ignore[assignment]
     HAS_CURL_CFFI = False
 
+from utils.http_utils import parse_retry_after
 from utils.normalization import is_bool_like, is_jp_stock_code
 
 logger = logging.getLogger(__name__)
@@ -188,8 +189,12 @@ def _parse_quote_number(value: Any, default: float = 0.0) -> float:
 # A bare "...円" match anywhere on the page returned unrelated figures such as
 # 手数料290円 as the stock price — a confidently wrong price is worse than no
 # fallback.
-_MINKABU_PRICE_CLASS_RE = re.compile(r"class=[\"']stock_price[\"'][^>]*>\s*([0-9,]+\.?[0-9]*)")
-_MINKABU_PRICE_LABEL_RE = re.compile(r"(現在値|株価|終値)[^0-9]{0,20}([0-9,]+\.?[0-9]*)")
+_MINKABU_PRICE_CLASS_RE = re.compile(
+    r"class=[\"']stock_price[\"'][^>]*>\s*([0-9][0-9,]*(?:\.[0-9]+)?)"
+)
+_MINKABU_PRICE_LABEL_RE = re.compile(
+    r"(現在値|株価|終値)[^0-9]{0,20}([0-9][0-9,]*(?:\.[0-9]+)?)"
+)
 
 
 def extract_minkabu_price(html: str) -> float | None:
@@ -207,7 +212,8 @@ def extract_minkabu_price(html: str) -> float | None:
         if match:
             token = match.group(1)
         else:
-            labelled = _MINKABU_PRICE_LABEL_RE.search(html)
+            visible_text = re.sub(r"<[^>]+>", " ", html)
+            labelled = _MINKABU_PRICE_LABEL_RE.search(visible_text)
             if not labelled:
                 return None
             token = labelled.group(2)
@@ -261,7 +267,9 @@ def _is_scraper_blocked() -> bool:
 
 
 def _mark_scraper_blocked_from_status(
-    status_code: int | None, propagate_to_yfinance: bool = False
+    status_code: int | None,
+    propagate_to_yfinance: bool = False,
+    response: Any = None,
 ) -> None:
     """Record a global scraper block when an upstream returns a block code."""
     if status_code not in SCRAPER_BLOCK_STATUS_CODES:
@@ -270,7 +278,10 @@ def _mark_scraper_blocked_from_status(
     if market is None or not hasattr(market, "mark_scraper_blocked"):
         return
     try:
-        market.mark_scraper_blocked(propagate_to_yfinance=propagate_to_yfinance)
+        retry_after = parse_retry_after(response) if response is not None else None
+        market.mark_scraper_blocked(
+            retry_after=retry_after, propagate_to_yfinance=propagate_to_yfinance
+        )
     except Exception as exc:
         logger.debug("Failed to mark scraper blocked: %s", exc)
 
@@ -325,7 +336,10 @@ def _previous_close_cache_variants(symbol: str) -> list[str]:
 
     _add(symbol)
     if ":" in symbol:
-        _add(symbol.split(":", 1)[-1])
+        bare = symbol.split(":", 1)[-1]
+        _add(bare)
+        if "." in bare and not bare.endswith(".T"):
+            _add(bare.replace(".", "-"))
     if "." in symbol and not symbol.endswith(".T"):
         _add(symbol.replace(".", "-"))
     return variants
@@ -401,6 +415,10 @@ def _get_yfinance_previous_close(symbol: str) -> float | None:
                 prev = get_stock_previous_close(bare)
                 if prev is not None and prev > 0:
                     return prev
+                if "." in bare and not bare.endswith(".T"):
+                    prev = get_stock_previous_close(bare.replace(".", "-"))
+                    if prev is not None and prev > 0:
+                        return prev
             if "." in symbol and not symbol.endswith(".T"):
                 dash_sym = symbol.replace(".", "-")
                 prev = get_stock_previous_close(dash_sym)
@@ -428,6 +446,10 @@ def _get_yfinance_volume(symbol: str) -> int | float | None:
             vol = get_stock_volume(bare)
             if vol is not None and vol > 0:
                 return vol
+            if "." in bare and not bare.endswith(".T"):
+                vol = get_stock_volume(bare.replace(".", "-"))
+                if vol is not None and vol > 0:
+                    return vol
         if "." in symbol and not symbol.endswith(".T"):
             dash_sym = symbol.replace(".", "-")
             vol = get_stock_volume(dash_sym)

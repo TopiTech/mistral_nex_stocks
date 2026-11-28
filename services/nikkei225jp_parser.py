@@ -70,7 +70,18 @@ def parse_ndy_min_js(text: str, cache: dict[int, list[str]]) -> None:
     for match in _NDY_MIN_RE.finditer(text):
         code = int(match.group(1))
         if code not in cache:
-            cache[code] = [match.group(2), match.group(3), "0", "", ""]
+            price_str = match.group(2)
+            change_str = match.group(3)
+            pct_str = "0"
+            try:
+                price_val = float(price_str)
+                change_val = float(change_str)
+                prev_close = price_val - change_val
+                if prev_close > 0:
+                    pct_str = f"{(change_val / prev_close) * 100.0:.2f}"
+            except (ValueError, TypeError, ZeroDivisionError):
+                pct_str = "0"
+            cache[code] = [price_str, change_str, pct_str, "", ""]
 
 
 def extract_direct_adr_parts(body_html: str) -> list[str] | None:

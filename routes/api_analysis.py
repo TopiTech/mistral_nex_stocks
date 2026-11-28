@@ -58,6 +58,7 @@ from route_helpers import (
     extract_tavily_api_key,
     rate_limit,
     resolve_conversation_scope,
+    sanitize_client_upstream_text,
     sanitize_upstream_log_message,
 )
 from route_helpers import (
@@ -1910,7 +1911,9 @@ def api_analyze_v2():
                     return error_response(
                         ErrorCode.API_SERVICE_ERROR,
                         details={
-                            "reason": _sanitize_error_message(str(err_msg)),
+                            "reason": sanitize_client_upstream_text(
+                                err_msg, "AIサービスエラーが発生しました"
+                            ),
                             **_safe_provider_error_details({"provider_error": prov_err}),
                         },
                         status_code=sc_int,
@@ -1919,7 +1922,11 @@ def api_analyze_v2():
                     err_msg = cached_result.get("message") or "AI解析処理に失敗しました"
                     return error_response(
                         ErrorCode.API_SERVICE_ERROR,
-                        details={"reason": _sanitize_error_message(str(err_msg))},
+                        details={
+                            "reason": sanitize_client_upstream_text(
+                                err_msg, "AI解析処理に失敗しました"
+                            )
+                        },
                         status_code=502,
                     )
             return ok_response(cached_result)
@@ -2311,7 +2318,9 @@ def api_analyze_v2():
                         return error_response(
                             ErrorCode.API_SERVICE_ERROR,
                             details={
-                                "reason": _sanitize_error_message(str(err_msg)),
+                                "reason": sanitize_client_upstream_text(
+                                    err_msg, "AIサービスエラーが発生しました"
+                                ),
                                 **_safe_provider_error_details(
                                     {"provider_error": prov_err}
                                 ),
@@ -2322,7 +2331,11 @@ def api_analyze_v2():
                         err_msg = cached_result.get("message") or "AI解析処理に失敗しました"
                         return error_response(
                             ErrorCode.API_SERVICE_ERROR,
-                            details={"reason": _sanitize_error_message(str(err_msg))},
+                            details={
+                                "reason": sanitize_client_upstream_text(
+                                    err_msg, "AI解析処理に失敗しました"
+                                )
+                            },
                             status_code=502,
                         )
                 return ok_response(cached_result)
@@ -2352,7 +2365,9 @@ def api_analyze_v2():
             return error_response(
                 ErrorCode.API_SERVICE_ERROR,
                 details={
-                    "reason": _sanitize_error_message(str(err_msg)),
+                    "reason": sanitize_client_upstream_text(
+                        err_msg, "AIサービスエラーが発生しました"
+                    ),
                     **_safe_provider_error_details({"provider_error": prov_err}),
                 },
                 status_code=sc_int,
@@ -2361,7 +2376,9 @@ def api_analyze_v2():
             err_msg = result_holder.get("message") or "AI解析処理に失敗しました"
             return error_response(
                 ErrorCode.API_SERVICE_ERROR,
-                details={"reason": _sanitize_error_message(str(err_msg))},
+                details={
+                    "reason": sanitize_client_upstream_text(err_msg, "AI解析処理に失敗しました")
+                },
                 status_code=502,
             )
 
@@ -2383,7 +2400,7 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
     """
     req_id = getattr(g, "request_id", "-")
     err_type = type(job_err).__name__
-    err_msg = _sanitize_error_message(str(job_err))
+    err_msg = sanitize_upstream_log_message(job_err)
 
     if isinstance(job_err, ProviderAPIError):
         current_app.logger.error(
@@ -2395,7 +2412,9 @@ def _analyze_v2_error_response(job_err: BaseException, g) -> "tuple[Any, int]":
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
             details={
-                "reason": err_msg,
+                "reason": sanitize_client_upstream_text(
+                    job_err, "AIサービスエラーが発生しました"
+                ),
                 "error_type": err_type,
                 **_safe_provider_error_details(job_err.details),
             },

@@ -546,9 +546,11 @@ async function fetchStockHistoryPayload(
         if (applied) return applied;
         attempts++;
         if (attempts >= maxAttempts) {
-          throw new Error(
+          const timeoutErr = new Error(
             "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
           );
+          timeoutErr.name = "TimeoutError";
+          throw timeoutErr;
         }
         await waitWithAbort(delay, controller.signal);
         continue;
@@ -572,6 +574,7 @@ async function fetchStockHistoryPayload(
           logger.warn(
             `Fetch failed for ${symbol} (${period}/${interval}), retrying...`,
           );
+          clearTimeout(timeoutId);
           const retryController = new AbortController();
           const abortRetry = () => retryController.abort();
           if (controller.signal.aborted) {
@@ -600,11 +603,13 @@ async function fetchStockHistoryPayload(
               await waitWithAbort(delay, controller.signal);
               continue;
             }
-            throw new Error(
+            const timeoutErr = new Error(
               "履歴データの取得がタイムアウトしました。しばらくしてから再読み込みしてください。",
               // (M36) 保持 outer catch の実例外を原因として保持する。
               { cause: err },
             );
+            timeoutErr.name = "TimeoutError";
+            throw timeoutErr;
           } finally {
             clearTimeout(retryTimeoutId);
             controller.signal.removeEventListener("abort", abortRetry);
@@ -2113,11 +2118,13 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
     const { formattedData, ohlcData } = prefetchEntry;
     applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData);
     if (wrapper.dataset.marketContext !== "portfolio") {
-      drawChart(wrapper, formattedData, ohlcData, {
-        animate: true,
-        period: targetPeriod,
-        interval: targetInterval,
-      });
+      if (!options?.skipInlineDraw) {
+        drawChart(wrapper, formattedData, ohlcData, {
+          animate: true,
+          period: targetPeriod,
+          interval: targetInterval,
+        });
+      }
       if (!options?.skipFullscreenDraw) {
         drawFullscreenChartIfActive(
           wrapper,
@@ -2248,10 +2255,12 @@ async function refreshStockChart(wrapper, period, interval, options = {}) {
     applyHistoryToStockAndWrapper(wrapper, formattedData, ohlcData);
 
     if (wrapper.dataset.marketContext !== "portfolio") {
-      drawChart(wrapper, formattedData, ohlcData, {
-        period: targetPeriod,
-        interval: targetInterval,
-      });
+      if (!options?.skipInlineDraw) {
+        drawChart(wrapper, formattedData, ohlcData, {
+          period: targetPeriod,
+          interval: targetInterval,
+        });
+      }
       if (!options?.skipFullscreenDraw) {
         drawFullscreenChartIfActive(
           wrapper,

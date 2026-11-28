@@ -57,6 +57,27 @@ def _log_langsearch_retry(retry_state: Any) -> None:
     )
 
 
+_LANGSEARCH_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+
+def _check_langsearch_response_size(response: Any) -> None:
+    """Enforce bounded response size on real HTTP responses while keeping mocks compatible."""
+    headers = getattr(response, "headers", None)
+    cl_raw = headers.get("Content-Length") if headers is not None and hasattr(headers, "get") else None
+    if isinstance(cl_raw, (int, str)) and not isinstance(cl_raw, bool):
+        try:
+            if int(str(cl_raw).strip()) > _LANGSEARCH_MAX_RESPONSE_BYTES:
+                raise requests.RequestException("LangSearch response exceeds size limit")
+        except ValueError:
+            pass
+    raw_content = getattr(response, "content", None)
+    if (
+        isinstance(raw_content, (bytes, bytearray))
+        and len(raw_content) > _LANGSEARCH_MAX_RESPONSE_BYTES
+    ):
+        raise requests.RequestException("LangSearch response exceeds size limit")
+
+
 def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     """Perform a bounded JSON POST and validate the LangSearch response.
 
@@ -71,7 +92,13 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
     this module's public retry/fallback contract.
     """
     try:
-        response: Any = curl_requests.post(url, json=payload, headers=headers, timeout=timeout)
+        response: Any = curl_requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=False,
+        )
     except curl_exceptions.Timeout as exc:
         raise requests.Timeout(str(exc)) from exc
     except curl_exceptions.ConnectionError as exc:
@@ -81,13 +108,23 @@ def _request_json_post(url, payload, headers, timeout=LANGSEARCH_TIMEOUT):
 
     parsed: Any = {}
     try:
+        status_code = getattr(response, "status_code", 0)
+        if (
+            isinstance(status_code, int)
+            and not isinstance(status_code, bool)
+            and 300 <= status_code < 400
+        ):
+            raise requests.HTTPError(
+                f"LangSearch redirects are not permitted (HTTP {status_code})",
+                response=response,
+            )
+        _check_langsearch_response_size(response)
         try:
             parsed = response.json()
         except (ValueError, TypeError):
             pass
 
         if not response.ok:
-            status_code = response.status_code
             error_msg = "Unknown LangSearch error"
             if isinstance(parsed, dict):
                 error_msg = str(parsed.get("msg") or parsed.get("message") or f"HTTP {status_code}")

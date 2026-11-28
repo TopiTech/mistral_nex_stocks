@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { extractFunction as extractBalancedFunction } from "./_brace_matcher.mjs";
 
 // チャット SSE の無応答タイムアウト契約の回帰ゲート。
 //
@@ -44,24 +45,9 @@ function withWatchdog(label, promise) {
 }
 
 function extractFunction(source, name, sourcePath) {
-  const marker = `function ${name}(`;
-  const start = source.indexOf(marker);
-  if (start === -1) fail(`${sourcePath} no longer defines ${name}()`);
-  // async 宣言を落とさないよう前方の修飾子まで含める
-  const declStart = source.lastIndexOf("\n", start) + 1;
-  const open = source.indexOf("{", start);
-  if (open === -1) fail(`${sourcePath} has no body for ${name}()`);
-  let depth = 0;
-  for (let index = open; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(declStart, index + 1);
-    }
-  }
-  return fail(`${sourcePath} has unbalanced braces in ${name}()`);
+  return extractBalancedFunction(source, name, sourcePath, {
+    includeModifiers: true,
+  });
 }
 
 function readApiSource() {

@@ -351,6 +351,6 @@ def load_sdk_agent(
 
     try:
         parsed_uuid = UUID(target)
-        return mistral_agents.Agent.load_from(agent_id=str(parsed_uuid), api_key=api_key)
-    except (ValueError, AttributeError):
+    except ValueError:
         return mistral_agents.Agent.load_from(agent_name=target, api_key=api_key)
+    return mistral_agents.Agent.load_from(agent_id=str(parsed_uuid), api_key=api_key)

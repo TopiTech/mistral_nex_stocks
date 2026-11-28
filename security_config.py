@@ -142,6 +142,7 @@ def init_security(app: Flask) -> CSRFProtect:
         strict_transport_security=_is_prod_env,
         session_cookie_secure=_cookie_secure,  # MNS_COOKIE_SECURE=1 or MNS_PROD=1 で有効化
         session_cookie_http_only=True,
+        session_cookie_samesite="Strict",
         referrer_policy="strict-origin-when-cross-origin",
         # M-7: Permissions-Policy ? 本アプリが使用しないブラウザ機能を明示的に無効化
         # ファイルアップロード/カメラ/マイク等は不要。クリップボード読取りは

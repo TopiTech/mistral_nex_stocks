@@ -669,40 +669,46 @@
       }
 
       // 1. Orbital Anti-collision spacing pass
-      const tierMap = new Map();
-      for (const stock of assignedStocks) {
-        if (!stock || stock.isCenter) continue;
-        const tierKey = stock.tier || "middle";
-        if (!tierMap.has(tierKey)) tierMap.set(tierKey, []);
-        tierMap.get(tierKey).push(stock);
-      }
+      if (!stateData.paused && !stateData.reducedMotion) {
+        const tierMap = new Map();
+        for (const stock of assignedStocks) {
+          if (!stock || stock.isCenter) continue;
+          const tierKey = stock.tier || "middle";
+          if (!tierMap.has(tierKey)) tierMap.set(tierKey, []);
+          tierMap.get(tierKey).push(stock);
+        }
 
-      for (const [tierKey, list] of tierMap.entries()) {
-        if (list.length < 2) continue;
-        const radius =
-          tierKey === "inner"
-            ? this.radii.inner
-            : tierKey === "middle"
-              ? this.radii.middle
-              : this.radii.outer;
-        const minAngleSpacing = 36 / radius; // Angular space threshold
+        for (const [tierKey, list] of tierMap.entries()) {
+          if (list.length < 2) continue;
+          const radius =
+            tierKey === "inner"
+              ? this.radii.inner
+              : tierKey === "middle"
+                ? this.radii.middle
+                : this.radii.outer;
+          const rawSpacing = radius > 0 ? 36 / radius : 0.2;
+          const minAngleSpacing = Math.min(
+            rawSpacing,
+            (Math.PI * 1.6) / list.length,
+          );
 
-        for (let i = 0; i < list.length; i++) {
-          for (let j = i + 1; j < list.length; j++) {
-            const rDataA = this.nodeRenderData.get(list[i].symbol);
-            const rDataB = this.nodeRenderData.get(list[j].symbol);
-            if (!rDataA || !rDataB) continue;
+          for (let i = 0; i < list.length; i++) {
+            for (let j = i + 1; j < list.length; j++) {
+              const rDataA = this.nodeRenderData.get(list[i].symbol);
+              const rDataB = this.nodeRenderData.get(list[j].symbol);
+              if (!rDataA || !rDataB) continue;
 
-            let diff = rDataB.angle - rDataA.angle;
-            // Normalize angle diff to [-PI, PI]
-            while (diff < -Math.PI) diff += Math.PI * 2;
-            while (diff > Math.PI) diff -= Math.PI * 2;
+              let diff = rDataB.angle - rDataA.angle;
+              // Normalize angle diff to [-PI, PI]
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              while (diff > Math.PI) diff -= Math.PI * 2;
 
-            if (Math.abs(diff) < minAngleSpacing) {
-              const push = (minAngleSpacing - Math.abs(diff)) * 0.5;
-              const dir = diff >= 0 ? 1 : -1;
-              rDataA.angle -= push * dir * 0.2;
-              rDataB.angle += push * dir * 0.2;
+              if (Math.abs(diff) < minAngleSpacing) {
+                const push = (minAngleSpacing - Math.abs(diff)) * 0.5;
+                const dir = diff >= 0 ? 1 : -1;
+                rDataA.angle -= push * dir * 0.2;
+                rDataB.angle += push * dir * 0.2;
+              }
             }
           }
         }
@@ -958,7 +964,12 @@
       if (!symbols || symbols.length < 2) return;
 
       const points = [];
+      const activeStocks =
+        stateData.stocks && typeof stateData.stocks.has === "function"
+          ? stateData.stocks
+          : null;
       for (const sym of symbols) {
+        if (activeStocks && !activeStocks.has(sym)) continue;
         const renderData = this.nodeRenderData.get(sym);
         if (renderData) {
           points.push({

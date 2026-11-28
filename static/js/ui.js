@@ -364,6 +364,10 @@ async function ensureStockDetails(wrapper) {
     }
 
     clearTimeout(timeoutId);
+    if (timedOut) {
+      if (isCurrentRequest()) showErrorBanner("タイムアウト");
+      return;
+    }
     if (!isCurrentRequest()) return;
     // 成功は「明示的な ok:true」のみとし、失敗フラグの不在を成功と見なさない
     // (空オブジェクトやプロキシの502ボディをキャッシュで恒久汚染しない)。
@@ -384,8 +388,12 @@ async function ensureStockDetails(wrapper) {
         "データ取得失敗";
       showErrorBanner(errMsg);
     }
+    if (isCurrentRequest()) {
+      wrapper.__detailsReqController = null;
+    }
   } catch (e) {
     if (!isCurrentRequest()) return;
+    wrapper.__detailsReqController = null;
     const reason = e?.details?.reason || e?.data?.details?.reason || "";
     if (timedOut) {
       showErrorBanner(reason ? `タイムアウト（${reason}）` : "タイムアウト");
@@ -791,21 +799,32 @@ function updateStockUI(wrapper, stock) {
             updateChartLastPoint(chartInstances.get(canvas), stock.price);
           }
         }
-        const fsModal = document.getElementById("chart-fullscreen-modal");
-        if (
-          fsModal &&
-          !fsModal.classList.contains("hidden") &&
-          fsModal.dataset.stockKey === stockKey
-        ) {
-          const fsCanvas = document.getElementById("fs-chart-canvas");
-          if (fsCanvas) {
-            updateChartLastPoint(chartInstances.get(fsCanvas), stock.price);
-          }
-        }
       }
     });
     if (isStockDetailsCacheFresh(stockKey))
       renderDetailExtras(wrapper, stockDetailsCache.get(stockKey));
+  }
+
+  const fsModal = document.getElementById("chart-fullscreen-modal");
+  if (
+    !isPortfolioTab &&
+    fsModal &&
+    !fsModal.classList.contains("hidden") &&
+    fsModal.dataset.stockKey === stockKey
+  ) {
+    requestAnimationFrame(() => {
+      if (wrapper.isConnected === false) return;
+      if (
+        fsModal.classList.contains("hidden") ||
+        fsModal.dataset.stockKey !== stockKey
+      ) {
+        return;
+      }
+      const fsCanvas = document.getElementById("fs-chart-canvas");
+      if (fsCanvas) {
+        updateChartLastPoint(chartInstances.get(fsCanvas), stock.price);
+      }
+    });
   }
 }
 
@@ -1957,6 +1976,9 @@ function renderPortfolio() {
   }
 
   // 既存のカードを保持したまま更新する (全削除によるチラつきを防止)
+  container
+    .querySelectorAll(":scope > .no-results")
+    .forEach((el) => el.remove());
   const existingKeys = new Set();
   holdings.forEach((stock) => {
     const stockKey = makeStockKey(stock.market, stock.symbol);
@@ -3856,11 +3878,22 @@ function closeStockDetailDrawer() {
         `${symbol}（${market}）の詳細を開く`,
       );
     }
+    currentDrawerActiveWrapper._chartAbortController?.abort();
+    currentDrawerActiveWrapper._chartAbortController = null;
+    currentDrawerActiveWrapper.__detailsReqController?.abort();
+    currentDrawerActiveWrapper.__detailsReqController = null;
     const detailInner = currentDrawerActiveWrapper.querySelector(
       ".detail-panel .detail-inner",
     );
     const chartContent = document.getElementById("drawerTabChartContent");
     const aiContent = document.getElementById("drawerTabAiContent");
+
+    chartContent
+      ?.querySelectorAll("canvas")
+      .forEach((canvas) => destroyChart(canvas));
+    detailInner
+      ?.querySelectorAll("canvas")
+      .forEach((canvas) => destroyChart(canvas));
 
     if (detailInner) {
       // (L17, 2026-11-07 review) 従来はタブ内の全子要素を無条件で不可視の
@@ -4592,9 +4625,18 @@ function openFullscreenChart(wrapper) {
           const p = getChartPref(stockKey, "period", "3mo");
           const inv = getChartPref(stockKey, "interval", "auto");
           const toolbarReqId = bumpFsToolbarReqId();
+          const hasVisibleInlineOrDrawer =
+            Boolean(
+              targetWrapper
+                .querySelector(".detail-panel")
+                ?.classList.contains("open"),
+            ) ||
+            (typeof currentDrawerActiveWrapper !== "undefined" &&
+              currentDrawerActiveWrapper === targetWrapper);
           Promise.resolve(
             refreshStockChart(targetWrapper, p, inv, {
               skipFullscreenDraw: true,
+              skipInlineDraw: !hasVisibleInlineOrDrawer,
             }),
           )
             .then(() => {
@@ -4699,9 +4741,18 @@ function openFullscreenChart(wrapper) {
           interval: interval,
         });
       } else {
+        const hasVisibleInlineOrDrawer =
+          Boolean(
+            targetWrapper
+              .querySelector(".detail-panel")
+              ?.classList.contains("open"),
+          ) ||
+          (typeof currentDrawerActiveWrapper !== "undefined" &&
+            currentDrawerActiveWrapper === targetWrapper);
         Promise.resolve(
           refreshStockChart(targetWrapper, period, interval, {
             skipFullscreenDraw: true,
+            skipInlineDraw: !hasVisibleInlineOrDrawer,
           }),
         )
           .then(() => {

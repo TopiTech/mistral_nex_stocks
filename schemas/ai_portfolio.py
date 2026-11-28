@@ -139,7 +139,7 @@ class AIPortfolioRebalanceRequest(BaseModel):
         theme: str | None = raw.strip() if isinstance(raw, str) else None
         if theme is None:
             raise ValueError("theme_must_be_string")
-        return {**data, "theme": theme}
+        return {**data, "theme": theme or "tech"}
 
 
 class AIPortfolioSaveRequest(BaseModel):

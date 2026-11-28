@@ -9,6 +9,7 @@ sliding-window event replay log used for Last-Event-ID resume.
 import logging
 import queue
 import threading
+import weakref
 from collections import deque
 from contextlib import contextmanager
 from typing import Any
@@ -84,7 +85,7 @@ class MessageAnnouncer:
 
     def __init__(self):
         self.listeners: list[queue.Queue[Any]] = []
-        self._closed_queues: set[int] = set()
+        self._closed_queues: weakref.WeakSet[queue.Queue[Any]] = weakref.WeakSet()
         self.lock = threading.Lock()
         # Observability counters, incremented inside ``self.lock`` (read-
         # modify-write is not atomic under the GIL) and exposed via ``stats()``:
@@ -126,7 +127,7 @@ class MessageAnnouncer:
     def unlisten(self, q):
         """Unregister a listener queue."""
         with self.lock:
-            self._closed_queues.discard(id(q))
+            self._closed_queues.discard(q)
             try:
                 self.listeners.remove(q)
             except ValueError:
@@ -148,7 +149,7 @@ class MessageAnnouncer:
             for q_over in overloaded:
                 try:
                     self.listeners.remove(q_over)
-                    self._closed_queues.add(id(q_over))
+                    self._closed_queues.add(q_over)
                 except ValueError:
                     pass
             targets = list(self.listeners)
@@ -167,7 +168,7 @@ class MessageAnnouncer:
         delivered = 0
         for q_target in targets:
             with self.lock:
-                if id(q_target) in self._closed_queues:
+                if q_target in self._closed_queues:
                     continue
             try:
                 q_target.put_nowait(msg)
@@ -177,7 +178,7 @@ class MessageAnnouncer:
                 with self.lock:
                     try:
                         self.listeners.remove(q_target)
-                        self._closed_queues.add(id(q_target))
+                        self._closed_queues.add(q_target)
                         removed_now = True
                         self.dropped_count += 1
                     except ValueError:
@@ -211,7 +212,7 @@ class MessageAnnouncer:
         with self.lock:
             closing = list(self.listeners)
             for q in closing:
-                self._closed_queues.add(id(q))
+                self._closed_queues.add(q)
             self.listeners.clear()
         for q in closing:
             self._enqueue_close_sentinel(q)

@@ -276,7 +276,16 @@ def sync_all_stocks_now(force_fetch: bool = False) -> None:
                         "schedule_sync_all_stocks_now",
                         schedule_sync_all_stocks_now,
                     )
-                    schedule_fn()
+                    if not schedule_fn() and not app_state.execution.shutdown_event.is_set():
+                        with (
+                            app_state.market.sync_schedule_lock,
+                            app_state.market.is_syncing_lock,
+                        ):
+                            if (
+                                not app_state.market.sync_scheduled
+                                and not app_state.market.is_syncing
+                            ):
+                                app_state.market.sync_pending = True
 
 
 def _run_scheduled_sync_job() -> None:
@@ -294,9 +303,21 @@ def _run_scheduled_sync_job() -> None:
             pending = app_state.market.sync_pending
             if pending:
                 app_state.market.sync_pending = False
-        if pending:
+        if pending and not app_state.execution.shutdown_event.is_set():
             logger.info("Triggering pending stock sync.")
-            schedule_sync_all_stocks_now()
+            if (
+                not schedule_sync_all_stocks_now()
+                and not app_state.execution.shutdown_event.is_set()
+            ):
+                with (
+                    app_state.market.sync_schedule_lock,
+                    app_state.market.is_syncing_lock,
+                ):
+                    if (
+                        not app_state.market.sync_scheduled
+                        and not app_state.market.is_syncing
+                    ):
+                        app_state.market.sync_pending = True
 
 
 def schedule_sync_all_stocks_now(
@@ -480,17 +501,22 @@ def start_background_worker() -> None:
         write shared state, so match on an explicit marker attribute rather
         than closure identity (``wrapped_loop`` is re-created on every call).
         """
-        for existing in app_state.execution.get_background_threads():
-            if (
-                getattr(existing, _BG_LOOP_MARKER_ATTR, None) == loop_name
-                and existing.is_alive()
-            ):
-                logger.debug("Background loop %s already running; not spawning again", loop_name)
-                return
-        t = threading.Thread(target=wrapped_loop, args=(loop_fn, loop_name), daemon=True)
-        setattr(t, _BG_LOOP_MARKER_ATTR, loop_name)
-        app_state.execution.register_background_thread(t)
-        t.start()
+        with app_state.execution._threads_lock:
+            for existing in app_state.execution.get_background_threads():
+                if (
+                    getattr(existing, _BG_LOOP_MARKER_ATTR, None) == loop_name
+                    and existing.is_alive()
+                ):
+                    logger.debug(
+                        "Background loop %s already running; not spawning again", loop_name
+                    )
+                    return
+            t = threading.Thread(
+                target=wrapped_loop, args=(loop_fn, loop_name), name=loop_name, daemon=True
+            )
+            setattr(t, _BG_LOOP_MARKER_ATTR, loop_name)
+            app_state.execution.register_background_thread(t)
+            t.start()
 
     _spawn_loop(yahoo_loop, "Yahoo")
     _spawn_loop(leader_loop, "LeaderElection")
@@ -559,15 +585,18 @@ def start_background_worker() -> None:
             except Exception:
                 logger.exception("Watchdog iteration failed; supervision continues")
 
-    watchdog_running = any(
-        getattr(existing, _BG_LOOP_MARKER_ATTR, None) == "Watchdog" and existing.is_alive()
-        for existing in app_state.execution.get_background_threads()
-    )
-    if not watchdog_running:
-        t_watchdog = threading.Thread(target=bg_threads_watchdog_loop, name="Watchdog", daemon=True)
-        setattr(t_watchdog, _BG_LOOP_MARKER_ATTR, "Watchdog")
-        app_state.execution.register_background_thread(t_watchdog)
-        t_watchdog.start()
+    with app_state.execution._threads_lock:
+        watchdog_running = any(
+            getattr(existing, _BG_LOOP_MARKER_ATTR, None) == "Watchdog" and existing.is_alive()
+            for existing in app_state.execution.get_background_threads()
+        )
+        if not watchdog_running:
+            t_watchdog = threading.Thread(
+                target=bg_threads_watchdog_loop, name="Watchdog", daemon=True
+            )
+            setattr(t_watchdog, _BG_LOOP_MARKER_ATTR, "Watchdog")
+            app_state.execution.register_background_thread(t_watchdog)
+            t_watchdog.start()
 
 
 _start_background_threads = start_background_worker

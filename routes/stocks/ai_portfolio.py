@@ -363,11 +363,15 @@ def api_generate_ai_portfolio() -> Any:
         if cached_err is not None:
             with ai_portfolio_fetch_lock:
                 ai_portfolio_result_cache.pop(inflight_key, None)
+                if req_token is not None:
+                    ai_portfolio_token_records[req_token] = (req_fingerprint, True)
             return _ai_portfolio_error_response(cached_err, g)
         if cached_result is not None:
             return ok_response({"portfolio": cached_result})
         with ai_portfolio_fetch_lock:
             ai_portfolio_result_cache.pop(inflight_key, None)
+            if req_token is not None:
+                ai_portfolio_token_records[req_token] = (req_fingerprint, True)
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
             details={"reason": "AIポートフォリオの生成結果が空でした。再試行してください。"},
@@ -459,11 +463,15 @@ def api_generate_ai_portfolio() -> Any:
     if result_holder["error"] is not None:
         with ai_portfolio_fetch_lock:
             ai_portfolio_result_cache.pop(inflight_key, None)
+            if req_token is not None:
+                ai_portfolio_token_records[req_token] = (req_fingerprint, True)
         return _ai_portfolio_error_response(result_holder["error"], g)
 
     if result_holder["result"] is None:
         with ai_portfolio_fetch_lock:
             ai_portfolio_result_cache.pop(inflight_key, None)
+            if req_token is not None:
+                ai_portfolio_token_records[req_token] = (req_fingerprint, True)
         return error_response(
             ErrorCode.INTERNAL_SERVER_ERROR,
             details={"reason": "AIポートフォリオの生成結果が空でした。再試行してください。"},

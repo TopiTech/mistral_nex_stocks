@@ -224,7 +224,9 @@ class SBISecuritiesScraper(_BaseFallbackScraper):
         resp: Any = None
         try:
             resp = self._get_session().get(self.BASE_URL, params=params, timeout=6.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            _mark_scraper_blocked_from_status(
+                resp.status_code, propagate_to_yfinance=False, response=resp
+            )
             if resp.status_code != 200:
                 logger.debug("[SBI Scraper] Non-200 response (%s) for %s", resp.status_code, symbol)
                 return None
@@ -378,7 +380,9 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
         resp: Any = None
         try:
             resp = self._get_session().get(self.ADR_ALL_URL, timeout=6.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            _mark_scraper_blocked_from_status(
+                resp.status_code, propagate_to_yfinance=False, response=resp
+            )
             if resp.status_code == 200:
                 text = resp.content.decode("utf-8", errors="replace")
                 cache = parse_adr_all_js(text)
@@ -467,7 +471,9 @@ class Nikkei225JPScraper(_BaseFallbackScraper):
             try:
                 url = f"{self.ADR_URL}?a={clean_code}"
                 resp = self._get_session().get(url, timeout=6.0)
-                _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+                _mark_scraper_blocked_from_status(
+                    resp.status_code, propagate_to_yfinance=False, response=resp
+                )
                 body_html = decode_http_response_text(resp)
                 if resp.status_code == 200 and f'var Sno="{clean_code}"' in body_html:
                     parts = extract_direct_adr_parts(body_html)
@@ -614,7 +620,9 @@ class MinkabuScraper(_BaseFallbackScraper):
         resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            _mark_scraper_blocked_from_status(
+                resp.status_code, propagate_to_yfinance=False, response=resp
+            )
             if resp.status_code == 200:
                 try:
                     html = decode_http_response_text(resp)
@@ -938,7 +946,9 @@ class YahooJPRealtimeScraper:
         resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            _mark_scraper_blocked_from_status(
+                resp.status_code, propagate_to_yfinance=False, response=resp
+            )
             if resp.status_code == 200 and BeautifulSoup is not None:
                 try:
                     soup = BeautifulSoup(decode_http_response_text(resp), "html.parser")
@@ -1012,7 +1022,9 @@ class YahooJPRealtimeScraper:
         resp: Any = None
         try:
             resp = self._get_session().get(url, timeout=5.0)
-            _mark_scraper_blocked_from_status(resp.status_code, propagate_to_yfinance=False)
+            _mark_scraper_blocked_from_status(
+                resp.status_code, propagate_to_yfinance=False, response=resp
+            )
             if resp.status_code == 200 and BeautifulSoup is not None:
                 try:
                     soup = BeautifulSoup(decode_http_response_text(resp), "html.parser")

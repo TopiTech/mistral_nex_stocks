@@ -21,13 +21,11 @@ import logging
 import time  # noqa: F401 -- patch 対象 (`services.stock_provider.time`)
 
 import yfinance as yf  # noqa: F401 -- patch 対象 (`services.stock_provider.yf`)
-from yfinance.exceptions import (  # noqa: F401 -- 下位互換の再エクスポート
-    YFPricesMissingError,
-    YFTickerMissingError,
-)
 
 from services.stock.errors import (  # noqa: F401
+    YFPricesMissingError,
     YFRateLimitError,
+    YFTickerMissingError,
     _handle_yf_rate_limit,
     _is_yfinance_invalid_symbol_error,
     _is_yfinance_rate_limit_error,

@@ -31,6 +31,10 @@ const HEALTH_TIMEOUT_MS = 3000;
 const SHUTDOWN_TIMEOUT_MS = 5000;
 let mnsShutdownToken = null;
 let mnsExtensionToken = null;
+let mnsExtensionTokenForceInflight = null;
+// Incremented on every forced refresh so an older in-flight acquisition that
+// resolves late cannot overwrite the newer token (or resurrect a rejected one).
+let mnsExtensionTokenGeneration = 0;
 let backendPort = DEFAULT_BACKEND_PORT;
 // null = native host could not verify (legacy/manual backend); false = the
 // listening port is known NOT to belong to this app's backend process.
@@ -279,8 +283,14 @@ if (mnsSessionStorage && typeof mnsSessionStorage.get === "function") {
   try {
     const pending = mnsSessionStorage.get(["mnsExtensionToken"], (items) => {
       // A token acquired while this read was pending is newer than the copy
-      // this callback started with, so never overwrite it.
-      if (items?.mnsExtensionToken && !mnsExtensionToken) {
+      // this callback started with, so never overwrite it or resurrect a
+      // token rejected by a concurrent forced refresh.
+      if (
+        items?.mnsExtensionToken &&
+        !mnsExtensionToken &&
+        mnsExtensionTokenGeneration === 0 &&
+        !mnsExtensionTokenForceInflight
+      ) {
         mnsExtensionToken = items.mnsExtensionToken;
       }
     });
@@ -297,10 +307,6 @@ if (mnsSessionStorage && typeof mnsSessionStorage.get === "function") {
 }
 
 let mnsExtensionTokenInflight = null;
-let mnsExtensionTokenForceInflight = null;
-// Incremented on every forced refresh so an older in-flight acquisition that
-// resolves late cannot overwrite the newer token (or resurrect a rejected one).
-let mnsExtensionTokenGeneration = 0;
 
 async function _acquireExtensionToken(forceRefresh, generation) {
   const isCurrent = () => generation === mnsExtensionTokenGeneration;

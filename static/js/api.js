@@ -2295,7 +2295,17 @@ async function addStock(symbol, name, market) {
     const resultBox = DOM.get("search-results");
     const searchInput = DOM.get("searchInput");
     if (resultBox) resultBox.style.display = "none";
-    if (searchInput) searchInput.value = "";
+    if (searchInput) {
+      searchInput.value = "";
+      searchInput.setAttribute?.("aria-expanded", "false");
+      searchInput.removeAttribute?.("aria-activedescendant");
+      if (
+        typeof CustomEvent === "function" &&
+        typeof searchInput.dispatchEvent === "function"
+      ) {
+        searchInput.dispatchEvent(new CustomEvent("searchresultschange"));
+      }
+    }
     await fetchInitialStocks();
   } catch (e) {
     $logger.error("Add stock error:", e);

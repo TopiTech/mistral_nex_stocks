@@ -372,7 +372,10 @@ class APIClient {
     preserveVisibilityPause = false,
   ) {
     const initialParams = { url, onMessage, onError, options };
-    if (!this.isVisibilityPaused) {
+    if (!preserveVisibilityPause) {
+      this.isVisibilityPaused = false;
+      this._lastSSEParams = initialParams;
+    } else if (!this.isVisibilityPaused) {
       this._lastSSEParams = initialParams;
     }
     this._teardownSSE(preserveVisibilityPause);

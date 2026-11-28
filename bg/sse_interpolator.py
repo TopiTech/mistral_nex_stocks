@@ -100,7 +100,12 @@ def _interpolate_and_fluctuate_market(
                     t_item.get("change"), allow_negative=True
                 )
                 target_change = _target_change_val if _target_change_val is not None else 0.0
-                previous_close = target_price - target_change
+                _raw_prev_close = normalize_optional_number(t_item.get("previous_close"))
+                previous_close = (
+                    _raw_prev_close
+                    if _raw_prev_close is not None and _raw_prev_close > 0
+                    else target_price - target_change
+                )
 
                 if not math.isfinite(target_price) or not math.isfinite(previous_close):
                     raise ValueError("non-finite price from data source")
@@ -130,7 +135,7 @@ def _interpolate_and_fluctuate_market(
                 # prices are rounded to 2 decimals before reaching the client).
                 published_price = round(new_price, decimals)
                 c_item["price"] = published_price
-                if previous_close != 0 and math.isfinite(previous_close):
+                if previous_close > 0 and math.isfinite(previous_close):
                     new_change = published_price - previous_close
                     new_change_percent = (new_change / previous_close) * 100
                     c_item["change"] = round(new_change, decimals)
@@ -195,8 +200,9 @@ def _fluctuate_indices(
                     _t_change = normalize_optional_number(
                         t_info.get("change"), allow_negative=True
                     )
-                    if _t_change is not None and math.isfinite(_t_change):
-                        change = _t_change
+                    change = (
+                        _t_change if (_t_change is not None and math.isfinite(_t_change)) else 0.0
+                    )
 
         prev_close = target_price - change if target_indices is not None else price - change
         if price <= 0 or not math.isfinite(target_price) or target_price <= 0:
@@ -217,7 +223,7 @@ def _fluctuate_indices(
 
             is_fx = key in ("USDJPY", "EURJPY")
             published_price = round(new_price, 3 if is_fx else 2)
-            if prev_close != 0 and math.isfinite(prev_close):
+            if prev_close > 0 and math.isfinite(prev_close):
                 # Change must be consistent with the rounded price that is
                 # actually published (same rule as the stock interpolator).
                 new_change = published_price - prev_close

@@ -210,7 +210,7 @@ def extract_batch_history(
                 pass
 
             return pd.DataFrame()
-        elif single_symbol or ("Close" in downloaded.columns or "close" in downloaded.columns):
+        elif single_symbol and ("Close" in downloaded.columns or "close" in downloaded.columns):
             return normalize_history_frame(downloaded)
         else:
             return pd.DataFrame()
@@ -437,9 +437,9 @@ def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None
         return None
 
     try:
-        hist = app_state.stock_provider.get_history(symbol, period="1mo")
+        hist = normalize_history_frame(app_state.stock_provider.get_history(symbol, period="1mo"))
 
-        if hist is None or len(hist) < 2:
+        if hist.empty or len(hist) < 2:
             return None
 
         last_row = hist.iloc[-1]
@@ -454,6 +454,8 @@ def fetch_index_data(key: str, symbol: str) -> tuple[str, dict[str, Any]] | None
         price_fmt = _fmt(price)
         if price_fmt is None or price_fmt <= 0:
             return None
+
+        _reset_yfinance_streak_on_success()
 
         market_type = "jp" if key == "N225" else "us"
         is_open = is_market_open(market_type)

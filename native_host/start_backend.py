@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import socket
+import stat
 import subprocess  # nosec B404
 import sys
 import tempfile
@@ -77,16 +78,44 @@ class _RestrictiveRotatingFileHandler(RotatingFileHandler):
         return stream
 
 
+def _temp_fallback_dir_name() -> str:
+    """Scope the shared temp fallback directory to the current UID on POSIX."""
+    if hasattr(os, "getuid"):
+        return f"mistral_nex_stocks-{os.getuid()}"
+    return "mistral_nex_stocks"
+
+
+def _ensure_secure_fallback_dir(target_dir: Path) -> None:
+    """Create *target_dir* safely with 0700 permissions and ownership checks on POSIX."""
+    if hasattr(os, "getuid"):
+        if target_dir.is_symlink():
+            raise OSError(f"Refusing symlink temp log directory: {target_dir}")
+        target_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        st = os.lstat(target_dir)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError(f"Temp log directory not owned by current user: {target_dir}")
+        try:
+            os.chmod(target_dir, 0o700)
+        except OSError:
+            pass
+    else:
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+
 def _build_backend_log_handler(log_path: Path) -> logging.Handler:
     """Create an OSError-safe rotating log handler with temp/stderr fallback."""
+    temp_fallback = Path(tempfile.gettempdir()) / _temp_fallback_dir_name() / log_path.name
     candidates = [
-        log_path,
-        Path(tempfile.gettempdir()) / "mistral_nex_stocks" / log_path.name,
+        (log_path, False),
+        (temp_fallback, True),
     ]
     formatter = logging.Formatter(_LOG_FORMAT)
-    for candidate in candidates:
+    for candidate, enforce_secure_dir in candidates:
         try:
-            candidate.parent.mkdir(parents=True, exist_ok=True)
+            if enforce_secure_dir:
+                _ensure_secure_fallback_dir(candidate.parent)
+            else:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
             handler = _RestrictiveRotatingFileHandler(
                 str(candidate),
                 maxBytes=2 * 1024 * 1024,

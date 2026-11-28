@@ -951,7 +951,11 @@ def test_nh_start_backend_log_handler_falls_back_on_oserror(tmp_path):
     orig_mkdir = Path.mkdir
 
     def fail_primary(self, *args, **kwargs):
-        if self == unwritable_path.parent or self.name == "mistral_nex_stocks":
+        if (
+            self == unwritable_path.parent
+            or self.name == "mistral_nex_stocks"
+            or self.name.startswith("mistral_nex_stocks-")
+        ):
             raise OSError("permission denied")
         return orig_mkdir(self, *args, **kwargs)
 

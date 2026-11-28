@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import math
 import os
@@ -389,20 +390,73 @@ class _ThreadSessionGuard:
 _MAX_TREND_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
-def _check_trend_response_size(response: Any, max_bytes: int = _MAX_TREND_RESPONSE_BYTES) -> None:
-    """Enforce bounded response size while preserving mock compatibility."""
+def _check_trend_header_size(response: Any, max_bytes: int | None = None) -> None:
+    """Reject responses whose declared Content-Length exceeds *max_bytes*."""
+    limit = _MAX_TREND_RESPONSE_BYTES if max_bytes is None else max_bytes
     headers = getattr(response, "headers", None)
     cl_raw = headers.get("Content-Length") if headers is not None and hasattr(headers, "get") else None
     if isinstance(cl_raw, (int, str)) and not isinstance(cl_raw, bool):
         try:
-            if int(str(cl_raw).strip()) > max_bytes:
+            if int(str(cl_raw).strip()) > limit:
                 raise ValueError("Trend response exceeds size limit")
         except ValueError as exc:
             if "exceeds size limit" in str(exc):
                 raise
+
+
+def _check_trend_response_size(response: Any, max_bytes: int | None = None) -> None:
+    """Enforce bounded response size while preserving mock compatibility."""
+    limit = _MAX_TREND_RESPONSE_BYTES if max_bytes is None else max_bytes
+    _check_trend_header_size(response, max_bytes=limit)
     raw_content = getattr(response, "content", None)
-    if isinstance(raw_content, (bytes, bytearray)) and len(raw_content) > max_bytes:
+    if isinstance(raw_content, (bytes, bytearray)) and len(raw_content) > limit:
         raise ValueError("Trend response exceeds size limit")
+
+
+def _read_bounded_trend_bytes(
+    response: Any, max_bytes: int | None = None
+) -> bytes | None:
+    """Read response body incrementally up to *max_bytes* when streaming is supported.
+
+    Avoids touching ``response.content`` on unconsumed ``requests.Response``
+    objects so oversized/chunked payloads abort immediately without buffering
+    everything into memory. Returns ``None`` only for non-streaming test doubles.
+    """
+    limit = _MAX_TREND_RESPONSE_BYTES if max_bytes is None else max_bytes
+    _check_trend_header_size(response, max_bytes=limit)
+    is_real_response = isinstance(response, requests.Response)
+    if not is_real_response:
+        raw_content = getattr(response, "content", None)
+        if isinstance(raw_content, (bytes, bytearray)):
+            if len(raw_content) > limit:
+                raise ValueError("Trend response exceeds size limit")
+            return bytes(raw_content)
+    elif getattr(response, "_content_consumed", False):
+        raw_content = response.content
+        if len(raw_content) > limit:
+            raise ValueError("Trend response exceeds size limit")
+        return raw_content
+
+    iter_content = getattr(response, "iter_content", None)
+    has_explicit_iter = callable(iter_content) and type(iter_content).__name__ not in {
+        "MagicMock",
+        "Mock",
+        "NonCallableMagicMock",
+        "AsyncMock",
+    }
+    if callable(iter_content) and (is_real_response or has_explicit_iter):
+        buf = bytearray()
+        for chunk in iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            if not isinstance(chunk, (bytes, bytearray)):
+                return None
+            buf.extend(chunk)
+            if len(buf) > limit:
+                raise ValueError("Trend response exceeds size limit")
+        return bytes(buf)
+
+    return None
 
 
 def _get_trend_session() -> requests.Session:
@@ -459,10 +513,16 @@ def _request_json(
             params=params,
             timeout=(int(TREND_REQUEST_TIMEOUT[0]), int(TREND_REQUEST_TIMEOUT[1])),
             headers=req_headers,
+            stream=True,
         )
         response.raise_for_status()
-        _check_trend_response_size(response)
-        data = response.json()
+        body_bytes = _read_bounded_trend_bytes(response)
+        if body_bytes is not None:
+            encoding = getattr(response, "encoding", None)
+            enc = encoding if isinstance(encoding, str) and encoding else "utf-8"
+            data = json.loads(body_bytes.decode(enc, errors="replace"))
+        else:
+            data = response.json()
         return data if isinstance(data, dict) else {}
     finally:
         close_response_quietly(response)
@@ -481,14 +541,19 @@ def _fetch_rss_feed(rss_url: str):
                 "User-Agent": USER_AGENT,
                 "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
             },
+            stream=True,
         )
         response.raise_for_status()
-        _check_trend_response_size(response)
-        raw_content = getattr(response, "content", None)
-        if isinstance(raw_content, (bytes, bytearray)) and raw_content:
-            return feedparser.parse(bytes(raw_content))
+        body_bytes = _read_bounded_trend_bytes(response)
+        if body_bytes is not None and (
+            body_bytes or isinstance(response, requests.Response)
+        ):
+            return feedparser.parse(body_bytes)
         resp_text = getattr(response, "text", "")
-        if isinstance(resp_text, str) and len(resp_text) > _MAX_TREND_RESPONSE_BYTES:
+        if isinstance(resp_text, str) and (
+            len(resp_text) > _MAX_TREND_RESPONSE_BYTES
+            or len(resp_text.encode("utf-8", errors="replace")) > _MAX_TREND_RESPONSE_BYTES
+        ):
             raise ValueError("Trend RSS response text exceeds size limit")
         return feedparser.parse(resp_text)
     finally:

@@ -539,6 +539,7 @@ function isCurrentInitialStocksFetch(generation, abortController) {
  * window because api.js is loaded before this file and only invokes it later.
  */
 function invalidatePendingInitialStocksFetch() {
+  clearInitialSkeletonWatchdog();
   if (!fetchInitialStocksAbortController) return;
   fetchInitialStocksGeneration += 1;
   fetchInitialStocksAbortController.abort();
@@ -1151,6 +1152,16 @@ window.addEventListener("click", (e) => {
 
     if (!clickedInsideResults && !clickedSearchInput && !clickedSearchBtn) {
       searchResults.style.display = "none";
+      if (searchInput) {
+        searchInput.setAttribute?.("aria-expanded", "false");
+        searchInput.removeAttribute?.("aria-activedescendant");
+        if (
+          typeof CustomEvent === "function" &&
+          typeof searchInput.dispatchEvent === "function"
+        ) {
+          searchInput.dispatchEvent(new CustomEvent("searchresultschange"));
+        }
+      }
     }
   }
 });
@@ -1270,6 +1281,7 @@ if (
   typeof window.addEventListener === "function"
 ) {
   const cleanupInitialStocksFetch = () => {
+    clearInitialSkeletonWatchdog();
     invalidatePendingInitialStocksFetch();
   };
   window.addEventListener("beforeunload", cleanupInitialStocksFetch);

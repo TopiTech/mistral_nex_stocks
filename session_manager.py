@@ -589,7 +589,8 @@ class YFinanceSessionManager:
         session.request = custom_request  # type: ignore[assignment]
         with self._lock:
             self._all_sessions.append((session, self._session_epoch, time.time()))
-        self._enforce_pool_cap()
+        if not getattr(self._local, "defer_pool_cap", False):
+            self._enforce_pool_cap()
         return session
 
     # -----------------------------------------------------------------------
@@ -616,6 +617,36 @@ class YFinanceSessionManager:
                 for entry in entries:
                     self._closing_sessions.discard(id(entry[0]))
 
+    def _collect_pool_cap_evictions_locked(self) -> list[tuple[Any, int, float]]:
+        """Collect oldest idle sessions over YFINANCE_SESSION_POOL_MAX (caller holds self._lock)."""
+        max_sessions = YFINANCE_SESSION_POOL_MAX
+        if len(self._all_sessions) <= max_sessions:
+            return []
+        # Sort by creation timestamp (oldest first) so we evict LRU.
+        self._all_sessions.sort(key=lambda e: e[2])
+        to_close: list[tuple[Any, int, float]] = []
+        with self._active_sessions_lock:
+            active = (
+                set(self._active_sessions)
+                | {sid for sid, cnt in self._active_session_counts.items() if cnt > 0}
+                | set(self._closing_sessions)
+            )
+            removed = 0
+            kept = []
+            for entry in self._all_sessions:
+                if len(self._all_sessions) - removed <= max_sessions:
+                    kept.append(entry)
+                    continue
+                sid = id(entry[0])
+                if sid in active:
+                    kept.append(entry)
+                    continue
+                self._closing_sessions.add(sid)
+                to_close.append(entry)
+                removed += 1
+        self._all_sessions = kept
+        return to_close
+
     def _enforce_pool_cap(self) -> None:
         """Close + drop the oldest idle sessions until under YFINANCE_SESSION_POOL_MAX.
 
@@ -623,33 +654,8 @@ class YFinanceSessionManager:
         preserving correctness under concurrency. Actual socket closure runs
         outside locks.
         """
-        to_close: list[tuple[Any, int, float]] = []
         with self._lock:
-            max_sessions = YFINANCE_SESSION_POOL_MAX
-            if len(self._all_sessions) <= max_sessions:
-                return
-            # Sort by creation timestamp (oldest first) so we evict LRU.
-            self._all_sessions.sort(key=lambda e: e[2])
-            with self._active_sessions_lock:
-                active = (
-                    set(self._active_sessions)
-                    | {sid for sid, cnt in self._active_session_counts.items() if cnt > 0}
-                    | set(self._closing_sessions)
-                )
-                removed = 0
-                kept = []
-                for entry in self._all_sessions:
-                    if len(self._all_sessions) - removed <= max_sessions:
-                        kept.append(entry)
-                        continue
-                    sid = id(entry[0])
-                    if sid in active:
-                        kept.append(entry)
-                        continue
-                    self._closing_sessions.add(sid)
-                    to_close.append(entry)
-                    removed += 1
-            self._all_sessions = kept
+            to_close = self._collect_pool_cap_evictions_locked()
         self._close_reclaimed_entries(to_close)
 
     def _reclaim_epoch_sessions(self, new_epoch: int) -> None:
@@ -909,8 +915,14 @@ class YFinanceSessionManager:
 
             if sess_to_return is None:
                 ua = YFINANCE_USER_AGENTS[idx]
-                sess_to_return = self._create_session(ua, ua_index=idx)
+                prev_defer = getattr(self._local, "defer_pool_cap", False)
+                self._local.defer_pool_cap = True
+                try:
+                    sess_to_return = self._create_session(ua, ua_index=idx)
+                finally:
+                    self._local.defer_pool_cap = prev_defer
                 self._local.sessions[idx] = (sess_to_return, current_epoch)
+                stale_to_close.extend(self._collect_pool_cap_evictions_locked())
 
         self._close_reclaimed_entries(stale_to_close)
         return sess_to_return

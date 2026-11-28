@@ -29,6 +29,7 @@ from route_helpers import (
     sanitize_upstream_log_message,
 )
 from routes.system.blueprint import api_system_bp
+from routes.system.guards import PUBLIC_SAFE_CREDENTIAL_KEYS
 from schemas.config import (
     normalize_openai_base_url_for_compare,
     validate_openai_base_url_setting,
@@ -56,37 +57,9 @@ def _build_safe_credentials_response() -> dict[str, Any]:
     API response across GET, POST, or DELETE.
     """
     _state = routes.api_system.get_api_credential_state()
-    _allowed_keys: set[str] = {
-        "has_mistral_api_key",
-        "has_openai_api_key",
-        "has_langsearch_api_key",
-        "has_tavily_api_key",
-        "has_alphavantage_api_key",
-        "has_ai_access",
-        "ai_provider",
-        "is_beta_provider",
-        "provider_notice",
-        "openai_base_url",
-        "openai_model",
-        "openai_embeddings_model",
-        "is_local_openai_base_url",
-        "api_mode",
-        "agent_id",
-        "preview_mode",
-        "model_selectable",
-        "mistral_model",
-        "is_ai_technical_lines_eligible",
-        "is_free_tier_model",
-        "model_tier",
-        "credentials_ephemeral",
-        "credentials_ephemeral_keys",
-        "credentials_ephemeral_warning",
-        "mistral_api_key_min_length",
-        "langsearch_api_key_min_length",
-        "tavily_api_key_min_length",
-        "sse_heartbeat_interval",
+    state: dict[str, Any] = {
+        k: _state[k] for k in PUBLIC_SAFE_CREDENTIAL_KEYS if k in _state
     }
-    state: dict[str, Any] = {k: _state[k] for k in _allowed_keys if k in _state}
     state["custom_ai_prompt"] = routes.api_system.get_custom_ai_prompt()
     from config_utils import get_model_catalog, resolve_model_target
     from credential_manager import get_model_badge

@@ -17,12 +17,12 @@ from flask import current_app, request
 import routes.api_system
 from app_state import app_state
 from credential_manager import get_ai_provider, get_model_badge, get_model_name, is_preview_mode
-from error_codes import ErrorCode
 from route_helpers import _seconds_until, rate_limit
 from routes.system.blueprint import api_system_bp
+from routes.system.guards import PUBLIC_SAFE_CREDENTIAL_KEYS, _check_system_read_origin_and_locality
 from utils.env_helpers import _env_bool
 from utils.networking import is_allowed_trusted_origin
-from utils.stock_payload import error_response, ok_response
+from utils.stock_payload import ok_response
 
 
 @api_system_bp.route("/api/health", methods=["GET", "OPTIONS"])
@@ -68,7 +68,10 @@ def api_health():
         origin = request.headers.get("Origin")
         if not origin or is_allowed_trusted_origin(request):
             health_data["extension_manifest_error"] = manifest_error
-            health_data.update(routes.api_system.get_api_credential_state())
+            raw_cred_state = routes.api_system.get_api_credential_state()
+            health_data.update(
+                {k: raw_cred_state[k] for k in PUBLIC_SAFE_CREDENTIAL_KEYS if k in raw_cred_state}
+            )
 
     return ok_response(health_data)
 
@@ -125,18 +128,9 @@ def api_cache_stats():
     ok, denied = routes.api_system._require_admin_token_if_remote(request)
     if not ok:
         return denied
-    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
-    is_local = routes.api_system._is_local_request(request)
-    if not allow_remote and not is_local:
-        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
-    if (
-        (not allow_remote or is_local)
-        and request.headers.get("Origin")
-        and not is_allowed_trusted_origin(request)
-    ):
-        return error_response(
-            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
-        )
+    denied_access = _check_system_read_origin_and_locality(request)
+    if denied_access is not None:
+        return denied_access
     stats = app_state.cache.get_stats()
     with app_state.cache.cache_lock:
         cache_sizes = {str(dur): len(c) for dur, c in app_state.cache.caches.items()}
@@ -157,18 +151,9 @@ def api_metrics():
     ok, denied = routes.api_system._require_admin_token_if_remote(request)
     if not ok:
         return denied
-    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
-    is_local = routes.api_system._is_local_request(request)
-    if not allow_remote and not is_local:
-        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
-    if (
-        (not allow_remote or is_local)
-        and request.headers.get("Origin")
-        and not is_allowed_trusted_origin(request)
-    ):
-        return error_response(
-            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
-        )
+    denied_access = _check_system_read_origin_and_locality(request)
+    if denied_access is not None:
+        return denied_access
 
     # Only expose safe, non-sensitive operational metrics
     with app_state.cache.cache_lock:

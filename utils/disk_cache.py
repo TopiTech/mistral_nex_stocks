@@ -336,7 +336,11 @@ class StockDiskCache:
             # warning instead of propagating a raw OSError and turning e.g.
             # /api/metrics into a 500.
             try:
-                fd = os.open(str(self._process_lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+                try:
+                    fd = os.open(str(self._process_lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+                except FileNotFoundError:
+                    self._cache_dir.mkdir(parents=True, exist_ok=True)
+                    fd = os.open(str(self._process_lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             except OSError as exc:
                 raise DiskCacheLockTimeout(
                     f"Could not open disk cache lock file: {self._process_lock_path} ({exc})"
@@ -387,7 +391,11 @@ class StockDiskCache:
             # M18: mirror the Windows branch — open failures degrade, not
             # propagate (see comment above).
             try:
-                handle = self._process_lock_path.open("a+", encoding="utf-8")
+                try:
+                    handle = self._process_lock_path.open("a+", encoding="utf-8")
+                except FileNotFoundError:
+                    self._cache_dir.mkdir(parents=True, exist_ok=True)
+                    handle = self._process_lock_path.open("a+", encoding="utf-8")
             except OSError as exc:
                 raise DiskCacheLockTimeout(
                     f"Could not open disk cache lock file: {self._process_lock_path} ({exc})"

@@ -28,6 +28,7 @@ from route_helpers import (
     _parse_stock_details_request,
     _parse_stock_history_request,
     rate_limit,
+    sanitize_client_upstream_text,
     sanitize_upstream_log_message,
 )
 from routes.stocks.common import (
@@ -675,9 +676,16 @@ def api_search() -> Any:
         result = {"results": []}
     if "error" in result:
         err_msg = result.get("error")
+        safe_reason = (
+            sanitize_client_upstream_text(
+                err_msg, get_error_message(ErrorCode.API_SERVICE_ERROR, lang="ja")
+            )
+            if err_msg
+            else None
+        )
         return error_response(
             ErrorCode.API_SERVICE_ERROR,
-            details={"reason": str(err_msg)} if err_msg else None,
+            details={"reason": safe_reason} if safe_reason else None,
             status_code=502,
         )
     return ok_response(result)

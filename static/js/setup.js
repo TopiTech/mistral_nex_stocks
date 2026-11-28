@@ -658,12 +658,6 @@ if (
   window.addEventListener("pagehide", cleanupSetupResources);
   window.addEventListener("pageshow", (event) => {
     if (!event?.persisted) return;
-    const previewBtn = getEl("previewBtn");
-    if (previewBtn) previewBtn.disabled = false;
-    const saveBtn = getEl("saveBtn");
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = "保存して開始";
-    }
+    setSetupSubmitBusy(false);
   });
 }

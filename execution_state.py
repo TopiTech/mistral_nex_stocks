@@ -31,7 +31,7 @@ class ExecutionState:
         self._shutdown_lock = threading.Lock()
         self._shutdown_done = False
         self.background_threads: list[threading.Thread] = []
-        self._threads_lock = threading.Lock()
+        self._threads_lock = threading.RLock()
 
     def register_background_thread(self, thread: threading.Thread) -> None:
         """Register a background thread under lock for lifecycle tracking."""

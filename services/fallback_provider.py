@@ -95,7 +95,7 @@ def _mark_yahoo_block(
 
         retry_after = parse_retry_after(response) if response is not None else None
         _app_state.market.mark_scraper_blocked(
-            retry_after=retry_after, propagate_to_yfinance=is_yahoo_host
+            retry_after=retry_after, propagate_to_yfinance=False
         )
         if is_yahoo_host:
             _app_state.market.mark_yf_429(retry_after=retry_after)

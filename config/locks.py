@@ -180,9 +180,12 @@ def _master_key_update_lock():
         + hashlib.sha256(str(config_store.CONFIG_FILE.resolve()).encode("utf-8", errors="ignore")).hexdigest()
     )
     windll_obj: Any = getattr(ctypes, "windll", None)
-    kernel32: Any = getattr(windll_obj, "kernel32", None) if windll_obj is not None else None
-    if kernel32 is None:
+    if windll_obj is None or getattr(windll_obj, "kernel32", None) is None:
         raise RuntimeError("Windows API (ctypes.windll) is not available on this platform")
+    win_dll_cls: Any = getattr(ctypes, "WinDLL", None)
+    if win_dll_cls is None:
+        raise RuntimeError("Windows API (ctypes.WinDLL) is not available on this platform")
+    kernel32: Any = win_dll_cls("kernel32", use_last_error=True)
     kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
     kernel32.CreateMutexW.restype = wintypes.HANDLE
     kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)

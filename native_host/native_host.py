@@ -8,6 +8,7 @@ import math
 import ntpath
 import os
 import re
+import stat
 import struct
 import subprocess
 import sys
@@ -151,7 +152,35 @@ _log_dir = Path(
 )
 
 
-def _build_file_handler(log_dir: Path) -> logging.Handler | None:
+def _temp_fallback_dir_name() -> str:
+    """Scope the shared temp fallback directory to the current UID on POSIX."""
+    if hasattr(os, "getuid"):
+        return f"mistral_nex_stocks-{os.getuid()}"
+    return "mistral_nex_stocks"
+
+
+def _ensure_secure_temp_dir(target_dir: Path) -> bool:
+    """Create *target_dir* safely, refusing symlinks or foreign ownership on POSIX."""
+    try:
+        if hasattr(os, "getuid"):
+            if target_dir.is_symlink():
+                return False
+            target_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            st = os.lstat(target_dir)
+            if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+                return False
+            try:
+                os.chmod(target_dir, 0o700)
+            except OSError:
+                pass
+        else:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+def _build_file_handler(log_dir: Path, *, enforce_secure_dir: bool = False) -> logging.Handler | None:
     """Create the rotating log handler, degrading gracefully.
 
     NH-07 (2026-11-08 review): the directory was created at import time, so a
@@ -160,7 +189,11 @@ def _build_file_handler(log_dir: Path) -> logging.Handler | None:
     diagnostics, not a prerequisite for the protocol.
     """
     try:
-        log_dir.mkdir(parents=True, exist_ok=True)
+        if enforce_secure_dir:
+            if not _ensure_secure_temp_dir(log_dir):
+                return None
+        else:
+            log_dir.mkdir(parents=True, exist_ok=True)
         handler = _RestrictiveRotatingFileHandler(
             log_dir / "native_host.log",
             maxBytes=1024 * 1024,
@@ -175,8 +208,8 @@ def _build_file_handler(log_dir: Path) -> logging.Handler | None:
 
 _file_handler = _build_file_handler(_log_dir)
 if _file_handler is None:
-    _log_dir = Path(tempfile.gettempdir()) / "mistral_nex_stocks"
-    _file_handler = _build_file_handler(_log_dir)
+    _log_dir = Path(tempfile.gettempdir()) / _temp_fallback_dir_name()
+    _file_handler = _build_file_handler(_log_dir, enforce_secure_dir=True)
 
 _stream_handler = logging.StreamHandler(sys.stderr)
 _stream_handler.setFormatter(SanitizedFormatter(_log_format))
@@ -381,7 +414,19 @@ def _sliding_window_allow(bucket: str, timestamps: list, max_events: int, window
         payload: dict = {}
         if not _rate_limit_ledger_disabled:
             try:
-                fd = os.open(_RATE_LIMIT_LEDGER_PATH, os.O_RDWR | os.O_CREAT, 0o600)
+                ledger_path = Path(_RATE_LIMIT_LEDGER_PATH)
+                if hasattr(os, "getuid") and (
+                    ledger_path.parent.is_symlink() or ledger_path.is_symlink()
+                ):
+                    raise OSError("Refusing symlink in rate-limit ledger path")
+                open_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(ledger_path, open_flags, 0o600)
+                if hasattr(os, "getuid"):
+                    st = os.fstat(fd)
+                    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+                        os.close(fd)
+                        fd = -1
+                        raise OSError("Rate-limit ledger is not a regular file owned by current user")
             except OSError:
                 _rate_limit_ledger_disabled = True
                 logger.warning(

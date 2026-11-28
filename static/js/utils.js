@@ -277,7 +277,13 @@ function openModal(modalId, onOpenCallback) {
     modal.removeEventListener("keydown", modal._keydownHandler);
     modal._keydownHandler = null;
   }
-  modal._previousFocus = document.activeElement;
+  if (
+    !wasOpen &&
+    document.activeElement &&
+    !modal.contains?.(document.activeElement)
+  ) {
+    modal._previousFocus = document.activeElement;
+  }
   modal.removeAttribute("inert");
   modal.setAttribute("aria-hidden", "false");
   modal.classList.remove("hidden");
@@ -860,6 +866,17 @@ function closeTopmostOverlayOnEscape(e) {
   if (isSearchVisible) {
     consumeEscape();
     searchResults.style.display = "none";
+    const searchInput = document.getElementById("searchInput");
+    if (searchInput) {
+      searchInput.setAttribute?.("aria-expanded", "false");
+      searchInput.removeAttribute?.("aria-activedescendant");
+      if (
+        typeof CustomEvent === "function" &&
+        typeof searchInput.dispatchEvent === "function"
+      ) {
+        searchInput.dispatchEvent(new CustomEvent("searchresultschange"));
+      }
+    }
     return true;
   }
 

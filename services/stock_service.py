@@ -212,12 +212,13 @@ def fetch_history_sync_impl(symbol, market, period, interval="auto"):
             is_negative = hasattr(
                 app_state.market, "is_negative_cached_symbol"
             ) and app_state.market.is_negative_cached_symbol(symbol)
-            is_transient = not is_negative or app_state.market.is_yf_rate_limited()
-            return {
-                "error": "銘柄情報が取得できませんでした。",
-                "symbol": symbol,
-                "transient": is_transient,
-            }
+            is_rate_limited = app_state.market.is_yf_rate_limited()
+            if is_negative or not is_rate_limited:
+                return {
+                    "error": "銘柄情報が取得できませんでした。",
+                    "symbol": symbol,
+                    "transient": not is_negative,
+                }
 
         fetch_interval = requested_interval
         orig_period = period

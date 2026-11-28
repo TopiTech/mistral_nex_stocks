@@ -286,7 +286,12 @@ def _is_sensitive_log_key(key: Any) -> bool:
     return bool(_SENSITIVE_LOG_KEY_RE.match(normalized))
 
 
-def sanitize_log_record_data(value: Any, *, _seen: set[int] | None = None) -> Any:
+_MAX_LOG_SANITIZE_DEPTH = 32
+
+
+def sanitize_log_record_data(
+    value: Any, *, _seen: set[int] | None = None, _depth: int = 0
+) -> Any:
     """Recursively sanitize structured log values BEFORE JSON serialization.
 
     Redacts secret-bearing dict keys in-place-safe copies and applies
@@ -296,6 +301,8 @@ def sanitize_log_record_data(value: Any, *, _seen: set[int] | None = None) -> An
         return value
     if isinstance(value, str):
         return _sanitize_error_message(value)
+    if _depth >= _MAX_LOG_SANITIZE_DEPTH:
+        return "[max-depth]"
     if _seen is None:
         _seen = set()
     obj_id = id(value)
@@ -314,7 +321,9 @@ def sanitize_log_record_data(value: Any, *, _seen: set[int] | None = None) -> An
                     else:
                         sanitized_dict[k] = "[REDACTED]"
                 else:
-                    sanitized_dict[k] = sanitize_log_record_data(v, _seen=_seen)
+                    sanitized_dict[k] = sanitize_log_record_data(
+                        v, _seen=_seen, _depth=_depth + 1
+                    )
             return sanitized_dict
         finally:
             _seen.discard(obj_id)
@@ -323,7 +332,10 @@ def sanitize_log_record_data(value: Any, *, _seen: set[int] | None = None) -> An
             return "[circular]"
         _seen.add(obj_id)
         try:
-            items = [sanitize_log_record_data(item, _seen=_seen) for item in value]
+            items = [
+                sanitize_log_record_data(item, _seen=_seen, _depth=_depth + 1)
+                for item in value
+            ]
             return tuple(items) if isinstance(value, tuple) else items
         finally:
             _seen.discard(obj_id)

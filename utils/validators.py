@@ -703,6 +703,33 @@ def normalize_chat_parse_payload(response: Any) -> dict[str, Any] | None:
     return None
 
 
+def _trim_trailing_partial_token(chunk: str) -> str:
+    """Trim a trailing partial JSON key/value fragment in O(n) time without ReDoS."""
+    end = len(chunk)
+    while end > 0 and chunk[end - 1].isspace():
+        end -= 1
+    if end > 0 and chunk[end - 1] == ":":
+        end -= 1
+    while end > 0 and chunk[end - 1].isspace():
+        end -= 1
+    if end > 0 and chunk[end - 1] == '"':
+        end -= 1
+    while end > 0 and (
+        "0" <= chunk[end - 1] <= "9"
+        or "a" <= chunk[end - 1] <= "z"
+        or "A" <= chunk[end - 1] <= "Z"
+        or chunk[end - 1] == "_"
+    ):
+        end -= 1
+    if end > 0 and chunk[end - 1] == '"':
+        end -= 1
+    while end > 0 and chunk[end - 1].isspace():
+        end -= 1
+    if end > 0 and chunk[end - 1] == ",":
+        end -= 1
+    return chunk[:end].rstrip()
+
+
 def extract_json_payload(content, required_fields=None):
     """
     AIの出力から最初の JSON オブジェクトを抽出・自動修復。
@@ -936,7 +963,7 @@ def extract_json_payload(content, required_fields=None):
                     break
                 _attempts += 1
                 chunk = working[:attempt_len].rstrip()
-                chunk = re.sub(r',?\s*"?[a-zA-Z0-9_]*"?\s*:?\s*$', "", chunk).rstrip()
+                chunk = _trim_trailing_partial_token(chunk)
                 if not chunk:
                     break
 

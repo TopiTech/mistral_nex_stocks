@@ -12,12 +12,10 @@ from flask import request
 import routes.api_system
 from app_state import app_state
 from credential_manager import get_ai_provider
-from error_codes import ErrorCode
 from route_helpers import rate_limit
 from routes.system.blueprint import api_system_bp
-from utils.env_helpers import _env_bool
-from utils.networking import is_allowed_trusted_origin
-from utils.stock_payload import error_response, ok_response
+from routes.system.guards import _check_system_read_origin_and_locality
+from utils.stock_payload import ok_response
 
 
 @api_system_bp.route("/api/system/ai-usage", methods=["GET", "OPTIONS"])
@@ -29,18 +27,9 @@ def get_ai_usage():
     ok, denied = routes.api_system._require_admin_token_if_remote(request)
     if not ok:
         return denied
-    allow_remote = _env_bool("MNS_ALLOW_REMOTE_API")
-    is_local = routes.api_system._is_local_request(request)
-    if not allow_remote and not is_local:
-        return error_response(ErrorCode.FORBIDDEN, details={"reason": "forbidden"}, status_code=403)
-    if (
-        (not allow_remote or is_local)
-        and request.headers.get("Origin")
-        and not is_allowed_trusted_origin(request)
-    ):
-        return error_response(
-            ErrorCode.FORBIDDEN, details={"reason": "untrusted origin"}, status_code=403
-        )
+    denied_access = _check_system_read_origin_and_locality(request)
+    if denied_access is not None:
+        return denied_access
     cfg = (
         app_state.config
         if hasattr(app_state, "config") and isinstance(app_state.config, dict)

@@ -44,6 +44,7 @@ _LEADER_LOCK_PID: int | None = None
 # time), while the advisory mode needs the handle plus file-identity checks.
 _LEADER_LOCK_MODE: str | None = None
 _LEADER_LOCK_PATH: Path | None = None
+_LEADER_RELEASE_GENERATION: int = 0
 # LIFECYCLE-7: "follower until elected" — a process must not claim leadership
 # before the election loop has won the leader lock, otherwise every worker in
 # multi-process mode fetches as leader during the startup window (the exact
@@ -74,8 +75,9 @@ def _detach_inherited_leader_lock_locked() -> None:
 
 def _reset_leader_lock_in_child() -> None:
     """Reset inherited leader-lock state immediately in a forked child process."""
-    global _LEADER_LOCK_FILE, _LEADER_LOCK_PID, _LEADER_LOCK_MUTEX
+    global _LEADER_LOCK_FILE, _LEADER_LOCK_PID, _LEADER_LOCK_MUTEX, _LEADER_RELEASE_GENERATION
     _LEADER_LOCK_MUTEX = threading.RLock()
+    _LEADER_RELEASE_GENERATION += 1
     _LEADER_LOCK_FILE = None
     _LEADER_LOCK_PID = None
     _set_app_bg_attr("_LEADER_LOCK_FILE", None)
@@ -181,7 +183,9 @@ def _pid_is_alive(pid: int) -> bool:
 
 def _release_leader_lock() -> None:
     """Close the leader lock file handle on process exit without unlinking advisory lock files."""
+    global _LEADER_RELEASE_GENERATION
     with _LEADER_LOCK_MUTEX:
+        _LEADER_RELEASE_GENERATION += 1
         _detach_inherited_leader_lock_locked()
         _lock_file = _get_leader_lock_file()
         _lock_mode = _get_leader_lock_mode()
@@ -492,14 +496,29 @@ def is_leader() -> bool:
     return _get_app_bg_attr("_is_sync_leader", _is_sync_leader)
 
 
+def _try_acquire_and_promote_leader(*, demote_on_failure: bool) -> bool:
+    """Acquire the leader lock and promote only if no concurrent release intervened."""
+    with _LEADER_LOCK_MUTEX:
+        release_gen = _LEADER_RELEASE_GENERATION
+    acquired = _try_acquire_leader_lock()
+    with _LEADER_LOCK_MUTEX:
+        if acquired and _LEADER_RELEASE_GENERATION == release_gen:
+            _set_is_sync_leader(True)
+            return True
+        if acquired:
+            _release_leader_lock()
+        if demote_on_failure or acquired:
+            _set_is_sync_leader(False)
+        return False
+
+
 def bg_leader_election_loop() -> None:
     """Periodically check and run leader election."""
     target = _get_app_bg_attr("bg_leader_election_loop", None)
     if target is not None and target is not bg_leader_election_loop:
         return target()
 
-    acquired = _try_acquire_leader_lock()
-    _set_is_sync_leader(acquired)
+    acquired = _try_acquire_and_promote_leader(demote_on_failure=True)
     if acquired:
         logger.info("This process has acquired the sync leader lock. Running as MASTER.")
     else:
@@ -507,9 +526,7 @@ def bg_leader_election_loop() -> None:
 
     while not app_state.execution.shutdown_event.is_set():
         if not is_leader():
-            acquired = _try_acquire_leader_lock()
-            if acquired:
-                _set_is_sync_leader(True)
+            if _try_acquire_and_promote_leader(demote_on_failure=False):
                 logger.info("Sync leader changed: this process is now the MASTER.")
         else:
             # R17-01: re-verify ownership every tick. Previously the leader

@@ -519,12 +519,6 @@ def clear_api_credentials() -> list[str]:
                     logger.warning("Failed to inspect keyring credential state for %s", key_name)
 
         if failed_keys:
-            _restore_cleared_credentials(
-                previous_keyring_values,
-                None,
-                None,
-                None,
-            )
             return failed_keys
 
         cleared_cfg = copy.deepcopy(cfg)

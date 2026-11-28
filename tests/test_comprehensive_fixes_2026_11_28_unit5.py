@@ -15,12 +15,13 @@ def _run_node(script: str) -> None:
     res = subprocess.run(
         [node, "-"],
         cwd=ROOT,
-        input=script,
+        input=script.encode("utf-8"),
         capture_output=True,
-        text=True,
         check=False,
     )
-    assert res.returncode == 0, f"Node check failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+    stdout = res.stdout.decode("utf-8", errors="replace")
+    stderr = res.stderr.decode("utf-8", errors="replace")
+    assert res.returncode == 0, f"Node check failed:\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
 
 
 def test_setup_pageshow_bfcache_resets_submit_inflight() -> None:
